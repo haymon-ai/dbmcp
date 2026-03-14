@@ -60,7 +60,9 @@ pub async fn get_table_schema_with_relations(
     database_name: &str,
     table_name: &str,
 ) -> Result<String, AppError> {
-    info!("TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}");
+    info!(
+        "TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}"
+    );
     validate_identifier(database_name)?;
     validate_identifier(table_name)?;
     let result = backend

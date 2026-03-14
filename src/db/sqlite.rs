@@ -5,7 +5,7 @@
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sqlx::sqlite::{SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row, SqlitePool};
 use std::collections::HashMap;
@@ -108,23 +108,23 @@ impl DatabaseBackend for SqliteBackend {
 
         for fk_row in &fk_rows {
             let from_col: String = fk_row.try_get("from").unwrap_or_default();
-            if let Some(col_info) = columns.get_mut(&from_col) {
-                if let Some(obj) = col_info.as_object_mut() {
-                    let ref_table: String = fk_row.try_get("table").unwrap_or_default();
-                    let ref_col: String = fk_row.try_get("to").unwrap_or_default();
-                    let on_update: String = fk_row.try_get("on_update").unwrap_or_default();
-                    let on_delete: String = fk_row.try_get("on_delete").unwrap_or_default();
-                    obj.insert(
-                        "foreign_key".to_string(),
-                        json!({
-                            "constraint_name": Value::Null,
-                            "referenced_table": ref_table,
-                            "referenced_column": ref_col,
-                            "on_update": on_update,
-                            "on_delete": on_delete,
-                        }),
-                    );
-                }
+            if let Some(col_info) = columns.get_mut(&from_col)
+                && let Some(obj) = col_info.as_object_mut()
+            {
+                let ref_table: String = fk_row.try_get("table").unwrap_or_default();
+                let ref_col: String = fk_row.try_get("to").unwrap_or_default();
+                let on_update: String = fk_row.try_get("on_update").unwrap_or_default();
+                let on_delete: String = fk_row.try_get("on_delete").unwrap_or_default();
+                obj.insert(
+                    "foreign_key".to_string(),
+                    json!({
+                        "constraint_name": Value::Null,
+                        "referenced_table": ref_table,
+                        "referenced_column": ref_col,
+                        "on_update": on_update,
+                        "on_delete": on_delete,
+                    }),
+                );
             }
         }
 

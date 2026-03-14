@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::{backtick_escape, validate_identifier};
 use crate::error::AppError;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sqlx::mysql::{MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, MySqlPool, Row};
 use std::collections::HashMap;
@@ -271,29 +271,25 @@ impl DatabaseBackend for MysqlBackend {
 
         for fk_row in &fk_rows {
             let col_name: Option<String> = fk_row.try_get("column_name").ok();
-            if let Some(col_name) = col_name {
-                if let Some(col_info) = columns.get_mut(&col_name) {
-                    if let Some(obj) = col_info.as_object_mut() {
-                        let constraint_name: Option<String> =
-                            fk_row.try_get("constraint_name").ok();
-                        let referenced_table: Option<String> =
-                            fk_row.try_get("referenced_table").ok();
-                        let referenced_column: Option<String> =
-                            fk_row.try_get("referenced_column").ok();
-                        let on_update: Option<String> = fk_row.try_get("on_update").ok();
-                        let on_delete: Option<String> = fk_row.try_get("on_delete").ok();
-                        obj.insert(
-                            "foreign_key".to_string(),
-                            json!({
-                                "constraint_name": constraint_name,
-                                "referenced_table": referenced_table,
-                                "referenced_column": referenced_column,
-                                "on_update": on_update,
-                                "on_delete": on_delete,
-                            }),
-                        );
-                    }
-                }
+            if let Some(col_name) = col_name
+                && let Some(col_info) = columns.get_mut(&col_name)
+                && let Some(obj) = col_info.as_object_mut()
+            {
+                let constraint_name: Option<String> = fk_row.try_get("constraint_name").ok();
+                let referenced_table: Option<String> = fk_row.try_get("referenced_table").ok();
+                let referenced_column: Option<String> = fk_row.try_get("referenced_column").ok();
+                let on_update: Option<String> = fk_row.try_get("on_update").ok();
+                let on_delete: Option<String> = fk_row.try_get("on_delete").ok();
+                obj.insert(
+                    "foreign_key".to_string(),
+                    json!({
+                        "constraint_name": constraint_name,
+                        "referenced_table": referenced_table,
+                        "referenced_column": referenced_column,
+                        "on_update": on_update,
+                        "on_delete": on_delete,
+                    }),
+                );
             }
         }
 

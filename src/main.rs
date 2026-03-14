@@ -36,12 +36,12 @@ mod server;
 mod tools;
 
 use config::Config;
-use db::backend::Backend;
 use db::DatabaseType;
-use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
-};
+use db::backend::Backend;
 use rmcp::ServiceExt;
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
 use server::DbMcpServer;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

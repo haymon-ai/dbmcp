@@ -16,7 +16,9 @@ pub enum AppError {
     Connection(String),
 
     /// Query blocked by read-only mode.
-    #[error("Query blocked: only SELECT, SHOW, DESC, DESCRIBE, USE queries are allowed in read-only mode")]
+    #[error(
+        "Query blocked: only SELECT, SHOW, DESC, DESCRIBE, USE queries are allowed in read-only mode"
+    )]
     ReadOnlyViolation,
 
     /// `LOAD_FILE()` function blocked for security.
@@ -34,7 +36,9 @@ pub enum AppError {
     MultiStatement,
 
     /// Invalid database or table name identifier.
-    #[error("Invalid database/table name '{0}': must contain only alphanumeric characters and underscores")]
+    #[error(
+        "Invalid database/table name '{0}': must contain only alphanumeric characters and underscores"
+    )]
     InvalidIdentifier(String),
 
     /// Database query execution failed.
