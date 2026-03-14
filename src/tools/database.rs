@@ -4,7 +4,7 @@
 //! `get_table_schema_with_relations`, `execute_sql`, and `create_database`.
 //! All tools delegate to the active [`Backend`].
 
-use crate::db::backend::Backend;
+use crate::db::backend::{Backend, DatabaseBackend};
 use crate::db::identifier::validate_identifier;
 use crate::db::validation::validate_read_only_with_dialect;
 use crate::error::AppError;

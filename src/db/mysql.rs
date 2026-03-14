@@ -4,6 +4,7 @@
 //! using sqlx's `MySqlPool`.
 
 use crate::config::Config;
+use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::{backtick_escape, validate_identifier};
 use crate::error::AppError;
 use serde_json::{json, Map, Value};
@@ -146,8 +147,8 @@ impl MysqlBackend {
     }
 }
 
-impl MysqlBackend {
-    pub async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+impl DatabaseBackend for MysqlBackend {
+    async fn list_databases(&self) -> Result<Vec<String>, AppError> {
         let results = self.query_to_json("SHOW DATABASES", None).await?;
         Ok(results
             .into_iter()
@@ -158,7 +159,7 @@ impl MysqlBackend {
             .collect())
     }
 
-    pub async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
+    async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
         validate_identifier(database)?;
         let results = self.query_to_json("SHOW TABLES", Some(database)).await?;
         Ok(results
@@ -171,7 +172,7 @@ impl MysqlBackend {
             .collect())
     }
 
-    pub async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
+    async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
@@ -205,7 +206,7 @@ impl MysqlBackend {
         Ok(json!(schema))
     }
 
-    pub async fn get_table_schema_with_relations(
+    async fn get_table_schema_with_relations(
         &self,
         database: &str,
         table: &str,
@@ -302,7 +303,7 @@ impl MysqlBackend {
         }))
     }
 
-    pub async fn execute_query(
+    async fn execute_query(
         &self,
         sql: &str,
         database: Option<&str>,
@@ -310,7 +311,7 @@ impl MysqlBackend {
         self.query_to_json(sql, database).await
     }
 
-    pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
+    async fn create_database(&self, name: &str) -> Result<Value, AppError> {
         if self.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
@@ -346,5 +347,13 @@ impl MysqlBackend {
             "message": format!("Database '{name}' created successfully."),
             "database_name": name,
         }))
+    }
+
+    fn dialect(&self) -> Box<dyn sqlparser::dialect::Dialect> {
+        Box::new(sqlparser::dialect::MySqlDialect {})
+    }
+
+    fn read_only(&self) -> bool {
+        self.read_only
     }
 }
