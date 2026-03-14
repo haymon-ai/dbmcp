@@ -19,8 +19,20 @@ pub struct PostgresBackend {
     pub read_only: bool,
 }
 
+impl std::fmt::Debug for PostgresBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresBackend")
+            .field("read_only", &self.read_only)
+            .finish_non_exhaustive()
+    }
+}
+
 impl PostgresBackend {
     /// Creates a new `PostgreSQL` backend from configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let url = format!(
             "postgres://{}:{}@{}:{}/{}",

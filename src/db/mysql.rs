@@ -9,7 +9,7 @@ use crate::db::identifier::{backtick_escape, validate_identifier};
 use crate::error::AppError;
 use serde_json::{Map, Value, json};
 use sqlx::mysql::{MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, MySqlPool, Row};
+use sqlx::{Column, Executor, MySqlPool, Row};
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -18,6 +18,14 @@ use tracing::{error, info};
 pub struct MysqlBackend {
     pool: MySqlPool,
     pub read_only: bool,
+}
+
+impl std::fmt::Debug for MysqlBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MysqlBackend")
+            .field("read_only", &self.read_only)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MysqlBackend {
@@ -107,6 +115,10 @@ impl MysqlBackend {
     }
 
     /// Executes raw SQL and converts rows to JSON maps.
+    ///
+    /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
+    /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
+    /// statements, and the text protocol returns all values as strings.
     async fn query_to_json(
         &self,
         sql: &str,
@@ -122,14 +134,14 @@ impl MysqlBackend {
         // Switch database if needed
         if let Some(db) = database {
             validate_identifier(db)?;
-            sqlx::query(&format!("USE {}", backtick_escape(db)))
-                .execute(&mut *conn)
+            let use_sql = format!("USE {}", backtick_escape(db));
+            conn.execute(use_sql.as_str())
                 .await
                 .map_err(|e| AppError::Query(e.to_string()))?;
         }
 
-        let rows: Vec<MySqlRow> = sqlx::query(sql)
-            .fetch_all(&mut *conn)
+        let rows: Vec<MySqlRow> = conn
+            .fetch_all(sql)
             .await
             .map_err(|e| AppError::Query(e.to_string()))?;
 
@@ -138,14 +150,23 @@ impl MysqlBackend {
             let mut map = Map::new();
             for col in row.columns() {
                 let name = col.name().to_string();
-                let val: Option<String> = row.try_get(col.ordinal()).ok();
-                map.insert(
-                    name,
-                    match val {
-                        Some(s) => Value::String(s),
-                        None => Value::Null,
-                    },
-                );
+                let idx = col.ordinal();
+                // MySQL may return columns with BINARY flag where try_get::<String>
+                // fails. Fall through: String → i64 → f64 → bool → Vec<u8> → Null.
+                let value = if let Ok(s) = row.try_get::<String, _>(idx) {
+                    Value::String(s)
+                } else if let Ok(n) = row.try_get::<i64, _>(idx) {
+                    Value::Number(n.into())
+                } else if let Ok(f) = row.try_get::<f64, _>(idx) {
+                    serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
+                } else if let Ok(b) = row.try_get::<bool, _>(idx) {
+                    Value::Bool(b)
+                } else if let Ok(bytes) = row.try_get::<Vec<u8>, _>(idx) {
+                    Value::String(String::from_utf8_lossy(&bytes).into_owned())
+                } else {
+                    Value::Null
+                };
+                map.insert(name, value);
             }
             results.push(map);
         }
@@ -156,26 +177,27 @@ impl MysqlBackend {
 
 impl DatabaseBackend for MysqlBackend {
     async fn list_databases(&self) -> Result<Vec<String>, AppError> {
-        let results = self.query_to_json("SHOW DATABASES", None).await?;
+        let results = self
+            .query_to_json(
+                "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+                None,
+            )
+            .await?;
         Ok(results
             .into_iter()
-            .filter_map(|row| {
-                row.get("Database")
-                    .and_then(|v| v.as_str().map(String::from))
-            })
+            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
             .collect())
     }
 
     async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
         validate_identifier(database)?;
-        let results = self.query_to_json("SHOW TABLES", Some(database)).await?;
+        let sql = format!(
+            "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{database}' ORDER BY TABLE_NAME"
+        );
+        let results = self.query_to_json(&sql, None).await?;
         Ok(results
             .into_iter()
-            .filter_map(|row| {
-                row.values()
-                    .next()
-                    .and_then(|v| v.as_str().map(String::from))
-            })
+            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
             .collect())
     }
 
@@ -320,8 +342,8 @@ impl DatabaseBackend for MysqlBackend {
         }
         validate_identifier(name)?;
 
-        // Check existence
-        let exists: Option<String> = sqlx::query_scalar(
+        // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
+        let exists: Option<Vec<u8>> = sqlx::query_scalar(
             "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
         )
         .bind(name)

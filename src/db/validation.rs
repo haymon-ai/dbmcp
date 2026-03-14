@@ -17,6 +17,10 @@ use sqlparser::parser::Parser;
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, USE, EXPLAIN)
 /// 3. No dangerous functions (`LOAD_FILE`)
 /// 4. No INTO OUTFILE/DUMPFILE clauses
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the query is not allowed in read-only mode.
 pub fn validate_read_only_with_dialect(sql: &str, dialect: &dyn Dialect) -> Result<(), AppError> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {

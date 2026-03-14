@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 use sqlparser::dialect::Dialect;
 
 /// Operations every database backend must support.
+#[allow(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait DatabaseBackend {
     /// Lists all accessible databases.
@@ -48,7 +49,7 @@ pub trait DatabaseBackend {
 }
 
 /// Concrete database backend — no dynamic dispatch.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[enum_dispatch(DatabaseBackend)]
 pub enum Backend {
     /// `MySQL`/`MariaDB` via sqlx.

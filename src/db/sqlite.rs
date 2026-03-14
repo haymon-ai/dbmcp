@@ -18,8 +18,20 @@ pub struct SqliteBackend {
     pub read_only: bool,
 }
 
+impl std::fmt::Debug for SqliteBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteBackend")
+            .field("read_only", &self.read_only)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SqliteBackend {
     /// Creates a new `SQLite` backend from a file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Connection`] if the database file cannot be opened.
     pub async fn new(db_path: &str, read_only: bool) -> Result<Self, AppError> {
         let url = format!("sqlite:{db_path}?mode=rwc");
 

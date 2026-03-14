@@ -48,6 +48,18 @@ multiple_crate_versions = "allow"          # Transitive deps, not our control
 struct_excessive_bools = "allow"           # Config struct legitimately has SSL bools
 module_name_repetitions = "allow"          # e.g. db::backend::DatabaseBackend is fine
 
+[[test]]
+name = "mysql"
+path = "tests/mysql/mysql.rs"
+
+[[test]]
+name = "postgres"
+path = "tests/postgres/postgres.rs"
+
+[[test]]
+name = "sqlite"
+path = "tests/sqlite/sqlite.rs"
+
 [profile.release]
 opt-level = "z"
 lto = true

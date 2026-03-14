@@ -30,10 +30,109 @@ jobs:
       - run: cargo clippy -- -D warnings
 
   test:
-    name: Test
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+      - run: cargo test --lib
+
+  mariadb:
+    name: MariaDB
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mariadb:
+        image: mariadb:12
+        env:
+          MARIADB_ROOT_HOST: '%'
+          MARIADB_ROOT_PASSWORD: password
+          MARIADB_DATABASE: mcp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -u root -ppassword --silent"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root -ppassword mcp < tests/mysql/setup.sql
+      - run: cargo test --test mysql -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+
+  mysql:
+    name: MySQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:9
+        env:
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: mcp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -u root -ppassword --silent"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root -ppassword mcp < tests/mysql/setup.sql
+      - run: cargo test --test mysql -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+
+  postgres:
+    name: PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: mcp
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=3s
+          --health-timeout=3s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec -i ${{ job.services.postgres.id }} psql -U postgres -d mcp < tests/postgres/setup.sql
+      - run: cargo test --test postgres -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+
+  sqlite:
+    name: SQLite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --test sqlite -- --test-threads=1
+        env:
+          DB_PATH: /tmp/mcp_test.db

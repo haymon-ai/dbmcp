@@ -29,20 +29,15 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod config;
-mod db;
-mod error;
-mod server;
-mod tools;
-
-use config::Config;
-use db::DatabaseType;
-use db::backend::Backend;
 use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use server::Server;
+use sql_mcp::config::Config;
+use sql_mcp::db;
+use sql_mcp::db::DatabaseType;
+use sql_mcp::db::backend::Backend;
+use sql_mcp::server::Server;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;

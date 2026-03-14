@@ -12,6 +12,10 @@ use serde_json::Value;
 use tracing::{error, info};
 
 /// Lists all accessible databases as a JSON array.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the backend query fails.
 pub async fn list_databases(backend: &Backend) -> Result<String, AppError> {
     info!("TOOL: list_databases called");
     let db_list = backend.list_databases().await?;
@@ -23,6 +27,10 @@ pub async fn list_databases(backend: &Backend) -> Result<String, AppError> {
 }
 
 /// Lists all tables in a database as a JSON array.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the identifier is invalid or the backend query fails.
 pub async fn list_tables(backend: &Backend, database_name: &str) -> Result<String, AppError> {
     info!("TOOL: list_tables called. database_name={database_name}");
     validate_identifier(database_name)?;
@@ -41,6 +49,10 @@ pub async fn list_tables(backend: &Backend, database_name: &str) -> Result<Strin
 }
 
 /// Returns column definitions for a table as JSON.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if identifiers are invalid or the backend query fails.
 pub async fn get_table_schema(
     backend: &Backend,
     database_name: &str,
@@ -55,6 +67,10 @@ pub async fn get_table_schema(
 }
 
 /// Returns column definitions with foreign key relationships.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if identifiers are invalid or the backend query fails.
 pub async fn get_table_schema_with_relations(
     backend: &Backend,
     database_name: &str,
@@ -73,6 +89,11 @@ pub async fn get_table_schema_with_relations(
 }
 
 /// Executes a user-provided SQL query with read-only validation.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the identifier is invalid, the query is blocked
+/// by read-only mode, or the backend query fails.
 pub async fn tool_execute_sql(
     backend: &Backend,
     sql_query: &str,
@@ -109,6 +130,11 @@ pub async fn tool_execute_sql(
 }
 
 /// Creates a database if it does not already exist.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the identifier is invalid, the server is in
+/// read-only mode, or the backend query fails.
 pub async fn create_database(backend: &Backend, database_name: &str) -> Result<String, AppError> {
     info!("TOOL: create_database called for database: '{database_name}'");
     validate_identifier(database_name)?;

@@ -13,10 +13,9 @@ use crate::error::AppError;
 /// starts with a digit, or contains characters other than
 /// alphanumeric and underscore.
 pub fn validate_identifier(name: &str) -> Result<(), AppError> {
-    if name.is_empty() {
+    let Some(first) = name.chars().next() else {
         return Err(AppError::InvalidIdentifier(name.to_string()));
-    }
-    let first = name.chars().next().unwrap();
+    };
     if !first.is_alphabetic() && first != '_' {
         return Err(AppError::InvalidIdentifier(name.to_string()));
     }
@@ -27,6 +26,7 @@ pub fn validate_identifier(name: &str) -> Result<(), AppError> {
 }
 
 /// Wraps `name` in backticks for safe use in SQL DDL.
+#[must_use]
 pub fn backtick_escape(name: &str) -> String {
     format!("`{name}`")
 }

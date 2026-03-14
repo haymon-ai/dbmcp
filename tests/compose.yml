@@ -1,0 +1,33 @@
+services:
+    mariadb_12:
+        image: mariadb:12
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "3306"
+        environment:
+            MARIADB_ROOT_HOST: '%'
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: mcp
+
+    mysql_9:
+        image: mysql:9
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "3306"
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_DATABASE: mcp
+
+    postgres_18:
+        image: postgres:18-alpine
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "5432"
+        environment:
+            POSTGRES_DB: mcp
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
