@@ -35,6 +35,38 @@ pub struct Config {
     pub log_backup_count: u32,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            db_host: "127.0.0.1".into(),
+            db_port: 3306,
+            db_user: String::new(),
+            db_password: String::new(),
+            db_name: None,
+            db_charset: None,
+            db_ssl: false,
+            db_ssl_ca: None,
+            db_ssl_cert: None,
+            db_ssl_key: None,
+            db_ssl_verify_cert: true,
+            db_ssl_verify_identity: false,
+            read_only: true,
+            max_pool_size: 10,
+            allowed_origins: vec![
+                "http://localhost".into(),
+                "http://127.0.0.1".into(),
+                "https://localhost".into(),
+                "https://127.0.0.1".into(),
+            ],
+            allowed_hosts: vec!["localhost".into(), "127.0.0.1".into()],
+            log_level: "info".into(),
+            log_file: "logs/mcp_server.log".into(),
+            log_max_bytes: 10_485_760,
+            log_backup_count: 5,
+        }
+    }
+}
+
 impl Config {
     /// Loads configuration from environment variables.
     ///
