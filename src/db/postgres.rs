@@ -36,27 +36,27 @@ impl PostgresBackend {
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let url = format!(
             "postgres://{}:{}@{}:{}/{}",
-            config.db_user,
-            config.db_password,
-            config.db_host,
-            config.db_port,
-            config.db_name.as_deref().unwrap_or("postgres")
+            config.database.user,
+            config.database.password,
+            config.database.host,
+            config.database.port,
+            config.database.name.as_deref().unwrap_or("postgres")
         );
 
         let pool = PgPoolOptions::new()
-            .max_connections(config.max_pool_size)
+            .max_connections(config.mcp.max_pool_size)
             .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
         info!(
             "PostgreSQL connection pool initialized: {}@{}:{}",
-            config.db_user, config.db_host, config.db_port
+            config.database.user, config.database.host, config.database.port
         );
 
         Ok(Self {
             pool,
-            read_only: config.read_only,
+            read_only: config.mcp.read_only,
         })
     }
 }

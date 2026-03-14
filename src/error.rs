@@ -9,7 +9,7 @@
 pub enum AppError {
     /// Configuration is invalid or missing.
     #[error("Configuration error: {0}")]
-    Config(String),
+    Config(#[from] crate::config::ConfigError),
 
     /// Database connection failed.
     #[error("Database connection error: {0}")]

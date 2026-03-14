@@ -66,6 +66,91 @@ struct Cli {
     /// Bind port for HTTP transport
     #[arg(long, default_value_t = 9001)]
     port: u16,
+
+    // -- Database connection --
+    /// Database host address
+    #[arg(long = "db-host")]
+    db_host: Option<String>,
+
+    /// Database port number
+    #[arg(long = "db-port")]
+    db_port: Option<u16>,
+
+    /// Database user name
+    #[arg(long = "db-user")]
+    db_user: Option<String>,
+
+    /// Database password
+    #[arg(long = "db-password")]
+    db_password: Option<String>,
+
+    /// Default database name
+    #[arg(long = "db-name")]
+    db_name: Option<String>,
+
+    /// Connection character set
+    #[arg(long = "db-charset")]
+    db_charset: Option<String>,
+
+    // -- SSL/TLS --
+    /// Enable SSL
+    #[arg(long = "db-ssl")]
+    db_ssl: Option<bool>,
+
+    /// Path to CA certificate file
+    #[arg(long = "db-ssl-ca")]
+    db_ssl_ca: Option<String>,
+
+    /// Path to client certificate file
+    #[arg(long = "db-ssl-cert")]
+    db_ssl_cert: Option<String>,
+
+    /// Path to client private key file
+    #[arg(long = "db-ssl-key")]
+    db_ssl_key: Option<String>,
+
+    /// Verify server certificate
+    #[arg(long = "db-ssl-verify-cert")]
+    db_ssl_verify_cert: Option<bool>,
+
+    /// Verify server hostname
+    #[arg(long = "db-ssl-verify-identity")]
+    db_ssl_verify_identity: Option<bool>,
+
+    // -- MCP behavior --
+    /// Enable read-only mode
+    #[arg(long = "read-only")]
+    read_only: Option<bool>,
+
+    /// Maximum connection pool size
+    #[arg(long = "max-pool-size")]
+    max_pool_size: Option<u32>,
+
+    // -- Network/CORS --
+    /// Allowed CORS origins (comma-separated)
+    #[arg(long = "allowed-origins", value_delimiter = ',')]
+    allowed_origins: Option<Vec<String>>,
+
+    /// Allowed host names (comma-separated)
+    #[arg(long = "allowed-hosts", value_delimiter = ',')]
+    allowed_hosts: Option<Vec<String>>,
+
+    // -- Logging --
+    /// Log level (e.g. info, debug, warn)
+    #[arg(long = "log-level")]
+    log_level: Option<String>,
+
+    /// Log file path
+    #[arg(long = "log-file")]
+    log_file: Option<String>,
+
+    /// Maximum log file size in bytes
+    #[arg(long = "log-max-bytes")]
+    log_max_bytes: Option<u64>,
+
+    /// Number of rotated log backups to keep
+    #[arg(long = "log-backup-count")]
+    log_backup_count: Option<u32>,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -104,16 +189,21 @@ async fn main() {
         .with_ansi(false)
         .init();
 
-    // Load configuration
-    let config = match Config::from_env() {
+    // Load configuration from env, then apply CLI overrides
+    let mut config = match Config::from_env_without_validation() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Configuration error: {e}");
             std::process::exit(1);
         }
     };
+    apply_cli_overrides(&mut config, &cli);
+    if let Err(e) = config.validate() {
+        eprintln!("Configuration error: {e}");
+        std::process::exit(1);
+    }
 
-    if config.read_only {
+    if config.mcp.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
@@ -138,7 +228,7 @@ async fn main() {
                 eprintln!("SQLite requires --db-path flag");
                 std::process::exit(1);
             });
-            match db::sqlite::SqliteBackend::new(db_path, config.read_only).await {
+            match db::sqlite::SqliteBackend::new(db_path, config.mcp.read_only).await {
                 Ok(b) => Backend::Sqlite(b),
                 Err(e) => {
                     eprintln!("Failed to open SQLite: {e}");
@@ -177,7 +267,7 @@ async fn run_http(backend: Backend, config: Arc<Config>, host: &str, port: u16) 
 
     let ct = CancellationToken::new();
 
-    let allowed_origins = config.allowed_origins.clone();
+    let allowed_origins = config.network.allowed_origins.clone();
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(
             allowed_origins
@@ -231,5 +321,71 @@ async fn run_http(backend: Backend, config: Arc<Config>, host: &str, port: u16) 
     {
         eprintln!("HTTP server error: {e}");
         std::process::exit(1);
+    }
+}
+
+/// Applies CLI argument overrides onto an env-loaded [`Config`].
+///
+/// Only fields explicitly provided via CLI (i.e. `Some(value)`) override.
+fn apply_cli_overrides(config: &mut Config, cli: &Cli) {
+    if let Some(v) = &cli.db_host {
+        config.database.host.clone_from(v);
+    }
+    if let Some(v) = cli.db_port {
+        config.database.port = v;
+    }
+    if let Some(v) = &cli.db_user {
+        config.database.user.clone_from(v);
+    }
+    if let Some(v) = &cli.db_password {
+        config.database.password.clone_from(v);
+    }
+    if cli.db_name.is_some() {
+        config.database.name.clone_from(&cli.db_name);
+    }
+    if cli.db_charset.is_some() {
+        config.database.charset.clone_from(&cli.db_charset);
+    }
+    if let Some(v) = cli.db_ssl {
+        config.ssl.enabled = v;
+    }
+    if cli.db_ssl_ca.is_some() {
+        config.ssl.ca.clone_from(&cli.db_ssl_ca);
+    }
+    if cli.db_ssl_cert.is_some() {
+        config.ssl.cert.clone_from(&cli.db_ssl_cert);
+    }
+    if cli.db_ssl_key.is_some() {
+        config.ssl.key.clone_from(&cli.db_ssl_key);
+    }
+    if let Some(v) = cli.db_ssl_verify_cert {
+        config.ssl.verify_cert = v;
+    }
+    if let Some(v) = cli.db_ssl_verify_identity {
+        config.ssl.verify_identity = v;
+    }
+    if let Some(v) = cli.read_only {
+        config.mcp.read_only = v;
+    }
+    if let Some(v) = cli.max_pool_size {
+        config.mcp.max_pool_size = v;
+    }
+    if let Some(v) = &cli.allowed_origins {
+        config.network.allowed_origins.clone_from(v);
+    }
+    if let Some(v) = &cli.allowed_hosts {
+        config.network.allowed_hosts.clone_from(v);
+    }
+    if let Some(v) = &cli.log_level {
+        config.log.level.clone_from(v);
+    }
+    if let Some(v) = &cli.log_file {
+        config.log.file.clone_from(v);
+    }
+    if let Some(v) = cli.log_max_bytes {
+        config.log.max_bytes = v;
+    }
+    if let Some(v) = cli.log_backup_count {
+        config.log.backup_count = v;
     }
 }

@@ -37,34 +37,34 @@ impl MysqlBackend {
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let url = format!(
             "mysql://{}:{}@{}:{}/{}",
-            config.db_user,
-            config.db_password,
-            config.db_host,
-            config.db_port,
-            config.db_name.as_deref().unwrap_or("")
+            config.database.user,
+            config.database.password,
+            config.database.host,
+            config.database.port,
+            config.database.name.as_deref().unwrap_or("")
         );
 
         let pool = MySqlPoolOptions::new()
-            .max_connections(config.max_pool_size)
+            .max_connections(config.mcp.max_pool_size)
             .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
         info!(
             "MySQL connection pool initialized: {}@{}:{}/{} (max size: {})",
-            config.db_user,
-            config.db_host,
-            config.db_port,
-            config.db_name.as_deref().unwrap_or(""),
-            config.max_pool_size
+            config.database.user,
+            config.database.host,
+            config.database.port,
+            config.database.name.as_deref().unwrap_or(""),
+            config.mcp.max_pool_size
         );
 
         let backend = Self {
             pool,
-            read_only: config.read_only,
+            read_only: config.mcp.read_only,
         };
 
-        if config.read_only {
+        if config.mcp.read_only {
             backend.warn_if_file_privilege().await;
         }
 

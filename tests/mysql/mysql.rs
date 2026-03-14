@@ -5,22 +5,28 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use sql_mcp::config::Config;
+use sql_mcp::config::{Config, DatabaseConfig, McpConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::mysql::MysqlBackend;
 use sql_mcp::tools::database;
 
 fn test_config() -> Config {
     Config {
-        db_host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-        db_port: std::env::var("DB_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3306),
-        db_user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
-        db_password: std::env::var("DB_PASSWORD").unwrap_or_else(|_| "password".into()),
-        db_name: Some("mcp".into()),
-        read_only: false,
+        database: DatabaseConfig {
+            host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            port: std::env::var("DB_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(3306),
+            user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
+            password: std::env::var("DB_PASSWORD").unwrap_or_else(|_| "password".into()),
+            name: Some("mcp".into()),
+            ..DatabaseConfig::default()
+        },
+        mcp: McpConfig {
+            read_only: false,
+            ..McpConfig::default()
+        },
         ..Config::default()
     }
 }
@@ -36,7 +42,10 @@ async fn backend() -> Backend {
 
 async fn readonly_backend() -> Backend {
     let config = Config {
-        read_only: true,
+        mcp: McpConfig {
+            read_only: true,
+            ..McpConfig::default()
+        },
         ..test_config()
     };
     Backend::Mysql(
