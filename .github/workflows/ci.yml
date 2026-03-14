@@ -53,15 +53,15 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="mariadb-admin ping -u root -ppassword --silent"
-          --health-interval=3s
+          --health-interval=5s
           --health-timeout=3s
-          --health-retries=15
-        volumes:
-          - ${{ github.workspace }}/tests/mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql
+          --health-retries=30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec ${{ job.services.mariadb.id }} mariadb -u root -ppassword mcp < tests/mysql/setup.sql
       - run: cargo test --test mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
@@ -84,13 +84,13 @@ jobs:
           --health-cmd="mysqladmin ping -u root -ppassword --silent"
           --health-interval=5s
           --health-timeout=3s
-          --health-retries=20
-        volumes:
-          - ${{ github.workspace }}/tests/mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql
+          --health-retries=30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root -ppassword mcp < tests/mysql/setup.sql
       - run: cargo test --test mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
@@ -114,12 +114,12 @@ jobs:
           --health-interval=3s
           --health-timeout=3s
           --health-retries=15
-        volumes:
-          - ${{ github.workspace }}/tests/postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: docker exec -i ${{ job.services.postgres.id }} psql -U postgres -d mcp < tests/postgres/setup.sql
       - run: cargo test --test postgres -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
