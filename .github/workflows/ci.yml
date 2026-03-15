@@ -47,12 +47,12 @@ jobs:
         image: mariadb:12
         env:
           MARIADB_ROOT_HOST: '%'
-          MARIADB_ROOT_PASSWORD: password
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
           MARIADB_DATABASE: mcp
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mariadb-admin ping -u root -ppassword --silent"
+          --health-cmd="mariadb-admin ping -u root --silent"
           --health-interval=5s
           --health-timeout=3s
           --health-retries=30
@@ -61,7 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root -ppassword mcp < tests/mysql/setup.sql
+        run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root mcp < tests/mysql/setup.sql
       - run: cargo test --test mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
@@ -76,12 +76,12 @@ jobs:
         image: mysql:9
         env:
           MYSQL_ROOT_HOST: '%'
-          MYSQL_ROOT_PASSWORD: password
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
           MYSQL_DATABASE: mcp
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -u root -ppassword --silent"
+          --health-cmd="mysqladmin ping -u root --silent"
           --health-interval=5s
           --health-timeout=3s
           --health-retries=30
@@ -90,7 +90,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root -ppassword mcp < tests/mysql/setup.sql
+        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root mcp < tests/mysql/setup.sql
       - run: cargo test --test mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
@@ -106,7 +106,7 @@ jobs:
         env:
           POSTGRES_DB: mcp
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
