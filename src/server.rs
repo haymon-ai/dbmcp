@@ -4,7 +4,6 @@
 //! trait and registers all 6 database tools using rmcp macros.
 
 use crate::db::backend::Backend;
-use crate::tools::database;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData, ServerCapabilities, ServerInfo};
@@ -92,7 +91,9 @@ impl Server {
         description = "List all accessible databases on the connected database server. Call this first to discover available database names."
     )]
     pub async fn list_databases(&self) -> Result<CallToolResult, ErrorData> {
-        let result = database::list_databases(&self.backend)
+        let result = self
+            .backend
+            .tool_list_databases()
             .await
             .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -106,7 +107,9 @@ impl Server {
         &self,
         req: Parameters<ListTablesRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = database::list_tables(&self.backend, &req.0.database_name)
+        let result = self
+            .backend
+            .tool_list_tables(&req.0.database_name)
             .await
             .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -120,10 +123,11 @@ impl Server {
         &self,
         req: Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result =
-            database::get_table_schema(&self.backend, &req.0.database_name, &req.0.table_name)
-                .await
-                .map_err(map_error)?;
+        let result = self
+            .backend
+            .tool_get_table_schema(&req.0.database_name, &req.0.table_name)
+            .await
+            .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -135,13 +139,11 @@ impl Server {
         &self,
         req: Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = database::get_table_schema_with_relations(
-            &self.backend,
-            &req.0.database_name,
-            &req.0.table_name,
-        )
-        .await
-        .map_err(map_error)?;
+        let result = self
+            .backend
+            .tool_get_table_schema_with_relations(&req.0.database_name, &req.0.table_name)
+            .await
+            .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -153,10 +155,11 @@ impl Server {
         &self,
         req: Parameters<ExecuteSqlRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result =
-            database::tool_execute_sql(&self.backend, &req.0.sql_query, &req.0.database_name, None)
-                .await
-                .map_err(map_error)?;
+        let result = self
+            .backend
+            .tool_execute_sql(&req.0.sql_query, &req.0.database_name, None)
+            .await
+            .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
@@ -168,7 +171,9 @@ impl Server {
         &self,
         req: Parameters<CreateDatabaseRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = database::create_database(&self.backend, &req.0.database_name)
+        let result = self
+            .backend
+            .tool_create_database(&req.0.database_name)
             .await
             .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))

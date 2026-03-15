@@ -7,7 +7,6 @@
 use sql_mcp::config::{Config, McpConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::postgres::PostgresBackend;
-use sql_mcp::tools::database;
 
 fn test_config() -> Config {
     let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
@@ -55,7 +54,7 @@ async fn readonly_backend() -> Backend {
 #[tokio::test]
 async fn it_lists_databases() {
     let b = backend().await;
-    let result = database::list_databases(&b).await.expect("failed");
+    let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
     assert!(
         dbs.iter().any(|db| db == "mcp"),
@@ -66,7 +65,7 @@ async fn it_lists_databases() {
 #[tokio::test]
 async fn it_lists_tables() {
     let b = backend().await;
-    let result = database::list_tables(&b, "mcp").await.expect("failed");
+    let result = b.tool_list_tables("mcp").await.expect("failed");
     let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -79,7 +78,8 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = database::get_table_schema(&b, "mcp", "users")
+    let result = b
+        .tool_get_table_schema("mcp", "users")
         .await
         .expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
@@ -100,7 +100,8 @@ async fn it_gets_table_schema() {
 #[tokio::test]
 async fn it_gets_table_relations() {
     let b = backend().await;
-    let result = database::get_table_schema_with_relations(&b, "mcp", "posts")
+    let result = b
+        .tool_get_table_schema_with_relations("mcp", "posts")
         .await
         .expect("failed");
     assert!(
@@ -112,7 +113,8 @@ async fn it_gets_table_relations() {
 #[tokio::test]
 async fn it_executes_sql() {
     let b = backend().await;
-    let result = database::tool_execute_sql(&b, "SELECT * FROM users ORDER BY id", "mcp", None)
+    let result = b
+        .tool_execute_sql("SELECT * FROM users ORDER BY id", "mcp", None)
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -122,13 +124,13 @@ async fn it_executes_sql() {
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
     let b = readonly_backend().await;
-    let result = database::tool_execute_sql(
-        &b,
-        "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-        "mcp",
-        None,
-    )
-    .await;
+    let result = b
+        .tool_execute_sql(
+            "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
+            "mcp",
+            None,
+        )
+        .await;
     assert!(
         result.is_err(),
         "Expected error for write in read-only mode"
@@ -138,11 +140,9 @@ async fn it_blocks_writes_in_read_only_mode() {
 #[tokio::test]
 async fn it_creates_database() {
     let b = backend().await;
-    let result = database::create_database(&b, "mcp_new")
-        .await
-        .expect("failed");
+    let result = b.tool_create_database("mcp_new").await.expect("failed");
     assert!(!result.is_empty());
-    let list = database::list_databases(&b).await.expect("list failed");
+    let list = b.tool_list_databases().await.expect("list failed");
     let dbs: Vec<String> = serde_json::from_str(&list).unwrap_or_default();
     assert!(dbs.iter().any(|db| db == "mcp_new"), "New db not in list");
 }
@@ -153,7 +153,8 @@ async fn it_has_consistent_seed_data() {
 
     async fn check(b: &Backend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
-        let result = database::tool_execute_sql(b, &sql, "mcp", None)
+        let result = b
+            .tool_execute_sql(&sql, "mcp", None)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();

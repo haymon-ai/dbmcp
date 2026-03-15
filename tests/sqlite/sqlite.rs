@@ -9,7 +9,6 @@
 
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::sqlite::SqliteBackend;
-use sql_mcp::tools::database;
 use tokio::sync::OnceCell;
 
 static SEEDED: OnceCell<()> = OnceCell::const_new();
@@ -62,7 +61,7 @@ async fn readonly_backend() -> Backend {
 #[tokio::test]
 async fn it_lists_databases() {
     let b = backend().await;
-    let result = database::list_databases(&b).await.expect("failed");
+    let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
     assert!(
         dbs.iter().any(|db| db == "main"),
@@ -73,7 +72,7 @@ async fn it_lists_databases() {
 #[tokio::test]
 async fn it_lists_tables() {
     let b = backend().await;
-    let result = database::list_tables(&b, "main").await.expect("failed");
+    let result = b.tool_list_tables("main").await.expect("failed");
     let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -86,7 +85,8 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = database::get_table_schema(&b, "main", "users")
+    let result = b
+        .tool_get_table_schema("main", "users")
         .await
         .expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
@@ -107,7 +107,8 @@ async fn it_gets_table_schema() {
 #[tokio::test]
 async fn it_gets_table_relations() {
     let b = backend().await;
-    let result = database::get_table_schema_with_relations(&b, "main", "posts")
+    let result = b
+        .tool_get_table_schema_with_relations("main", "posts")
         .await
         .expect("failed");
     assert!(
@@ -119,7 +120,8 @@ async fn it_gets_table_relations() {
 #[tokio::test]
 async fn it_executes_sql() {
     let b = backend().await;
-    let result = database::tool_execute_sql(&b, "SELECT * FROM users ORDER BY id", "main", None)
+    let result = b
+        .tool_execute_sql("SELECT * FROM users ORDER BY id", "main", None)
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -129,13 +131,13 @@ async fn it_executes_sql() {
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
     let b = readonly_backend().await;
-    let result = database::tool_execute_sql(
-        &b,
-        "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-        "main",
-        None,
-    )
-    .await;
+    let result = b
+        .tool_execute_sql(
+            "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
+            "main",
+            None,
+        )
+        .await;
     assert!(
         result.is_err(),
         "Expected error for write in read-only mode"
@@ -148,7 +150,8 @@ async fn it_has_consistent_seed_data() {
 
     async fn check(b: &Backend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
-        let result = database::tool_execute_sql(b, &sql, "main", None)
+        let result = b
+            .tool_execute_sql(&sql, "main", None)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
