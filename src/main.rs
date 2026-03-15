@@ -33,7 +33,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use sql_mcp::config::{Config, LogConfig, McpConfig, NetworkConfig};
+use sql_mcp::config::Config;
 use sql_mcp::db;
 use sql_mcp::db::backend::Backend;
 use sql_mcp::server::Server;
@@ -111,25 +111,18 @@ struct Cli {
     log_backup_count: u32,
 }
 
-impl Cli {
-    /// Constructs a [`Config`] from parsed CLI arguments.
-    fn into_config(self) -> Config {
-        Config {
-            database_url: self.database_url,
-            mcp: McpConfig {
-                read_only: self.read_only,
-                max_pool_size: self.max_pool_size,
-            },
-            network: NetworkConfig {
-                allowed_origins: self.allowed_origins,
-                allowed_hosts: self.allowed_hosts,
-            },
-            log: LogConfig {
-                level: self.log_level,
-                file: self.log_file,
-                max_bytes: self.log_max_bytes,
-                backup_count: self.log_backup_count,
-            },
+impl From<Cli> for Config {
+    fn from(cli: Cli) -> Self {
+        Self {
+            database_url: cli.database_url,
+            read_only: cli.read_only,
+            max_pool_size: cli.max_pool_size,
+            allowed_origins: cli.allowed_origins,
+            allowed_hosts: cli.allowed_hosts,
+            log_level: cli.log_level,
+            log_file: cli.log_file,
+            log_max_bytes: cli.log_max_bytes,
+            log_backup_count: cli.log_backup_count,
         }
     }
 }
@@ -172,15 +165,15 @@ async fn main() {
         .init();
 
     // Build config from CLI args
-    let config = cli.into_config();
+    let config: Config = cli.into();
 
-    if config.mcp.read_only {
+    if config.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
     // Detect database type from URL scheme and create the appropriate backend
     let backend: Backend = if config.database_url.starts_with("sqlite:") {
-        match db::sqlite::SqliteBackend::new(&config.database_url, config.mcp.read_only).await {
+        match db::sqlite::SqliteBackend::new(&config.database_url, config.read_only).await {
             Ok(b) => Backend::Sqlite(b),
             Err(e) => {
                 eprintln!("Failed to open SQLite: {e}");
@@ -237,7 +230,7 @@ async fn run_http(backend: Backend, config: Arc<Config>, host: &str, port: u16) 
 
     let ct = CancellationToken::new();
 
-    let allowed_origins = config.network.allowed_origins.clone();
+    let allowed_origins = config.allowed_origins.clone();
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(
             allowed_origins

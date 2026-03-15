@@ -35,19 +35,19 @@ impl PostgresBackend {
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let pool = PgPoolOptions::new()
-            .max_connections(config.mcp.max_pool_size)
+            .max_connections(config.max_pool_size)
             .connect(&config.database_url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
         info!(
             "PostgreSQL connection pool initialized (max size: {})",
-            config.mcp.max_pool_size
+            config.max_pool_size
         );
 
         Ok(Self {
             pool,
-            read_only: config.mcp.read_only,
+            read_only: config.read_only,
         })
     }
 }

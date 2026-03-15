@@ -4,7 +4,7 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use sql_mcp::config::{Config, McpConfig};
+use sql_mcp::config::Config;
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::postgres::PostgresBackend;
 
@@ -19,10 +19,7 @@ fn test_config() -> Config {
 
     Config {
         database_url: format!("postgres://{user}:{password}@{host}:{port}/mcp"),
-        mcp: McpConfig {
-            read_only: false,
-            ..McpConfig::default()
-        },
+        read_only: false,
         ..Config::default()
     }
 }
@@ -38,10 +35,7 @@ async fn backend() -> Backend {
 
 async fn readonly_backend() -> Backend {
     let config = Config {
-        mcp: McpConfig {
-            read_only: true,
-            ..McpConfig::default()
-        },
+        read_only: true,
         ..test_config()
     };
     Backend::Postgres(
