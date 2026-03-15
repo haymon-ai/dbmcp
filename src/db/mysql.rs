@@ -35,27 +35,14 @@ impl MysqlBackend {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
-        let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
-            config.database.user,
-            config.database.password,
-            config.database.host,
-            config.database.port,
-            config.database.name.as_deref().unwrap_or("")
-        );
-
         let pool = MySqlPoolOptions::new()
             .max_connections(config.mcp.max_pool_size)
-            .connect(&url)
+            .connect(&config.database_url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
         info!(
-            "MySQL connection pool initialized: {}@{}:{}/{} (max size: {})",
-            config.database.user,
-            config.database.host,
-            config.database.port,
-            config.database.name.as_deref().unwrap_or(""),
+            "MySQL connection pool initialized (max size: {})",
             config.mcp.max_pool_size
         );
 

@@ -5,24 +5,22 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use sql_mcp::config::{Config, DatabaseConfig, McpConfig};
+use sql_mcp::config::{Config, McpConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::mysql::MysqlBackend;
 use sql_mcp::tools::database;
 
 fn test_config() -> Config {
+    let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = std::env::var("DB_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3306);
+    let user = std::env::var("DB_USER").unwrap_or_else(|_| "root".into());
+    let password = std::env::var("DB_PASSWORD").unwrap_or_default();
+
     Config {
-        database: DatabaseConfig {
-            host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-            port: std::env::var("DB_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(3306),
-            user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
-            password: std::env::var("DB_PASSWORD").unwrap_or_else(|_| "password".into()),
-            name: Some("mcp".into()),
-            ..DatabaseConfig::default()
-        },
+        database_url: format!("mysql://{user}:{password}@{host}:{port}/mcp"),
         mcp: McpConfig {
             read_only: false,
             ..McpConfig::default()

@@ -40,8 +40,9 @@ async fn seed_db(db_path: &str) {
 async fn backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
+    let url = format!("sqlite:{db_path}?mode=rwc");
     Backend::Sqlite(
-        SqliteBackend::new(&db_path, false)
+        SqliteBackend::new(&url, false)
             .await
             .expect("SQLite open failed"),
     )
@@ -50,8 +51,9 @@ async fn backend() -> Backend {
 async fn readonly_backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
+    let url = format!("sqlite:{db_path}?mode=rwc");
     Backend::Sqlite(
-        SqliteBackend::new(&db_path, true)
+        SqliteBackend::new(&url, true)
             .await
             .expect("SQLite open failed"),
     )
