@@ -34,24 +34,15 @@ impl PostgresBackend {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
-        let url = format!(
-            "postgres://{}:{}@{}:{}/{}",
-            config.database.user,
-            config.database.password,
-            config.database.host,
-            config.database.port,
-            config.database.name.as_deref().unwrap_or("postgres")
-        );
-
         let pool = PgPoolOptions::new()
             .max_connections(config.mcp.max_pool_size)
-            .connect(&url)
+            .connect(&config.database_url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
         info!(
-            "PostgreSQL connection pool initialized: {}@{}:{}",
-            config.database.user, config.database.host, config.database.port
+            "PostgreSQL connection pool initialized (max size: {})",
+            config.mcp.max_pool_size
         );
 
         Ok(Self {

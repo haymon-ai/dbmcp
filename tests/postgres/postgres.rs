@@ -4,24 +4,22 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use sql_mcp::config::{Config, DatabaseConfig, McpConfig};
+use sql_mcp::config::{Config, McpConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::postgres::PostgresBackend;
 use sql_mcp::tools::database;
 
 fn test_config() -> Config {
+    let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = std::env::var("DB_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5432);
+    let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into());
+    let password = std::env::var("DB_PASSWORD").unwrap_or_default();
+
     Config {
-        database: DatabaseConfig {
-            host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-            port: std::env::var("DB_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(5432),
-            user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
-            password: std::env::var("DB_PASSWORD").unwrap_or_else(|_| "password".into()),
-            name: Some("mcp".into()),
-            ..DatabaseConfig::default()
-        },
+        database_url: format!("postgres://{user}:{password}@{host}:{port}/mcp"),
         mcp: McpConfig {
             read_only: false,
             ..McpConfig::default()

@@ -4,7 +4,7 @@
 //! `list_databases`, `list_tables`, `get_table_schema`,
 //! `get_table_schema_with_relations`, `execute_sql`, and `create_database`.
 //!
-//! Supports MySQL/MariaDB, `PostgreSQL`, and `SQLite` backends via `--database-type`.
+//! Supports MySQL/MariaDB, `PostgreSQL`, and `SQLite` backends.
 //! Supports stdio and HTTP transport modes. Read-only mode is enabled by
 //! default, enforcing AST-based SQL validation to block write operations.
 //!
@@ -12,16 +12,16 @@
 //!
 //! ```bash
 //! # MySQL (default)
-//! db-mcp
+//! db-mcp --database-url mysql://root@localhost/mydb
 //!
 //! # PostgreSQL
-//! db-mcp --database-type postgres
+//! db-mcp --database-url postgres://user@localhost:5432/mydb
 //!
 //! # SQLite
-//! db-mcp --database-type sqlite --db-path ./data.db
+//! db-mcp --database-url sqlite:./data.db
 //!
 //! # HTTP mode
-//! db-mcp --transport http --port 9001
+//! db-mcp --database-url mysql://root@localhost/mydb --transport http --port 9001
 //! ```
 
 use mimalloc::MiMalloc;
@@ -33,9 +33,8 @@ use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use sql_mcp::config::Config;
+use sql_mcp::config::{Config, LogConfig, McpConfig, NetworkConfig};
 use sql_mcp::db;
-use sql_mcp::db::DatabaseType;
 use sql_mcp::db::backend::Backend;
 use sql_mcp::server::Server;
 use std::sync::Arc;
@@ -51,13 +50,9 @@ struct Cli {
     #[arg(long, default_value = "stdio")]
     transport: Transport,
 
-    /// Database type
-    #[arg(long, default_value = "mysql")]
-    database_type: DatabaseType,
-
-    /// `SQLite` database file path
-    #[arg(long)]
-    db_path: Option<String>,
+    /// Database connection URL in sqlx DSN format
+    #[arg(long = "database-url")]
+    database_url: String,
 
     /// Bind host for HTTP transport
     #[arg(long, default_value = "127.0.0.1")]
@@ -67,90 +62,76 @@ struct Cli {
     #[arg(long, default_value_t = 9001)]
     port: u16,
 
-    // -- Database connection --
-    /// Database host address
-    #[arg(long = "db-host")]
-    db_host: Option<String>,
-
-    /// Database port number
-    #[arg(long = "db-port")]
-    db_port: Option<u16>,
-
-    /// Database user name
-    #[arg(long = "db-user")]
-    db_user: Option<String>,
-
-    /// Database password
-    #[arg(long = "db-password")]
-    db_password: Option<String>,
-
-    /// Default database name
-    #[arg(long = "db-name")]
-    db_name: Option<String>,
-
-    /// Connection character set
-    #[arg(long = "db-charset")]
-    db_charset: Option<String>,
-
-    // -- SSL/TLS --
-    /// Enable SSL
-    #[arg(long = "db-ssl")]
-    db_ssl: Option<bool>,
-
-    /// Path to CA certificate file
-    #[arg(long = "db-ssl-ca")]
-    db_ssl_ca: Option<String>,
-
-    /// Path to client certificate file
-    #[arg(long = "db-ssl-cert")]
-    db_ssl_cert: Option<String>,
-
-    /// Path to client private key file
-    #[arg(long = "db-ssl-key")]
-    db_ssl_key: Option<String>,
-
-    /// Verify server certificate
-    #[arg(long = "db-ssl-verify-cert")]
-    db_ssl_verify_cert: Option<bool>,
-
-    /// Verify server hostname
-    #[arg(long = "db-ssl-verify-identity")]
-    db_ssl_verify_identity: Option<bool>,
-
     // -- MCP behavior --
     /// Enable read-only mode
-    #[arg(long = "read-only")]
-    read_only: Option<bool>,
+    #[arg(long = "read-only", default_value_t = true)]
+    read_only: bool,
 
     /// Maximum connection pool size
-    #[arg(long = "max-pool-size")]
-    max_pool_size: Option<u32>,
+    #[arg(long = "max-pool-size", default_value_t = 10)]
+    max_pool_size: u32,
 
     // -- Network/CORS --
     /// Allowed CORS origins (comma-separated)
-    #[arg(long = "allowed-origins", value_delimiter = ',')]
-    allowed_origins: Option<Vec<String>>,
+    #[arg(
+        long = "allowed-origins",
+        value_delimiter = ',',
+        default_values_t = vec![
+            "http://localhost".to_string(),
+            "http://127.0.0.1".to_string(),
+            "https://localhost".to_string(),
+            "https://127.0.0.1".to_string(),
+        ]
+    )]
+    allowed_origins: Vec<String>,
 
     /// Allowed host names (comma-separated)
-    #[arg(long = "allowed-hosts", value_delimiter = ',')]
-    allowed_hosts: Option<Vec<String>>,
+    #[arg(
+        long = "allowed-hosts",
+        value_delimiter = ',',
+        default_values_t = vec!["localhost".to_string(), "127.0.0.1".to_string()]
+    )]
+    allowed_hosts: Vec<String>,
 
     // -- Logging --
     /// Log level (e.g. info, debug, warn)
-    #[arg(long = "log-level")]
-    log_level: Option<String>,
+    #[arg(long = "log-level", default_value = "info")]
+    log_level: String,
 
     /// Log file path
-    #[arg(long = "log-file")]
-    log_file: Option<String>,
+    #[arg(long = "log-file", default_value = "logs/mcp_server.log")]
+    log_file: String,
 
     /// Maximum log file size in bytes
-    #[arg(long = "log-max-bytes")]
-    log_max_bytes: Option<u64>,
+    #[arg(long = "log-max-bytes", default_value_t = 10_485_760)]
+    log_max_bytes: u64,
 
     /// Number of rotated log backups to keep
-    #[arg(long = "log-backup-count")]
-    log_backup_count: Option<u32>,
+    #[arg(long = "log-backup-count", default_value_t = 5)]
+    log_backup_count: u32,
+}
+
+impl Cli {
+    /// Constructs a [`Config`] from parsed CLI arguments.
+    fn into_config(self) -> Config {
+        Config {
+            database_url: self.database_url,
+            mcp: McpConfig {
+                read_only: self.read_only,
+                max_pool_size: self.max_pool_size,
+            },
+            network: NetworkConfig {
+                allowed_origins: self.allowed_origins,
+                allowed_hosts: self.allowed_hosts,
+            },
+            log: LogConfig {
+                level: self.log_level,
+                file: self.log_file,
+                max_bytes: self.log_max_bytes,
+                backup_count: self.log_backup_count,
+            },
+        }
+    }
 }
 
 #[derive(Clone, ValueEnum)]
@@ -161,18 +142,19 @@ enum Transport {
 
 #[tokio::main]
 async fn main() {
-    // Load .env file (ignore if missing)
-    dotenvy::dotenv().ok();
-
     // Parse CLI args
     let cli = Cli::parse();
 
-    // Initialize tracing
-    let env_filter = tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
+    // Extract transport and bind info before consuming cli
+    let transport = cli.transport.clone();
+    let host = cli.host.clone();
+    let port = cli.port;
+
+    // Initialize tracing using CLI-provided values
+    let env_filter = tracing_subscriber::EnvFilter::try_new(&cli.log_level)
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    let log_file = std::env::var("LOG_FILE").unwrap_or_else(|_| "logs/mcp_server.log".into());
-    let log_path = std::path::Path::new(&log_file);
+    let log_path = std::path::Path::new(&cli.log_file);
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
@@ -189,60 +171,48 @@ async fn main() {
         .with_ansi(false)
         .init();
 
-    // Load configuration from env, then apply CLI overrides
-    let mut config = match Config::from_env_without_validation() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Configuration error: {e}");
-            std::process::exit(1);
-        }
-    };
-    apply_cli_overrides(&mut config, &cli);
-    if let Err(e) = config.validate() {
-        eprintln!("Configuration error: {e}");
-        std::process::exit(1);
-    }
+    // Build config from CLI args
+    let config = cli.into_config();
 
     if config.mcp.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    // Create the appropriate database backend
-    let backend: Backend = match cli.database_type {
-        DatabaseType::Mysql => match db::mysql::MysqlBackend::new(&config).await {
-            Ok(b) => Backend::Mysql(b),
+    // Detect database type from URL scheme and create the appropriate backend
+    let backend: Backend = if config.database_url.starts_with("sqlite:") {
+        match db::sqlite::SqliteBackend::new(&config.database_url, config.mcp.read_only).await {
+            Ok(b) => Backend::Sqlite(b),
             Err(e) => {
-                eprintln!("Failed to connect to MySQL: {e}");
+                eprintln!("Failed to open SQLite: {e}");
                 std::process::exit(1);
             }
-        },
-        DatabaseType::Postgres => match db::postgres::PostgresBackend::new(&config).await {
+        }
+    } else if config.database_url.starts_with("postgres://")
+        || config.database_url.starts_with("postgresql://")
+    {
+        match db::postgres::PostgresBackend::new(&config).await {
             Ok(b) => Backend::Postgres(b),
             Err(e) => {
                 eprintln!("Failed to connect to PostgreSQL: {e}");
                 std::process::exit(1);
             }
-        },
-        DatabaseType::Sqlite => {
-            let db_path = cli.db_path.as_deref().unwrap_or_else(|| {
-                eprintln!("SQLite requires --db-path flag");
+        }
+    } else {
+        // Default: mysql:// or mariadb://
+        match db::mysql::MysqlBackend::new(&config).await {
+            Ok(b) => Backend::Mysql(b),
+            Err(e) => {
+                eprintln!("Failed to connect to MySQL: {e}");
                 std::process::exit(1);
-            });
-            match db::sqlite::SqliteBackend::new(db_path, config.mcp.read_only).await {
-                Ok(b) => Backend::Sqlite(b),
-                Err(e) => {
-                    eprintln!("Failed to open SQLite: {e}");
-                    std::process::exit(1);
-                }
             }
         }
     };
 
     let config = Arc::new(config);
 
-    match cli.transport {
+    match transport {
         Transport::Stdio => run_stdio(Server::new(backend)).await,
-        Transport::Http => run_http(backend, config, &cli.host, cli.port).await,
+        Transport::Http => run_http(backend, config, &host, port).await,
     }
 }
 
@@ -321,71 +291,5 @@ async fn run_http(backend: Backend, config: Arc<Config>, host: &str, port: u16) 
     {
         eprintln!("HTTP server error: {e}");
         std::process::exit(1);
-    }
-}
-
-/// Applies CLI argument overrides onto an env-loaded [`Config`].
-///
-/// Only fields explicitly provided via CLI (i.e. `Some(value)`) override.
-fn apply_cli_overrides(config: &mut Config, cli: &Cli) {
-    if let Some(v) = &cli.db_host {
-        config.database.host.clone_from(v);
-    }
-    if let Some(v) = cli.db_port {
-        config.database.port = v;
-    }
-    if let Some(v) = &cli.db_user {
-        config.database.user.clone_from(v);
-    }
-    if let Some(v) = &cli.db_password {
-        config.database.password.clone_from(v);
-    }
-    if cli.db_name.is_some() {
-        config.database.name.clone_from(&cli.db_name);
-    }
-    if cli.db_charset.is_some() {
-        config.database.charset.clone_from(&cli.db_charset);
-    }
-    if let Some(v) = cli.db_ssl {
-        config.ssl.enabled = v;
-    }
-    if cli.db_ssl_ca.is_some() {
-        config.ssl.ca.clone_from(&cli.db_ssl_ca);
-    }
-    if cli.db_ssl_cert.is_some() {
-        config.ssl.cert.clone_from(&cli.db_ssl_cert);
-    }
-    if cli.db_ssl_key.is_some() {
-        config.ssl.key.clone_from(&cli.db_ssl_key);
-    }
-    if let Some(v) = cli.db_ssl_verify_cert {
-        config.ssl.verify_cert = v;
-    }
-    if let Some(v) = cli.db_ssl_verify_identity {
-        config.ssl.verify_identity = v;
-    }
-    if let Some(v) = cli.read_only {
-        config.mcp.read_only = v;
-    }
-    if let Some(v) = cli.max_pool_size {
-        config.mcp.max_pool_size = v;
-    }
-    if let Some(v) = &cli.allowed_origins {
-        config.network.allowed_origins.clone_from(v);
-    }
-    if let Some(v) = &cli.allowed_hosts {
-        config.network.allowed_hosts.clone_from(v);
-    }
-    if let Some(v) = &cli.log_level {
-        config.log.level.clone_from(v);
-    }
-    if let Some(v) = &cli.log_file {
-        config.log.file.clone_from(v);
-    }
-    if let Some(v) = cli.log_max_bytes {
-        config.log.max_bytes = v;
-    }
-    if let Some(v) = cli.log_backup_count {
-        config.log.backup_count = v;
     }
 }

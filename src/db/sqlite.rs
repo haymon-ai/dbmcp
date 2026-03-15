@@ -27,21 +27,21 @@ impl std::fmt::Debug for SqliteBackend {
 }
 
 impl SqliteBackend {
-    /// Creates a new `SQLite` backend from a file path.
+    /// Creates a new `SQLite` backend from a DSN URL.
+    ///
+    /// The URL should be in sqlx format (e.g. `sqlite:./data.db`).
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Connection`] if the database file cannot be opened.
-    pub async fn new(db_path: &str, read_only: bool) -> Result<Self, AppError> {
-        let url = format!("sqlite:{db_path}?mode=rwc");
-
+    pub async fn new(database_url: &str, read_only: bool) -> Result<Self, AppError> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1) // SQLite is single-writer
-            .connect(&url)
+            .connect(database_url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
 
-        info!("SQLite connection initialized: {db_path}");
+        info!("SQLite connection initialized: {database_url}");
 
         Ok(Self { pool, read_only })
     }
