@@ -36,22 +36,22 @@ impl MysqlBackend {
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let pool = MySqlPoolOptions::new()
-            .max_connections(config.mcp.max_pool_size)
+            .max_connections(config.max_pool_size)
             .connect(&config.database_url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
         info!(
             "MySQL connection pool initialized (max size: {})",
-            config.mcp.max_pool_size
+            config.max_pool_size
         );
 
         let backend = Self {
             pool,
-            read_only: config.mcp.read_only,
+            read_only: config.read_only,
         };
 
-        if config.mcp.read_only {
+        if config.read_only {
             backend.warn_if_file_privilege().await;
         }
 
