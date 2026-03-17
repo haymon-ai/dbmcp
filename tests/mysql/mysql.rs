@@ -5,7 +5,7 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use sql_mcp::config::Config;
+use sql_mcp::config::{Config, DatabaseBackend};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::mysql::MysqlBackend;
 
@@ -19,9 +19,26 @@ fn test_config() -> Config {
     let password = std::env::var("DB_PASSWORD").unwrap_or_default();
 
     Config {
-        database_url: format!("mysql://{user}:{password}@{host}:{port}/mcp"),
-        read_only: false,
-        ..Config::default()
+        db_backend: DatabaseBackend::Mysql,
+        db_host: Some(host),
+        db_port: Some(port),
+        db_user: Some(user),
+        db_password: Some(password),
+        db_name: Some("mcp".into()),
+        db_read_only: false,
+        db_max_pool_size: 10,
+        db_charset: None,
+        db_ssl: false,
+        db_ssl_ca: None,
+        db_ssl_cert: None,
+        db_ssl_key: None,
+        db_ssl_verify_cert: true,
+        log_level: "info".into(),
+        log_file: "logs/mcp_server.log".into(),
+        http_host: None,
+        http_port: None,
+        http_allowed_origins: None,
+        http_allowed_hosts: None,
     }
 }
 
@@ -36,7 +53,7 @@ async fn backend() -> Backend {
 
 async fn readonly_backend() -> Backend {
     let config = Config {
-        read_only: true,
+        db_read_only: true,
         ..test_config()
     };
     Backend::Mysql(

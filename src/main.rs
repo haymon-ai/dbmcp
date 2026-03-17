@@ -9,6 +9,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 mod cli;
 
 fn main() -> ExitCode {
+    dotenvy::dotenv().ok();
+
     match cli::run() {
         Ok(code) => code,
         Err(e) => {
