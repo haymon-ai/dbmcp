@@ -1,9 +1,9 @@
 //! CLI argument parsing and application bootstrapping.
 //!
-//! This module owns the entire bootstrapping pipeline: `.env` file loading,
-//! CLI argument parsing (via clap with subcommands), tracing initialization,
-//! configuration construction, validation, database backend creation, and
-//! MCP transport dispatch.
+//! This module owns the entire bootstrapping pipeline: CLI argument parsing
+//! (via clap with subcommands), tracing initialization, configuration
+//! construction, validation, database backend creation, and MCP transport
+//! dispatch.
 //!
 //! The binary has two subcommands:
 //! - `stdio` (default) — runs the MCP server over stdin/stdout
