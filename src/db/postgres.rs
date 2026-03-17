@@ -52,6 +52,16 @@ impl PostgresBackend {
     }
 }
 
+impl PostgresBackend {
+    /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
+    ///
+    /// Escapes internal double quotes by doubling them.
+    fn quote_identifier(name: &str) -> String {
+        let escaped = name.replace('"', "\"\"");
+        format!("\"{escaped}\"")
+    }
+}
+
 impl DatabaseBackend for PostgresBackend {
     async fn list_databases(&self) -> Result<Vec<String>, AppError> {
         let rows: Vec<(String,)> = sqlx::query_as(
@@ -209,7 +219,7 @@ impl DatabaseBackend for PostgresBackend {
         validate_identifier(name)?;
 
         // PostgreSQL CREATE DATABASE can't use parameterized queries
-        sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+        sqlx::query(&format!("CREATE DATABASE {}", Self::quote_identifier(name)))
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -233,5 +243,31 @@ impl DatabaseBackend for PostgresBackend {
 
     fn read_only(&self) -> bool {
         self.read_only
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quote_identifier_wraps_in_double_quotes() {
+        assert_eq!(PostgresBackend::quote_identifier("users"), "\"users\"");
+        assert_eq!(
+            PostgresBackend::quote_identifier("eu-docker"),
+            "\"eu-docker\""
+        );
+    }
+
+    #[test]
+    fn quote_identifier_escapes_double_quotes() {
+        assert_eq!(
+            PostgresBackend::quote_identifier("test\"db"),
+            "\"test\"\"db\""
+        );
+        assert_eq!(
+            PostgresBackend::quote_identifier("a\"b\"c"),
+            "\"a\"\"b\"\"c\""
+        );
     }
 }

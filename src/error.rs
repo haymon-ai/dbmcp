@@ -33,7 +33,7 @@ pub enum AppError {
 
     /// Invalid database or table name identifier.
     #[error(
-        "Invalid database/table name '{0}': must contain only alphanumeric characters and underscores"
+        "Invalid identifier '{0}': must not be empty, whitespace-only, or contain control characters"
     )]
     InvalidIdentifier(String),
 

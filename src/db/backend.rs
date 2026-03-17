@@ -5,7 +5,6 @@
 //! The inherent `impl Backend` block provides MCP tool entry points that
 //! combine input validation, delegation, and JSON formatting.
 
-use crate::db::identifier::validate_identifier;
 use crate::db::mysql::MysqlBackend;
 use crate::db::postgres::PostgresBackend;
 use crate::db::sqlite::SqliteBackend;
@@ -92,7 +91,6 @@ impl Backend {
     /// Returns [`AppError`] if the identifier is invalid or the backend query fails.
     pub async fn tool_list_tables(&self, database_name: &str) -> Result<String, AppError> {
         info!("TOOL: list_tables called. database_name={database_name}");
-        validate_identifier(database_name)?;
         let table_list = match self.list_tables(database_name).await {
             Ok(t) => t,
             Err(e) => {
@@ -120,8 +118,6 @@ impl Backend {
         info!(
             "TOOL: get_table_schema called. database_name={database_name}, table_name={table_name}"
         );
-        validate_identifier(database_name)?;
-        validate_identifier(table_name)?;
         let schema = self.get_table_schema(database_name, table_name).await?;
         info!("TOOL: get_table_schema completed");
         Ok(serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".into()))
@@ -140,8 +136,6 @@ impl Backend {
         info!(
             "TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}"
         );
-        validate_identifier(database_name)?;
-        validate_identifier(table_name)?;
         let result = self
             .get_table_schema_with_relations(database_name, table_name)
             .await?;
@@ -165,10 +159,6 @@ impl Backend {
             "TOOL: execute_sql called. database_name={database_name}, sql_query={}",
             &sql_query[..sql_query.len().min(100)]
         );
-
-        if !database_name.is_empty() {
-            validate_identifier(database_name)?;
-        }
 
         // Read-only validation with the backend's dialect
         if self.read_only() {
@@ -198,7 +188,6 @@ impl Backend {
     /// read-only mode, or the backend query fails.
     pub async fn tool_create_database(&self, database_name: &str) -> Result<String, AppError> {
         info!("TOOL: create_database called for database: '{database_name}'");
-        validate_identifier(database_name)?;
         let result = self.create_database(database_name).await?;
         info!("TOOL: create_database completed");
         Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into()))
