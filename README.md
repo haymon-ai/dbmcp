@@ -8,23 +8,30 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 - **6 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `get_table_schema_with_relations`, `execute_sql`, `create_database`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
-- **Three-layer config** — CLI flags > environment variables > `.env` file, with sensible defaults per backend
+- **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
 
 ## Quick Start
 
-### Using a `.env` file
+### Using `.mcp.json` (recommended)
 
-```bash
-cat > .env << 'EOF'
-DB_BACKEND=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=secret
-DB_NAME=mydb
-EOF
+Add a `.mcp.json` file to your project root. MCP clients (Claude Desktop, Cursor, etc.) read this file and start the server with the configured environment variables automatically:
 
-sql-mcp
+```json
+{
+  "mcpServers": {
+    "sql-mcp": {
+      "command": "sql-mcp",
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "3306",
+        "DB_USER": "root",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "mydb"
+      }
+    }
+  }
+}
 ```
 
 ### Using CLI flags
@@ -51,11 +58,11 @@ DB_BACKEND=mysql DB_USER=root DB_NAME=mydb sql-mcp
 
 ## Configuration
 
-Configuration is loaded from three sources with clear precedence:
+Configuration is loaded with clear precedence:
 
-**CLI flags > environment variables > `.env` file > defaults**
+**CLI flags > environment variables > defaults**
 
-The `.env` file is loaded from the current working directory at startup.
+Environment variables are typically set by your MCP client (via `env` or `envFile` in the server config).
 
 ### Subcommands
 
