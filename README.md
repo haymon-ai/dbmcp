@@ -8,66 +8,135 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 - **6 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `get_table_schema_with_relations`, `execute_sql`, `create_database`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
-- **DSN-based connection** — single `--database-url` flag using standard sqlx URL format (SSL/TLS included as query parameters)
+- **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
 
 ## Quick Start
 
+### Using `.mcp.json` (recommended)
+
+Add a `.mcp.json` file to your project root. MCP clients read this file and configure the server automatically.
+
+**Stdio transport** — the client starts and manages the server process:
+
+```json
+{
+  "mcpServers": {
+    "sql-mcp": {
+      "command": "sql-mcp",
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "3306",
+        "DB_USER": "root",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+**HTTP transport** — you start the server yourself, the client connects to it:
+
+```bash
+# Start the server first
+sql-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
+```
+
+```json
+{
+  "mcpServers": {
+    "sql-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:9001/mcp"
+    }
+  }
+}
+```
+
+> **Note:** The `"type": "http"` field is required for HTTP transport. Without it, clients like Claude Code will reject the config.
+
+### Using CLI flags
+
 ```bash
 # MySQL/MariaDB
-sql-mcp --database-url mysql://root@localhost/mydb
+sql-mcp --db-backend mysql --db-host localhost --db-user root --db-name mydb
 
 # PostgreSQL
-sql-mcp --database-url postgres://user@localhost:5432/mydb
+sql-mcp --db-backend postgres --db-host localhost --db-user postgres --db-name mydb
 
 # SQLite
-sql-mcp --database-url sqlite:./data.db
+sql-mcp --db-backend sqlite --db-name ./data.db
 
 # HTTP transport
-sql-mcp --database-url mysql://root@localhost/mydb --transport http --port 9001
+sql-mcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
+```
+
+### Using environment variables
+
+```bash
+DB_BACKEND=mysql DB_USER=root DB_NAME=mydb sql-mcp
 ```
 
 ## Configuration
 
-All settings via CLI flags. Run `sql-mcp --help` for the full list.
+Configuration is loaded with clear precedence:
 
-### Required
+**CLI flags > environment variables > defaults**
 
-| Flag | Description |
-|------|-------------|
-| `--database-url <URL>` | Database connection URL in sqlx DSN format |
+Environment variables are typically set by your MCP client (via `env` or `envFile` in the server config).
 
-### Optional
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `stdio` | Run in stdio mode (default if no subcommand given) |
+| `http` | Run in HTTP/SSE mode |
+
+### Database Options (shared across subcommands)
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--db-backend` | `DB_BACKEND` | *(required)* | `mysql`, `mariadb`, `postgres`, or `sqlite` |
+| `--db-host` | `DB_HOST` | `localhost` | Database host |
+| `--db-port` | `DB_PORT` | backend default | `3306` (MySQL/MariaDB), `5432` (PostgreSQL) |
+| `--db-user` | `DB_USER` | backend default | `root` (MySQL/MariaDB), `postgres` (PostgreSQL) |
+| `--db-password` | `DB_PASSWORD` | *(empty)* | Database password |
+| `--db-name` | `DB_NAME` | *(empty)* | Database name or SQLite file path |
+| `--db-charset` | `DB_CHARSET` | | Character set (MySQL/MariaDB only) |
+
+### SSL/TLS Options
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--db-ssl` | `DB_SSL` | `false` | Enable SSL |
+| `--db-ssl-ca` | `DB_SSL_CA` | | CA certificate path |
+| `--db-ssl-cert` | `DB_SSL_CERT` | | Client certificate path |
+| `--db-ssl-key` | `DB_SSL_KEY` | | Client key path |
+| `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify server certificate |
+
+### Server Options
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--read-only` | `MCP_READ_ONLY` | `true` | Block write queries |
+| `--max-pool-size` | `MCP_MAX_POOL_SIZE` | `10` | Max connection pool size (min: 1) |
+
+### Logging Options
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--log-level` | `LOG_LEVEL` | `info` | Log level (trace/debug/info/warn/error) |
+| `--log-file` | `LOG_FILE` | `logs/mcp_server.log` | Log file path |
+
+### HTTP-only Options (only available with `http` subcommand)
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--transport <MODE>` | `stdio` | Transport mode: `stdio` or `http` |
-| `--host <HOST>` | `127.0.0.1` | Bind host for HTTP transport |
-| `--port <PORT>` | `9001` | Bind port for HTTP transport |
-| `--read-only` | `true` | Block write queries |
-| `--max-pool-size <N>` | `10` | Max connection pool size |
-| `--allowed-origins <LIST>` | localhost variants | CORS allowed origins (comma-separated) |
-| `--allowed-hosts <LIST>` | `localhost,127.0.0.1` | Trusted Host headers (comma-separated) |
-| `--log-level <LEVEL>` | `info` | Log level (trace/debug/info/warn/error) |
-| `--log-file <PATH>` | `logs/mcp_server.log` | Log file path |
-| `--log-max-bytes <N>` | `10485760` | Max log file size before rotation |
-| `--log-backup-count <N>` | `5` | Number of rotated log backups |
-
-### Database URL Examples
-
-```bash
-# MySQL with credentials
-mysql://user:password@host:3306/database
-
-# PostgreSQL
-postgres://user:password@host:5432/database
-
-# MySQL with SSL
-mysql://root@localhost/mydb?ssl-mode=required&ssl-ca=/path/to/ca.pem
-
-# SQLite (file path)
-sqlite:./data.db
-sqlite:/absolute/path/to/data.db
-```
+| `--host` | `127.0.0.1` | Bind host |
+| `--port` | `9001` | Bind port |
+| `--allowed-origins` | localhost variants | CORS allowed origins (comma-separated) |
+| `--allowed-hosts` | `localhost,127.0.0.1` | Trusted Host headers (comma-separated) |
 
 ## MCP Tools
 
@@ -100,9 +169,10 @@ Creates a database if it doesn't exist. Blocked in read-only mode. Not supported
 - **Read-only mode** (default) — AST-based SQL parsing validates every query before execution
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
-- **Identifier validation** — database/table names restricted to alphanumeric + underscore
+- **Identifier validation** — database/table names validated against control characters and empty strings
 - **CORS + trusted hosts** — configurable for HTTP transport
-- **SSL/TLS** — configured via database URL query parameters (e.g. `?ssl-mode=required`)
+- **SSL/TLS** — configured via individual `DB_SSL_*` variables
+- **Credential redaction** — database password is never shown in logs or debug output
 
 ## Testing
 

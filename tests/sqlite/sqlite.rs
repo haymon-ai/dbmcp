@@ -7,6 +7,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
+use sql_mcp::config::{Config, DatabaseBackend};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::sqlite::SqliteBackend;
 use tokio::sync::OnceCell;
@@ -36,12 +37,37 @@ async fn seed_db(db_path: &str) {
     pool.close().await;
 }
 
+fn sqlite_config(db_path: &str, read_only: bool) -> Config {
+    Config {
+        db_backend: DatabaseBackend::Sqlite,
+        db_host: "localhost".into(),
+        db_port: 0,
+        db_user: String::new(),
+        db_password: String::new(),
+        db_name: format!("{db_path}?mode=rwc"),
+        db_read_only: read_only,
+        db_max_pool_size: 10,
+        db_charset: None,
+        db_ssl: false,
+        db_ssl_ca: None,
+        db_ssl_cert: None,
+        db_ssl_key: None,
+        db_ssl_verify_cert: true,
+        log_level: "info".into(),
+        log_file: "logs/mcp_server.log".into(),
+        http_host: "127.0.0.1".into(),
+        http_port: 9001,
+        http_allowed_origins: vec!["http://localhost".into()],
+        http_allowed_hosts: vec!["localhost".into()],
+    }
+}
+
 async fn backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
-    let url = format!("sqlite:{db_path}?mode=rwc");
+    let config = sqlite_config(&db_path, false);
     Backend::Sqlite(
-        SqliteBackend::new(&url, false)
+        SqliteBackend::new(&config)
             .await
             .expect("SQLite open failed"),
     )
@@ -50,9 +76,9 @@ async fn backend() -> Backend {
 async fn readonly_backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
-    let url = format!("sqlite:{db_path}?mode=rwc");
+    let config = sqlite_config(&db_path, true);
     Backend::Sqlite(
-        SqliteBackend::new(&url, true)
+        SqliteBackend::new(&config)
             .await
             .expect("SQLite open failed"),
     )

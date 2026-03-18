@@ -4,7 +4,7 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use sql_mcp::config::Config;
+use sql_mcp::config::{Config, DatabaseBackend};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::postgres::PostgresBackend;
 
@@ -18,9 +18,26 @@ fn test_config() -> Config {
     let password = std::env::var("DB_PASSWORD").unwrap_or_default();
 
     Config {
-        database_url: format!("postgres://{user}:{password}@{host}:{port}/mcp"),
-        read_only: false,
-        ..Config::default()
+        db_backend: DatabaseBackend::Postgres,
+        db_host: host,
+        db_port: port,
+        db_user: user,
+        db_password: password,
+        db_name: "mcp".into(),
+        db_read_only: false,
+        db_max_pool_size: 10,
+        db_charset: None,
+        db_ssl: false,
+        db_ssl_ca: None,
+        db_ssl_cert: None,
+        db_ssl_key: None,
+        db_ssl_verify_cert: true,
+        log_level: "info".into(),
+        log_file: "logs/mcp_server.log".into(),
+        http_host: "127.0.0.1".into(),
+        http_port: 9001,
+        http_allowed_origins: vec!["http://localhost".into()],
+        http_allowed_hosts: vec!["localhost".into()],
     }
 }
 
@@ -35,7 +52,7 @@ async fn backend() -> Backend {
 
 async fn readonly_backend() -> Backend {
     let config = Config {
-        read_only: true,
+        db_read_only: true,
         ..test_config()
     };
     Backend::Postgres(

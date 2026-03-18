@@ -34,25 +34,53 @@ impl PostgresBackend {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
+        let url = Self::build_connection_url(config);
         let pool = PgPoolOptions::new()
-            .max_connections(config.max_pool_size)
-            .connect(&config.database_url)
+            .max_connections(config.db_max_pool_size)
+            .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
         info!(
             "PostgreSQL connection pool initialized (max size: {})",
-            config.max_pool_size
+            config.db_max_pool_size
         );
 
         Ok(Self {
             pool,
-            read_only: config.read_only,
+            read_only: config.db_read_only,
         })
     }
 }
 
 impl PostgresBackend {
+    /// Builds a sqlx connection URL from individual config fields.
+    fn build_connection_url(config: &Config) -> String {
+        let mut url = format!(
+            "postgres://{}:{}@{}:{}/{}",
+            config.db_user, config.db_password, config.db_host, config.db_port, config.db_name
+        );
+
+        let mut params = Vec::new();
+        if config.db_ssl {
+            params.push("sslmode=require".into());
+            if let Some(ref ca) = config.db_ssl_ca {
+                params.push(format!("sslrootcert={ca}"));
+            }
+            if let Some(ref cert) = config.db_ssl_cert {
+                params.push(format!("sslcert={cert}"));
+            }
+            if let Some(ref key) = config.db_ssl_key {
+                params.push(format!("sslkey={key}"));
+            }
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+        url
+    }
+
     /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
     ///
     /// Escapes internal double quotes by doubling them.

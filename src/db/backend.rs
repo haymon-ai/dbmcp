@@ -64,10 +64,6 @@ pub enum Backend {
     Sqlite(SqliteBackend),
 }
 
-// ---------------------------------------------------------------------------
-// Tool-level orchestration (validation + delegation + JSON formatting)
-// ---------------------------------------------------------------------------
-
 impl Backend {
     /// Lists all accessible databases as a JSON array.
     ///

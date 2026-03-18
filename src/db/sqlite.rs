@@ -2,6 +2,7 @@
 //!
 //! Implements [`DatabaseBackend`] for `SQLite` file-based databases.
 
+use crate::config::Config;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
@@ -27,23 +28,25 @@ impl std::fmt::Debug for SqliteBackend {
 }
 
 impl SqliteBackend {
-    /// Creates a new `SQLite` backend from a DSN URL.
-    ///
-    /// The URL should be in sqlx format (e.g. `sqlite:./data.db`).
+    /// Creates a new `SQLite` backend from configuration.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Connection`] if the database file cannot be opened.
-    pub async fn new(database_url: &str, read_only: bool) -> Result<Self, AppError> {
+    pub async fn new(config: &Config) -> Result<Self, AppError> {
+        let url = format!("sqlite:{}", config.db_name);
         let pool = SqlitePoolOptions::new()
             .max_connections(1) // SQLite is single-writer
-            .connect(database_url)
+            .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
 
-        info!("SQLite connection initialized: {database_url}");
+        info!("SQLite connection initialized: {}", config.db_name);
 
-        Ok(Self { pool, read_only })
+        Ok(Self {
+            pool,
+            read_only: config.db_read_only,
+        })
     }
 }
 

@@ -35,23 +35,24 @@ impl MysqlBackend {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &Config) -> Result<Self, AppError> {
+        let url = Self::build_connection_url(config);
         let pool = MySqlPoolOptions::new()
-            .max_connections(config.max_pool_size)
-            .connect(&config.database_url)
+            .max_connections(config.db_max_pool_size)
+            .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
         info!(
             "MySQL connection pool initialized (max size: {})",
-            config.max_pool_size
+            config.db_max_pool_size
         );
 
         let backend = Self {
             pool,
-            read_only: config.read_only,
+            read_only: config.db_read_only,
         };
 
-        if config.read_only {
+        if config.db_read_only {
             backend.warn_if_file_privilege().await;
         }
 
@@ -99,6 +100,37 @@ impl MysqlBackend {
         if let Err(e) = result {
             tracing::debug!("Unable to determine whether FILE privilege is enabled: {e}");
         }
+    }
+
+    /// Builds a sqlx connection URL from individual config fields.
+    fn build_connection_url(config: &Config) -> String {
+        let mut url = format!(
+            "mysql://{}:{}@{}:{}/{}",
+            config.db_user, config.db_password, config.db_host, config.db_port, config.db_name
+        );
+
+        let mut params = Vec::new();
+        if let Some(ref charset) = config.db_charset {
+            params.push(format!("charset={charset}"));
+        }
+
+        if config.db_ssl {
+            params.push("ssl-mode=required".into());
+            if let Some(ref ca) = config.db_ssl_ca {
+                params.push(format!("ssl-ca={ca}"));
+            }
+            if let Some(ref cert) = config.db_ssl_cert {
+                params.push(format!("ssl-cert={cert}"));
+            }
+            if let Some(ref key) = config.db_ssl_key {
+                params.push(format!("ssl-key={key}"));
+            }
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+        url
     }
 
     /// Wraps `name` in backticks for safe use in `MySQL` SQL statements.

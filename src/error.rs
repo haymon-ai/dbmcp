@@ -1,7 +1,8 @@
 //! Application error types for the MCP server.
 //!
-//! Defines [`AppError`] with variants for configuration, connection,
-//! security validation, and query execution failures.
+//! Defines [`AppError`] with variants for connection, security validation,
+//! and query execution failures. Configuration errors live in the
+//! [`config`](crate::config) module.
 
 /// Errors that can occur during MCP server operation.
 #[derive(Debug, thiserror::Error)]
@@ -41,7 +42,7 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Query(String),
 
-    /// Table not found in database.
+    /// Table isn't found in database.
     #[error("Table not found: {0}")]
     TableNotFound(String),
 }
