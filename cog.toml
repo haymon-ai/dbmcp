@@ -1,0 +1,51 @@
+from_latest_tag = true
+ignore_merge_commits = true
+tag_prefix = "v"
+branch_whitelist = ["main", "master", "release/**"]
+skip_ci = "[skip ci]"
+
+# Allowed scopes (enforce consistency)
+scopes = [
+    "cli",
+    "config",
+    "db",
+    "mysql",
+    "postgres",
+    "sqlite",
+    "mcp",
+    "http",
+    "sql",
+    "ci",
+    "deps",
+]
+
+# Bump hooks
+pre_bump_hooks = [
+    "cargo build --release",
+    "cargo set-version {{version}}",
+    "cargo check --release",
+    "git add :/Cargo.toml :/Cargo.lock",
+]
+
+# No post_bump_hooks — push manually after reviewing the bump
+
+# Git hook: validate commit messages locally
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+set -e
+# Add cargo bin to PATH for environments where it's not loaded
+export PATH="$HOME/.cargo/bin:$PATH"
+cog verify --file "$1"
+"""
+
+# Changelog configuration
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+owner = "athopen"
+repository = "sql-mcp"
+
+# Commit type customization
+[commit_types]
+hotfix = { changelog_title = "Hotfixes", bump_patch = true }
