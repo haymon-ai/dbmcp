@@ -115,15 +115,6 @@ struct Cli {
         global = true
     )]
     log_level: String,
-
-    /// Log file path
-    #[arg(
-        long = "log-file",
-        env = "LOG_FILE",
-        default_value = Config::DEFAULT_LOG_FILE,
-        global = true
-    )]
-    log_file: String,
 }
 
 #[derive(Subcommand)]
@@ -181,7 +172,6 @@ impl From<&Cli> for Config {
             db_read_only: cli.read_only,
             db_max_pool_size: cli.max_pool_size,
             log_level: cli.log_level.clone(),
-            log_file: cli.log_file.clone(),
             http_host: Config::DEFAULT_HTTP_HOST.into(),
             http_port: Config::DEFAULT_HTTP_PORT,
             http_allowed_origins: Config::DEFAULT_HTTP_ALLOWED_ORIGINS
@@ -227,20 +217,8 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env_filter = tracing_subscriber::EnvFilter::try_new(&cli.log_level)
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    let log_path = std::path::Path::new(&cli.log_file);
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-
-    let file_appender = tracing_appender::rolling::never(
-        log_path.parent().unwrap_or(std::path::Path::new(".")),
-        log_path
-            .file_name()
-            .unwrap_or(std::ffi::OsStr::new("mcp_server.log")),
-    );
-
     tracing_subscriber::fmt()
-        .with_writer(file_appender)
+        .with_writer(std::io::stderr)
         .with_env_filter(env_filter)
         .with_ansi(false)
         .init();
