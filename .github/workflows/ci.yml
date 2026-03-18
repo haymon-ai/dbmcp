@@ -20,9 +20,10 @@ jobs:
           fetch-tags: true
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: cocogitto/cocogitto-action@v4
-        with:
-          install-only: true
+      - name: Install cocogitto
+        run: |
+          VERSION="6.4.0"
+          curl -sSL "https://github.com/cocogitto/cocogitto/releases/download/${VERSION}/cocogitto-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz -C /usr/local/bin
 
       - name: Check conventional commits
         run: |
