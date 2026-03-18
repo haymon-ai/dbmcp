@@ -34,7 +34,6 @@ fn test_config() -> Config {
         db_ssl_key: None,
         db_ssl_verify_cert: true,
         log_level: "info".into(),
-        log_file: "logs/mcp_server.log".into(),
         http_host: "127.0.0.1".into(),
         http_port: 9001,
         http_allowed_origins: vec!["http://localhost".into()],

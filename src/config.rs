@@ -122,9 +122,6 @@ pub struct Config {
     /// Log level filter (e.g. "info", "debug", "warn").
     pub log_level: String,
 
-    /// Path to the log file.
-    pub log_file: String,
-
     /// Bind host for HTTP transport.
     pub http_host: String,
 
@@ -156,7 +153,6 @@ impl std::fmt::Debug for Config {
             .field("db_read_only", &self.db_read_only)
             .field("db_max_pool_size", &self.db_max_pool_size)
             .field("log_level", &self.log_level)
-            .field("log_file", &self.log_file)
             .field("http_host", &self.http_host)
             .field("http_port", &self.http_port)
             .field("http_allowed_origins", &self.http_allowed_origins)
@@ -180,8 +176,6 @@ impl Config {
     pub const DEFAULT_DB_MAX_POOL_SIZE: u32 = 10;
     /// Default log level.
     pub const DEFAULT_LOG_LEVEL: &'static str = "info";
-    /// Default log file path.
-    pub const DEFAULT_LOG_FILE: &'static str = "logs/mcp_server.log";
     /// Default HTTP bind host.
     pub const DEFAULT_HTTP_HOST: &'static str = "127.0.0.1";
     /// Default HTTP bind port.
@@ -251,7 +245,6 @@ mod tests {
             db_read_only: Config::DEFAULT_DB_READ_ONLY,
             db_max_pool_size: Config::DEFAULT_DB_MAX_POOL_SIZE,
             log_level: Config::DEFAULT_LOG_LEVEL.into(),
-            log_file: Config::DEFAULT_LOG_FILE.into(),
             http_host: Config::DEFAULT_HTTP_HOST.into(),
             http_port: Config::DEFAULT_HTTP_PORT,
             http_allowed_origins: Config::DEFAULT_HTTP_ALLOWED_ORIGINS

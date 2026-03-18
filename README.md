@@ -127,7 +127,6 @@ Environment variables are typically set by your MCP client (via `env` or `envFil
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
 | `--log-level` | `LOG_LEVEL` | `info` | Log level (trace/debug/info/warn/error) |
-| `--log-file` | `LOG_FILE` | `logs/mcp_server.log` | Log file path |
 
 ### HTTP-only Options (only available with `http` subcommand)
 
