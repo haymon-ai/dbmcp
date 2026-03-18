@@ -22,8 +22,19 @@ jobs:
 
       - uses: cocogitto/cocogitto-action@v4
         with:
-          command: check
-          args: --from-latest-tag
+          install-only: true
+
+      - name: Check conventional commits
+        run: |
+          # Find latest tag (including pre-release) reachable from HEAD
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LATEST_TAG" ]; then
+            echo "Checking commits from $LATEST_TAG to HEAD"
+            cog check "$LATEST_TAG..HEAD"
+          else
+            echo "No tags found, checking all commits"
+            cog check
+          fi
 
   fmt:
     name: Format

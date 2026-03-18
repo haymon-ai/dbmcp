@@ -1,6 +1,5 @@
 #:schema https://docs.cocogitto.io/cog-schema.json
 
-from_latest_tag = true
 ignore_merge_commits = true
 tag_prefix = "v"
 branch_whitelist = ["main", "master", "release/**"]
