@@ -156,10 +156,7 @@ impl From<&Cli> for DatabaseConfig {
             backend,
             host: cli.db_host.clone(),
             port: cli.db_port.unwrap_or_else(|| backend.default_port()),
-            user: cli
-                .db_user
-                .clone()
-                .unwrap_or_else(|| backend.default_user().into()),
+            user: cli.db_user.clone().unwrap_or_else(|| backend.default_user().into()),
             password: cli.db_password.clone(),
             name: cli.db_name.clone(),
             charset: cli.db_charset.clone(),
@@ -240,12 +237,8 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     let backend: Backend = match config.database.backend {
-        DatabaseBackend::Sqlite => {
-            Backend::Sqlite(db::sqlite::SqliteBackend::new(&config.database).await?)
-        }
-        DatabaseBackend::Postgres => {
-            Backend::Postgres(db::postgres::PostgresBackend::new(&config.database).await?)
-        }
+        DatabaseBackend::Sqlite => Backend::Sqlite(db::sqlite::SqliteBackend::new(&config.database).await?),
+        DatabaseBackend::Postgres => Backend::Postgres(db::postgres::PostgresBackend::new(&config.database).await?),
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
             Backend::Mysql(db::mysql::MysqlBackend::new(&config.database).await?)
         }
@@ -254,10 +247,7 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
         None | Some(Command::Stdio) => run_stdio(Server::new(backend)).await?,
         Some(Command::Http { .. }) => {
-            let server = config
-                .server
-                .as_ref()
-                .expect("server config is set for HTTP command");
+            let server = config.server.as_ref().expect("server config is set for HTTP command");
             run_http(backend, server).await?;
         }
     }
@@ -275,15 +265,15 @@ async fn run_stdio(server: Server) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_http(backend: Backend, server: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let bind_addr = format!("{}:{}", server.host, server.port);
+async fn run_http(backend: Backend, config: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let bind_addr = format!("{}:{}", config.host, config.port);
     info!("Starting MCP server via HTTP transport on {bind_addr}...");
 
     let ct = CancellationToken::new();
 
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(
-            server
+            config
                 .allowed_origins
                 .iter()
                 .filter_map(|o| o.parse().ok())
@@ -307,9 +297,7 @@ async fn run_http(backend: Backend, server: &HttpConfig) -> Result<(), Box<dyn s
         },
     );
 
-    let router = axum::Router::new()
-        .nest_service("/mcp", service)
-        .layer(cors);
+    let router = axum::Router::new().nest_service("/mcp", service).layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     info!("Listening on http://{bind_addr}/mcp");

@@ -42,10 +42,7 @@ impl MysqlBackend {
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
-        info!(
-            "MySQL connection pool initialized (max size: {})",
-            config.max_pool_size
-        );
+        info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
 
         let backend = Self {
             pool,
@@ -156,11 +153,7 @@ impl MysqlBackend {
     /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
     /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
     /// statements, and the text protocol returns all values as strings.
-    async fn query_to_json(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         // Acquire a single connection so USE and the query run on the same session
         let mut conn = self
             .pool
@@ -177,10 +170,7 @@ impl MysqlBackend {
                 .map_err(|e| AppError::Query(e.to_string()))?;
         }
 
-        let rows: Vec<MySqlRow> = conn
-            .fetch_all(sql)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<MySqlRow> = conn.fetch_all(sql).await.map_err(|e| AppError::Query(e.to_string()))?;
 
         let mut results = Vec::new();
         for row in &rows {
@@ -273,11 +263,7 @@ impl DatabaseBackend for MysqlBackend {
         Ok(json!(schema))
     }
 
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError> {
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
@@ -366,11 +352,7 @@ impl DatabaseBackend for MysqlBackend {
         }))
     }
 
-    async fn execute_query(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         self.query_to_json(sql, database).await
     }
 
@@ -381,13 +363,12 @@ impl DatabaseBackend for MysqlBackend {
         validate_identifier(name)?;
 
         // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
-        let exists: Option<Vec<u8>> = sqlx::query_scalar(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let exists: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?")
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
 
         if exists.is_some() {
             return Ok(json!({

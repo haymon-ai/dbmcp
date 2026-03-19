@@ -94,22 +94,20 @@ impl PostgresBackend {
 
 impl DatabaseBackend for PostgresBackend {
     async fn list_databases(&self) -> Result<Vec<String>, AppError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
     async fn list_tables(&self, _database: &str) -> Result<Vec<String>, AppError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -151,14 +149,9 @@ impl DatabaseBackend for PostgresBackend {
         Ok(json!(schema))
     }
 
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError> {
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
         let schema = self.get_table_schema(database, table).await?;
-        let mut columns: HashMap<String, Value> =
-            serde_json::from_value(schema).unwrap_or_default();
+        let mut columns: HashMap<String, Value> = serde_json::from_value(schema).unwrap_or_default();
 
         // Add null foreign_key to all columns
         for col in columns.values_mut() {
@@ -219,11 +212,7 @@ impl DatabaseBackend for PostgresBackend {
         }))
     }
 
-    async fn execute_query(
-        &self,
-        sql: &str,
-        _database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await
@@ -283,21 +272,12 @@ mod tests {
     #[test]
     fn quote_identifier_wraps_in_double_quotes() {
         assert_eq!(PostgresBackend::quote_identifier("users"), "\"users\"");
-        assert_eq!(
-            PostgresBackend::quote_identifier("eu-docker"),
-            "\"eu-docker\""
-        );
+        assert_eq!(PostgresBackend::quote_identifier("eu-docker"), "\"eu-docker\"");
     }
 
     #[test]
     fn quote_identifier_escapes_double_quotes() {
-        assert_eq!(
-            PostgresBackend::quote_identifier("test\"db"),
-            "\"test\"\"db\""
-        );
-        assert_eq!(
-            PostgresBackend::quote_identifier("a\"b\"c"),
-            "\"a\"\"b\"\"c\""
-        );
+        assert_eq!(PostgresBackend::quote_identifier("test\"db"), "\"test\"\"db\"");
+        assert_eq!(PostgresBackend::quote_identifier("a\"b\"c"), "\"a\"\"b\"\"c\"");
     }
 }

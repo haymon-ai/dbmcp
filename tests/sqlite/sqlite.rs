@@ -52,22 +52,14 @@ async fn backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
     let config = sqlite_config(&db_path, false);
-    Backend::Sqlite(
-        SqliteBackend::new(&config)
-            .await
-            .expect("SQLite open failed"),
-    )
+    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
 }
 
 async fn readonly_backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
     let config = sqlite_config(&db_path, true);
-    Backend::Sqlite(
-        SqliteBackend::new(&config)
-            .await
-            .expect("SQLite open failed"),
-    )
+    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
 }
 
 #[tokio::test]
@@ -75,10 +67,7 @@ async fn it_lists_databases() {
     let b = backend().await;
     let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
-    assert!(
-        dbs.iter().any(|db| db == "main"),
-        "Expected 'main' in: {dbs:?}"
-    );
+    assert!(dbs.iter().any(|db| db == "main"), "Expected 'main' in: {dbs:?}");
 }
 
 #[tokio::test]
@@ -97,22 +86,11 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = b
-        .tool_get_table_schema("main", "users")
-        .await
-        .expect("failed");
+    let result = b.tool_get_table_schema("main", "users").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
-    let columns: Vec<String> = schema
-        .as_object()
-        .expect("object")
-        .keys()
-        .cloned()
-        .collect();
+    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
     for col in ["id", "name", "email", "created_at"] {
-        assert!(
-            columns.iter().any(|c| c == col),
-            "Missing '{col}' in: {columns:?}"
-        );
+        assert!(columns.iter().any(|c| c == col), "Missing '{col}' in: {columns:?}");
     }
 }
 
@@ -150,10 +128,7 @@ async fn it_blocks_writes_in_read_only_mode() {
             None,
         )
         .await;
-    assert!(
-        result.is_err(),
-        "Expected error for write in read-only mode"
-    );
+    assert!(result.is_err(), "Expected error for write in read-only mode");
 }
 
 #[tokio::test]

@@ -268,11 +268,7 @@ impl Config {
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -401,11 +397,7 @@ mod tests {
     fn sqlite_requires_db_name() {
         let config = base_config(DatabaseBackend::Sqlite);
         let errors = config.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::MissingSqliteDbName))
-        );
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
     }
 
     #[test]

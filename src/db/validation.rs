@@ -33,8 +33,8 @@ pub fn validate_read_only_with_dialect(sql: &str, dialect: &dyn Dialect) -> Resu
         return Err(AppError::IntoOutfileBlocked);
     }
 
-    let statements = Parser::parse_sql(dialect, trimmed)
-        .map_err(|e| AppError::Query(format!("SQL parse error: {e}")))?;
+    let statements =
+        Parser::parse_sql(dialect, trimmed).map_err(|e| AppError::Query(format!("SQL parse error: {e}")))?;
 
     // Must be exactly one statement
     if statements.is_empty() {
@@ -263,10 +263,7 @@ mod tests {
 
     #[test]
     fn test_empty_query_blocked() {
-        assert!(matches!(
-            validate_read_only(""),
-            Err(AppError::ReadOnlyViolation)
-        ));
+        assert!(matches!(validate_read_only(""), Err(AppError::ReadOnlyViolation)));
     }
 
     #[test]
