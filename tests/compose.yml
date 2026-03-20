@@ -4,7 +4,7 @@ services:
         volumes:
             - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "3306"
+            - "13306:3306"
         environment:
             MARIADB_ROOT_HOST: '%'
             MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
@@ -14,7 +14,7 @@ services:
         volumes:
             - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "3306"
+            - "13307:3306"
         environment:
             MYSQL_ROOT_HOST: '%'
             MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -24,7 +24,16 @@ services:
         volumes:
             - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "5432"
+            - "15432:5432"
         environment:
             POSTGRES_USER: postgres
             POSTGRES_HOST_AUTH_METHOD: trust
+
+    sqlite:
+        image: alpine/sqlite
+        user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+        entrypoint: sh
+        command: -c "rm -f /data/database.db && sqlite3 /data/database.db < /seed/setup.sql"
+        volumes:
+            - "./sqlite/setup.sql:/seed/setup.sql:ro,z"
+            - "./sqlite:/data:z"

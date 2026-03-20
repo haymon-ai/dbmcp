@@ -135,19 +135,26 @@ run_entry() {
     local test_output
 
     if [ "$db_type" = "sqlite" ]; then
-        # SQLite: no container — create temp file, seeding happens in Rust via include_str!
-        local tmpdir
-        tmpdir=$(mktemp -d)
-        local db_path="${tmpdir}/app.db"
+        # SQLite: generate database via Docker Compose, then run tests against it
+        local db_path="${SCRIPT_DIR}/sqlite/database.db"
 
-        echo "  Running cargo test... (seeds via sqlx)"
+        echo -n "  Generating database via Docker Compose..."
+        if ! DOCKER_UID="$(id -u)" DOCKER_GID="$(id -g)" \
+            docker compose -f "$COMPOSE_FILE" run --rm sqlite 2>/dev/null; then
+            echo " FAILED"
+            RESULTS+=("${service}|SKIP|0|$(( $(date +%s) - start_time ))")
+            OVERALL_EXIT=1; return
+        fi
+        echo " OK"
+
+        echo "  Running cargo test..."
         test_output=$(
             DB_PATH="$db_path" \
             MCP_READ_ONLY=false \
             cargo test --test "$test_bin" -- --test-threads=1 2>&1
         ) || test_exit=$?
 
-        rm -rf "$tmpdir"
+        rm -f "$db_path"
     else
         # Container-based databases (MySQL, MariaDB, PostgreSQL)
         echo -n "  Starting container..."

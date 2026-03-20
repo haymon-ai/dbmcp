@@ -130,6 +130,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Seed database
+        run: sqlite3 /tmp/app.db < tests/sqlite/setup.sql
       - run: cargo test --test sqlite -- --test-threads=1
         env:
           DB_PATH: /tmp/app.db
