@@ -11,7 +11,6 @@ categories = ["database", "command-line-utilities"]
 [dependencies]
 rmcp = { version = "1.2", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls", "mysql", "postgres", "sqlite"] }
-enum_dispatch = "0.3"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -23,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlparser = { version = "0.61", features = ["visitor"] }
 thiserror = "2"
+moka = { version = "0.12", features = ["future"] }
 mimalloc = "0.1"
 
 [lints.rust]

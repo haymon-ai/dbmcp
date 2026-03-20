@@ -1,14 +1,20 @@
 -- Seed schema and data for PostgreSQL
 -- This file is mounted to /docker-entrypoint-initdb.d/ and auto-executed on first start
 
-CREATE TABLE IF NOT EXISTS users (
+-- app database
+
+DROP DATABASE IF EXISTS app;
+CREATE DATABASE app;
+\c app
+
+CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS posts (
+CREATE TABLE posts (
     id SERIAL PRIMARY KEY,
     user_id INT NOT NULL,
     title VARCHAR(255) NOT NULL,
@@ -17,12 +23,12 @@ CREATE TABLE IF NOT EXISTS posts (
     CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE TABLE IF NOT EXISTS tags (
+CREATE TABLE tags (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS post_tags (
+CREATE TABLE post_tags (
     post_id INT NOT NULL,
     tag_id INT NOT NULL,
     PRIMARY KEY (post_id, tag_id),
@@ -59,3 +65,20 @@ INSERT INTO post_tags (post_id, tag_id) VALUES
     (2, 1),
     (3, 3),
     (3, 1);
+
+-- analytics database
+
+DROP DATABASE IF EXISTS analytics;
+CREATE DATABASE analytics;
+\c analytics
+
+CREATE TABLE events (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    payload TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO events (name, payload) VALUES
+    ('signup', '{"user": "alice"}'),
+    ('login', '{"user": "bob"}');
