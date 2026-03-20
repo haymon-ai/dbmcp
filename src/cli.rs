@@ -13,7 +13,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use sql_mcp::config::{Config, DEFAULT_LOG_LEVEL, DatabaseBackend, DatabaseConfig, HttpConfig};
+use sql_mcp::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
 use sql_mcp::db;
 use sql_mcp::db::backend::Backend;
 use sql_mcp::server::Server;
@@ -23,6 +23,48 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use clap::{Parser, Subcommand};
+
+/// Log severity levels for the MCP server.
+///
+/// Maps directly to [`tracing::Level`] variants. Used as a
+/// [`clap::ValueEnum`] for type-safe CLI argument parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum LogLevel {
+    /// Only errors.
+    Error,
+    /// Warnings and above.
+    Warn,
+    /// Informational and above (default).
+    Info,
+    /// Debug and above.
+    Debug,
+    /// All trace output.
+    Trace,
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Error => write!(f, "error"),
+            Self::Warn => write!(f, "warn"),
+            Self::Info => write!(f, "info"),
+            Self::Debug => write!(f, "debug"),
+            Self::Trace => write!(f, "trace"),
+        }
+    }
+}
+
+impl From<LogLevel> for tracing::Level {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Error => Self::ERROR,
+            LogLevel::Warn => Self::WARN,
+            LogLevel::Info => Self::INFO,
+            LogLevel::Debug => Self::DEBUG,
+            LogLevel::Trace => Self::TRACE,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "sql-mcp", about = "Database MCP Server")]
@@ -107,14 +149,14 @@ struct Cli {
     )]
     max_pool_size: u32,
 
-    /// Log level (e.g. info, debug, warn)
+    /// Log level
     #[arg(
         long = "log-level",
         env = "LOG_LEVEL",
-        default_value = DEFAULT_LOG_LEVEL,
+        default_value_t = LogLevel::Info,
         global = true
     )]
-    log_level: String,
+    log_level: LogLevel,
 }
 
 #[derive(Subcommand)]
@@ -214,12 +256,9 @@ impl From<&Cli> for Config {
 pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let env_filter = tracing_subscriber::EnvFilter::try_new(&cli.log_level)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(env_filter)
+        .with_max_level(tracing::Level::from(cli.log_level))
         .with_ansi(false)
         .init();
 
@@ -369,5 +408,34 @@ mod tests {
     fn cli_flag_overrides_default_backend() {
         let cli = Cli::try_parse_from(["sql-mcp", "http", "--db-backend", "postgres"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Postgres);
+    }
+
+    #[test]
+    fn parse_valid_log_levels() {
+        for level in ["error", "warn", "info", "debug", "trace"] {
+            let cli = Cli::try_parse_from(["sql-mcp", "--log-level", level]).unwrap();
+            assert_eq!(cli.log_level.to_string(), level);
+        }
+    }
+
+    #[test]
+    fn parse_invalid_log_level_is_rejected() {
+        assert!(Cli::try_parse_from(["sql-mcp", "--log-level", "nonsense"]).is_err());
+    }
+
+    #[test]
+    fn log_level_defaults_to_info() {
+        let cli = Cli::try_parse_from(["sql-mcp"]).unwrap();
+        assert_eq!(cli.log_level, LogLevel::Info);
+    }
+
+    #[test]
+    fn parse_log_level_case_insensitive() {
+        for level in ["DEBUG", "Info", "TRACE", "Warn", "ERROR"] {
+            assert!(
+                Cli::try_parse_from(["sql-mcp", "--log-level", level]).is_ok(),
+                "expected '{level}' to be accepted case-insensitively"
+            );
+        }
     }
 }

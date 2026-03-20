@@ -221,9 +221,6 @@ impl HttpConfig {
     }
 }
 
-/// Default log level.
-pub const DEFAULT_LOG_LEVEL: &str = "info";
-
 /// Runtime configuration for the MCP server.
 ///
 /// Composes [`DatabaseConfig`] with an optional [`HttpConfig`].
