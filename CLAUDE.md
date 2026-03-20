@@ -82,3 +82,12 @@ ALWAYS verify for new/modified code:
 - Every new module has `//!` doc comment
 - Every public item has `///` doc comment with `# Errors`/`# Panics` where applicable
 - The first doc sentence is under 15 words
+
+## Active Technologies
+- Rust 1.94.0, edition 2024 + clap (CLI parsing), sqlx (database), axum + tower-http (HTTP transport), tracing (logging) (032-nested-config)
+- MySQL, PostgreSQL, SQLite via sqlx (032-nested-config)
+- Rust 1.94.0, edition 2024 + clap (CLI parsing with `ValueEnum` derive), tracing + tracing-subscriber (logging) (033-typed-log-level)
+- N/A (no storage changes) (033-typed-log-level)
+
+## Recent Changes
+- 032-nested-config: Added Rust 1.94.0, edition 2024 + clap (CLI parsing), sqlx (database), axum + tower-http (HTTP transport), tracing (logging)
