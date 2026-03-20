@@ -4,39 +4,23 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use sql_mcp::config::{Config, DatabaseBackend};
+use sql_mcp::config::{DatabaseBackend, DatabaseConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::postgres::PostgresBackend;
 
-fn test_config() -> Config {
-    let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-    let port: u16 = std::env::var("DB_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(5432);
-    let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into());
-    let password = std::env::var("DB_PASSWORD").unwrap_or_default();
-
-    Config {
-        db_backend: DatabaseBackend::Postgres,
-        db_host: host,
-        db_port: port,
-        db_user: user,
-        db_password: password,
-        db_name: "mcp".into(),
-        db_read_only: false,
-        db_max_pool_size: 10,
-        db_charset: None,
-        db_ssl: false,
-        db_ssl_ca: None,
-        db_ssl_cert: None,
-        db_ssl_key: None,
-        db_ssl_verify_cert: true,
-        log_level: "info".into(),
-        http_host: "127.0.0.1".into(),
-        http_port: 9001,
-        http_allowed_origins: vec!["http://localhost".into()],
-        http_allowed_hosts: vec!["localhost".into()],
+fn test_config() -> DatabaseConfig {
+    DatabaseConfig {
+        backend: DatabaseBackend::Postgres,
+        host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        port: std::env::var("DB_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(5432),
+        user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
+        password: std::env::var("DB_PASSWORD").ok(),
+        name: Some("mcp".into()),
+        read_only: false,
+        ..DatabaseConfig::default()
     }
 }
 
@@ -50,8 +34,8 @@ async fn backend() -> Backend {
 }
 
 async fn readonly_backend() -> Backend {
-    let config = Config {
-        db_read_only: true,
+    let config = DatabaseConfig {
+        read_only: true,
         ..test_config()
     };
     Backend::Postgres(
@@ -66,10 +50,7 @@ async fn it_lists_databases() {
     let b = backend().await;
     let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
-    assert!(
-        dbs.iter().any(|db| db == "mcp"),
-        "Expected 'mcp' in: {dbs:?}"
-    );
+    assert!(dbs.iter().any(|db| db == "mcp"), "Expected 'mcp' in: {dbs:?}");
 }
 
 #[tokio::test]
@@ -88,22 +69,11 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = b
-        .tool_get_table_schema("mcp", "users")
-        .await
-        .expect("failed");
+    let result = b.tool_get_table_schema("mcp", "users").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
-    let columns: Vec<String> = schema
-        .as_object()
-        .expect("object")
-        .keys()
-        .cloned()
-        .collect();
+    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
     for col in ["id", "name", "email", "created_at"] {
-        assert!(
-            columns.iter().any(|c| c == col),
-            "Missing '{col}' in: {columns:?}"
-        );
+        assert!(columns.iter().any(|c| c == col), "Missing '{col}' in: {columns:?}");
     }
 }
 
@@ -141,10 +111,7 @@ async fn it_blocks_writes_in_read_only_mode() {
             None,
         )
         .await;
-    assert!(
-        result.is_err(),
-        "Expected error for write in read-only mode"
-    );
+    assert!(result.is_err(), "Expected error for write in read-only mode");
 }
 
 #[tokio::test]

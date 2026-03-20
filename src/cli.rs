@@ -13,7 +13,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use sql_mcp::config::{Config, DatabaseBackend};
+use sql_mcp::config::{Config, DEFAULT_LOG_LEVEL, DatabaseBackend, DatabaseConfig, HttpConfig};
 use sql_mcp::db;
 use sql_mcp::db::backend::Backend;
 use sql_mcp::server::Server;
@@ -31,11 +31,11 @@ struct Cli {
     command: Option<Command>,
 
     /// Database backend
-    #[arg(long = "db-backend", env = "DB_BACKEND", default_value_t = Config::DEFAULT_DB_BACKEND, global = true)]
+    #[arg(long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND, global = true)]
     db_backend: DatabaseBackend,
 
     /// Database host
-    #[arg(long = "db-host", env = "DB_HOST", default_value = Config::DEFAULT_DB_HOST, global = true)]
+    #[arg(long = "db-host", env = "DB_HOST", default_value = DatabaseConfig::DEFAULT_HOST, global = true)]
     db_host: String,
 
     /// Database port (default: backend-dependent)
@@ -62,7 +62,7 @@ struct Cli {
     #[arg(
         long = "db-ssl",
         env = "DB_SSL",
-        default_value_t = Config::DEFAULT_DB_SSL,
+        default_value_t = DatabaseConfig::DEFAULT_SSL,
         global = true
     )]
     db_ssl: bool,
@@ -83,7 +83,7 @@ struct Cli {
     #[arg(
         long = "db-ssl-verify-cert",
         env = "DB_SSL_VERIFY_CERT",
-        default_value_t = Config::DEFAULT_DB_SSL_VERIFY_CERT,
+        default_value_t = DatabaseConfig::DEFAULT_SSL_VERIFY_CERT,
         global = true
     )]
     db_ssl_verify_cert: bool,
@@ -92,7 +92,7 @@ struct Cli {
     #[arg(
         long = "read-only",
         env = "MCP_READ_ONLY",
-        default_value_t = Config::DEFAULT_DB_READ_ONLY,
+        default_value_t = DatabaseConfig::DEFAULT_READ_ONLY,
         global = true
     )]
     read_only: bool,
@@ -101,7 +101,7 @@ struct Cli {
     #[arg(
         long = "max-pool-size",
         env = "MCP_MAX_POOL_SIZE",
-        default_value_t = Config::DEFAULT_DB_MAX_POOL_SIZE,
+        default_value_t = DatabaseConfig::DEFAULT_MAX_POOL_SIZE,
         global = true,
         value_parser = clap::value_parser!(u32).range(1..)
     )]
@@ -111,7 +111,7 @@ struct Cli {
     #[arg(
         long = "log-level",
         env = "LOG_LEVEL",
-        default_value = Config::DEFAULT_LOG_LEVEL,
+        default_value = DEFAULT_LOG_LEVEL,
         global = true
     )]
     log_level: String,
@@ -124,18 +124,18 @@ enum Command {
     /// Run in HTTP/SSE mode
     Http {
         /// Bind host for HTTP transport
-        #[arg(long, default_value = Config::DEFAULT_HTTP_HOST)]
+        #[arg(long, default_value = HttpConfig::DEFAULT_HOST)]
         host: String,
 
         /// Bind port for HTTP transport
-        #[arg(long, default_value_t = Config::DEFAULT_HTTP_PORT)]
+        #[arg(long, default_value_t = HttpConfig::DEFAULT_PORT)]
         port: u16,
 
         /// Allowed CORS origins (comma-separated)
         #[arg(
             long = "allowed-origins",
             value_delimiter = ',',
-            default_values_t = Config::DEFAULT_HTTP_ALLOWED_ORIGINS.iter().map(|&s| s.to_string())
+            default_values_t = HttpConfig::default_allowed_origins()
         )]
         allowed_origins: Vec<String>,
 
@@ -143,65 +143,65 @@ enum Command {
         #[arg(
             long = "allowed-hosts",
             value_delimiter = ',',
-            default_values_t = Config::DEFAULT_HTTP_ALLOWED_HOSTS.iter().map(|&s| s.to_string())
+            default_values_t = HttpConfig::default_allowed_hosts()
         )]
         allowed_hosts: Vec<String>,
     },
 }
 
-impl From<&Cli> for Config {
+impl From<&Cli> for DatabaseConfig {
     fn from(cli: &Cli) -> Self {
         let backend = cli.db_backend;
+        Self {
+            backend,
+            host: cli.db_host.clone(),
+            port: cli.db_port.unwrap_or_else(|| backend.default_port()),
+            user: cli.db_user.clone().unwrap_or_else(|| backend.default_user().into()),
+            password: cli.db_password.clone(),
+            name: cli.db_name.clone(),
+            charset: cli.db_charset.clone(),
+            ssl: cli.db_ssl,
+            ssl_ca: cli.db_ssl_ca.clone(),
+            ssl_cert: cli.db_ssl_cert.clone(),
+            ssl_key: cli.db_ssl_key.clone(),
+            ssl_verify_cert: cli.db_ssl_verify_cert,
+            read_only: cli.read_only,
+            max_pool_size: cli.max_pool_size,
+        }
+    }
+}
 
-        let mut config = Self {
-            db_backend: backend,
-            db_host: cli.db_host.clone(),
-            db_port: cli.db_port.unwrap_or_else(|| backend.default_port()),
-            db_user: cli
-                .db_user
-                .clone()
-                .unwrap_or_else(|| backend.default_user().into()),
-            db_password: cli.db_password.clone().unwrap_or_default(),
-            db_name: cli.db_name.clone().unwrap_or_default(),
-            db_charset: cli.db_charset.clone(),
-            db_ssl: cli.db_ssl,
-            db_ssl_ca: cli.db_ssl_ca.clone(),
-            db_ssl_cert: cli.db_ssl_cert.clone(),
-            db_ssl_key: cli.db_ssl_key.clone(),
-            db_ssl_verify_cert: cli.db_ssl_verify_cert,
-            db_read_only: cli.read_only,
-            db_max_pool_size: cli.max_pool_size,
-            log_level: cli.log_level.clone(),
-            http_host: Config::DEFAULT_HTTP_HOST.into(),
-            http_port: Config::DEFAULT_HTTP_PORT,
-            http_allowed_origins: Config::DEFAULT_HTTP_ALLOWED_ORIGINS
-                .iter()
-                .map(|&s| s.into())
-                .collect(),
-            http_allowed_hosts: Config::DEFAULT_HTTP_ALLOWED_HOSTS
-                .iter()
-                .map(|&s| s.into())
-                .collect(),
-        };
-
-        if let Some(Command::Http {
+impl From<&Command> for Option<HttpConfig> {
+    fn from(cmd: &Command) -> Self {
+        if let Command::Http {
             host,
             port,
             allowed_origins,
             allowed_hosts,
-        }) = &cli.command
+        } = cmd
         {
-            config.http_host.clone_from(host);
-            config.http_port = *port;
-            config.http_allowed_origins.clone_from(allowed_origins);
-            config.http_allowed_hosts.clone_from(allowed_hosts);
+            Some(HttpConfig {
+                host: host.clone(),
+                port: *port,
+                allowed_origins: allowed_origins.clone(),
+                allowed_hosts: allowed_hosts.clone(),
+            })
+        } else {
+            None
         }
-
-        config
     }
 }
 
-/// Parses CLI arguments, initialises the application, and runs the MCP server.
+impl From<&Cli> for Config {
+    fn from(cli: &Cli) -> Self {
+        Self {
+            database: DatabaseConfig::from(cli),
+            server: cli.command.as_ref().and_then(Into::into),
+        }
+    }
+}
+
+/// Parses CLI arguments, initializes the application, and runs the MCP server.
 ///
 /// # Errors
 ///
@@ -232,23 +232,24 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::FAILURE);
     }
 
-    if config.db_read_only {
+    if config.database.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    let backend: Backend = match config.db_backend {
-        DatabaseBackend::Sqlite => Backend::Sqlite(db::sqlite::SqliteBackend::new(&config).await?),
-        DatabaseBackend::Postgres => {
-            Backend::Postgres(db::postgres::PostgresBackend::new(&config).await?)
-        }
+    let backend: Backend = match config.database.backend {
+        DatabaseBackend::Sqlite => Backend::Sqlite(db::sqlite::SqliteBackend::new(&config.database).await?),
+        DatabaseBackend::Postgres => Backend::Postgres(db::postgres::PostgresBackend::new(&config.database).await?),
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
-            Backend::Mysql(db::mysql::MysqlBackend::new(&config).await?)
+            Backend::Mysql(db::mysql::MysqlBackend::new(&config.database).await?)
         }
     };
 
     match cli.command {
         None | Some(Command::Stdio) => run_stdio(Server::new(backend)).await?,
-        Some(Command::Http { .. }) => run_http(backend, &config).await?,
+        Some(Command::Http { .. }) => {
+            let server = config.server.as_ref().expect("server config is set for HTTP command");
+            run_http(backend, server).await?;
+        }
     }
 
     Ok(ExitCode::SUCCESS)
@@ -264,8 +265,8 @@ async fn run_stdio(server: Server) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_http(backend: Backend, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    let bind_addr = format!("{}:{}", config.http_host, config.http_port);
+async fn run_http(backend: Backend, config: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let bind_addr = format!("{}:{}", config.host, config.port);
     info!("Starting MCP server via HTTP transport on {bind_addr}...");
 
     let ct = CancellationToken::new();
@@ -273,7 +274,7 @@ async fn run_http(backend: Backend, config: &Config) -> Result<(), Box<dyn std::
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(
             config
-                .http_allowed_origins
+                .allowed_origins
                 .iter()
                 .filter_map(|o| o.parse().ok())
                 .collect::<Vec<axum::http::HeaderValue>>(),
@@ -296,9 +297,7 @@ async fn run_http(backend: Backend, config: &Config) -> Result<(), Box<dyn std::
         },
     );
 
-    let router = axum::Router::new()
-        .nest_service("/mcp", service)
-        .layer(cors);
+    let router = axum::Router::new().nest_service("/mcp", service).layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     info!("Listening on http://{bind_addr}/mcp");

@@ -91,22 +91,13 @@ impl Server {
         description = "List all accessible databases on the connected database server. Call this first to discover available database names."
     )]
     pub async fn list_databases(&self) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .backend
-            .tool_list_databases()
-            .await
-            .map_err(map_error)?;
+        let result = self.backend.tool_list_databases().await.map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
     /// List all tables in a specific database.
-    #[tool(
-        description = "List all tables in a specific database. Requires database_name from list_databases."
-    )]
-    pub async fn list_tables(
-        &self,
-        req: Parameters<ListTablesRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    #[tool(description = "List all tables in a specific database. Requires database_name from list_databases.")]
+    pub async fn list_tables(&self, req: Parameters<ListTablesRequest>) -> Result<CallToolResult, ErrorData> {
         let result = self
             .backend
             .tool_list_tables(&req.0.database_name)
@@ -119,10 +110,7 @@ impl Server {
     #[tool(
         description = "Get column definitions (type, nullable, key, default) for a table. Requires database_name and table_name."
     )]
-    pub async fn get_table_schema(
-        &self,
-        req: Parameters<GetTableSchemaRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    pub async fn get_table_schema(&self, req: Parameters<GetTableSchemaRequest>) -> Result<CallToolResult, ErrorData> {
         let result = self
             .backend
             .tool_get_table_schema(&req.0.database_name, &req.0.table_name)
@@ -151,10 +139,7 @@ impl Server {
     #[tool(
         description = "Execute a SQL query. Requires database_name and sql_query. In read-only mode only SELECT, SHOW, DESCRIBE, USE are allowed."
     )]
-    pub async fn execute_sql(
-        &self,
-        req: Parameters<ExecuteSqlRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    pub async fn execute_sql(&self, req: Parameters<ExecuteSqlRequest>) -> Result<CallToolResult, ErrorData> {
         let result = self
             .backend
             .tool_execute_sql(&req.0.sql_query, &req.0.database_name, None)
@@ -167,10 +152,7 @@ impl Server {
     #[tool(
         description = "Create a new database. Requires database_name. Blocked in read-only mode. Not supported for SQLite."
     )]
-    pub async fn create_database(
-        &self,
-        req: Parameters<CreateDatabaseRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    pub async fn create_database(&self, req: Parameters<CreateDatabaseRequest>) -> Result<CallToolResult, ErrorData> {
         let result = self
             .backend
             .tool_create_database(&req.0.database_name)
@@ -183,9 +165,8 @@ impl Server {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(
-                "Database MCP Server - provides database exploration and query tools for MySQL, PostgreSQL, and SQLite",
-            )
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Database MCP Server - provides database exploration and query tools for MySQL, PostgreSQL, and SQLite",
+        )
     }
 }

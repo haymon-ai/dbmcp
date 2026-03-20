@@ -3,7 +3,7 @@
 //! Implements [`DatabaseBackend`] for `MySQL` and `MariaDB` databases
 //! using sqlx's `MySqlPool`.
 
-use crate::config::Config;
+use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
@@ -34,25 +34,22 @@ impl MysqlBackend {
     /// # Errors
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
-    pub async fn new(config: &Config) -> Result<Self, AppError> {
+    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
         let url = Self::build_connection_url(config);
         let pool = MySqlPoolOptions::new()
-            .max_connections(config.db_max_pool_size)
+            .max_connections(config.max_pool_size)
             .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
-        info!(
-            "MySQL connection pool initialized (max size: {})",
-            config.db_max_pool_size
-        );
+        info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
 
         let backend = Self {
             pool,
-            read_only: config.db_read_only,
+            read_only: config.read_only,
         };
 
-        if config.db_read_only {
+        if config.read_only {
             backend.warn_if_file_privilege().await;
         }
 
@@ -103,26 +100,28 @@ impl MysqlBackend {
     }
 
     /// Builds a sqlx connection URL from individual config fields.
-    fn build_connection_url(config: &Config) -> String {
+    fn build_connection_url(config: &DatabaseConfig) -> String {
+        let password = config.password.as_deref().unwrap_or_default();
+        let name = config.name.as_deref().unwrap_or_default();
         let mut url = format!(
             "mysql://{}:{}@{}:{}/{}",
-            config.db_user, config.db_password, config.db_host, config.db_port, config.db_name
+            config.user, password, config.host, config.port, name
         );
 
         let mut params = Vec::new();
-        if let Some(ref charset) = config.db_charset {
+        if let Some(ref charset) = config.charset {
             params.push(format!("charset={charset}"));
         }
 
-        if config.db_ssl {
+        if config.ssl {
             params.push("ssl-mode=required".into());
-            if let Some(ref ca) = config.db_ssl_ca {
+            if let Some(ref ca) = config.ssl_ca {
                 params.push(format!("ssl-ca={ca}"));
             }
-            if let Some(ref cert) = config.db_ssl_cert {
+            if let Some(ref cert) = config.ssl_cert {
                 params.push(format!("ssl-cert={cert}"));
             }
-            if let Some(ref key) = config.db_ssl_key {
+            if let Some(ref key) = config.ssl_key {
                 params.push(format!("ssl-key={key}"));
             }
         }
@@ -154,11 +153,7 @@ impl MysqlBackend {
     /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
     /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
     /// statements, and the text protocol returns all values as strings.
-    async fn query_to_json(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         // Acquire a single connection so USE and the query run on the same session
         let mut conn = self
             .pool
@@ -175,10 +170,7 @@ impl MysqlBackend {
                 .map_err(|e| AppError::Query(e.to_string()))?;
         }
 
-        let rows: Vec<MySqlRow> = conn
-            .fetch_all(sql)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<MySqlRow> = conn.fetch_all(sql).await.map_err(|e| AppError::Query(e.to_string()))?;
 
         let mut results = Vec::new();
         for row in &rows {
@@ -271,11 +263,7 @@ impl DatabaseBackend for MysqlBackend {
         Ok(json!(schema))
     }
 
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError> {
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
@@ -364,11 +352,7 @@ impl DatabaseBackend for MysqlBackend {
         }))
     }
 
-    async fn execute_query(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         self.query_to_json(sql, database).await
     }
 
@@ -379,13 +363,12 @@ impl DatabaseBackend for MysqlBackend {
         validate_identifier(name)?;
 
         // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
-        let exists: Option<Vec<u8>> = sqlx::query_scalar(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let exists: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?")
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
 
         if exists.is_some() {
             return Ok(json!({
