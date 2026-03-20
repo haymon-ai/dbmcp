@@ -29,18 +29,10 @@ pub trait DatabaseBackend {
     async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError>;
 
     /// Returns column definitions with foreign key relationships.
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError>;
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError>;
 
     /// Executes a SQL query and returns rows as JSON objects.
-    async fn execute_query(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError>;
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError>;
 
     /// Creates a database if it doesn't exist.
     async fn create_database(&self, name: &str) -> Result<Value, AppError>;
@@ -73,10 +65,7 @@ impl Backend {
     pub async fn tool_list_databases(&self) -> Result<String, AppError> {
         info!("TOOL: list_databases called");
         let db_list = self.list_databases().await?;
-        info!(
-            "TOOL: list_databases completed. Databases found: {}",
-            db_list.len()
-        );
+        info!("TOOL: list_databases completed. Databases found: {}", db_list.len());
         Ok(serde_json::to_string_pretty(&db_list).unwrap_or_else(|_| "[]".into()))
     }
 
@@ -94,10 +83,7 @@ impl Backend {
                 return Err(e);
             }
         };
-        info!(
-            "TOOL: list_tables completed. Tables found: {}",
-            table_list.len()
-        );
+        info!("TOOL: list_tables completed. Tables found: {}", table_list.len());
         Ok(serde_json::to_string_pretty(&table_list).unwrap_or_else(|_| "[]".into()))
     }
 
@@ -106,14 +92,8 @@ impl Backend {
     /// # Errors
     ///
     /// Returns [`AppError`] if identifiers are invalid or the backend query fails.
-    pub async fn tool_get_table_schema(
-        &self,
-        database_name: &str,
-        table_name: &str,
-    ) -> Result<String, AppError> {
-        info!(
-            "TOOL: get_table_schema called. database_name={database_name}, table_name={table_name}"
-        );
+    pub async fn tool_get_table_schema(&self, database_name: &str, table_name: &str) -> Result<String, AppError> {
+        info!("TOOL: get_table_schema called. database_name={database_name}, table_name={table_name}");
         let schema = self.get_table_schema(database_name, table_name).await?;
         info!("TOOL: get_table_schema completed");
         Ok(serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".into()))
@@ -129,12 +109,8 @@ impl Backend {
         database_name: &str,
         table_name: &str,
     ) -> Result<String, AppError> {
-        info!(
-            "TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}"
-        );
-        let result = self
-            .get_table_schema_with_relations(database_name, table_name)
-            .await?;
+        info!("TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}");
+        let result = self.get_table_schema_with_relations(database_name, table_name).await?;
         info!("TOOL: get_table_schema_with_relations completed");
         Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into()))
     }
@@ -169,10 +145,7 @@ impl Backend {
         };
 
         let results = self.execute_query(sql_query, db).await?;
-        info!(
-            "TOOL: execute_sql completed. Rows returned: {}",
-            results.len()
-        );
+        info!("TOOL: execute_sql completed. Rows returned: {}", results.len());
         Ok(serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".into()))
     }
 

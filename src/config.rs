@@ -1,9 +1,13 @@
 //! Configuration for the MCP server.
 //!
-//! All configuration fields live directly on [`Config`] as a flat struct.
-//! Database connection is configured via individual variables (`DB_HOST`,
-//! `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_BACKEND`) instead
-//! of a single DSN URL. Values are resolved with clear precedence:
+//! Configuration is organized into sections:
+//! - [`DatabaseConfig`] — database connection and behavior settings
+//! - [`HttpConfig`] — HTTP transport binding and security settings
+//!
+//! The top-level [`Config`] composes these sections. Database connection is
+//! configured via individual variables (`DB_HOST`, `DB_PORT`, `DB_USER`,
+//! `DB_PASSWORD`, `DB_NAME`, `DB_BACKEND`) instead of a single DSN URL.
+//! Values are resolved with clear precedence:
 //! CLI flags > environment variables > defaults.
 //!
 //! All defaults (backend-aware port, user, host) are resolved at construction
@@ -11,7 +15,7 @@
 //!
 //! # Security
 //!
-//! [`Config`] implements [`Debug`] manually to redact the database password.
+//! [`DatabaseConfig`] implements [`Debug`] manually to redact the database password.
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, thiserror::Error)]
@@ -71,125 +75,171 @@ impl DatabaseBackend {
     }
 }
 
-/// Runtime configuration for the MCP server.
+/// Database connection and behavior settings.
 ///
-/// All fields are fully resolved — no `Option` indirection for database or
-/// HTTP fields. Defaults are applied during construction in `From<&Cli>`.
+/// All fields are fully resolved — no `Option` indirection for connection
+/// fields. Defaults are applied during construction in `From<&Cli>`.
 #[derive(Clone)]
-pub struct Config {
+pub struct DatabaseConfig {
     /// Database backend type.
-    pub db_backend: DatabaseBackend,
+    pub backend: DatabaseBackend,
 
     /// Database host (resolved default: `"localhost"`).
-    pub db_host: String,
+    pub host: String,
 
     /// Database port (resolved default: backend-dependent).
-    pub db_port: u16,
+    pub port: u16,
 
     /// Database user (resolved default: backend-dependent).
-    pub db_user: String,
+    pub user: String,
 
-    /// Database password (resolved default: empty string).
-    pub db_password: String,
+    /// Database password.
+    pub password: Option<String>,
 
-    /// Database name or `SQLite` file path (resolved default: empty string).
-    pub db_name: String,
+    /// Database name or `SQLite` file path.
+    pub name: Option<String>,
 
     /// Character set for MySQL/MariaDB connections.
-    pub db_charset: Option<String>,
+    pub charset: Option<String>,
 
     /// Enable SSL/TLS for the database connection.
-    pub db_ssl: bool,
+    pub ssl: bool,
 
     /// Path to the CA certificate for SSL.
-    pub db_ssl_ca: Option<String>,
+    pub ssl_ca: Option<String>,
 
     /// Path to the client certificate for SSL.
-    pub db_ssl_cert: Option<String>,
+    pub ssl_cert: Option<String>,
 
     /// Path to the client key for SSL.
-    pub db_ssl_key: Option<String>,
+    pub ssl_key: Option<String>,
 
     /// Whether to verify the server certificate.
-    pub db_ssl_verify_cert: bool,
+    pub ssl_verify_cert: bool,
 
     /// Whether the server runs in read-only mode.
-    pub db_read_only: bool,
+    pub read_only: bool,
 
     /// Maximum database connection pool size.
-    pub db_max_pool_size: u32,
-
-    /// Log level filter (e.g. "info", "debug", "warn").
-    pub log_level: String,
-
-    /// Bind host for HTTP transport.
-    pub http_host: String,
-
-    /// Bind port for HTTP transport.
-    pub http_port: u16,
-
-    /// Allowed CORS origins.
-    pub http_allowed_origins: Vec<String>,
-
-    /// Allowed host names.
-    pub http_allowed_hosts: Vec<String>,
+    pub max_pool_size: u32,
 }
 
-impl std::fmt::Debug for Config {
+impl std::fmt::Debug for DatabaseConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config")
-            .field("db_backend", &self.db_backend)
-            .field("db_host", &self.db_host)
-            .field("db_port", &self.db_port)
-            .field("db_user", &self.db_user)
-            .field("db_password", &"[REDACTED]")
-            .field("db_name", &self.db_name)
-            .field("db_charset", &self.db_charset)
-            .field("db_ssl", &self.db_ssl)
-            .field("db_ssl_ca", &self.db_ssl_ca)
-            .field("db_ssl_cert", &self.db_ssl_cert)
-            .field("db_ssl_key", &self.db_ssl_key)
-            .field("db_ssl_verify_cert", &self.db_ssl_verify_cert)
-            .field("db_read_only", &self.db_read_only)
-            .field("db_max_pool_size", &self.db_max_pool_size)
-            .field("log_level", &self.log_level)
-            .field("http_host", &self.http_host)
-            .field("http_port", &self.http_port)
-            .field("http_allowed_origins", &self.http_allowed_origins)
-            .field("http_allowed_hosts", &self.http_allowed_hosts)
+        f.debug_struct("DatabaseConfig")
+            .field("backend", &self.backend)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &"[REDACTED]")
+            .field("name", &self.name)
+            .field("charset", &self.charset)
+            .field("ssl", &self.ssl)
+            .field("ssl_ca", &self.ssl_ca)
+            .field("ssl_cert", &self.ssl_cert)
+            .field("ssl_key", &self.ssl_key)
+            .field("ssl_verify_cert", &self.ssl_verify_cert)
+            .field("read_only", &self.read_only)
+            .field("max_pool_size", &self.max_pool_size)
             .finish()
     }
 }
 
-impl Config {
+impl DatabaseConfig {
     /// Default database backend.
-    pub const DEFAULT_DB_BACKEND: DatabaseBackend = DatabaseBackend::Mysql;
+    pub const DEFAULT_BACKEND: DatabaseBackend = DatabaseBackend::Mysql;
     /// Default database host.
-    pub const DEFAULT_DB_HOST: &'static str = "localhost";
+    pub const DEFAULT_HOST: &'static str = "localhost";
     /// Default SSL enabled state.
-    pub const DEFAULT_DB_SSL: bool = false;
+    pub const DEFAULT_SSL: bool = false;
     /// Default SSL certificate verification.
-    pub const DEFAULT_DB_SSL_VERIFY_CERT: bool = true;
+    pub const DEFAULT_SSL_VERIFY_CERT: bool = true;
     /// Default read-only mode.
-    pub const DEFAULT_DB_READ_ONLY: bool = true;
+    pub const DEFAULT_READ_ONLY: bool = true;
     /// Default connection pool size.
-    pub const DEFAULT_DB_MAX_POOL_SIZE: u32 = 10;
-    /// Default log level.
-    pub const DEFAULT_LOG_LEVEL: &'static str = "info";
-    /// Default HTTP bind host.
-    pub const DEFAULT_HTTP_HOST: &'static str = "127.0.0.1";
-    /// Default HTTP bind port.
-    pub const DEFAULT_HTTP_PORT: u16 = 9001;
-    /// Default allowed CORS origins.
-    pub const DEFAULT_HTTP_ALLOWED_ORIGINS: &'static [&'static str] = &[
-        "http://localhost",
-        "http://127.0.0.1",
-        "https://localhost",
-        "https://127.0.0.1",
-    ];
-    /// Default allowed host names.
-    pub const DEFAULT_HTTP_ALLOWED_HOSTS: &'static [&'static str] = &["localhost", "127.0.0.1"];
+    pub const DEFAULT_MAX_POOL_SIZE: u32 = 10;
+}
 
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            backend: Self::DEFAULT_BACKEND,
+            host: Self::DEFAULT_HOST.into(),
+            port: Self::DEFAULT_BACKEND.default_port(),
+            user: Self::DEFAULT_BACKEND.default_user().into(),
+            password: None,
+            name: None,
+            charset: None,
+            ssl: Self::DEFAULT_SSL,
+            ssl_ca: None,
+            ssl_cert: None,
+            ssl_key: None,
+            ssl_verify_cert: Self::DEFAULT_SSL_VERIFY_CERT,
+            read_only: Self::DEFAULT_READ_ONLY,
+            max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
+        }
+    }
+}
+
+/// HTTP transport binding and security settings.
+#[derive(Clone, Debug)]
+pub struct HttpConfig {
+    /// Bind host for HTTP transport.
+    pub host: String,
+
+    /// Bind port for HTTP transport.
+    pub port: u16,
+
+    /// Allowed CORS origins.
+    pub allowed_origins: Vec<String>,
+
+    /// Allowed host names.
+    pub allowed_hosts: Vec<String>,
+}
+
+impl HttpConfig {
+    /// Default HTTP bind host.
+    pub const DEFAULT_HOST: &'static str = "127.0.0.1";
+    /// Default HTTP bind port.
+    pub const DEFAULT_PORT: u16 = 9001;
+
+    /// Return default allowed CORS origins.
+    #[must_use]
+    pub fn default_allowed_origins() -> Vec<String> {
+        vec![
+            "http://localhost".into(),
+            "http://127.0.0.1".into(),
+            "https://localhost".into(),
+            "https://127.0.0.1".into(),
+        ]
+    }
+
+    /// Returns default allowed host names.
+    #[must_use]
+    pub fn default_allowed_hosts() -> Vec<String> {
+        vec!["localhost".into(), "127.0.0.1".into()]
+    }
+}
+
+/// Default log level.
+pub const DEFAULT_LOG_LEVEL: &str = "info";
+
+/// Runtime configuration for the MCP server.
+///
+/// Composes [`DatabaseConfig`] with an optional [`HttpConfig`].
+/// Server config is only present when the HTTP transport is selected.
+/// Logging is configured directly from CLI arguments before `Config`
+/// is constructed, so it is not part of this struct.
+#[derive(Clone, Debug)]
+pub struct Config {
+    /// Database connection and behavior settings.
+    pub database: DatabaseConfig,
+
+    /// HTTP transport settings (present only for the `http` subcommand).
+    pub server: Option<HttpConfig>,
+}
+
+impl Config {
     /// Validates the configuration and returns all errors found.
     ///
     /// # Errors
@@ -198,15 +248,17 @@ impl Config {
     pub fn validate(&self) -> Result<(), Vec<ConfigError>> {
         let mut errors = Vec::new();
 
-        if self.db_backend == DatabaseBackend::Sqlite && self.db_name.is_empty() {
+        if self.database.backend == DatabaseBackend::Sqlite
+            && self.database.name.as_deref().unwrap_or_default().is_empty()
+        {
             errors.push(ConfigError::MissingSqliteDbName);
         }
 
-        if self.db_ssl {
+        if self.database.ssl {
             for (name, path) in [
-                ("DB_SSL_CA", &self.db_ssl_ca),
-                ("DB_SSL_CERT", &self.db_ssl_cert),
-                ("DB_SSL_KEY", &self.db_ssl_key),
+                ("DB_SSL_CA", &self.database.ssl_ca),
+                ("DB_SSL_CERT", &self.database.ssl_cert),
+                ("DB_SSL_KEY", &self.database.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
@@ -216,11 +268,7 @@ impl Config {
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
 
@@ -228,41 +276,30 @@ impl Config {
 mod tests {
     use super::*;
 
+    fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
+        DatabaseConfig {
+            backend,
+            port: backend.default_port(),
+            user: backend.default_user().into(),
+            ..DatabaseConfig::default()
+        }
+    }
+
     fn base_config(backend: DatabaseBackend) -> Config {
         Config {
-            db_backend: backend,
-            db_host: Config::DEFAULT_DB_HOST.into(),
-            db_port: backend.default_port(),
-            db_user: backend.default_user().into(),
-            db_password: String::new(),
-            db_name: String::new(),
-            db_charset: None,
-            db_ssl: false,
-            db_ssl_ca: None,
-            db_ssl_cert: None,
-            db_ssl_key: None,
-            db_ssl_verify_cert: true,
-            db_read_only: Config::DEFAULT_DB_READ_ONLY,
-            db_max_pool_size: Config::DEFAULT_DB_MAX_POOL_SIZE,
-            log_level: Config::DEFAULT_LOG_LEVEL.into(),
-            http_host: Config::DEFAULT_HTTP_HOST.into(),
-            http_port: Config::DEFAULT_HTTP_PORT,
-            http_allowed_origins: Config::DEFAULT_HTTP_ALLOWED_ORIGINS
-                .iter()
-                .map(|&s| s.into())
-                .collect(),
-            http_allowed_hosts: Config::DEFAULT_HTTP_ALLOWED_HOSTS
-                .iter()
-                .map(|&s| s.into())
-                .collect(),
+            database: db_config(backend),
+            server: None,
         }
     }
 
     fn mysql_config() -> Config {
         Config {
-            db_port: 3306,
-            db_user: "root".into(),
-            db_password: "secret".into(),
+            database: DatabaseConfig {
+                port: 3306,
+                user: "root".into(),
+                password: Some("secret".into()),
+                ..db_config(DatabaseBackend::Mysql)
+            },
             ..base_config(DatabaseBackend::Mysql)
         }
     }
@@ -270,7 +307,10 @@ mod tests {
     #[test]
     fn debug_redacts_password() {
         let config = Config {
-            db_password: "super_secret_password".into(),
+            database: DatabaseConfig {
+                password: Some("super_secret_password".into()),
+                ..mysql_config().database
+            },
             ..mysql_config()
         };
         let debug_output = format!("{config:?}");
@@ -292,8 +332,11 @@ mod tests {
     #[test]
     fn valid_postgres_config_passes() {
         let config = Config {
-            db_user: "pguser".into(),
-            db_port: 5432,
+            database: DatabaseConfig {
+                user: "pguser".into(),
+                port: 5432,
+                ..db_config(DatabaseBackend::Postgres)
+            },
             ..base_config(DatabaseBackend::Postgres)
         };
         assert!(config.validate().is_ok());
@@ -302,7 +345,10 @@ mod tests {
     #[test]
     fn valid_sqlite_config_passes() {
         let config = Config {
-            db_name: "./test.db".into(),
+            database: DatabaseConfig {
+                name: Some("./test.db".into()),
+                ..db_config(DatabaseBackend::Sqlite)
+            },
             ..base_config(DatabaseBackend::Sqlite)
         };
         assert!(config.validate().is_ok());
@@ -311,36 +357,39 @@ mod tests {
     #[test]
     fn defaults_resolved_at_construction() {
         let mysql = base_config(DatabaseBackend::Mysql);
-        assert_eq!(mysql.db_host, "localhost");
-        assert_eq!(mysql.db_port, 3306);
-        assert_eq!(mysql.db_user, "root");
+        assert_eq!(mysql.database.host, "localhost");
+        assert_eq!(mysql.database.port, 3306);
+        assert_eq!(mysql.database.user, "root");
 
         let pg = base_config(DatabaseBackend::Postgres);
-        assert_eq!(pg.db_port, 5432);
-        assert_eq!(pg.db_user, "postgres");
+        assert_eq!(pg.database.port, 5432);
+        assert_eq!(pg.database.user, "postgres");
 
         let sqlite = base_config(DatabaseBackend::Sqlite);
-        assert_eq!(sqlite.db_port, 0);
-        assert_eq!(sqlite.db_user, "");
+        assert_eq!(sqlite.database.port, 0);
+        assert_eq!(sqlite.database.user, "");
     }
 
     #[test]
     fn explicit_values_override_defaults() {
         let config = Config {
-            db_host: "dbserver.example.com".into(),
-            db_port: 13306,
-            db_user: "myuser".into(),
+            database: DatabaseConfig {
+                host: "dbserver.example.com".into(),
+                port: 13306,
+                user: "myuser".into(),
+                ..db_config(DatabaseBackend::Mysql)
+            },
             ..base_config(DatabaseBackend::Mysql)
         };
-        assert_eq!(config.db_host, "dbserver.example.com");
-        assert_eq!(config.db_port, 13306);
-        assert_eq!(config.db_user, "myuser");
+        assert_eq!(config.database.host, "dbserver.example.com");
+        assert_eq!(config.database.port, 13306);
+        assert_eq!(config.database.user, "myuser");
     }
 
     #[test]
     fn mysql_without_user_gets_default() {
         let config = base_config(DatabaseBackend::Mysql);
-        assert_eq!(config.db_user, "root");
+        assert_eq!(config.database.user, "root");
         assert!(config.validate().is_ok());
     }
 
@@ -348,20 +397,19 @@ mod tests {
     fn sqlite_requires_db_name() {
         let config = base_config(DatabaseBackend::Sqlite);
         let errors = config.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::MissingSqliteDbName))
-        );
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
     }
 
     #[test]
     fn multiple_errors_accumulated() {
         let config = Config {
-            db_ssl: true,
-            db_ssl_ca: Some("/nonexistent/ca.pem".into()),
-            db_ssl_cert: Some("/nonexistent/cert.pem".into()),
-            db_ssl_key: Some("/nonexistent/key.pem".into()),
+            database: DatabaseConfig {
+                ssl: true,
+                ssl_ca: Some("/nonexistent/ca.pem".into()),
+                ssl_cert: Some("/nonexistent/cert.pem".into()),
+                ssl_key: Some("/nonexistent/key.pem".into()),
+                ..db_config(DatabaseBackend::Mysql)
+            },
             ..base_config(DatabaseBackend::Mysql)
         };
         let errors = config.validate().unwrap_err();

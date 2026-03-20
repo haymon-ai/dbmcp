@@ -7,7 +7,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use sql_mcp::config::{Config, DatabaseBackend};
+use sql_mcp::config::{DatabaseBackend, DatabaseConfig};
 use sql_mcp::db::backend::Backend;
 use sql_mcp::db::sqlite::SqliteBackend;
 use tokio::sync::OnceCell;
@@ -37,27 +37,14 @@ async fn seed_db(db_path: &str) {
     pool.close().await;
 }
 
-fn sqlite_config(db_path: &str, read_only: bool) -> Config {
-    Config {
-        db_backend: DatabaseBackend::Sqlite,
-        db_host: "localhost".into(),
-        db_port: 0,
-        db_user: String::new(),
-        db_password: String::new(),
-        db_name: format!("{db_path}?mode=rwc"),
-        db_read_only: read_only,
-        db_max_pool_size: 10,
-        db_charset: None,
-        db_ssl: false,
-        db_ssl_ca: None,
-        db_ssl_cert: None,
-        db_ssl_key: None,
-        db_ssl_verify_cert: true,
-        log_level: "info".into(),
-        http_host: "127.0.0.1".into(),
-        http_port: 9001,
-        http_allowed_origins: vec!["http://localhost".into()],
-        http_allowed_hosts: vec!["localhost".into()],
+fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
+    DatabaseConfig {
+        backend: DatabaseBackend::Sqlite,
+        port: 0,
+        user: String::new(),
+        name: Some(format!("{db_path}?mode=rwc")),
+        read_only,
+        ..DatabaseConfig::default()
     }
 }
 
@@ -65,22 +52,14 @@ async fn backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
     let config = sqlite_config(&db_path, false);
-    Backend::Sqlite(
-        SqliteBackend::new(&config)
-            .await
-            .expect("SQLite open failed"),
-    )
+    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
 }
 
 async fn readonly_backend() -> Backend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     SEEDED.get_or_init(|| seed_db(&db_path)).await;
     let config = sqlite_config(&db_path, true);
-    Backend::Sqlite(
-        SqliteBackend::new(&config)
-            .await
-            .expect("SQLite open failed"),
-    )
+    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
 }
 
 #[tokio::test]
@@ -88,10 +67,7 @@ async fn it_lists_databases() {
     let b = backend().await;
     let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
-    assert!(
-        dbs.iter().any(|db| db == "main"),
-        "Expected 'main' in: {dbs:?}"
-    );
+    assert!(dbs.iter().any(|db| db == "main"), "Expected 'main' in: {dbs:?}");
 }
 
 #[tokio::test]
@@ -110,22 +86,11 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = b
-        .tool_get_table_schema("main", "users")
-        .await
-        .expect("failed");
+    let result = b.tool_get_table_schema("main", "users").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
-    let columns: Vec<String> = schema
-        .as_object()
-        .expect("object")
-        .keys()
-        .cloned()
-        .collect();
+    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
     for col in ["id", "name", "email", "created_at"] {
-        assert!(
-            columns.iter().any(|c| c == col),
-            "Missing '{col}' in: {columns:?}"
-        );
+        assert!(columns.iter().any(|c| c == col), "Missing '{col}' in: {columns:?}");
     }
 }
 
@@ -163,10 +128,7 @@ async fn it_blocks_writes_in_read_only_mode() {
             None,
         )
         .await;
-    assert!(
-        result.is_err(),
-        "Expected error for write in read-only mode"
-    );
+    assert!(result.is_err(), "Expected error for write in read-only mode");
 }
 
 #[tokio::test]

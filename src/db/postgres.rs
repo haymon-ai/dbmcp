@@ -2,7 +2,7 @@
 //!
 //! Implements [`DatabaseBackend`] for `PostgreSQL` databases.
 
-use crate::config::Config;
+use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
@@ -33,44 +33,46 @@ impl PostgresBackend {
     /// # Errors
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
-    pub async fn new(config: &Config) -> Result<Self, AppError> {
+    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
         let url = Self::build_connection_url(config);
         let pool = PgPoolOptions::new()
-            .max_connections(config.db_max_pool_size)
+            .max_connections(config.max_pool_size)
             .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
         info!(
             "PostgreSQL connection pool initialized (max size: {})",
-            config.db_max_pool_size
+            config.max_pool_size
         );
 
         Ok(Self {
             pool,
-            read_only: config.db_read_only,
+            read_only: config.read_only,
         })
     }
 }
 
 impl PostgresBackend {
     /// Builds a sqlx connection URL from individual config fields.
-    fn build_connection_url(config: &Config) -> String {
+    fn build_connection_url(config: &DatabaseConfig) -> String {
+        let password = config.password.as_deref().unwrap_or_default();
+        let name = config.name.as_deref().unwrap_or_default();
         let mut url = format!(
             "postgres://{}:{}@{}:{}/{}",
-            config.db_user, config.db_password, config.db_host, config.db_port, config.db_name
+            config.user, password, config.host, config.port, name
         );
 
         let mut params = Vec::new();
-        if config.db_ssl {
+        if config.ssl {
             params.push("sslmode=require".into());
-            if let Some(ref ca) = config.db_ssl_ca {
+            if let Some(ref ca) = config.ssl_ca {
                 params.push(format!("sslrootcert={ca}"));
             }
-            if let Some(ref cert) = config.db_ssl_cert {
+            if let Some(ref cert) = config.ssl_cert {
                 params.push(format!("sslcert={cert}"));
             }
-            if let Some(ref key) = config.db_ssl_key {
+            if let Some(ref key) = config.ssl_key {
                 params.push(format!("sslkey={key}"));
             }
         }
@@ -92,22 +94,20 @@ impl PostgresBackend {
 
 impl DatabaseBackend for PostgresBackend {
     async fn list_databases(&self) -> Result<Vec<String>, AppError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
     async fn list_tables(&self, _database: &str) -> Result<Vec<String>, AppError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -149,14 +149,9 @@ impl DatabaseBackend for PostgresBackend {
         Ok(json!(schema))
     }
 
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError> {
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
         let schema = self.get_table_schema(database, table).await?;
-        let mut columns: HashMap<String, Value> =
-            serde_json::from_value(schema).unwrap_or_default();
+        let mut columns: HashMap<String, Value> = serde_json::from_value(schema).unwrap_or_default();
 
         // Add null foreign_key to all columns
         for col in columns.values_mut() {
@@ -217,11 +212,7 @@ impl DatabaseBackend for PostgresBackend {
         }))
     }
 
-    async fn execute_query(
-        &self,
-        sql: &str,
-        _database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await
@@ -281,21 +272,12 @@ mod tests {
     #[test]
     fn quote_identifier_wraps_in_double_quotes() {
         assert_eq!(PostgresBackend::quote_identifier("users"), "\"users\"");
-        assert_eq!(
-            PostgresBackend::quote_identifier("eu-docker"),
-            "\"eu-docker\""
-        );
+        assert_eq!(PostgresBackend::quote_identifier("eu-docker"), "\"eu-docker\"");
     }
 
     #[test]
     fn quote_identifier_escapes_double_quotes() {
-        assert_eq!(
-            PostgresBackend::quote_identifier("test\"db"),
-            "\"test\"\"db\""
-        );
-        assert_eq!(
-            PostgresBackend::quote_identifier("a\"b\"c"),
-            "\"a\"\"b\"\"c\""
-        );
+        assert_eq!(PostgresBackend::quote_identifier("test\"db"), "\"test\"\"db\"");
+        assert_eq!(PostgresBackend::quote_identifier("a\"b\"c"), "\"a\"\"b\"\"c\"");
     }
 }

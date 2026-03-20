@@ -2,7 +2,7 @@
 //!
 //! Implements [`DatabaseBackend`] for `SQLite` file-based databases.
 
-use crate::config::Config;
+use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
@@ -33,19 +33,20 @@ impl SqliteBackend {
     /// # Errors
     ///
     /// Returns [`AppError::Connection`] if the database file cannot be opened.
-    pub async fn new(config: &Config) -> Result<Self, AppError> {
-        let url = format!("sqlite:{}", config.db_name);
+    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
+        let name = config.name.as_deref().unwrap_or_default();
+        let url = format!("sqlite:{name}");
         let pool = SqlitePoolOptions::new()
             .max_connections(1) // SQLite is single-writer
             .connect(&url)
             .await
             .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
 
-        info!("SQLite connection initialized: {}", config.db_name);
+        info!("SQLite connection initialized: {name}");
 
         Ok(Self {
             pool,
-            read_only: config.db_read_only,
+            read_only: config.read_only,
         })
     }
 }
@@ -79,13 +80,10 @@ impl DatabaseBackend for SqliteBackend {
 
     async fn get_table_schema(&self, _database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(table)?;
-        let rows: Vec<SqliteRow> = sqlx::query(&format!(
-            "PRAGMA table_info({})",
-            Self::quote_identifier(table)
-        ))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info({})", Self::quote_identifier(table)))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Query(e.to_string()))?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.to_string()));
@@ -112,14 +110,9 @@ impl DatabaseBackend for SqliteBackend {
         Ok(json!(schema))
     }
 
-    async fn get_table_schema_with_relations(
-        &self,
-        database: &str,
-        table: &str,
-    ) -> Result<Value, AppError> {
+    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
         let schema = self.get_table_schema(database, table).await?;
-        let mut columns: HashMap<String, Value> =
-            serde_json::from_value(schema).unwrap_or_default();
+        let mut columns: HashMap<String, Value> = serde_json::from_value(schema).unwrap_or_default();
 
         // Add null foreign_key to all columns
         for col in columns.values_mut() {
@@ -129,13 +122,11 @@ impl DatabaseBackend for SqliteBackend {
         }
 
         // Get FK info via PRAGMA
-        let fk_rows: Vec<SqliteRow> = sqlx::query(&format!(
-            "PRAGMA foreign_key_list({})",
-            Self::quote_identifier(table)
-        ))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let fk_rows: Vec<SqliteRow> =
+            sqlx::query(&format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table)))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))?;
 
         for fk_row in &fk_rows {
             let from_col: String = fk_row.try_get("from").unwrap_or_default();
@@ -165,11 +156,7 @@ impl DatabaseBackend for SqliteBackend {
         }))
     }
 
-    async fn execute_query(
-        &self,
-        sql: &str,
-        _database: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
         let rows: Vec<SqliteRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await
@@ -212,21 +199,12 @@ mod tests {
     #[test]
     fn quote_identifier_wraps_in_double_quotes() {
         assert_eq!(SqliteBackend::quote_identifier("users"), "\"users\"");
-        assert_eq!(
-            SqliteBackend::quote_identifier("eu-docker"),
-            "\"eu-docker\""
-        );
+        assert_eq!(SqliteBackend::quote_identifier("eu-docker"), "\"eu-docker\"");
     }
 
     #[test]
     fn quote_identifier_escapes_double_quotes() {
-        assert_eq!(
-            SqliteBackend::quote_identifier("test\"db"),
-            "\"test\"\"db\""
-        );
-        assert_eq!(
-            SqliteBackend::quote_identifier("a\"b\"c"),
-            "\"a\"\"b\"\"c\""
-        );
+        assert_eq!(SqliteBackend::quote_identifier("test\"db"), "\"test\"\"db\"");
+        assert_eq!(SqliteBackend::quote_identifier("a\"b\"c"), "\"a\"\"b\"\"c\"");
     }
 }
