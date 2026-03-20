@@ -1,21 +1,32 @@
 //! `PostgreSQL` backend implementation via sqlx.
 //!
-//! Implements [`DatabaseBackend`] for `PostgreSQL` databases.
+//! Implements [`DatabaseBackend`] for `PostgreSQL` databases. Supports
+//! cross-database operations by maintaining a concurrent cache of connection
+//! pools keyed by database name.
 
 use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
+use moka::future::Cache;
 use serde_json::{Map, Value, json};
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use sqlx::{Column, PgPool, Row};
 use std::collections::HashMap;
 use tracing::info;
 
+/// Maximum number of database connection pools to cache (including the default).
+const POOL_CACHE_CAPACITY: u64 = 6;
+
 /// `PostgreSQL` database backend.
+///
+/// All connection pools — including the default — live in a single
+/// concurrent cache keyed by database name. No external mutex required.
 #[derive(Clone)]
 pub struct PostgresBackend {
-    pool: PgPool,
+    config: DatabaseConfig,
+    default_db: String,
+    pools: Cache<String, PgPool>,
     pub read_only: bool,
 }
 
@@ -23,12 +34,17 @@ impl std::fmt::Debug for PostgresBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresBackend")
             .field("read_only", &self.read_only)
+            .field("default_db", &self.default_db)
             .finish_non_exhaustive()
     }
 }
 
 impl PostgresBackend {
     /// Creates a new `PostgreSQL` backend from configuration.
+    ///
+    /// Stores a clone of the configuration for constructing connection URLs
+    /// to non-default databases at runtime. The initial pool is placed into
+    /// the shared cache keyed by the configured database name.
     ///
     /// # Errors
     ///
@@ -46,8 +62,24 @@ impl PostgresBackend {
             config.max_pool_size
         );
 
+        // PostgreSQL defaults to a database named after the connecting user.
+        let default_db = config.name.clone().unwrap_or_else(|| config.user.clone());
+
+        let pools = Cache::builder()
+            .max_capacity(POOL_CACHE_CAPACITY)
+            .eviction_listener(|_key, pool: PgPool, _cause| {
+                tokio::spawn(async move {
+                    pool.close().await;
+                });
+            })
+            .build();
+
+        pools.insert(default_db.clone(), pool).await;
+
         Ok(Self {
-            pool,
+            config: config.clone(),
+            default_db,
+            pools,
             read_only: config.read_only,
         })
     }
@@ -90,29 +122,87 @@ impl PostgresBackend {
         let escaped = name.replace('"', "\"\"");
         format!("\"{escaped}\"")
     }
+
+    /// Returns a connection pool for the requested database.
+    ///
+    /// Resolves `None` or empty names to the default pool. On a cache miss
+    /// a new pool is created and cached. Evicted pools are closed via the
+    /// cache's eviction listener.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::InvalidIdentifier`] if the database name fails
+    /// validation, or [`AppError::Connection`] if the new pool cannot connect.
+    async fn get_pool(&self, database: Option<&str>) -> Result<PgPool, AppError> {
+        let db_key = match database {
+            Some(name) if !name.is_empty() => name,
+            _ => &self.default_db,
+        };
+
+        if let Some(pool) = self.pools.get(db_key).await {
+            return Ok(pool);
+        }
+
+        // Cache miss — validate then create a new pool.
+        validate_identifier(db_key)?;
+
+        let config = self.config.clone();
+        let db_key_owned = db_key.to_owned();
+
+        let pool = self
+            .pools
+            .try_get_with(db_key_owned, async {
+                let mut cfg = config;
+                cfg.name = Some(db_key.to_owned());
+                let url = Self::build_connection_url(&cfg);
+
+                PgPoolOptions::new()
+                    .max_connections(cfg.max_pool_size)
+                    .connect(&url)
+                    .await
+                    .map_err(|e| {
+                        AppError::Connection(format!("Failed to connect to PostgreSQL database '{db_key}': {e}"))
+                    })
+            })
+            .await
+            .map_err(|e| match e.as_ref() {
+                AppError::Connection(msg) => AppError::Connection(msg.clone()),
+                other => AppError::Connection(other.to_string()),
+            })?;
+
+        Ok(pool)
+    }
 }
 
 impl DatabaseBackend for PostgresBackend {
+    // `list_databases` uses the default pool intentionally — `pg_database`
+    // is a server-wide catalog that returns all databases regardless of
+    // which database the connection targets.
     async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+        let pool = self.get_pool(None).await?;
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
-                .fetch_all(&self.pool)
+                .fetch_all(&pool)
                 .await
                 .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
-    async fn list_tables(&self, _database: &str) -> Result<Vec<String>, AppError> {
+    async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
+        let db = if database.is_empty() { None } else { Some(database) };
+        let pool = self.get_pool(db).await?;
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
-                .fetch_all(&self.pool)
+                .fetch_all(&pool)
                 .await
                 .map_err(|e| AppError::Query(e.to_string()))?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
-    async fn get_table_schema(&self, _database: &str, table: &str) -> Result<Value, AppError> {
+    async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(table)?;
+        let db = if database.is_empty() { None } else { Some(database) };
+        let pool = self.get_pool(db).await?;
         let rows: Vec<PgRow> = sqlx::query(
             r"SELECT column_name, data_type, is_nullable, column_default,
                       character_maximum_length
@@ -121,7 +211,7 @@ impl DatabaseBackend for PostgresBackend {
                ORDER BY ordinal_position",
         )
         .bind(table)
-        .fetch_all(&self.pool)
+        .fetch_all(&pool)
         .await
         .map_err(|e| AppError::Query(e.to_string()))?;
 
@@ -160,7 +250,9 @@ impl DatabaseBackend for PostgresBackend {
             }
         }
 
-        // Get FK info
+        // Get FK info using the same pool as the schema query
+        let db = if database.is_empty() { None } else { Some(database) };
+        let pool = self.get_pool(db).await?;
         let fk_rows: Vec<PgRow> = sqlx::query(
             r"SELECT
                 kcu.column_name,
@@ -184,7 +276,7 @@ impl DatabaseBackend for PostgresBackend {
                 AND tc.table_schema = 'public'",
         )
         .bind(table)
-        .fetch_all(&self.pool)
+        .fetch_all(&pool)
         .await
         .map_err(|e| AppError::Query(e.to_string()))?;
 
@@ -212,9 +304,10 @@ impl DatabaseBackend for PostgresBackend {
         }))
     }
 
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+        let pool = self.get_pool(database).await?;
         let rows: Vec<PgRow> = sqlx::query(sql)
-            .fetch_all(&self.pool)
+            .fetch_all(&pool)
             .await
             .map_err(|e| AppError::Query(e.to_string()))?;
 
@@ -237,9 +330,11 @@ impl DatabaseBackend for PostgresBackend {
         }
         validate_identifier(name)?;
 
+        let pool = self.get_pool(None).await?;
+
         // PostgreSQL CREATE DATABASE can't use parameterized queries
         sqlx::query(&format!("CREATE DATABASE {}", Self::quote_identifier(name)))
-            .execute(&self.pool)
+            .execute(&pool)
             .await
             .map_err(|e| {
                 let msg = e.to_string();

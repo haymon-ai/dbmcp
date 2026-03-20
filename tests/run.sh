@@ -93,9 +93,9 @@ wait_for_ready() {
         case "$db_type" in
             mysql)
                 if docker compose -f "$COMPOSE_FILE" exec -T "$service" \
-                    mariadb -u root mcp -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1 \
+                    mariadb -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1 \
                 || docker compose -f "$COMPOSE_FILE" exec -T "$service" \
-                    mysql -u root mcp -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1; then
+                    mysql -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1; then
                     echo " OK (${elapsed}s)"
                     return 0
                 fi
@@ -138,7 +138,7 @@ run_entry() {
         # SQLite: no container — create temp file, seeding happens in Rust via include_str!
         local tmpdir
         tmpdir=$(mktemp -d)
-        local db_path="${tmpdir}/mcp.db"
+        local db_path="${tmpdir}/app.db"
 
         echo "  Running cargo test... (seeds via sqlx)"
         test_output=$(

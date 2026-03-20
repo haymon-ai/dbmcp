@@ -19,7 +19,7 @@ fn test_config() -> DatabaseConfig {
             .unwrap_or(3306),
         user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
         password: std::env::var("DB_PASSWORD").ok(),
-        name: Some("mcp".into()),
+        name: Some("app".into()),
         read_only: false,
         ..DatabaseConfig::default()
     }
@@ -43,13 +43,13 @@ async fn it_lists_databases() {
     let b = backend().await;
     let result = b.tool_list_databases().await.expect("failed");
     let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
-    assert!(dbs.iter().any(|db| db == "mcp"), "Expected 'mcp' in: {dbs:?}");
+    assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
 
 #[tokio::test]
 async fn it_lists_tables() {
     let b = backend().await;
-    let result = b.tool_list_tables("mcp").await.expect("failed");
+    let result = b.tool_list_tables("app").await.expect("failed");
     let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -62,7 +62,7 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = b.tool_get_table_schema("mcp", "users").await.expect("failed");
+    let result = b.tool_get_table_schema("app", "users").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
     let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
     for col in ["id", "name", "email", "created_at"] {
@@ -74,7 +74,7 @@ async fn it_gets_table_schema() {
 async fn it_gets_table_relations() {
     let b = backend().await;
     let result = b
-        .tool_get_table_schema_with_relations("mcp", "posts")
+        .tool_get_table_schema_with_relations("app", "posts")
         .await
         .expect("failed");
     assert!(
@@ -87,7 +87,7 @@ async fn it_gets_table_relations() {
 async fn it_executes_sql() {
     let b = backend().await;
     let result = b
-        .tool_execute_sql("SELECT * FROM users ORDER BY id", "mcp", None)
+        .tool_execute_sql("SELECT * FROM users ORDER BY id", "app", None)
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -100,7 +100,7 @@ async fn it_blocks_writes_in_read_only_mode() {
     let result = b
         .tool_execute_sql(
             "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-            "mcp",
+            "app",
             None,
         )
         .await;
@@ -110,11 +110,87 @@ async fn it_blocks_writes_in_read_only_mode() {
 #[tokio::test]
 async fn it_creates_database() {
     let b = backend().await;
-    let result = b.tool_create_database("mcp_new").await.expect("failed");
+    let result = b.tool_create_database("app_new").await.expect("failed");
     assert!(!result.is_empty());
     let list = b.tool_list_databases().await.expect("list failed");
     let dbs: Vec<String> = serde_json::from_str(&list).unwrap_or_default();
-    assert!(dbs.iter().any(|db| db == "mcp_new"), "New db not in list");
+    assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
+}
+
+// ---- Cross-database tests ----
+
+#[tokio::test]
+async fn it_lists_tables_cross_database() {
+    let b = backend().await;
+    let result = b.tool_list_tables("analytics").await.expect("failed");
+    let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
+    assert!(
+        tables.iter().any(|t| t == "events"),
+        "Expected 'events' in analytics tables: {tables:?}"
+    );
+    assert!(
+        !tables.iter().any(|t| t == "users"),
+        "Should not see 'users' from default db in analytics: {tables:?}"
+    );
+}
+
+#[tokio::test]
+async fn it_executes_sql_cross_database() {
+    let b = backend().await;
+    let result = b
+        .tool_execute_sql("SELECT * FROM events ORDER BY id", "analytics", None)
+        .await
+        .expect("failed");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    assert_eq!(rows.len(), 2, "Expected 2 events, got {}", rows.len());
+}
+
+#[tokio::test]
+async fn it_gets_table_schema_cross_database() {
+    let b = backend().await;
+    let result = b.tool_get_table_schema("analytics", "events").await.expect("failed");
+    let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
+    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
+    for col in ["id", "name", "payload", "created_at"] {
+        assert!(
+            columns.iter().any(|c| c == col),
+            "Missing '{col}' in analytics events schema: {columns:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn it_lists_databases_includes_cross_db() {
+    let b = backend().await;
+    let result = b.tool_list_databases().await.expect("failed");
+    let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
+    assert!(
+        dbs.iter().any(|db| db == "analytics"),
+        "Expected 'analytics' in databases: {dbs:?}"
+    );
+}
+
+#[tokio::test]
+async fn it_blocks_writes_cross_database_in_read_only_mode() {
+    let b = readonly_backend().await;
+    let result = b
+        .tool_execute_sql("INSERT INTO events (name) VALUES ('hack')", "analytics", None)
+        .await;
+    assert!(
+        result.is_err(),
+        "Expected error for write in read-only mode on cross-database"
+    );
+}
+
+#[tokio::test]
+async fn it_uses_default_pool_for_matching_database() {
+    let b = backend().await;
+    let result = b.tool_list_tables("app").await.expect("failed");
+    let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
+    assert!(
+        tables.iter().any(|t| t == "users"),
+        "Expected 'users' when explicitly passing default db: {tables:?}"
+    );
 }
 
 #[tokio::test]
@@ -124,7 +200,7 @@ async fn it_has_consistent_seed_data() {
     async fn check(b: &Backend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let result = b
-            .tool_execute_sql(&sql, "mcp", None)
+            .tool_execute_sql(&sql, "app", None)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
