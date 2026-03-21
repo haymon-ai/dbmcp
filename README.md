@@ -208,3 +208,7 @@ cargo clippy -- -D warnings  # Lint
 cargo fmt                # Format
 cargo doc --no-deps      # Build documentation
 ```
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
