@@ -9,10 +9,18 @@ use crate::error::AppError;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Map, Value, json};
-use sqlx::sqlite::{SqlitePoolOptions, SqliteRow};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row, SqlitePool, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use tracing::info;
+
+/// Converts [`DatabaseConfig`] into [`SqliteConnectOptions`].
+impl From<&DatabaseConfig> for SqliteConnectOptions {
+    fn from(config: &DatabaseConfig) -> Self {
+        let name = config.name.as_deref().unwrap_or_default();
+        SqliteConnectOptions::new().filename(name)
+    }
+}
 
 /// `SQLite` file-based database backend.
 #[derive(Clone)]
@@ -37,10 +45,9 @@ impl SqliteBackend {
     /// Returns [`AppError::Connection`] if the database file cannot be opened.
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
         let name = config.name.as_deref().unwrap_or_default();
-        let url = format!("sqlite:{name}");
         let pool = SqlitePoolOptions::new()
             .max_connections(1) // SQLite is single-writer
-            .connect(&url)
+            .connect_with(config.into())
             .await
             .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
 
@@ -248,7 +255,7 @@ fn sqlite_dynamic_probe(row: &SqliteRow, idx: usize) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use crate::config::DatabaseBackend;
 
     #[test]
     fn quote_identifier_wraps_in_double_quotes() {
@@ -260,6 +267,31 @@ mod tests {
     fn quote_identifier_escapes_double_quotes() {
         assert_eq!(SqliteBackend::quote_identifier("test\"db"), "\"test\"\"db\"");
         assert_eq!(SqliteBackend::quote_identifier("a\"b\"c"), "\"a\"\"b\"\"c\"");
+    }
+
+    #[test]
+    fn try_from_sets_filename() {
+        let config = DatabaseConfig {
+            backend: DatabaseBackend::Sqlite,
+            name: Some("test.db".into()),
+            ..DatabaseConfig::default()
+        };
+        let opts = SqliteConnectOptions::from(&config);
+
+        assert_eq!(opts.get_filename().to_str().expect("valid path"), "test.db");
+    }
+
+    #[test]
+    fn try_from_empty_name_defaults() {
+        let config = DatabaseConfig {
+            backend: DatabaseBackend::Sqlite,
+            name: None,
+            ..DatabaseConfig::default()
+        };
+        let opts = SqliteConnectOptions::from(&config);
+
+        // Empty string filename — validated elsewhere by Config::validate()
+        assert_eq!(opts.get_filename().to_str().expect("valid path"), "");
     }
 
     /// Helper: creates an in-memory `SQLite` pool for unit tests.
