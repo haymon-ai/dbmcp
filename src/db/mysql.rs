@@ -10,10 +10,51 @@ use crate::error::AppError;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Map, Value, json};
-use sqlx::mysql::{MySqlPoolOptions, MySqlRow};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::{Column, Executor, MySqlPool, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use tracing::{error, info};
+
+/// Converts [`DatabaseConfig`] into [`MySqlConnectOptions`].
+impl From<&DatabaseConfig> for MySqlConnectOptions {
+    fn from(config: &DatabaseConfig) -> Self {
+        let mut opts = MySqlConnectOptions::new()
+            .host(&config.host)
+            .port(config.port)
+            .username(&config.user);
+
+        if let Some(ref password) = config.password {
+            opts = opts.password(password);
+        }
+        if let Some(ref name) = config.name
+            && !name.is_empty()
+        {
+            opts = opts.database(name);
+        }
+        if let Some(ref charset) = config.charset {
+            opts = opts.charset(charset);
+        }
+
+        if config.ssl {
+            opts = if config.ssl_verify_cert {
+                opts.ssl_mode(MySqlSslMode::VerifyCa)
+            } else {
+                opts.ssl_mode(MySqlSslMode::Required)
+            };
+            if let Some(ref ca) = config.ssl_ca {
+                opts = opts.ssl_ca(ca);
+            }
+            if let Some(ref cert) = config.ssl_cert {
+                opts = opts.ssl_client_cert(cert);
+            }
+            if let Some(ref key) = config.ssl_key {
+                opts = opts.ssl_client_key(key);
+            }
+        }
+
+        opts
+    }
+}
 
 /// MySQL/MariaDB database backend.
 #[derive(Clone)]
@@ -37,10 +78,9 @@ impl MysqlBackend {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let url = Self::build_connection_url(config);
         let pool = MySqlPoolOptions::new()
             .max_connections(config.max_pool_size)
-            .connect(&url)
+            .connect_with(config.into())
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
 
@@ -99,39 +139,6 @@ impl MysqlBackend {
         if let Err(e) = result {
             tracing::debug!("Unable to determine whether FILE privilege is enabled: {e}");
         }
-    }
-
-    /// Builds a sqlx connection URL from individual config fields.
-    fn build_connection_url(config: &DatabaseConfig) -> String {
-        let password = config.password.as_deref().unwrap_or_default();
-        let name = config.name.as_deref().unwrap_or_default();
-        let mut url = format!(
-            "mysql://{}:{}@{}:{}/{}",
-            config.user, password, config.host, config.port, name
-        );
-
-        let mut params = Vec::new();
-        if let Some(ref charset) = config.charset {
-            params.push(format!("charset={charset}"));
-        }
-
-        if config.ssl {
-            params.push("ssl-mode=required".into());
-            if let Some(ref ca) = config.ssl_ca {
-                params.push(format!("ssl-ca={ca}"));
-            }
-            if let Some(ref cert) = config.ssl_cert {
-                params.push(format!("ssl-cert={cert}"));
-            }
-            if let Some(ref key) = config.ssl_key {
-                params.push(format!("ssl-key={key}"));
-            }
-        }
-        if !params.is_empty() {
-            url.push('?');
-            url.push_str(&params.join("&"));
-        }
-        url
     }
 
     /// Wraps `name` in backticks for safe use in `MySQL` SQL statements.
@@ -447,6 +454,19 @@ fn mysql_bytes_to_json(row: &MySqlRow, idx: usize) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DatabaseBackend;
+
+    fn base_config() -> DatabaseConfig {
+        DatabaseConfig {
+            backend: DatabaseBackend::Mysql,
+            host: "db.example.com".into(),
+            port: 3307,
+            user: "admin".into(),
+            password: Some("s3cret".into()),
+            name: Some("mydb".into()),
+            ..DatabaseConfig::default()
+        }
+    }
 
     #[test]
     fn quote_identifier_wraps_in_backticks() {
@@ -458,5 +478,82 @@ mod tests {
     fn quote_identifier_escapes_backticks() {
         assert_eq!(MysqlBackend::quote_identifier("test`db"), "`test``db`");
         assert_eq!(MysqlBackend::quote_identifier("a`b`c"), "`a``b``c`");
+    }
+
+    #[test]
+    fn try_from_basic_config() {
+        let config = base_config();
+        let opts = MySqlConnectOptions::from(&config);
+
+        assert_eq!(opts.get_host(), "db.example.com");
+        assert_eq!(opts.get_port(), 3307);
+        assert_eq!(opts.get_username(), "admin");
+        assert_eq!(opts.get_database(), Some("mydb"));
+    }
+
+    #[test]
+    fn try_from_with_charset() {
+        let config = DatabaseConfig {
+            charset: Some("utf8mb4".into()),
+            ..base_config()
+        };
+        let opts = MySqlConnectOptions::from(&config);
+
+        assert_eq!(opts.get_charset(), "utf8mb4");
+    }
+
+    #[test]
+    fn try_from_with_ssl_required() {
+        let config = DatabaseConfig {
+            ssl: true,
+            ssl_verify_cert: false,
+            ..base_config()
+        };
+        let opts = MySqlConnectOptions::from(&config);
+
+        assert!(
+            matches!(opts.get_ssl_mode(), MySqlSslMode::Required),
+            "expected Required, got {:?}",
+            opts.get_ssl_mode()
+        );
+    }
+
+    #[test]
+    fn try_from_with_ssl_verify_ca() {
+        let config = DatabaseConfig {
+            ssl: true,
+            ssl_verify_cert: true,
+            ..base_config()
+        };
+        let opts = MySqlConnectOptions::from(&config);
+
+        assert!(
+            matches!(opts.get_ssl_mode(), MySqlSslMode::VerifyCa),
+            "expected VerifyCa, got {:?}",
+            opts.get_ssl_mode()
+        );
+    }
+
+    #[test]
+    fn try_from_without_password() {
+        let config = DatabaseConfig {
+            password: None,
+            ..base_config()
+        };
+        let opts = MySqlConnectOptions::from(&config);
+
+        // Should not panic — password is simply omitted
+        assert_eq!(opts.get_host(), "db.example.com");
+    }
+
+    #[test]
+    fn try_from_without_database_name() {
+        let config = DatabaseConfig {
+            name: None,
+            ..base_config()
+        };
+        let opts = MySqlConnectOptions::from(&config);
+
+        assert_eq!(opts.get_database(), None);
     }
 }
