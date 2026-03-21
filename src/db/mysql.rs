@@ -7,9 +7,11 @@ use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Map, Value, json};
 use sqlx::mysql::{MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Executor, MySqlPool, Row};
+use sqlx::{Column, Executor, MySqlPool, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -172,33 +174,7 @@ impl MysqlBackend {
 
         let rows: Vec<MySqlRow> = conn.fetch_all(sql).await.map_err(|e| AppError::Query(e.to_string()))?;
 
-        let mut results = Vec::new();
-        for row in &rows {
-            let mut map = Map::new();
-            for col in row.columns() {
-                let name = col.name().to_string();
-                let idx = col.ordinal();
-                // MySQL may return columns with BINARY flag where try_get::<String>
-                // fails. Fall through: String → i64 → f64 → bool → Vec<u8> → Null.
-                let value = if let Ok(s) = row.try_get::<String, _>(idx) {
-                    Value::String(s)
-                } else if let Ok(n) = row.try_get::<i64, _>(idx) {
-                    Value::Number(n.into())
-                } else if let Ok(f) = row.try_get::<f64, _>(idx) {
-                    serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
-                } else if let Ok(b) = row.try_get::<bool, _>(idx) {
-                    Value::Bool(b)
-                } else if let Ok(bytes) = row.try_get::<Vec<u8>, _>(idx) {
-                    Value::String(String::from_utf8_lossy(&bytes).into_owned())
-                } else {
-                    Value::Null
-                };
-                map.insert(name, value);
-            }
-            results.push(map);
-        }
-
-        Ok(results)
+        Ok(rows.iter().map(mysql_row_to_json).collect())
     }
 }
 
@@ -400,6 +376,72 @@ impl DatabaseBackend for MysqlBackend {
     fn read_only(&self) -> bool {
         self.read_only
     }
+}
+
+/// Converts a `MySQL` row to a JSON object with type-aware value extraction.
+///
+/// Uses `column.type_info().name()` to pick the right Rust type for each column.
+/// `MySQL` 9 reports `information_schema` text columns as `VARBINARY`; these
+/// are decoded as UTF-8 strings rather than base64.
+fn mysql_row_to_json(row: &MySqlRow) -> Map<String, Value> {
+    let columns = row.columns();
+    let mut map = Map::with_capacity(columns.len());
+
+    for column in columns {
+        let idx = column.ordinal();
+        let type_name = column.type_info().name();
+
+        let value = if row.try_get_raw(idx).is_ok_and(|v| v.is_null()) {
+            Value::Null
+        } else {
+            match type_name {
+                "BOOLEAN" => row.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
+
+                "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED"
+                | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => row
+                    .try_get::<i64, _>(idx)
+                    .map(|v| Value::Number(v.into()))
+                    .unwrap_or(Value::Null),
+
+                "BIGINT UNSIGNED" => row.try_get::<u64, _>(idx).map_or(Value::Null, |v| {
+                    i64::try_from(v)
+                        .map_or_else(|_| Value::String(v.to_string()), |signed| Value::Number(signed.into()))
+                }),
+
+                "FLOAT" | "DOUBLE" | "DECIMAL" => row
+                    .try_get::<f64, _>(idx)
+                    .ok()
+                    .and_then(serde_json::Number::from_f64)
+                    .map_or(Value::Null, Value::Number),
+
+                "JSON" => row.try_get::<Value, _>(idx).unwrap_or(Value::Null),
+
+                // MySQL 9 returns information_schema columns as BINARY/VARBINARY
+                // even when they contain valid UTF-8. Try String first, then bytes.
+                "BINARY" | "VARBINARY" => row
+                    .try_get::<String, _>(idx)
+                    .map_or_else(|_| mysql_bytes_to_json(row, idx), Value::String),
+
+                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => mysql_bytes_to_json(row, idx),
+
+                // All other types (VARCHAR, TEXT, DATE, TIME, ENUM, etc.) → String
+                _ => row
+                    .try_get::<String, _>(idx)
+                    .map_or_else(|_| mysql_bytes_to_json(row, idx), Value::String),
+            }
+        };
+
+        map.insert(column.name().to_string(), value);
+    }
+
+    map
+}
+
+/// Extracts a `MySQL` binary column as UTF-8 string, falling back to base64.
+fn mysql_bytes_to_json(row: &MySqlRow, idx: usize) -> Value {
+    row.try_get::<Vec<u8>, _>(idx).map_or(Value::Null, |bytes| {
+        String::from_utf8(bytes.clone()).map_or_else(|_| Value::String(BASE64.encode(&bytes)), Value::String)
+    })
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ sqlparser = { version = "0.61", features = ["visitor"] }
 thiserror = "2"
 moka = { version = "0.12", features = ["future"] }
 mimalloc = "0.1"
+base64 = "0.22"
 
 [lints.rust]
 ambiguous_negative_literals = "warn"

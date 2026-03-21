@@ -108,6 +108,38 @@ async fn it_blocks_writes_in_read_only_mode() {
 }
 
 #[tokio::test]
+async fn it_preserves_json_types() {
+    let b = backend().await;
+
+    // COUNT(*) should return a JSON number, not a string or null
+    let result = b
+        .tool_execute_sql("SELECT COUNT(*) as cnt FROM users", "app", None)
+        .await
+        .expect("failed");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    let cnt = &rows[0]["cnt"];
+    assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
+    assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
+
+    // Integer and text columns should have correct types
+    let result = b
+        .tool_execute_sql("SELECT id, name FROM users ORDER BY id LIMIT 1", "app", None)
+        .await
+        .expect("failed");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    assert!(
+        rows[0]["id"].is_number(),
+        "id should be a number, got: {}",
+        rows[0]["id"]
+    );
+    assert!(
+        rows[0]["name"].is_string(),
+        "name should be a string, got: {}",
+        rows[0]["name"]
+    );
+}
+
+#[tokio::test]
 async fn it_creates_database() {
     let b = backend().await;
     let result = b.tool_create_database("app_new").await.expect("failed");
