@@ -8,6 +8,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  commits:
+    name: Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cocogitto/cocogitto-action@v4
+        with:
+          command: check
+          args: --from-latest-tag
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
