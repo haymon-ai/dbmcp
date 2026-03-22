@@ -143,6 +143,7 @@ Scopes are optional and freeform. Common scopes in this project include:
 - `db` — database backend logic
 - `cli` — command-line interface
 - `http` — HTTP transport layer
+- `sqlx_to_json` — row-to-JSON conversion crate
 
 ### Examples
 

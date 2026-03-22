@@ -28,6 +28,7 @@ cargo fmt                     # apply formatting
 - **`src/config.rs`** — `Config` flat struct, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `Option<T>` fields with backend-aware defaults via `effective_host()`, `effective_port()`, `effective_user()`. `Config::validate()` accumulates all errors into `Result<(), Vec<ConfigError>>`.
 - **`src/cli.rs`** — Top-level `Cli` struct with `global = true` args. `Command` enum: `Stdio` | `Http`. `From<&Cli> for Config` maps args, then `validate()` runs separately.
 - **`src/db/`** — `DatabaseBackend` trait + `Backend` enum via `enum_dispatch` (zero-cost dispatch). Each backend has `build_connection_url(config)` constructing the sqlx DSN from `effective_*()` methods.
+- **`crates/sqlx_to_json/`** — Internal workspace crate providing the `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow` with a shared `row_to_json_map` helper for column iteration and null handling.
 - **Transport**: `stdio` (default, for Claude Desktop/Cursor) and `http` (Streamable HTTP with CORS via axum + tower-http).
 
 ## Configuration

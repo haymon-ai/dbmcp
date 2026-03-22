@@ -8,12 +8,11 @@ use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use moka::future::Cache;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
-use sqlx::{Column, PgPool, Row, TypeInfo, ValueRef};
+use sqlx::{PgPool, Row};
+use sqlx_to_json::RowExt;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -320,14 +319,13 @@ impl DatabaseBackend for PostgresBackend {
         }))
     }
 
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         let pool = self.get_pool(database).await?;
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&pool)
             .await
             .map_err(|e| AppError::Query(e.to_string()))?;
-
-        Ok(rows.iter().map(pg_row_to_json).collect())
+        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 
     async fn create_database(&self, name: &str) -> Result<Value, AppError> {
@@ -364,63 +362,6 @@ impl DatabaseBackend for PostgresBackend {
     fn read_only(&self) -> bool {
         self.read_only
     }
-}
-
-/// Converts a `PostgreSQL` row to a JSON object with type-aware value extraction.
-///
-/// Type names are normalized to uppercase because sqlx may return either case
-/// depending on query context. Integer types use size-specific Rust types
-/// (`i16`, `i32`, `i64`) because sqlx enforces strict type matching for
-/// `PostgreSQL`.
-fn pg_row_to_json(row: &PgRow) -> Map<String, Value> {
-    let columns = row.columns();
-    let mut map = Map::with_capacity(columns.len());
-
-    for column in columns {
-        let idx = column.ordinal();
-        let type_name = column.type_info().name().to_ascii_uppercase();
-
-        let value = if row.try_get_raw(idx).is_ok_and(|v| v.is_null()) {
-            Value::Null
-        } else {
-            match type_name.as_str() {
-                "BOOL" => row.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
-
-                "INT8" => row
-                    .try_get::<i64, _>(idx)
-                    .map(|v| Value::Number(v.into()))
-                    .unwrap_or(Value::Null),
-
-                "INT4" | "OID" => row
-                    .try_get::<i32, _>(idx)
-                    .map(|v| Value::Number(i64::from(v).into()))
-                    .unwrap_or(Value::Null),
-
-                "INT2" => row
-                    .try_get::<i16, _>(idx)
-                    .map(|v| Value::Number(i64::from(v).into()))
-                    .unwrap_or(Value::Null),
-
-                "FLOAT4" | "FLOAT8" | "NUMERIC" | "MONEY" => row
-                    .try_get::<f64, _>(idx)
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map_or(Value::Null, Value::Number),
-
-                "BYTEA" => row
-                    .try_get::<Vec<u8>, _>(idx)
-                    .map_or(Value::Null, |bytes| Value::String(BASE64.encode(&bytes))),
-
-                "JSON" | "JSONB" => row.try_get::<Value, _>(idx).unwrap_or(Value::Null),
-
-                _ => row.try_get::<String, _>(idx).map(Value::String).unwrap_or(Value::Null),
-            }
-        };
-
-        map.insert(column.name().to_string(), value);
-    }
-
-    map
 }
 
 #[cfg(test)]

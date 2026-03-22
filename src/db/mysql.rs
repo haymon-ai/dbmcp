@@ -7,11 +7,10 @@ use crate::config::DatabaseConfig;
 use crate::db::backend::DatabaseBackend;
 use crate::db::identifier::validate_identifier;
 use crate::error::AppError;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
-use sqlx::{Column, Executor, MySqlPool, Row, TypeInfo, ValueRef};
+use sqlx::{Executor, MySqlPool, Row};
+use sqlx_to_json::RowExt;
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -162,7 +161,7 @@ impl MysqlBackend {
     /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
     /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
     /// statements, and the text protocol returns all values as strings.
-    async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         // Acquire a single connection so USE and the query run on the same session
         let mut conn = self
             .pool
@@ -180,8 +179,7 @@ impl MysqlBackend {
         }
 
         let rows: Vec<MySqlRow> = conn.fetch_all(sql).await.map_err(|e| AppError::Query(e.to_string()))?;
-
-        Ok(rows.iter().map(mysql_row_to_json).collect())
+        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 }
 
@@ -193,8 +191,9 @@ impl DatabaseBackend for MysqlBackend {
                 None,
             )
             .await?;
-        Ok(results
-            .into_iter()
+        let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
+        Ok(rows
+            .iter()
             .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
             .collect())
     }
@@ -206,8 +205,9 @@ impl DatabaseBackend for MysqlBackend {
             Self::quote_string(database)
         );
         let results = self.query_to_json(&sql, None).await?;
-        Ok(results
-            .into_iter()
+        let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
+        Ok(rows
+            .iter()
             .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
             .collect())
     }
@@ -222,13 +222,14 @@ impl DatabaseBackend for MysqlBackend {
             Self::quote_identifier(table)
         );
         let results = self.query_to_json(&sql, None).await?;
+        let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
 
-        if results.is_empty() {
+        if rows.is_empty() {
             return Err(AppError::TableNotFound(format!("{database}.{table}")));
         }
 
         let mut schema: HashMap<String, Value> = HashMap::new();
-        for row in &results {
+        for row in rows {
             if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
                 schema.insert(
                     col_name.to_string(),
@@ -257,13 +258,14 @@ impl DatabaseBackend for MysqlBackend {
             Self::quote_identifier(table)
         );
         let schema_results = self.query_to_json(&describe_sql, None).await?;
+        let schema_rows = schema_results.as_array().map_or([].as_slice(), Vec::as_slice);
 
-        if schema_results.is_empty() {
+        if schema_rows.is_empty() {
             return Err(AppError::TableNotFound(format!("{database}.{table}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
-        for row in &schema_results {
+        for row in schema_rows {
             if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
                 columns.insert(
                     col_name.to_string(),
@@ -335,7 +337,7 @@ impl DatabaseBackend for MysqlBackend {
         }))
     }
 
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         self.query_to_json(sql, database).await
     }
 
@@ -383,72 +385,6 @@ impl DatabaseBackend for MysqlBackend {
     fn read_only(&self) -> bool {
         self.read_only
     }
-}
-
-/// Converts a `MySQL` row to a JSON object with type-aware value extraction.
-///
-/// Uses `column.type_info().name()` to pick the right Rust type for each column.
-/// `MySQL` 9 reports `information_schema` text columns as `VARBINARY`; these
-/// are decoded as UTF-8 strings rather than base64.
-fn mysql_row_to_json(row: &MySqlRow) -> Map<String, Value> {
-    let columns = row.columns();
-    let mut map = Map::with_capacity(columns.len());
-
-    for column in columns {
-        let idx = column.ordinal();
-        let type_name = column.type_info().name();
-
-        let value = if row.try_get_raw(idx).is_ok_and(|v| v.is_null()) {
-            Value::Null
-        } else {
-            match type_name {
-                "BOOLEAN" => row.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
-
-                "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED"
-                | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => row
-                    .try_get::<i64, _>(idx)
-                    .map(|v| Value::Number(v.into()))
-                    .unwrap_or(Value::Null),
-
-                "BIGINT UNSIGNED" => row.try_get::<u64, _>(idx).map_or(Value::Null, |v| {
-                    i64::try_from(v)
-                        .map_or_else(|_| Value::String(v.to_string()), |signed| Value::Number(signed.into()))
-                }),
-
-                "FLOAT" | "DOUBLE" | "DECIMAL" => row
-                    .try_get::<f64, _>(idx)
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map_or(Value::Null, Value::Number),
-
-                "JSON" => row.try_get::<Value, _>(idx).unwrap_or(Value::Null),
-
-                // MySQL 9 returns information_schema columns as BINARY/VARBINARY
-                // even when they contain valid UTF-8. Try String first, then bytes.
-                "BINARY" | "VARBINARY" => row
-                    .try_get::<String, _>(idx)
-                    .map_or_else(|_| mysql_bytes_to_json(row, idx), Value::String),
-
-                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => mysql_bytes_to_json(row, idx),
-
-                // All other types (VARCHAR, TEXT, DATE, TIME, ENUM, etc.) → String
-                _ => row
-                    .try_get::<String, _>(idx)
-                    .map_or_else(|_| mysql_bytes_to_json(row, idx), Value::String),
-            }
-        };
-
-        map.insert(column.name().to_string(), value);
-    }
-
-    map
-}
-
-/// Extracts a `MySQL` binary column as UTF-8 string, falling back to base64.
-fn mysql_bytes_to_json(row: &MySqlRow, idx: usize) -> Value {
-    row.try_get::<Vec<u8>, _>(idx).map_or(Value::Null, |bytes| {
-        String::from_utf8(bytes.clone()).map_or_else(|_| Value::String(BASE64.encode(&bytes)), Value::String)
-    })
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use crate::db::postgres::PostgresBackend;
 use crate::db::sqlite::SqliteBackend;
 use crate::db::validation::validate_read_only_with_dialect;
 use crate::error::AppError;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sqlparser::dialect::Dialect;
 use tracing::{error, info};
 
@@ -29,8 +29,8 @@ pub trait DatabaseBackend {
     /// Returns column definitions with foreign key relationships.
     async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError>;
 
-    /// Executes a SQL query and returns rows as JSON objects.
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError>;
+    /// Executes a SQL query and returns rows as a JSON array.
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError>;
 
     /// Creates a database if it doesn't exist.
     async fn create_database(&self, name: &str) -> Result<Value, AppError>;
@@ -90,7 +90,7 @@ impl DatabaseBackend for Backend {
         }
     }
 
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Vec<Map<String, Value>>, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         match self {
             Self::Mysql(b) => b.execute_query(sql, database).await,
             Self::Postgres(b) => b.execute_query(sql, database).await,
@@ -212,7 +212,8 @@ impl Backend {
         };
 
         let results = self.execute_query(sql_query, db).await?;
-        info!("TOOL: execute_sql completed. Rows returned: {}", results.len());
+        let row_count = results.as_array().map_or(0, Vec::len);
+        info!("TOOL: execute_sql completed. Rows returned: {row_count}");
         Ok(serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".into()))
     }
 

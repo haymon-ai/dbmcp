@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/sqlx_to_json"]
+
 [package]
 name = "sql-mcp"
 version = "0.1.0"
@@ -25,6 +28,7 @@ thiserror = "2"
 moka = { version = "0.12", features = ["future"] }
 mimalloc = "0.1"
 base64 = "0.22"
+sqlx_to_json = { path = "crates/sqlx_to_json" }
 
 [lints.rust]
 ambiguous_negative_literals = "warn"

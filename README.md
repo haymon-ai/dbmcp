@@ -198,6 +198,15 @@ curl -X POST http://localhost:9001/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}'
 ```
 
+## Project Structure
+
+This is a Cargo workspace with two crates:
+
+| Crate | Path | Description |
+|-------|------|-------------|
+| `sql-mcp` | `.` (root) | Main binary — CLI, transports, database backends |
+| `sqlx_to_json` | `crates/sqlx_to_json/` | Internal library — type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
+
 ## Development
 
 ```bash

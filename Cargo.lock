@@ -1912,6 +1912,7 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
+ "sqlx_to_json",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2130,6 +2131,15 @@ dependencies = [
  "thiserror",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "sqlx_to_json"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde_json",
+ "sqlx",
 ]
 
 [[package]]
