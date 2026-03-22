@@ -100,16 +100,32 @@ The script handles container lifecycle, port assignment, seeding, and cleanup au
 
 CI automatically runs on every push and pull request:
 
-1. `cargo fmt --check` — formatting
-2. `cargo clippy -- -D warnings` — linting
-3. `cargo test --lib` — unit tests
-4. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
+1. Commit message validation — conventional commit format ([cocogitto](https://github.com/cocogitto/cocogitto))
+2. `cargo fmt --check` — formatting
+3. `cargo clippy -- -D warnings` — linting
+4. `cargo test --lib` — unit tests
+5. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
 
 All checks must pass before a PR can be merged.
 
 ## Commit Message Convention
 
-This project requires [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Every commit message must follow this format:
+This project requires [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and uses [cocogitto](https://github.com/cocogitto/cocogitto) to enforce them locally and in CI.
+
+### Setup (One-Time)
+
+Install cocogitto and the commit-msg git hook:
+
+```bash
+cargo install --locked cocogitto
+cog install-hook commit-msg
+```
+
+The hook validates every commit message against the conventional commit specification before allowing the commit. If your message doesn't conform, the commit is rejected with an error showing the expected format.
+
+### Message Format
+
+Every commit message must follow this format:
 
 ```
 <type>[optional scope]: <description>
@@ -134,16 +150,6 @@ This project requires [Conventional Commits](https://www.conventionalcommits.org
 | `ci`       | Changes to CI configuration files and scripts        |
 | `chore`    | Other changes that don't modify src or test files    |
 | `revert`   | Reverts a previous commit                            |
-
-### Scopes
-
-Scopes are optional and freeform. Common scopes in this project include:
-
-- `config` — configuration and CLI parsing
-- `db` — database backend logic
-- `cli` — command-line interface
-- `http` — HTTP transport layer
-- `sqlx_to_json` — row-to-JSON conversion crate
 
 ### Examples
 
@@ -198,12 +204,4 @@ Migrate to individual DB_* environment variables.
 
 ## Versioning & Releases
 
-This project follows [Semantic Versioning 2.0.0](https://semver.org/):
-
-- **MAJOR** (X.0.0): Breaking changes — incompatible API or behavior changes
-- **MINOR** (0.X.0): New features — backwards-compatible additions
-- **PATCH** (0.0.X): Bug fixes — backwards-compatible fixes
-
-### Release Process
-
-Releases are triggered by pushing a version tag (e.g., `v0.2.0`). The CI pipeline automatically builds release binaries for all supported platforms and creates a GitHub release.
+This project follows [Semantic Versioning 2.0.0](https://semver.org/). Releases are managed by maintainers.

@@ -1,0 +1,42 @@
+from_latest_tag = true
+ignore_merge_commits = true
+tag_prefix = "v"
+branch_whitelist = ["master"]
+skip_ci = "[skip ci]"
+
+# Pre-bump: quality gates + Cargo.toml version update
+pre_bump_hooks = [
+    "cargo fmt --check",
+    "cargo clippy -- -D warnings",
+    "cargo test --lib",
+    "sed -i 's/^version = \".*\"/version = \"{{version}}\"/' Cargo.toml",
+]
+
+# Post-bump: push commit and tag
+post_bump_hooks = [
+    "git push",
+    "git push origin v{{version}}",
+]
+
+# Local git hook: validate commit messages
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+set -e
+cog verify --file $1
+"""
+
+# Changelog configuration
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+owner = "haymon-ai"
+repository = "sql-mcp"
+
+# Commit type visibility in the changelog
+[commit_types]
+chore = { omit_from_changelog = true }
+style = { omit_from_changelog = true }
+ci = { omit_from_changelog = true }
+build = { omit_from_changelog = true }
+test = { omit_from_changelog = true }
