@@ -4,9 +4,9 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use sql_mcp::config::{DatabaseBackend, DatabaseConfig};
-use sql_mcp::db::backend::Backend;
-use sql_mcp::db::postgres::PostgresBackend;
+use database_mcp::config::{DatabaseBackend, DatabaseConfig};
+use database_mcp::db::backend::Backend;
+use database_mcp::db::postgres::PostgresBackend;
 
 fn test_config() -> DatabaseConfig {
     DatabaseConfig {

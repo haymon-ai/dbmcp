@@ -31,7 +31,7 @@ path = "CHANGELOG.md"
 template = "remote"
 remote = "github.com"
 owner = "haymon-ai"
-repository = "sql-mcp"
+repository = "database-mcp"
 
 # Commit type visibility in the changelog
 [commit_types]

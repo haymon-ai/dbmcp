@@ -7,9 +7,9 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use sql_mcp::config::{DatabaseBackend, DatabaseConfig};
-use sql_mcp::db::backend::Backend;
-use sql_mcp::db::sqlite::SqliteBackend;
+use database_mcp::config::{DatabaseBackend, DatabaseConfig};
+use database_mcp::db::backend::Backend;
+use database_mcp::db::sqlite::SqliteBackend;
 
 fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
