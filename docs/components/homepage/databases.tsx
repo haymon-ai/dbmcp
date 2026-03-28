@@ -45,7 +45,7 @@ export function Databases() {
             href={db.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex flex-col items-center gap-4 rounded-xl border border-black/[0.08] bg-white p-6 transition-all hover:border-black/20 hover:shadow-sm"
+            className="flex flex-col items-center gap-4 rounded-sm border border-black/[0.08] bg-white p-6 transition-all hover:border-black/20 hover:shadow-sm"
           >
             <img
               src={db.logo}

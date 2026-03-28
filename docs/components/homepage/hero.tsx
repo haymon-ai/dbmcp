@@ -7,7 +7,7 @@ export function Hero() {
     <section className="mx-auto w-full max-w-4xl px-6 pt-16 md:pt-28 pb-16 text-center">
       <Link
         href="/docs"
-        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-1.5 text-sm text-gray-600 transition-colors hover:border-black/20 hover:bg-gray-50"
+        className="inline-flex items-center gap-2 rounded-sm border border-black/10 px-4 py-1.5 text-sm text-gray-600 transition-colors hover:border-black/20 hover:bg-gray-50"
       >
         <span className="inline-block h-2 w-2 rounded-full bg-[#ff4800]" />
         Open source MCP server
@@ -28,7 +28,7 @@ export function Hero() {
       <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
         <Link
           href="/docs"
-          className="inline-flex items-center justify-center rounded-md bg-[#151715] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#2a2c2a]"
+          className="inline-flex items-center justify-center rounded-sm bg-[#151715] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#2a2c2a]"
         >
           Get started
         </Link>
@@ -36,7 +36,7 @@ export function Hero() {
           href={gitHubUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-md border border-black/15 bg-white px-5 py-2.5 text-sm font-medium text-[#141e12] transition-colors hover:bg-gray-50"
+          className="inline-flex items-center justify-center rounded-sm border border-black/15 bg-white px-5 py-2.5 text-sm font-medium text-[#141e12] transition-colors hover:bg-gray-50"
         >
           View on GitHub
         </a>
