@@ -1,3 +1,5 @@
+import Image from 'next/image';
+
 interface SupportedItem {
   name: string;
   logo: string;
@@ -47,10 +49,11 @@ export function Databases() {
             rel="noopener noreferrer"
             className="flex flex-col items-center gap-4 rounded-sm border border-black/[0.08] bg-white p-6 transition-all hover:border-black/20 hover:shadow-sm"
           >
-            <img
+            <Image
               src={db.logo}
               alt={`${db.name} logo`}
-              className="h-12 w-12"
+              width={48}
+              height={48}
             />
             <span className="text-sm font-medium text-black">
               {db.name}

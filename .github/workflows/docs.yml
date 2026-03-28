@@ -38,11 +38,17 @@ jobs:
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build
         run: npm run build
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
 
       - name: Upload artifact
         if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/docs') && github.event_name != 'pull_request'

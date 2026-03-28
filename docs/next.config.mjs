@@ -2,7 +2,7 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
-const isProd = process.env.NODE_ENV === 'production';
+const basePath = process.env.PAGES_BASE_PATH || '';
 
 /** @type {import('next').NextConfig} */
 const config = {
@@ -10,8 +10,8 @@ const config = {
   reactStrictMode: true,
   trailingSlash: true,
   images: { unoptimized: true },
-  basePath: isProd ? '/database-mcp' : '',
-  assetPrefix: isProd ? '/database-mcp/' : '',
+  basePath,
+  assetPrefix: basePath ? `${basePath}/` : '',
 };
 
 export default withMDX(config);

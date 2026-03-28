@@ -1,3 +1,5 @@
+import Image from 'next/image';
+
 interface SupportedItem {
   name: string;
   logo: string;
@@ -53,10 +55,11 @@ export function Agents() {
             rel="noopener noreferrer"
             className="flex flex-col items-center gap-3 rounded-sm border border-black/[0.08] bg-white p-5 transition-all hover:border-black/20 hover:shadow-sm"
           >
-            <img
+            <Image
               src={agent.logo}
               alt={`${agent.name} logo`}
-              className="h-10 w-10"
+              width={40}
+              height={40}
             />
             <span className="text-sm font-medium text-black">
               {agent.name}
