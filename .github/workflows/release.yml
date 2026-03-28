@@ -20,13 +20,13 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: sql-mcp
+            artifact: database-mcp
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: sql-mcp
+            artifact: database-mcp
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: sql-mcp
+            artifact: database-mcp
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,12 +50,12 @@ jobs:
       - name: Package artifact
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../sql-mcp-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          tar czf ../../../database-mcp-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sql-mcp-${{ matrix.target }}
-          path: sql-mcp-${{ matrix.target }}.tar.gz
+          name: database-mcp-${{ matrix.target }}
+          path: database-mcp-${{ matrix.target }}.tar.gz
 
   release:
     name: Create Release

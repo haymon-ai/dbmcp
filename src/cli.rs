@@ -9,14 +9,14 @@
 //! - `stdio` (default) — runs the MCP server over stdin/stdout
 //! - `http` — runs the MCP server over HTTP with Streamable HTTP transport
 
+use database_mcp::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
+use database_mcp::db;
+use database_mcp::db::backend::Backend;
+use database_mcp::server::Server;
 use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use sql_mcp::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
-use sql_mcp::db;
-use sql_mcp::db::backend::Backend;
-use sql_mcp::server::Server;
 use std::process::ExitCode;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -67,7 +67,7 @@ impl From<LogLevel> for tracing::Level {
 }
 
 #[derive(Parser)]
-#[command(name = "sql-mcp", about = "Database MCP Server")]
+#[command(name = "database-mcp", about = "Database MCP Server")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -361,21 +361,21 @@ mod tests {
 
     #[test]
     fn parse_db_backend_after_http_subcommand() {
-        let cli = Cli::try_parse_from(["sql-mcp", "http", "--db-backend", "mysql"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp", "http", "--db-backend", "mysql"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
         assert!(matches!(cli.command, Some(Command::Http { .. })));
     }
 
     #[test]
     fn parse_db_backend_before_http_subcommand() {
-        let cli = Cli::try_parse_from(["sql-mcp", "--db-backend", "mysql", "http"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp", "--db-backend", "mysql", "http"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
         assert!(matches!(cli.command, Some(Command::Http { .. })));
     }
 
     #[test]
     fn parse_db_backend_with_no_subcommand() {
-        let cli = Cli::try_parse_from(["sql-mcp", "--db-backend", "postgres"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp", "--db-backend", "postgres"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Postgres);
         assert!(cli.command.is_none());
     }
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn parse_multiple_global_args_after_subcommand() {
         let cli = Cli::try_parse_from([
-            "sql-mcp",
+            "database-mcp",
             "http",
             "--db-backend",
             "mysql",
@@ -400,32 +400,32 @@ mod tests {
 
     #[test]
     fn parse_db_backend_defaults_to_mysql() {
-        let cli = Cli::try_parse_from(["sql-mcp", "http"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp", "http"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
     }
 
     #[test]
     fn cli_flag_overrides_default_backend() {
-        let cli = Cli::try_parse_from(["sql-mcp", "http", "--db-backend", "postgres"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp", "http", "--db-backend", "postgres"]).unwrap();
         assert_eq!(cli.db_backend, DatabaseBackend::Postgres);
     }
 
     #[test]
     fn parse_valid_log_levels() {
         for level in ["error", "warn", "info", "debug", "trace"] {
-            let cli = Cli::try_parse_from(["sql-mcp", "--log-level", level]).unwrap();
+            let cli = Cli::try_parse_from(["database-mcp", "--log-level", level]).unwrap();
             assert_eq!(cli.log_level.to_string(), level);
         }
     }
 
     #[test]
     fn parse_invalid_log_level_is_rejected() {
-        assert!(Cli::try_parse_from(["sql-mcp", "--log-level", "nonsense"]).is_err());
+        assert!(Cli::try_parse_from(["database-mcp", "--log-level", "nonsense"]).is_err());
     }
 
     #[test]
     fn log_level_defaults_to_info() {
-        let cli = Cli::try_parse_from(["sql-mcp"]).unwrap();
+        let cli = Cli::try_parse_from(["database-mcp"]).unwrap();
         assert_eq!(cli.log_level, LogLevel::Info);
     }
 
@@ -433,7 +433,7 @@ mod tests {
     fn parse_log_level_case_insensitive() {
         for level in ["DEBUG", "Info", "TRACE", "Warn", "ERROR"] {
             assert!(
-                Cli::try_parse_from(["sql-mcp", "--log-level", level]).is_ok(),
+                Cli::try_parse_from(["database-mcp", "--log-level", level]).is_ok(),
                 "expected '{level}' to be accepted case-insensitively"
             );
         }

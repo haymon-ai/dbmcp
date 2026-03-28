@@ -5,9 +5,9 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use sql_mcp::config::{DatabaseBackend, DatabaseConfig};
-use sql_mcp::db::backend::Backend;
-use sql_mcp::db::mysql::MysqlBackend;
+use database_mcp::config::{DatabaseBackend, DatabaseConfig};
+use database_mcp::db::backend::Backend;
+use database_mcp::db::mysql::MysqlBackend;
 
 fn test_config() -> DatabaseConfig {
     DatabaseConfig {

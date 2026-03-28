@@ -1,4 +1,4 @@
-# sql-mcp
+# database-mcp
 
 A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases. Connect your AI assistant to MySQL/MariaDB, PostgreSQL, or SQLite with zero runtime dependencies.
 
@@ -21,8 +21,8 @@ Add a `.mcp.json` file to your project root. MCP clients read this file and conf
 ```json
 {
   "mcpServers": {
-    "sql-mcp": {
-      "command": "sql-mcp",
+    "database-mcp": {
+      "command": "database-mcp",
       "env": {
         "DB_BACKEND": "mysql",
         "DB_HOST": "127.0.0.1",
@@ -40,13 +40,13 @@ Add a `.mcp.json` file to your project root. MCP clients read this file and conf
 
 ```bash
 # Start the server first
-sql-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
+database-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 ```
 
 ```json
 {
   "mcpServers": {
-    "sql-mcp": {
+    "database-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:9001/mcp"
     }
@@ -60,22 +60,22 @@ sql-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 
 ```bash
 # MySQL/MariaDB
-sql-mcp --db-backend mysql --db-host localhost --db-user root --db-name mydb
+database-mcp --db-backend mysql --db-host localhost --db-user root --db-name mydb
 
 # PostgreSQL
-sql-mcp --db-backend postgres --db-host localhost --db-user postgres --db-name mydb
+database-mcp --db-backend postgres --db-host localhost --db-user postgres --db-name mydb
 
 # SQLite
-sql-mcp --db-backend sqlite --db-name ./data.db
+database-mcp --db-backend sqlite --db-name ./data.db
 
 # HTTP transport
-sql-mcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
+database-mcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
 ```
 
 ### Using environment variables
 
 ```bash
-DB_BACKEND=mysql DB_USER=root DB_NAME=mydb sql-mcp
+DB_BACKEND=mysql DB_USER=root DB_NAME=mydb database-mcp
 ```
 
 ## Configuration
@@ -189,7 +189,7 @@ cargo test --lib
 ./tests/run.sh --filter sqlite
 
 # With MCP Inspector
-npx @modelcontextprotocol/inspector ./target/release/sql-mcp
+npx @modelcontextprotocol/inspector ./target/release/database-mcp
 
 # HTTP mode testing
 curl -X POST http://localhost:9001/mcp \
@@ -204,7 +204,7 @@ This is a Cargo workspace with two crates:
 
 | Crate | Path | Description |
 |-------|------|-------------|
-| `sql-mcp` | `.` (root) | Main binary — CLI, transports, database backends |
+| `database-mcp` | `.` (root) | Main binary — CLI, transports, database backends |
 | `sqlx_to_json` | `crates/sqlx_to_json/` | Internal library — type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
 
 ## Development

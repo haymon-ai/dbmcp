@@ -2,12 +2,12 @@
 members = [".", "crates/sqlx_to_json"]
 
 [package]
-name = "sql-mcp"
+name = "database-mcp"
 version = "0.1.0"
 edition = "2024"
 description = "A single-binary MCP server for MySQL, PostgreSQL, and SQLite"
 license = "MIT"
-repository = "https://github.com/haymon-ai/sql-mcp"
+repository = "https://github.com/haymon-ai/database-mcp"
 keywords = ["mcp", "database", "mysql", "postgresql", "sqlite"]
 categories = ["database", "command-line-utilities"]
 
