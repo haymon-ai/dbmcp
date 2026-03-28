@@ -1,0 +1,69 @@
+---
+title: Features
+description: Database support, MCP tools, transport modes, and security in Database MCP
+---
+
+Database MCP gives AI assistants structured access to your databases through the Model Context Protocol. This page summarizes what it can do.
+
+## Database Support
+
+Database MCP connects to four database backends with a single binary:
+
+| Backend | Versions | Notes |
+|---------|----------|-------|
+| MySQL | 5.7+ / 8.x | Full support including character set configuration |
+| MariaDB | 10.x+ | Treated as a distinct backend with its own defaults |
+| PostgreSQL | 12+ | Native protocol support via libpq-compatible driver |
+| SQLite | 3.x | File-based — requires only a path, no server needed |
+
+Each backend has sensible defaults for host, port, and user. See [Configuration](/docs/configuration#backend-defaults) for the full default table.
+
+## MCP Tools
+
+Database MCP exposes six tools through the MCP protocol. AI assistants call these tools to explore and query your database.
+
+### `list_databases`
+
+Discover all accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available.
+
+### `list_tables`
+
+List all tables in a specific database. Requires a database name from `list_databases`.
+
+### `get_table_schema`
+
+Inspect column definitions for a table — column names, types, nullability, keys, and default values. Useful for understanding table structure before writing queries.
+
+### `get_table_schema_with_relations`
+
+Like `get_table_schema`, but also includes foreign key relationships. Helps assistants understand how tables connect to each other.
+
+### `execute_sql`
+
+Run a SQL query against a specific database. In read-only mode (the default), only `SELECT`, `SHOW`, `DESCRIBE`, and `USE` statements are allowed. See [Security](/docs/security) for details on query validation.
+
+### `create_database`
+
+Create a new database. This tool is blocked when read-only mode is enabled (the default). Not supported for SQLite.
+
+## Transport Modes
+
+Database MCP supports two transport modes for communicating with MCP clients.
+
+### Stdio (default)
+
+The server communicates over standard input/output. This is the default mode and works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess.
+
+**Best for**: Local development, single-user setups, desktop MCP clients.
+
+### HTTP
+
+The server runs as an HTTP service with Streamable HTTP transport and CORS support. This mode is useful for remote access or shared environments where multiple clients connect to the same server.
+
+**Best for**: Remote servers, shared team databases, environments where the MCP client cannot launch local processes.
+
+See [Configuration](/docs/configuration#http-transport) for HTTP-specific options like bind host, port, and allowed origins.
+
+## Single Binary
+
+Database MCP ships as a single compiled binary with no runtime dependencies. There is no language runtime to install, no package manager to configure, and no dependency tree to manage. Download the binary for your platform and it is ready to use.

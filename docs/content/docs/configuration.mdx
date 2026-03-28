@@ -1,0 +1,203 @@
+---
+title: Configuration
+description: Configure database-mcp with CLI flags, environment variables, and backend-specific defaults
+---
+
+Database MCP is configured through CLI flags and environment variables. This page documents every available option.
+
+## Precedence
+
+Configuration values are resolved in this order (highest priority first):
+
+1. **CLI flags** — explicitly passed on the command line
+2. **Environment variables** — set by the MCP client (via `env` or `envFile` in server config)
+3. **Built-in defaults** — backend-aware defaults described below
+
+When the same option is set in multiple places, the higher-priority source wins.
+
+## Database Connection
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--db-backend` | `DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
+| `--db-host` | `DB_HOST` | `localhost` | Database host |
+| `--db-port` | `DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
+| `--db-user` | `DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
+| `--db-password` | `DB_PASSWORD` | — | Database password |
+| `--db-name` | `DB_NAME` | — | Database name, or file path for SQLite |
+
+### Character Set
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--db-charset` | `DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
+
+## Backend Defaults
+
+Default values for `--db-port` and `--db-user` depend on the selected backend:
+
+| Backend | Default Port | Default User |
+|---------|-------------|-------------|
+| MySQL | `3306` | `root` |
+| MariaDB | `3306` | `root` |
+| PostgreSQL | `5432` | `postgres` |
+| SQLite | N/A | N/A |
+
+SQLite does not use host, port, or user — only `--db-name` (the file path) is required.
+
+## SSL / TLS
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--db-ssl` | `DB_SSL` | `false` | Enable SSL for the database connection |
+| `--db-ssl-ca` | `DB_SSL_CA` | — | Path to CA certificate |
+| `--db-ssl-cert` | `DB_SSL_CERT` | — | Path to client certificate |
+| `--db-ssl-key` | `DB_SSL_KEY` | — | Path to client key |
+| `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
+
+When `--db-ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
+
+## Server Behavior
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--read-only` | `MCP_READ_ONLY` | `true` | Enable read-only mode |
+| `--max-pool-size` | `MCP_MAX_POOL_SIZE` | `10` | Maximum database connection pool size |
+| `--log-level` | `LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+
+> **Security note**: Read-only mode is **enabled by default**. In this mode, only `SELECT`, `SHOW`, `DESC`, `DESCRIBE`, and `USE` statements are allowed. Set `--read-only=false` or `MCP_READ_ONLY=false` to allow write operations.
+
+## HTTP Transport
+
+These options are available only when running in HTTP mode (`database-mcp http`):
+
+| CLI Flag | Default | Description |
+|----------|---------|-------------|
+| `--host` | `127.0.0.1` | Bind host for the HTTP server |
+| `--port` | `9001` | Bind port for the HTTP server |
+| `--allowed-origins` | `http://localhost http://127.0.0.1 https://localhost https://127.0.0.1` | Allowed CORS origins (space-separated) |
+| `--allowed-hosts` | `localhost 127.0.0.1` | Allowed host names (space-separated) |
+
+The default stdio transport requires no additional configuration.
+
+## Client Configuration Examples
+
+MCP clients configure servers through JSON files. Each tool uses a slightly different file path, but the format is nearly identical. The examples below connect to a local MySQL database.
+
+### Claude Code
+
+Create a `.mcp.json` file in your project root:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "command": "database-mcp",
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
+Claude Code also supports HTTP transport for remote servers:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:9001/mcp"
+    }
+  }
+}
+```
+
+**File locations**: `.mcp.json` (project, shareable) · `~/.claude.json` (user, global)
+
+### Claude Desktop
+
+Edit the config file at:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "command": "database-mcp",
+      "env": {
+        "DB_BACKEND": "postgres",
+        "DB_HOST": "localhost",
+        "DB_USER": "postgres",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
+> Claude Desktop only supports stdio transport. For HTTP mode, use the Connectors UI under **Settings > Connectors > Add custom connector**.
+
+### Cursor
+
+Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for global configuration:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "type": "stdio",
+      "command": "database-mcp",
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_NAME": "myapp"
+      },
+      "envFile": ".env"
+    }
+  }
+}
+```
+
+Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DB_PASSWORD` can be kept there instead of in the JSON config.
+
+### Windsurf
+
+Edit the config file at:
+- **macOS / Linux**: `~/.codeium/windsurf/mcp_config.json`
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "command": "database-mcp",
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_PASSWORD": "${env:DB_PASSWORD}",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
+Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from your shell environment instead of hardcoding them.
+
+### Environment Variables vs. `envFile`
+
+| Feature | Claude Code | Claude Desktop | Cursor | Windsurf |
+|---------|-------------|----------------|--------|----------|
+| `env` object | Yes | Yes | Yes | Yes |
+| `envFile` | No | No | Yes | No |
+| Variable interpolation | `${VAR}` | No | `${env:VAR}` | `${env:VAR}` |
+| HTTP transport in config | Yes | No | Yes | Yes |
+| Project-scoped config | Yes | No | Yes | No |
