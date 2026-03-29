@@ -3,7 +3,8 @@ name = "sqlx_to_json"
 version = "0.1.0"
 edition = "2024"
 description = "Database-agnostic row-to-JSON conversion for sqlx"
-publish = false
+license = "MIT"
+repository = "https://github.com/haymon-ai/database-mcp"
 
 [dependencies]
 sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls", "mysql", "postgres", "sqlite"] }
