@@ -339,11 +339,15 @@ async fn run_http(backend: Backend, config: &HttpConfig) -> Result<(), Box<dyn s
     let service = StreamableHttpService::new(
         move || Ok(Server::new(backend.clone())),
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig {
-            stateful_mode: false,
-            json_response: true,
-            cancellation_token: ct.child_token(),
-            ..Default::default()
+        // StreamableHttpServerConfig is #[non_exhaustive] in rmcp >=1.3,
+        // so struct literal syntax cannot be used here.
+        #[allow(clippy::field_reassign_with_default)]
+        {
+            let mut config = StreamableHttpServerConfig::default();
+            config.stateful_mode = false;
+            config.json_response = true;
+            config.cancellation_token = ct.child_token();
+            config
         },
     );
 
