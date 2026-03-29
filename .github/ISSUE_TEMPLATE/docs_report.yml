@@ -1,0 +1,44 @@
+name: Documentation Issue
+description: Report inaccurate, incomplete, or confusing documentation
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our documentation! Please fill out the form below.
+
+        Before submitting, please:
+        - Search [existing issues](https://github.com/haymon-ai/database-mcp/issues) for duplicates
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues for duplicates
+          required: true
+
+  - type: input
+    id: page
+    attributes:
+      label: Affected Page or Section
+      description: URL or path to the documentation page, or the section name
+      placeholder: "e.g., https://haymon-ai.github.io/database-mcp/... or README.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description of the Problem
+      description: What is inaccurate, incomplete, or confusing?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be changed or improved?
+    validations:
+      required: false

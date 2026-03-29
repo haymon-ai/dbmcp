@@ -1,0 +1,112 @@
+name: Regression Report
+description: Report something that worked before but is now broken
+labels: ["bug", "regression"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a regression! This template helps us quickly identify what changed.
+
+        Before submitting, please:
+        - Search [existing issues](https://github.com/haymon-ai/database-mcp/issues) for duplicates
+        - Make sure you're using the latest version of database-mcp
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues for duplicates
+          required: true
+        - label: I am using the latest version of database-mcp
+          required: true
+
+  - type: input
+    id: last-working-version
+    attributes:
+      label: Last Working Version
+      description: The version or commit where this last worked correctly
+      placeholder: "e.g., 0.1.0, git commit abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: broken-version
+    attributes:
+      label: Broken Version
+      description: The version or commit where the regression was first noticed
+      placeholder: "e.g., 0.2.0, git commit def5678, or latest main"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database-backend
+    attributes:
+      label: Database Backend
+      description: Which database backend are you using?
+      options:
+        - MySQL
+        - MariaDB
+        - PostgreSQL
+        - SQLite
+        - Not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport-mode
+    attributes:
+      label: Transport Mode
+      description: Which transport mode are you using?
+      options:
+        - stdio
+        - HTTP
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating System
+      description: Your OS and version
+      placeholder: "e.g., Ubuntu 24.04, macOS 15.2, Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the regression
+      placeholder: |
+        1. Configure database-mcp with '...'
+        2. Run command '...'
+        3. Execute query '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What used to happen (in the working version)
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What happens now (in the broken version)
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any additional context, logs, screenshots, or configuration that might help
+    validations:
+      required: false
