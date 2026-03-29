@@ -1,0 +1,48 @@
+---
+title: Security
+description: How Database MCP protects your data
+---
+
+Database MCP is designed with security as a primary concern. When you give an AI assistant access to your database, you need confidence that your data is protected. Here is how Database MCP keeps your data safe.
+
+## Read-Only Mode
+
+By default, Database MCP runs in **read-only mode**. This means the AI assistant can query your data but cannot modify it in any way.
+
+### Allowed Operations
+
+In read-only mode, only the following SQL operations are permitted:
+
+- `SELECT` — read data from tables
+- `SHOW` — view database and table metadata
+- `DESCRIBE` / `DESC` — inspect table structure
+- `USE` — switch between databases
+
+### Blocked Operations
+
+All write operations are blocked, including `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, and `TRUNCATE`. Additionally, the following are always blocked regardless of mode:
+
+- `LOAD_FILE()` — prevents reading files from the server filesystem
+- `SELECT INTO OUTFILE` / `SELECT INTO DUMPFILE` — prevents writing files to the server filesystem
+
+SQL comments and string contents are stripped before validation to prevent bypass attempts.
+
+## Injection Prevention
+
+Database MCP implements multiple layers of protection against SQL injection:
+
+### Multi-Statement Blocking
+
+The server never enables multi-statement execution on database connections. This prevents an attacker from appending malicious statements (such as `; DROP TABLE users`) to a legitimate query.
+
+### Parameterized Queries
+
+User-provided values are never interpolated into SQL strings. All values are passed through parameterized queries, which ensures the database treats them as data rather than executable SQL.
+
+### Identifier Validation
+
+Database and table names are validated to contain only alphanumeric characters and underscores. Names are then properly quoted using each database backend's native quoting mechanism, preventing injection through crafted identifiers.
+
+## Disabling Read-Only Mode
+
+Read-only mode can be explicitly disabled if you need write access. Set the `MCP_READ_ONLY` environment variable to `false` or pass the `--read-only false` flag. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
