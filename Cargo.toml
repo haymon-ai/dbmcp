@@ -3,7 +3,7 @@ members = [".", "crates/sqlx_to_json"]
 
 [package]
 name = "database-mcp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A single-binary MCP server for MySQL, PostgreSQL, and SQLite"
 license = "MIT"
