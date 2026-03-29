@@ -2,6 +2,18 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.3.0](https://github.com/haymon-ai/database-mcp/compare/ae40099963bd50181fd76fbd0a61b207d5f4ccda..v0.3.0) - 2026-03-29
+#### Features
+- add MCP tool annotations (readOnlyHint, destructiveHint, etc.) (#37) - ([261bede](https://github.com/haymon-ai/database-mcp/commit/261bedef8acd413c0d62b41a59bc2ab9e1252782)) - [@athopen](https://github.com/athopen)
+- include server name and version in ServerInfo (#35) (#36) - ([071b4b7](https://github.com/haymon-ai/database-mcp/commit/071b4b7f89518b2b69c63fabc70e4549ae00723e)) - [@athopen](https://github.com/athopen)
+- dynamic tool registration based on backend and read-only flag (#32) - ([ae40099](https://github.com/haymon-ai/database-mcp/commit/ae40099963bd50181fd76fbd0a61b207d5f4ccda)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- use correct cocogitto authors config syntax - ([08f96a7](https://github.com/haymon-ai/database-mcp/commit/08f96a7f8cc249d7b25c5c429c83dfd327f75d1a)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- add demo gif to README - ([b2f6b5a](https://github.com/haymon-ai/database-mcp/commit/b2f6b5a9a2b923d543d9d03d6c5eb1c238db1081)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.2.0](https://github.com/haymon-ai/database-mcp/compare/e00e191f7f1cfba9099d1db00469c9f365b5de6c..v0.2.0) - 2026-03-29
 #### Features
 - add --version flag and version subcommand (#31) - ([4d69220](https://github.com/haymon-ai/database-mcp/commit/4d69220685b98ccd296941994fd44a36386bdc82)) - Andreas Penz
