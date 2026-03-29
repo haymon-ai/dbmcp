@@ -1,0 +1,103 @@
+---
+title: Installation
+description: Install database-mcp on Linux or macOS
+---
+
+Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
+
+## Prebuilt Binaries
+
+Download the latest release from GitHub.
+
+### Linux
+
+**x86_64 (Intel/AMD)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/database-mcp/releases/latest/download/sql-mcp-x86_64-unknown-linux-gnu.tar.gz
+tar xzf sql-mcp-x86_64-unknown-linux-gnu.tar.gz
+sudo mv database-mcp /usr/local/bin/
+```
+
+**aarch64 (ARM)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/database-mcp/releases/latest/download/sql-mcp-aarch64-unknown-linux-gnu.tar.gz
+tar xzf sql-mcp-aarch64-unknown-linux-gnu.tar.gz
+sudo mv database-mcp /usr/local/bin/
+```
+
+### macOS
+
+**Apple Silicon (M1/M2/M3/M4)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/database-mcp/releases/latest/download/sql-mcp-aarch64-apple-darwin.tar.gz
+tar xzf sql-mcp-aarch64-apple-darwin.tar.gz
+sudo mv database-mcp /usr/local/bin/
+```
+
+> **Intel macOS**: Prebuilt binaries for Intel Macs are not yet available. Use [Build from Source](#build-from-source) instead.
+
+---
+
+For older versions or other assets, see the [GitHub Releases](https://github.com/haymon-ai/database-mcp/releases) page.
+
+Verify the installation:
+
+```bash
+database-mcp --help
+```
+
+## Package Managers
+
+### Cargo
+
+If you have the [Rust toolchain](https://rustup.rs/) installed:
+
+```bash
+cargo install database-mcp
+```
+
+This builds from source and installs the binary to `~/.cargo/bin/`.
+
+Verify the installation:
+
+```bash
+database-mcp --help
+```
+
+## Build from Source
+
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Rust toolchain](https://rustup.rs/) (edition 2024, requires Rust 1.85+)
+
+### Build
+
+```bash
+git clone https://github.com/haymon-ai/database-mcp.git
+cd database-mcp
+cargo build --release
+```
+
+Copy the binary to a directory on your PATH:
+
+```bash
+sudo cp target/release/database-mcp /usr/local/bin/
+```
+
+Verify the installation:
+
+```bash
+database-mcp --help
+```
+
+## Comparison
+
+| Method | Ease of Install | Auto Updates | Version Flexibility | Prerequisites | Platform Coverage |
+|--------|----------------|--------------|--------------------|--------------|--------------------|
+| Prebuilt Binary | Simple download | None | Any release | None | Linux, macOS (Apple Silicon) |
+| Cargo Install | One command | `cargo install` to update | Any published version | Rust toolchain | All platforms Rust supports |
+| Build from Source | Multiple steps | Manual (git pull + rebuild) | Any commit/branch | Git + Rust toolchain | All platforms Rust supports |
