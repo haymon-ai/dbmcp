@@ -19,3 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/audit@v1
+        with:
+          # RUSTSEC-2023-0071: rsa timing sidechannel — no fix available,
+          # transitive dep via sqlx-mysql. Tracked upstream.
+          ignore: RUSTSEC-2023-0071
