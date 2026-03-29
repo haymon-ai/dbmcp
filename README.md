@@ -9,6 +9,8 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 
 **[Website](https://database.haymon.ai)** · **[Documentation](https://database.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/database-mcp/releases)**
 
+![demo](https://raw.githubusercontent.com/haymon-ai/database-mcp/master/docs/public/demo.gif)
+
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
