@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.3.1](https://github.com/haymon-ai/database-mcp/compare/47bbb336670cdc0e4542b10f3ff9c74614017644..v0.3.1) - 2026-03-29
+#### Features
+- add structured GitHub issue templates for docs and regressions - ([47bbb33](https://github.com/haymon-ai/database-mcp/commit/47bbb336670cdc0e4542b10f3ff9c74614017644)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- use Default + field mutation for StreamableHttpServerConfig - ([bac1804](https://github.com/haymon-ai/database-mcp/commit/bac1804ce9775646448f87ed294e6e9d21a31ecf)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.3.0](https://github.com/haymon-ai/database-mcp/compare/ae40099963bd50181fd76fbd0a61b207d5f4ccda..v0.3.0) - 2026-03-29
 #### Features
 - add MCP tool annotations (readOnlyHint, destructiveHint, etc.) (#37) - ([261bede](https://github.com/haymon-ai/database-mcp/commit/261bedef8acd413c0d62b41a59bc2ab9e1252782)) - [@athopen](https://github.com/athopen)
