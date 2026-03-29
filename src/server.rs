@@ -14,7 +14,7 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerInfo, Tool,
+    ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
 };
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
@@ -86,6 +86,13 @@ fn list_databases_route() -> ToolRoute<Server> {
             "list_databases",
             "List all accessible databases on the connected database server. Call this first to discover available database names.",
             schema_for_empty_input(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(false),
         ),
         |ctx: ToolCallContext<'_, Server>| {
             let server = ctx.service;
@@ -102,6 +109,13 @@ fn list_tables_route() -> ToolRoute<Server> {
             "list_tables",
             "List all tables in a specific database. Requires database_name from list_databases.",
             schema_for::<ListTablesRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(false),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<ListTablesRequest>::from_context_part(&mut ctx);
@@ -122,6 +136,13 @@ fn get_table_schema_route() -> ToolRoute<Server> {
             "get_table_schema",
             "Get column definitions (type, nullable, key, default) for a table. Requires database_name and table_name.",
             schema_for::<GetTableSchemaRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(false),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<GetTableSchemaRequest>::from_context_part(&mut ctx);
@@ -142,6 +163,13 @@ fn get_table_schema_with_relations_route() -> ToolRoute<Server> {
             "get_table_schema_with_relations",
             "Get column definitions plus foreign key relationships for a table. Requires database_name and table_name.",
             schema_for::<GetTableSchemaRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(false),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<GetTableSchemaRequest>::from_context_part(&mut ctx);
@@ -162,6 +190,13 @@ fn read_query_route() -> ToolRoute<Server> {
             "read_query",
             "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
             schema_for::<QueryRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(true),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<QueryRequest>::from_context_part(&mut ctx);
@@ -182,6 +217,13 @@ fn write_query_route() -> ToolRoute<Server> {
             "write_query",
             "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).",
             schema_for::<QueryRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(false)
+                .destructive(true)
+                .idempotent(false)
+                .open_world(true),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<QueryRequest>::from_context_part(&mut ctx);
@@ -202,6 +244,13 @@ fn create_database_route() -> ToolRoute<Server> {
             "create_database",
             "Create a new database. Not supported for SQLite.",
             schema_for::<CreateDatabaseRequest>(),
+        )
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(false)
+                .destructive(false)
+                .idempotent(false)
+                .open_world(false),
         ),
         |mut ctx: ToolCallContext<'_, Server>| {
             let params = Parameters::<CreateDatabaseRequest>::from_context_part(&mut ctx);
@@ -599,6 +648,101 @@ mod tests {
     fn sqlite_backend(read_only: bool) -> Backend {
         Backend::Sqlite(SqliteBackend::in_memory(read_only))
     }
+
+    // --- tool annotation tests ---
+
+    /// Unwraps the annotations from a tool route, panicking if absent.
+    fn annotations(route: &ToolRoute<Server>) -> &ToolAnnotations {
+        route.attr.annotations.as_ref().expect("tool should have annotations")
+    }
+
+    #[test]
+    fn list_databases_annotations_are_read_only_closed_world() {
+        let route = list_databases_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true));
+        assert_eq!(ann.open_world_hint, Some(false));
+    }
+
+    #[test]
+    fn list_tables_annotations_are_read_only_closed_world() {
+        let route = list_tables_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true));
+        assert_eq!(ann.open_world_hint, Some(false));
+    }
+
+    #[test]
+    fn get_table_schema_annotations_are_read_only_closed_world() {
+        let route = get_table_schema_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true));
+        assert_eq!(ann.open_world_hint, Some(false));
+    }
+
+    #[test]
+    fn get_table_schema_with_relations_annotations_are_read_only_closed_world() {
+        let route = get_table_schema_with_relations_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true));
+        assert_eq!(ann.open_world_hint, Some(false));
+    }
+
+    #[test]
+    fn read_query_annotations_are_read_only_open_world() {
+        let route = read_query_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true));
+        assert_eq!(ann.open_world_hint, Some(true));
+    }
+
+    #[test]
+    fn write_query_annotations_are_destructive_open_world() {
+        let route = write_query_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(false));
+        assert_eq!(ann.destructive_hint, Some(true));
+        assert_eq!(ann.idempotent_hint, Some(false));
+        assert_eq!(ann.open_world_hint, Some(true));
+    }
+
+    #[test]
+    fn create_database_annotations_are_non_destructive_closed_world() {
+        let route = create_database_route();
+        let ann = annotations(&route);
+        assert_eq!(ann.read_only_hint, Some(false));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(false));
+        assert_eq!(ann.open_world_hint, Some(false));
+    }
+
+    #[tokio::test]
+    async fn all_router_tools_have_annotations() {
+        let backend = sqlite_backend(false);
+        let tools = Server::build_tool_router(&backend).list_all();
+        for tool in &tools {
+            assert!(
+                tool.annotations.is_some(),
+                "tool '{}' should have annotations",
+                tool.name
+            );
+        }
+    }
+
+    // --- build_tool_router tests ---
+    //
+    // Uses SQLite in-memory backends since they're cheap to construct.
+    // MySQL/Postgres router behavior is verified by integration tests.
 
     #[tokio::test]
     async fn router_sqlite_read_only_returns_4_tools() {
