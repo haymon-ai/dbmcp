@@ -129,13 +129,13 @@ impl Backend {
     /// Builds the [`ToolRouter`] for the active backend variant.
     ///
     /// Each backend decides which tools to register based on
-    /// its capabilities and the `read_only` flag.
+    /// its capabilities and its own `read_only` configuration.
     #[must_use]
-    pub fn build_tool_router(&self, read_only: bool) -> ToolRouter<Server> {
+    pub fn build_tool_router(&self) -> ToolRouter<Server> {
         match self {
-            Self::Mysql(_) => MysqlBackend::build_tool_router(read_only),
-            Self::Postgres(_) => PostgresBackend::build_tool_router(read_only),
-            Self::Sqlite(_) => SqliteBackend::build_tool_router(read_only),
+            Self::Mysql(b) => MysqlBackend::build_tool_router(b.read_only),
+            Self::Postgres(b) => PostgresBackend::build_tool_router(b.read_only),
+            Self::Sqlite(b) => SqliteBackend::build_tool_router(b.read_only),
         }
     }
 

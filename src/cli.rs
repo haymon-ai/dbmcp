@@ -293,11 +293,11 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     match cli.command {
         None | Some(Command::Stdio) => {
-            run_stdio(Server::new(backend, config.database.read_only)).await?;
+            run_stdio(Server::new(backend)).await?;
         }
         Some(Command::Http { .. }) => {
             let server = config.server.as_ref().expect("server config is set for HTTP command");
-            run_http(backend, config.database.read_only, server).await?;
+            run_http(backend, server).await?;
         }
         Some(Command::Version) => unreachable!("handled before backend initialization"),
     }
@@ -315,7 +315,7 @@ async fn run_stdio(server: Server) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_http(backend: Backend, read_only: bool, config: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_http(backend: Backend, config: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr = format!("{}:{}", config.host, config.port);
     info!("Starting MCP server via HTTP transport on {bind_addr}...");
 
@@ -337,7 +337,7 @@ async fn run_http(backend: Backend, read_only: bool, config: &HttpConfig) -> Res
         .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT]);
 
     let service = StreamableHttpService::new(
-        move || Ok(Server::new(backend.clone(), read_only)),
+        move || Ok(Server::new(backend.clone())),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig {
             stateful_mode: false,

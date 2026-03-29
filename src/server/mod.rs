@@ -89,10 +89,11 @@ impl Server {
     ///
     /// The tool router is built by the backend, which decides
     /// which tools to register based on its capabilities and
-    /// the `read_only` flag.
+    /// its own `read_only` configuration.
     #[must_use]
-    pub fn new(backend: Backend, read_only: bool) -> Self {
-        let tool_router = backend.build_tool_router(read_only);
+    pub fn new(backend: Backend) -> Self {
+        let read_only = backend.read_only();
+        let tool_router = backend.build_tool_router();
         Self {
             backend,
             read_only,
