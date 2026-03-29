@@ -5,9 +5,10 @@
 //! construction, validation, database backend creation, and MCP transport
 //! dispatch.
 //!
-//! The binary has two subcommands:
+//! The binary has three subcommands:
 //! - `stdio` (default) — runs the MCP server over stdin/stdout
 //! - `http` — runs the MCP server over HTTP with Streamable HTTP transport
+//! - `version` — prints the version and exits
 
 use database_mcp::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
 use database_mcp::db;
@@ -67,7 +68,7 @@ impl From<LogLevel> for tracing::Level {
 }
 
 #[derive(Parser)]
-#[command(name = "database-mcp", about = "Database MCP Server")]
+#[command(name = "database-mcp", about = "Database MCP Server", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -161,6 +162,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print version information and exit
+    Version,
     /// Run in stdio mode (default)
     Stdio,
     /// Run in HTTP/SSE mode
@@ -256,6 +259,11 @@ impl From<&Cli> for Config {
 pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    if matches!(cli.command, Some(Command::Version)) {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
+
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_max_level(tracing::Level::from(cli.log_level))
@@ -289,6 +297,7 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let server = config.server.as_ref().expect("server config is set for HTTP command");
             run_http(backend, server).await?;
         }
+        Some(Command::Version) => unreachable!("handled before backend initialization"),
     }
 
     Ok(ExitCode::SUCCESS)
@@ -437,5 +446,28 @@ mod tests {
                 "expected '{level}' to be accepted case-insensitively"
             );
         }
+    }
+
+    #[test]
+    fn version_flag_is_accepted() {
+        let result = Cli::try_parse_from(["database-mcp", "--version"]);
+        // clap exits early for --version, so try_parse_from returns an Err
+        // with DisplayVersion kind — not a "real" error.
+        let err = result.err().expect("--version should cause clap to return Err");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+
+    #[test]
+    fn short_version_flag_is_accepted() {
+        let err = Cli::try_parse_from(["database-mcp", "-V"])
+            .err()
+            .expect("-V should cause clap to return Err");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+
+    #[test]
+    fn version_subcommand_is_parsed() {
+        let cli = Cli::try_parse_from(["database-mcp", "version"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Version)));
     }
 }
