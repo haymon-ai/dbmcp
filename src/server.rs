@@ -13,7 +13,7 @@ use rmcp::handler::server::router::tool::{ToolRoute, ToolRouter};
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorData, ListToolsResult, PaginatedRequestParams,
+    CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, ListToolsResult, PaginatedRequestParams,
     ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::schemars;
@@ -400,9 +400,11 @@ impl Server {
 
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Database MCP Server - provides database exploration and query tools for MySQL, PostgreSQL, and SQLite",
-        )
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
+            .with_instructions(
+                "Database MCP Server - provides database exploration and query tools for MySQL, MariaDB, PostgreSQL, and SQLite",
+            )
     }
 
     async fn list_tools(
@@ -457,9 +459,12 @@ mod tests {
     }
 
     #[test]
-    fn get_info_returns_tools_capability() {
-        let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions("test");
+    fn get_info_returns_tools_capability_and_server_info() {
+        let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
         assert!(info.capabilities.tools.is_some(), "tools capability should be enabled");
+        assert_eq!(info.server_info.name, "database-mcp");
+        assert!(!info.server_info.version.is_empty(), "version should not be empty");
     }
 
     // --- route definition tests ---
