@@ -9,7 +9,9 @@ pre_bump_hooks = [
     "cargo fmt --check",
     "cargo clippy -- -D warnings",
     "cargo test --lib",
-    "sed -i 's/^version = \".*\"/version = \"{{version}}\"/' Cargo.toml",
+    "cargo set-version {{version}}",
+    "cargo check --release",
+    "git add :/Cargo.lock",
 ]
 
 # Post-bump: push commit and tag
