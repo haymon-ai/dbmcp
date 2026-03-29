@@ -33,9 +33,9 @@ remote = "github.com"
 owner = "haymon-ai"
 repository = "database-mcp"
 
-# Map git authors to GitHub usernames for changelog links
-[remote_contributors]
-"Andreas Penz" = "athopen"
+authors = [
+    { username = "athopen", signature = "Andreas Penz" },
+]
 
 # Commit type visibility in the changelog
 [commit_types]
