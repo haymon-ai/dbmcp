@@ -20,15 +20,29 @@ Each backend has sensible defaults for host, port, and user. See [Configuration]
 
 ## MCP Tools
 
-Database MCP exposes six tools through the MCP protocol. AI assistants call these tools to explore and query your database.
+Database MCP exposes tools through the MCP protocol. The available tool set depends on the database backend and read-only setting. AI assistants call these tools to explore and query your database.
+
+### Tool Availability
+
+| Tool | MySQL / MariaDB | PostgreSQL | SQLite | Blocked when read-only |
+|------|-----------------|------------|--------|------------------------|
+| `list_databases` | Yes | Yes | No | No |
+| `list_tables` | Yes | Yes | Yes | No |
+| `get_table_schema` | Yes | Yes | Yes | No |
+| `get_table_schema_with_relations` | Yes | Yes | Yes | No |
+| `read_query` | Yes | Yes | Yes | No |
+| `write_query` | Yes | Yes | Yes | Yes |
+| `create_database` | Yes | Yes | No | Yes |
+
+SQLite is file-based with a single database, so `list_databases` and `create_database` are not applicable.
 
 ### `list_databases`
 
-Discover all accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available.
+Discover all accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available. Not available for SQLite.
 
 ### `list_tables`
 
-List all tables in a specific database. Requires a database name from `list_databases`.
+List all tables in a specific database. Requires a database name (use `list_databases` first on MySQL/MariaDB/PostgreSQL).
 
 ### `get_table_schema`
 
@@ -38,13 +52,17 @@ Inspect column definitions for a table — column names, types, nullability, key
 
 Like `get_table_schema`, but also includes foreign key relationships. Helps assistants understand how tables connect to each other.
 
-### `execute_sql`
+### `read_query`
 
-Run a SQL query against a specific database. In read-only mode (the default), only `SELECT`, `SHOW`, `DESCRIBE`, and `USE` statements are allowed. See [Security](/docs/security) for details on query validation.
+Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation.
+
+### `write_query`
+
+Execute a write SQL query (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`) against a specific database. This tool is only available when read-only mode is disabled. No SQL type validation is performed — the tool boundary is the access control.
 
 ### `create_database`
 
-Create a new database. This tool is blocked when read-only mode is enabled (the default). Not supported for SQLite.
+Create a new database. Only available when read-only mode is disabled. Not supported for SQLite.
 
 ## Transport Modes
 

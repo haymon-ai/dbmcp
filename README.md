@@ -12,7 +12,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **6 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `get_table_schema_with_relations`, `execute_sql`, `create_database`
+- **7 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `get_table_schema_with_relations`, `read_query`, `write_query`, `create_database`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -148,7 +148,7 @@ Environment variables are typically set by your MCP client (via `env` or `envFil
 
 ### list_databases
 
-Lists all accessible databases. Returns a JSON array of database names.
+Lists all accessible databases. Returns a JSON array of database names. Not available for SQLite.
 
 ### list_tables
 
@@ -162,17 +162,21 @@ Returns column definitions (type, nullable, key, default, extra) for a table. Pa
 
 Same as `get_table_schema` plus foreign key relationships (constraint name, referenced table/column, on update/delete rules). Parameters: `database_name`, `table_name`.
 
-### execute_sql
+### read_query
 
-Executes a SQL query. In read-only mode (default), only SELECT, SHOW, DESCRIBE, and USE are allowed. Parameters: `sql_query`, `database_name`.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `sql_query`, `database_name`.
+
+### write_query
+
+Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only available when read-only mode is disabled. Parameters: `sql_query`, `database_name`.
 
 ### create_database
 
-Creates a database if it doesn't exist. Blocked in read-only mode. Not supported for SQLite. Parameters: `database_name`.
+Creates a database if it doesn't exist. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database_name`.
 
 ## Security
 
-- **Read-only mode** (default) — AST-based SQL parsing validates every query before execution
+- **Read-only mode** (default) — write tools hidden from AI assistant; `read_query` enforces AST-based SQL validation
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings
