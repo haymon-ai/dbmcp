@@ -8,8 +8,9 @@
 //! ```
 
 use database_mcp::config::{DatabaseBackend, DatabaseConfig};
-use database_mcp::db::backend::Backend;
+use database_mcp::db::backend::{Backend, DatabaseBackend as _};
 use database_mcp::db::sqlite::SqliteBackend;
+use database_mcp::db::validation::validate_read_only_with_dialect;
 use database_mcp::server::Server;
 use rmcp::ServerHandler;
 
@@ -39,16 +40,14 @@ async fn readonly_backend() -> Backend {
 #[tokio::test]
 async fn it_lists_databases() {
     let b = backend().await;
-    let result = b.tool_list_databases().await.expect("failed");
-    let dbs: Vec<String> = serde_json::from_str(&result).expect("bad json");
+    let dbs = b.list_databases().await.expect("failed");
     assert!(dbs.iter().any(|db| db == "main"), "Expected 'main' in: {dbs:?}");
 }
 
 #[tokio::test]
 async fn it_lists_tables() {
     let b = backend().await;
-    let result = b.tool_list_tables("main").await.expect("failed");
-    let tables: Vec<String> = serde_json::from_str(&result).expect("bad json");
+    let tables = b.list_tables("main").await.expect("failed");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
             tables.iter().any(|t| t == expected),
@@ -60,8 +59,7 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let result = b.tool_get_table_schema("main", "users").await.expect("failed");
-    let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
+    let schema = b.get_table_schema("main", "users").await.expect("failed");
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     assert!(obj.contains_key("columns"), "Response should contain columns");
@@ -74,8 +72,7 @@ async fn it_gets_table_schema() {
 #[tokio::test]
 async fn it_gets_table_schema_with_relations() {
     let b = backend().await;
-    let result = b.tool_get_table_schema("main", "posts").await.expect("failed");
-    let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
+    let schema = b.get_table_schema("main", "posts").await.expect("failed");
     let columns = schema["columns"].as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
@@ -92,23 +89,22 @@ async fn it_gets_table_schema_with_relations() {
 #[tokio::test]
 async fn it_executes_sql() {
     let b = backend().await;
-    let result = b
-        .tool_execute_sql("SELECT * FROM users ORDER BY id", "main")
+    let results = b
+        .execute_query("SELECT * FROM users ORDER BY id", Some("main"))
         .await
         .expect("failed");
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    let rows = results.as_array().expect("array");
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
 
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
     let b = readonly_backend().await;
-    let result = b
-        .tool_execute_sql(
-            "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-            "main",
-        )
-        .await;
+    let dialect = b.dialect();
+    let result = validate_read_only_with_dialect(
+        "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
+        dialect.as_ref(),
+    );
     assert!(result.is_err(), "Expected error for write in read-only mode");
 }
 
@@ -117,21 +113,21 @@ async fn it_preserves_json_types() {
     let b = backend().await;
 
     // COUNT(*) should return a JSON number, not a string or null
-    let result = b
-        .tool_execute_sql("SELECT COUNT(*) as cnt FROM users", "main")
+    let results = b
+        .execute_query("SELECT COUNT(*) as cnt FROM users", Some("main"))
         .await
         .expect("failed");
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    let rows = results.as_array().expect("array");
     let cnt = &rows[0]["cnt"];
     assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
     assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
 
     // Integer and text columns should have correct types
-    let result = b
-        .tool_execute_sql("SELECT id, name FROM users ORDER BY id LIMIT 1", "main")
+    let results = b
+        .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1", Some("main"))
         .await
         .expect("failed");
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
+    let rows = results.as_array().expect("array");
     assert!(
         rows[0]["id"].is_number(),
         "id should be a number, got: {}",
@@ -150,11 +146,11 @@ async fn it_has_consistent_seed_data() {
 
     async fn check(b: &Backend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
-        let result = b
-            .tool_execute_sql(&sql, "main")
+        let results = b
+            .execute_query(&sql, Some("main"))
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
-        let rows: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+        let rows = results.as_array().expect("array");
         let count_str = rows[0]
             .get("cnt")
             .and_then(|v| v.as_str())
