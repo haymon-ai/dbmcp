@@ -227,15 +227,12 @@ fn map_error(e: impl std::fmt::Display) -> ErrorData {
 pub struct Server {
     /// The active database backend.
     pub backend: Backend,
-    read_only: bool,
     tool_router: ToolRouter<Self>,
 }
 
 impl std::fmt::Debug for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Server")
-            .field("read_only", &self.read_only)
-            .finish_non_exhaustive()
+        f.debug_struct("Server").finish_non_exhaustive()
     }
 }
 
@@ -246,13 +243,8 @@ impl Server {
     /// and read-only setting. `SQLite` does not support `create_database`.
     #[must_use]
     pub fn new(backend: Backend) -> Self {
-        let read_only = backend.read_only();
         let tool_router = Self::build_tool_router(&backend);
-        Self {
-            backend,
-            read_only,
-            tool_router,
-        }
+        Self { backend, tool_router }
     }
 
     /// Builds the [`ToolRouter`] for the given backend.
@@ -261,21 +253,25 @@ impl Server {
     /// when not in read-only mode. `create_database` is excluded for
     /// `SQLite` since it has no server-side database management.
     fn build_tool_router(backend: &Backend) -> ToolRouter<Self> {
-        let read_only = backend.read_only();
-        let supports_create_database = !matches!(backend, Backend::Sqlite(_));
-
         let mut router = ToolRouter::new();
-        router.add_route(list_databases_route());
+
+        if !matches!(backend, Backend::Sqlite(_)) {
+            router.add_route(list_databases_route());
+        }
+
         router.add_route(list_tables_route());
         router.add_route(get_table_schema_route());
         router.add_route(get_table_schema_with_relations_route());
         router.add_route(read_query_route());
 
-        if !read_only {
-            router.add_route(write_query_route());
-            if supports_create_database {
-                router.add_route(create_database_route());
-            }
+        if backend.read_only() {
+            return router;
+        }
+
+        router.add_route(write_query_route());
+
+        if !matches!(backend, Backend::Sqlite(_)) {
+            router.add_route(create_database_route());
         }
 
         router
@@ -600,26 +596,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_read_only_returns_5_read_tools() {
+    async fn router_sqlite_read_only_returns_4_tools() {
         let names = router_tool_names(&sqlite_backend(true));
-        assert_eq!(names.len(), 5);
-        assert!(names.contains(&"list_databases".to_string()));
+        assert_eq!(names.len(), 4);
+        assert!(!names.contains(&"list_databases".to_string()));
         assert!(names.contains(&"list_tables".to_string()));
         assert!(names.contains(&"get_table_schema".to_string()));
         assert!(names.contains(&"get_table_schema_with_relations".to_string()));
         assert!(names.contains(&"read_query".to_string()));
-        assert!(!names.contains(&"write_query".to_string()));
-        assert!(!names.contains(&"create_database".to_string()));
     }
 
     #[tokio::test]
-    async fn router_sqlite_read_write_returns_6_tools_no_create_database() {
+    async fn router_sqlite_read_write_returns_5_tools() {
         let names = router_tool_names(&sqlite_backend(false));
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 5);
+        assert!(!names.contains(&"list_databases".to_string()));
         assert!(names.contains(&"write_query".to_string()));
-        assert!(
-            !names.contains(&"create_database".to_string()),
-            "SQLite must never expose create_database"
-        );
+        assert!(!names.contains(&"create_database".to_string()));
     }
 }

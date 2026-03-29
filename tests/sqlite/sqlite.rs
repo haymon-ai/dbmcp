@@ -10,6 +10,8 @@
 use database_mcp::config::{DatabaseBackend, DatabaseConfig};
 use database_mcp::db::backend::Backend;
 use database_mcp::db::sqlite::SqliteBackend;
+use database_mcp::server::Server;
+use rmcp::ServerHandler;
 
 fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
@@ -163,4 +165,23 @@ async fn it_has_consistent_seed_data() {
     check(&b, "posts", 5).await;
     check(&b, "tags", 4).await;
     check(&b, "post_tags", 6).await;
+}
+
+#[tokio::test]
+async fn it_excludes_list_databases_and_create_database_tools() {
+    let server = Server::new(backend().await);
+
+    assert!(
+        server.get_tool("list_databases").is_none(),
+        "SQLite must not expose list_databases"
+    );
+    assert!(
+        server.get_tool("create_database").is_none(),
+        "SQLite must not expose create_database"
+    );
+
+    // Verify core tools are present
+    assert!(server.get_tool("list_tables").is_some());
+    assert!(server.get_tool("read_query").is_some());
+    assert!(server.get_tool("write_query").is_some());
 }
