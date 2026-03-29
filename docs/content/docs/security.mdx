@@ -7,20 +7,29 @@ Database MCP is designed with security as a primary concern. When you give an AI
 
 ## Read-Only Mode
 
-By default, Database MCP runs in **read-only mode**. This means the AI assistant can query your data but cannot modify it in any way.
+By default, Database MCP runs in **read-only mode**. This controls which tools the AI assistant can see and use.
 
-### Allowed Operations
+### Tool-Level Access Control
 
-In read-only mode, only the following SQL operations are permitted:
+In read-only mode, write tools (`write_query`, `create_database`) are not registered with the MCP client. The AI assistant never sees them in the tool list, which prevents it from attempting write operations entirely.
+
+When read-only mode is disabled, the full tool set becomes available. See [Features](/docs/features#tool-availability) for the complete tool availability matrix.
+
+### SQL Validation in `read_query`
+
+The `read_query` tool enforces AST-based SQL validation as defence-in-depth. Only the following SQL operations are permitted:
 
 - `SELECT` — read data from tables
 - `SHOW` — view database and table metadata
 - `DESCRIBE` / `DESC` — inspect table structure
 - `USE` — switch between databases
+- `EXPLAIN` — view query execution plans
+
+This validation is always enforced, even when read-only mode is disabled, preventing write statements from being smuggled through the read tool.
 
 ### Blocked Operations
 
-All write operations are blocked, including `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, and `TRUNCATE`. Additionally, the following are always blocked regardless of mode:
+The following are always blocked regardless of mode:
 
 - `LOAD_FILE()` — prevents reading files from the server filesystem
 - `SELECT INTO OUTFILE` / `SELECT INTO DUMPFILE` — prevents writing files to the server filesystem
@@ -45,4 +54,4 @@ Database and table names are validated to contain only alphanumeric characters a
 
 ## Disabling Read-Only Mode
 
-Read-only mode can be explicitly disabled if you need write access. Set the `MCP_READ_ONLY` environment variable to `false` or pass the `--read-only false` flag. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
+Read-only mode can be explicitly disabled if you need write access. Set the `MCP_READ_ONLY` environment variable to `false` or pass the `--read-only false` flag. This makes `write_query` and `create_database` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.

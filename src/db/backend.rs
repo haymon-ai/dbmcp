@@ -182,24 +182,22 @@ impl Backend {
         Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into()))
     }
 
-    /// Executes a user-provided SQL query with read-only validation.
+    /// Executes a SQL query and returns results as a JSON string.
+    ///
+    /// Includes read-only validation as defence-in-depth. The `read_query`
+    /// tool handler also validates, but this ensures safety even when
+    /// calling `tool_execute_sql` directly (e.g. from integration tests).
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if the identifier is invalid, the query is blocked
-    /// by read-only mode, or the backend query fails.
-    pub async fn tool_execute_sql(
-        &self,
-        sql_query: &str,
-        database_name: &str,
-        _parameters: Option<Vec<Value>>,
-    ) -> Result<String, AppError> {
+    /// Returns [`AppError`] if the query is blocked by read-only mode
+    /// or the backend query fails.
+    pub async fn tool_execute_sql(&self, sql_query: &str, database_name: &str) -> Result<String, AppError> {
         info!(
             "TOOL: execute_sql called. database_name={database_name}, sql_query={}",
             &sql_query[..sql_query.len().min(100)]
         );
 
-        // Read-only validation with the backend's dialect
         if self.read_only() {
             let dialect = self.dialect();
             validate_read_only_with_dialect(sql_query, dialect.as_ref())?;

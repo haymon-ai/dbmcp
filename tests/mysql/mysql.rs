@@ -87,7 +87,7 @@ async fn it_gets_table_relations() {
 async fn it_executes_sql() {
     let b = backend().await;
     let result = b
-        .tool_execute_sql("SELECT * FROM users ORDER BY id", "app", None)
+        .tool_execute_sql("SELECT * FROM users ORDER BY id", "app")
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -101,7 +101,6 @@ async fn it_blocks_writes_in_read_only_mode() {
         .tool_execute_sql(
             "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
             "app",
-            None,
         )
         .await;
     assert!(result.is_err(), "Expected error for write in read-only mode");
@@ -113,7 +112,7 @@ async fn it_preserves_json_types() {
 
     // COUNT(*) should return a JSON number, not a string or null
     let result = b
-        .tool_execute_sql("SELECT COUNT(*) as cnt FROM users", "app", None)
+        .tool_execute_sql("SELECT COUNT(*) as cnt FROM users", "app")
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -123,7 +122,7 @@ async fn it_preserves_json_types() {
 
     // Integer and text columns should have correct types
     let result = b
-        .tool_execute_sql("SELECT id, name FROM users ORDER BY id LIMIT 1", "app", None)
+        .tool_execute_sql("SELECT id, name FROM users ORDER BY id LIMIT 1", "app")
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -170,7 +169,7 @@ async fn it_lists_tables_cross_database() {
 async fn it_executes_sql_cross_database() {
     let b = backend().await;
     let result = b
-        .tool_execute_sql("SELECT * FROM events ORDER BY id", "analytics", None)
+        .tool_execute_sql("SELECT * FROM events ORDER BY id", "analytics")
         .await
         .expect("failed");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&result).expect("bad json");
@@ -206,7 +205,7 @@ async fn it_lists_databases_includes_cross_db() {
 async fn it_blocks_writes_cross_database_in_read_only_mode() {
     let b = readonly_backend().await;
     let result = b
-        .tool_execute_sql("INSERT INTO events (name) VALUES ('hack')", "analytics", None)
+        .tool_execute_sql("INSERT INTO events (name) VALUES ('hack')", "analytics")
         .await;
     assert!(
         result.is_err(),
@@ -232,7 +231,7 @@ async fn it_has_consistent_seed_data() {
     async fn check(b: &Backend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let result = b
-            .tool_execute_sql(&sql, "app", None)
+            .tool_execute_sql(&sql, "app")
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
