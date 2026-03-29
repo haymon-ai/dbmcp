@@ -33,6 +33,10 @@ remote = "github.com"
 owner = "haymon-ai"
 repository = "database-mcp"
 
+# Map git authors to GitHub usernames for changelog links
+[remote_contributors]
+"Andreas Penz" = "athopen"
+
 # Commit type visibility in the changelog
 [commit_types]
 chore = { omit_from_changelog = true }
