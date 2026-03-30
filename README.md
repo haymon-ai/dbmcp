@@ -14,7 +14,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **7 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `get_table_schema_with_relations`, `read_query`, `write_query`, `create_database`
+- **6 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -158,11 +158,7 @@ Lists all tables in a database. Parameters: `database_name`.
 
 ### get_table_schema
 
-Returns column definitions (type, nullable, key, default, extra) for a table. Parameters: `database_name`, `table_name`.
-
-### get_table_schema_with_relations
-
-Same as `get_table_schema` plus foreign key relationships (constraint name, referenced table/column, on update/delete rules). Parameters: `database_name`, `table_name`.
+Returns column definitions (type, nullable, key, default, extra) and foreign key relationships (constraint name, referenced table/column, on update/delete rules) for a table. Parameters: `database_name`, `table_name`.
 
 ### read_query
 

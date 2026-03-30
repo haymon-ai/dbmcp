@@ -98,6 +98,8 @@ impl DatabaseBackend for SqliteBackend {
 
     async fn get_table_schema(&self, _database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(table)?;
+
+        // 1. Get basic schema
         let rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info({})", Self::quote_identifier(table)))
             .fetch_all(&self.pool)
             .await
@@ -107,14 +109,14 @@ impl DatabaseBackend for SqliteBackend {
             return Err(AppError::TableNotFound(table.to_string()));
         }
 
-        let mut schema: HashMap<String, Value> = HashMap::new();
+        let mut columns: HashMap<String, Value> = HashMap::new();
         for row in &rows {
             let col_name: String = row.try_get("name").unwrap_or_default();
             let col_type: String = row.try_get("type").unwrap_or_default();
             let notnull: i32 = row.try_get("notnull").unwrap_or(0);
             let default: Option<String> = row.try_get("dflt_value").ok();
             let pk: i32 = row.try_get("pk").unwrap_or(0);
-            schema.insert(
+            columns.insert(
                 col_name,
                 json!({
                     "type": col_type,
@@ -122,24 +124,12 @@ impl DatabaseBackend for SqliteBackend {
                     "key": if pk > 0 { "PRI" } else { "" },
                     "default": default,
                     "extra": Value::Null,
+                    "foreign_key": Value::Null,
                 }),
             );
         }
-        Ok(json!(schema))
-    }
 
-    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
-        let schema = self.get_table_schema(database, table).await?;
-        let mut columns: HashMap<String, Value> = serde_json::from_value(schema).unwrap_or_default();
-
-        // Add null foreign_key to all columns
-        for col in columns.values_mut() {
-            if let Some(obj) = col.as_object_mut() {
-                obj.entry("foreign_key".to_string()).or_insert(Value::Null);
-            }
-        }
-
-        // Get FK info via PRAGMA
+        // 2. Get FK info via PRAGMA
         let fk_rows: Vec<SqliteRow> =
             sqlx::query(&format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table)))
                 .fetch_all(&self.pool)

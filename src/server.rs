@@ -134,7 +134,7 @@ fn get_table_schema_route() -> ToolRoute<Server> {
     ToolRoute::new_dyn(
         Tool::new(
             "get_table_schema",
-            "Get column definitions (type, nullable, key, default) for a table. Requires database_name and table_name.",
+            "Get column definitions (type, nullable, key, default) and foreign key relationships for a table. Requires database_name and table_name.",
             schema_for::<GetTableSchemaRequest>(),
         )
         .with_annotations(
@@ -150,33 +150,6 @@ fn get_table_schema_route() -> ToolRoute<Server> {
             Box::pin(async move {
                 let params = params?;
                 server.get_table_schema(params).await
-            })
-        },
-    )
-}
-
-/// Route for the `get_table_schema_with_relations` tool.
-#[must_use]
-fn get_table_schema_with_relations_route() -> ToolRoute<Server> {
-    ToolRoute::new_dyn(
-        Tool::new(
-            "get_table_schema_with_relations",
-            "Get column definitions plus foreign key relationships for a table. Requires database_name and table_name.",
-            schema_for::<GetTableSchemaRequest>(),
-        )
-        .with_annotations(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        ),
-        |mut ctx: ToolCallContext<'_, Server>| {
-            let params = Parameters::<GetTableSchemaRequest>::from_context_part(&mut ctx);
-            let server = ctx.service;
-            Box::pin(async move {
-                let params = params?;
-                server.get_table_schema_with_relations(params).await
             })
         },
     )
@@ -310,7 +283,6 @@ impl Server {
 
         router.add_route(list_tables_route());
         router.add_route(get_table_schema_route());
-        router.add_route(get_table_schema_with_relations_route());
         router.add_route(read_query_route());
 
         if backend.read_only() {
@@ -356,7 +328,7 @@ impl Server {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    /// Get column definitions for a table.
+    /// Get column definitions and foreign key relationships for a table.
     ///
     /// # Errors
     ///
@@ -365,23 +337,6 @@ impl Server {
         let result = self
             .backend
             .tool_get_table_schema(&req.0.database_name, &req.0.table_name)
-            .await
-            .map_err(map_error)?;
-        Ok(CallToolResult::success(vec![Content::text(result)]))
-    }
-
-    /// Get column definitions plus foreign key relationships.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorData`] if the backend query fails.
-    pub async fn get_table_schema_with_relations(
-        &self,
-        req: Parameters<GetTableSchemaRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .backend
-            .tool_get_table_schema_with_relations(&req.0.database_name, &req.0.table_name)
             .await
             .map_err(map_error)?;
         Ok(CallToolResult::success(vec![Content::text(result)]))
@@ -557,17 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn get_table_schema_with_relations_route_has_correct_name() {
-        let route = get_table_schema_with_relations_route();
-        assert_eq!(route.attr.name.as_ref(), "get_table_schema_with_relations");
-        let props = route.attr.input_schema.get("properties").and_then(|v| v.as_object());
-        assert!(
-            props.is_some_and(|p| p.contains_key("database_name") && p.contains_key("table_name")),
-            "schema should have database_name and table_name properties"
-        );
-    }
-
-    #[test]
     fn read_query_route_has_correct_name_and_schema() {
         let route = read_query_route();
         assert_eq!(route.attr.name.as_ref(), "read_query");
@@ -687,16 +631,6 @@ mod tests {
     }
 
     #[test]
-    fn get_table_schema_with_relations_annotations_are_read_only_closed_world() {
-        let route = get_table_schema_with_relations_route();
-        let ann = annotations(&route);
-        assert_eq!(ann.read_only_hint, Some(true));
-        assert_eq!(ann.destructive_hint, Some(false));
-        assert_eq!(ann.idempotent_hint, Some(true));
-        assert_eq!(ann.open_world_hint, Some(false));
-    }
-
-    #[test]
     fn read_query_annotations_are_read_only_open_world() {
         let route = read_query_route();
         let ann = annotations(&route);
@@ -745,20 +679,19 @@ mod tests {
     // MySQL/Postgres router behavior is verified by integration tests.
 
     #[tokio::test]
-    async fn router_sqlite_read_only_returns_4_tools() {
+    async fn router_sqlite_read_only_returns_3_tools() {
         let names = router_tool_names(&sqlite_backend(true));
-        assert_eq!(names.len(), 4);
+        assert_eq!(names.len(), 3);
         assert!(!names.contains(&"list_databases".to_string()));
         assert!(names.contains(&"list_tables".to_string()));
         assert!(names.contains(&"get_table_schema".to_string()));
-        assert!(names.contains(&"get_table_schema_with_relations".to_string()));
         assert!(names.contains(&"read_query".to_string()));
     }
 
     #[tokio::test]
-    async fn router_sqlite_read_write_returns_5_tools() {
+    async fn router_sqlite_read_write_returns_4_tools() {
         let names = router_tool_names(&sqlite_backend(false));
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 4);
         assert!(!names.contains(&"list_databases".to_string()));
         assert!(names.contains(&"write_query".to_string()));
         assert!(!names.contains(&"create_database".to_string()));

@@ -29,7 +29,6 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 | `list_databases` | Yes | Yes | No | No |
 | `list_tables` | Yes | Yes | Yes | No |
 | `get_table_schema` | Yes | Yes | Yes | No |
-| `get_table_schema_with_relations` | Yes | Yes | Yes | No |
 | `read_query` | Yes | Yes | Yes | No |
 | `write_query` | Yes | Yes | Yes | Yes |
 | `create_database` | Yes | Yes | No | Yes |
@@ -46,11 +45,7 @@ List all tables in a specific database. Requires a database name (use `list_data
 
 ### `get_table_schema`
 
-Inspect column definitions for a table — column names, types, nullability, keys, and default values. Useful for understanding table structure before writing queries.
-
-### `get_table_schema_with_relations`
-
-Like `get_table_schema`, but also includes foreign key relationships. Helps assistants understand how tables connect to each other.
+Inspect column definitions for a table — column names, types, nullability, keys, default values, and foreign key relationships (constraint name, referenced table/column, cascade rules). Helps assistants understand both table structure and how tables connect to each other.
 
 ### `read_query`
 

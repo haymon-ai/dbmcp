@@ -64,22 +64,30 @@ async fn it_gets_table_schema() {
     let b = backend().await;
     let result = b.tool_get_table_schema("app", "users").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
-    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
+    let obj = schema.as_object().expect("object");
+    assert!(obj.contains_key("table_name"), "Response should contain table_name");
+    assert!(obj.contains_key("columns"), "Response should contain columns");
+    let columns = obj["columns"].as_object().expect("columns object");
     for col in ["id", "name", "email", "created_at"] {
-        assert!(columns.iter().any(|c| c == col), "Missing '{col}' in: {columns:?}");
+        assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
     }
 }
 
 #[tokio::test]
-async fn it_gets_table_relations() {
+async fn it_gets_table_schema_with_relations() {
     let b = backend().await;
-    let result = b
-        .tool_get_table_schema_with_relations("app", "posts")
-        .await
-        .expect("failed");
+    let result = b.tool_get_table_schema("app", "posts").await.expect("failed");
+    let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
+    let columns = schema["columns"].as_object().expect("columns object");
+    assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
+    let user_id = columns["user_id"].as_object().expect("user_id object");
     assert!(
-        result.contains("user_id") || result.contains("users"),
-        "Expected foreign key reference in: {result}"
+        user_id.contains_key("foreign_key"),
+        "Missing 'foreign_key' in user_id column"
+    );
+    assert!(
+        !user_id["foreign_key"].is_null(),
+        "foreign_key should not be null for user_id"
     );
 }
 
@@ -181,10 +189,12 @@ async fn it_gets_table_schema_cross_database() {
     let b = backend().await;
     let result = b.tool_get_table_schema("analytics", "events").await.expect("failed");
     let schema: serde_json::Value = serde_json::from_str(&result).expect("bad json");
-    let columns: Vec<String> = schema.as_object().expect("object").keys().cloned().collect();
+    let obj = schema.as_object().expect("object");
+    assert!(obj.contains_key("table_name"), "Response should contain table_name");
+    let columns = obj["columns"].as_object().expect("columns object");
     for col in ["id", "name", "payload", "created_at"] {
         assert!(
-            columns.iter().any(|c| c == col),
+            columns.contains_key(col),
             "Missing '{col}' in analytics events schema: {columns:?}"
         );
     }

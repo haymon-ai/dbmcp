@@ -23,11 +23,8 @@ pub trait DatabaseBackend {
     /// Lists all tables in a database.
     async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError>;
 
-    /// Returns column definitions for a table.
+    /// Returns column definitions with foreign key relationships for a table.
     async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError>;
-
-    /// Returns column definitions with foreign key relationships.
-    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError>;
 
     /// Executes a SQL query and returns rows as a JSON array.
     async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError>;
@@ -79,14 +76,6 @@ impl DatabaseBackend for Backend {
             Self::Mysql(b) => b.get_table_schema(database, table).await,
             Self::Postgres(b) => b.get_table_schema(database, table).await,
             Self::Sqlite(b) => b.get_table_schema(database, table).await,
-        }
-    }
-
-    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
-        match self {
-            Self::Mysql(b) => b.get_table_schema_with_relations(database, table).await,
-            Self::Postgres(b) => b.get_table_schema_with_relations(database, table).await,
-            Self::Sqlite(b) => b.get_table_schema_with_relations(database, table).await,
         }
     }
 
@@ -154,7 +143,7 @@ impl Backend {
         Ok(serde_json::to_string_pretty(&table_list).unwrap_or_else(|_| "[]".into()))
     }
 
-    /// Returns column definitions for a table as JSON.
+    /// Returns column definitions with foreign key relationships as JSON.
     ///
     /// # Errors
     ///
@@ -164,22 +153,6 @@ impl Backend {
         let schema = self.get_table_schema(database_name, table_name).await?;
         info!("TOOL: get_table_schema completed");
         Ok(serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".into()))
-    }
-
-    /// Returns column definitions with foreign key relationships.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError`] if identifiers are invalid or the backend query fails.
-    pub async fn tool_get_table_schema_with_relations(
-        &self,
-        database_name: &str,
-        table_name: &str,
-    ) -> Result<String, AppError> {
-        info!("TOOL: get_table_schema_with_relations called. database_name={database_name}, table_name={table_name}");
-        let result = self.get_table_schema_with_relations(database_name, table_name).await?;
-        info!("TOOL: get_table_schema_with_relations completed");
-        Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into()))
     }
 
     /// Executes a SQL query and returns results as a JSON string.

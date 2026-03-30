@@ -216,41 +216,6 @@ impl DatabaseBackend for MysqlBackend {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
-        let sql = format!(
-            "DESCRIBE {}.{}",
-            Self::quote_identifier(database),
-            Self::quote_identifier(table)
-        );
-        let results = self.query_to_json(&sql, None).await?;
-        let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
-
-        if rows.is_empty() {
-            return Err(AppError::TableNotFound(format!("{database}.{table}")));
-        }
-
-        let mut schema: HashMap<String, Value> = HashMap::new();
-        for row in rows {
-            if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
-                schema.insert(
-                    col_name.to_string(),
-                    json!({
-                        "type": row.get("Type").unwrap_or(&Value::Null),
-                        "nullable": row.get("Null").and_then(|v| v.as_str()).is_some_and(|s| s.to_uppercase() == "YES"),
-                        "key": row.get("Key").unwrap_or(&Value::Null),
-                        "default": row.get("Default").unwrap_or(&Value::Null),
-                        "extra": row.get("Extra").unwrap_or(&Value::Null),
-                    }),
-                );
-            }
-        }
-
-        Ok(json!(schema))
-    }
-
-    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
-        validate_identifier(database)?;
-        validate_identifier(table)?;
-
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",

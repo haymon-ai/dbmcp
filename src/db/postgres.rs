@@ -218,6 +218,8 @@ impl DatabaseBackend for PostgresBackend {
         validate_identifier(table)?;
         let db = if database.is_empty() { None } else { Some(database) };
         let pool = self.get_pool(db).await?;
+
+        // 1. Get basic schema
         let rows: Vec<PgRow> = sqlx::query(
             r"SELECT column_name, data_type, is_nullable, column_default,
                       character_maximum_length
@@ -234,13 +236,13 @@ impl DatabaseBackend for PostgresBackend {
             return Err(AppError::TableNotFound(table.to_string()));
         }
 
-        let mut schema: HashMap<String, Value> = HashMap::new();
+        let mut columns: HashMap<String, Value> = HashMap::new();
         for row in &rows {
             let col_name: String = row.try_get("column_name").unwrap_or_default();
             let data_type: String = row.try_get("data_type").unwrap_or_default();
             let nullable: String = row.try_get("is_nullable").unwrap_or_default();
             let default: Option<String> = row.try_get("column_default").ok();
-            schema.insert(
+            columns.insert(
                 col_name,
                 json!({
                     "type": data_type,
@@ -248,26 +250,12 @@ impl DatabaseBackend for PostgresBackend {
                     "key": Value::Null,
                     "default": default,
                     "extra": Value::Null,
+                    "foreign_key": Value::Null,
                 }),
             );
         }
-        Ok(json!(schema))
-    }
 
-    async fn get_table_schema_with_relations(&self, database: &str, table: &str) -> Result<Value, AppError> {
-        let schema = self.get_table_schema(database, table).await?;
-        let mut columns: HashMap<String, Value> = serde_json::from_value(schema).unwrap_or_default();
-
-        // Add null foreign_key to all columns
-        for col in columns.values_mut() {
-            if let Some(obj) = col.as_object_mut() {
-                obj.entry("foreign_key".to_string()).or_insert(Value::Null);
-            }
-        }
-
-        // Get FK info using the same pool as the schema query
-        let db = if database.is_empty() { None } else { Some(database) };
-        let pool = self.get_pool(db).await?;
+        // 2. Get FK relationships
         let fk_rows: Vec<PgRow> = sqlx::query(
             r"SELECT
                 kcu.column_name,
