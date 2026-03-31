@@ -6,9 +6,9 @@ skip_ci = "[skip ci]"
 
 # Pre-bump: quality gates + Cargo.toml version update
 pre_bump_hooks = [
-    "cargo fmt --check",
-    "cargo clippy -- -D warnings",
-    "cargo test --lib",
+    "cargo fmt --all --check",
+    "cargo clippy --workspace -- -D warnings",
+    "cargo test --workspace --lib",
     "cargo set-version {{version}}",
     "cargo check --release",
     "git add :/Cargo.lock",
