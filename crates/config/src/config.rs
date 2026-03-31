@@ -233,7 +233,7 @@ pub struct Config {
     pub database: DatabaseConfig,
 
     /// HTTP transport settings (present only for the `http` subcommand).
-    pub server: Option<HttpConfig>,
+    pub http: Option<HttpConfig>,
 }
 
 impl Config {
@@ -285,7 +285,7 @@ mod tests {
     fn base_config(backend: DatabaseBackend) -> Config {
         Config {
             database: db_config(backend),
-            server: None,
+            http: None,
         }
     }
 

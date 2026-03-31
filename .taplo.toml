@@ -1,0 +1,19 @@
+include = ["**/Cargo.toml"]
+exclude = ["target/**", "**/target/**", "references/**"]
+
+[formatting]
+allowed_blank_lines = 1
+column_width = 100
+indent_string = "    "
+
+# Sort dependencies alphabetically
+[[rule]]
+include = ["**/Cargo.toml"]
+keys = ["dependencies", "dev-dependencies", "build-dependencies", "workspace.dependencies"]
+formatting = { reorder_keys = true }
+
+# Sort workspace members alphabetically
+[[rule]]
+include = ["Cargo.toml"]
+keys = ["workspace"]
+formatting = { reorder_arrays = true }

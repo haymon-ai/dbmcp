@@ -6,19 +6,17 @@ skip_ci = "[skip ci]"
 
 # Pre-bump: quality gates + Cargo.toml version update
 pre_bump_hooks = [
-    "cargo fmt --check",
-    "cargo clippy -- -D warnings",
-    "cargo test --lib",
+    "cargo fmt --all --check",
+    "taplo fmt --check",
+    "cargo clippy --workspace -- -D warnings",
+    "cargo test --workspace --lib",
     "cargo set-version {{version}}",
     "cargo check --release",
     "git add :/Cargo.lock",
 ]
 
 # Post-bump: push commit and tag
-post_bump_hooks = [
-    "git push",
-    "git push origin v{{version}}",
-]
+post_bump_hooks = ["git push", "git push origin v{{version}}"]
 
 # Local git hook: validate commit messages
 [git_hooks.commit-msg]
@@ -35,9 +33,7 @@ remote = "github.com"
 owner = "haymon-ai"
 repository = "database-mcp"
 
-authors = [
-    { username = "athopen", signature = "Andreas Penz" },
-]
+authors = [{ username = "athopen", signature = "Andreas Penz" }]
 
 # Commit type visibility in the changelog
 [commit_types]

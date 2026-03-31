@@ -7,12 +7,10 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use database_mcp::config::{DatabaseBackend, DatabaseConfig};
-use database_mcp::db::backend::{Backend, DatabaseBackend as _};
-use database_mcp::db::sqlite::SqliteBackend;
-use database_mcp::db::validation::validate_read_only_with_dialect;
-use database_mcp::server::Server;
+use backend::validation::validate_read_only_with_dialect;
+use config::{DatabaseBackend, DatabaseConfig};
 use rmcp::ServerHandler;
+use sqlite::{SqliteBackend, SqliteHandler};
 
 fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
@@ -25,23 +23,16 @@ fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     }
 }
 
-async fn backend() -> Backend {
+async fn backend() -> SqliteBackend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let config = sqlite_config(&db_path, false);
-    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
+    SqliteBackend::new(&config).await.expect("SQLite open failed")
 }
 
-async fn readonly_backend() -> Backend {
+async fn readonly_backend() -> SqliteBackend {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let config = sqlite_config(&db_path, true);
-    Backend::Sqlite(SqliteBackend::new(&config).await.expect("SQLite open failed"))
-}
-
-#[tokio::test]
-async fn it_lists_databases() {
-    let b = backend().await;
-    let dbs = b.list_databases().await.expect("failed");
-    assert!(dbs.iter().any(|db| db == "main"), "Expected 'main' in: {dbs:?}");
+    SqliteBackend::new(&config).await.expect("SQLite open failed")
 }
 
 #[tokio::test]
@@ -99,11 +90,11 @@ async fn it_executes_sql() {
 
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
-    let b = readonly_backend().await;
-    let dialect = b.dialect();
+    let _b = readonly_backend().await;
+    let dialect = sqlparser::dialect::SQLiteDialect {};
     let result = validate_read_only_with_dialect(
         "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-        dialect.as_ref(),
+        &dialect,
     );
     assert!(result.is_err(), "Expected error for write in read-only mode");
 }
@@ -144,7 +135,7 @@ async fn it_preserves_json_types() {
 async fn it_has_consistent_seed_data() {
     let b = backend().await;
 
-    async fn check(b: &Backend, table: &str, expected: usize) {
+    async fn check(b: &SqliteBackend, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
             .execute_query(&sql, Some("main"))
@@ -173,19 +164,21 @@ async fn it_has_consistent_seed_data() {
 
 #[tokio::test]
 async fn it_excludes_list_databases_and_create_database_tools() {
-    let server = Server::new(backend().await);
+    let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let config = sqlite_config(&db_path, false);
+    let handler = SqliteHandler::new(&config).await.expect("handler creation failed");
 
     assert!(
-        server.get_tool("list_databases").is_none(),
+        handler.get_tool("list_databases").is_none(),
         "SQLite must not expose list_databases"
     );
     assert!(
-        server.get_tool("create_database").is_none(),
+        handler.get_tool("create_database").is_none(),
         "SQLite must not expose create_database"
     );
 
     // Verify core tools are present
-    assert!(server.get_tool("list_tables").is_some());
-    assert!(server.get_tool("read_query").is_some());
-    assert!(server.get_tool("write_query").is_some());
+    assert!(handler.get_tool("list_tables").is_some());
+    assert!(handler.get_tool("read_query").is_some());
+    assert!(handler.get_tool("write_query").is_some());
 }

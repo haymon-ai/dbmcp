@@ -2,6 +2,16 @@
 
 use crate::error::AppError;
 
+/// Wraps `name` in `quote_char` for safe use in SQL statements.
+///
+/// Escapes internal occurrences of `quote_char` by doubling them.
+#[must_use]
+pub fn quote_identifier(name: &str, quote_char: char) -> String {
+    let doubled: String = std::iter::repeat_n(quote_char, 2).collect();
+    let escaped = name.replace(quote_char, &doubled);
+    format!("{quote_char}{escaped}{quote_char}")
+}
+
 /// Validates that `name` is a non-empty identifier without control characters.
 ///
 /// # Errors
@@ -59,5 +69,18 @@ mod tests {
         assert!(validate_identifier("test\x00db").is_err());
         assert!(validate_identifier("test\ndb").is_err());
         assert!(validate_identifier("test\x1Fdb").is_err());
+    }
+
+    #[test]
+    fn quote_with_double_quotes() {
+        assert_eq!(quote_identifier("users", '"'), "\"users\"");
+        assert_eq!(quote_identifier("eu-docker", '"'), "\"eu-docker\"");
+        assert_eq!(quote_identifier("test\"db", '"'), "\"test\"\"db\"");
+    }
+
+    #[test]
+    fn quote_with_backticks() {
+        assert_eq!(quote_identifier("users", '`'), "`users`");
+        assert_eq!(quote_identifier("test`db", '`'), "`test``db`");
     }
 }
