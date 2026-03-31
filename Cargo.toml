@@ -10,6 +10,12 @@ members = [
     "crates/sqlx_to_json",
 ]
 
+[workspace.package]
+version = "0.3.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/haymon-ai/database-mcp"
+
 [workspace.dependencies]
 # Shared across multiple crates
 sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls"] }
@@ -54,11 +60,11 @@ module_name_repetitions = "allow"          # e.g. db::backend::DatabaseBackend i
 
 [package]
 name = "database-mcp"
-version = "0.3.1"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "A single-binary MCP server for MySQL, PostgreSQL, and SQLite"
-license = "MIT"
-repository = "https://github.com/haymon-ai/database-mcp"
+license.workspace = true
+repository.workspace = true
 keywords = ["mcp", "database", "mysql", "postgresql", "sqlite"]
 categories = ["database", "command-line-utilities"]
 

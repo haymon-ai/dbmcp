@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "mcp-core",
  "serde_json",
@@ -1169,7 +1169,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-core"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "serde",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "mysql"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "backend",
  "mcp-core",
@@ -1430,7 +1430,7 @@ checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "postgres"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "backend",
  "mcp-core",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "backend",
  "mcp-core",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "sqlite"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "backend",
  "mcp-core",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx_to_json"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "base64",
  "serde_json",
