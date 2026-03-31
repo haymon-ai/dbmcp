@@ -11,15 +11,12 @@
 //! - `version` — prints the version and exits
 
 use config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
-use rmcp::ServiceExt;
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
 use server::Server;
 use std::process::ExitCode;
-use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use super::http::HttpCommand;
+use super::stdio::StdioCommand;
 
 use clap::{Parser, Subcommand};
 
@@ -67,7 +64,7 @@ impl From<LogLevel> for tracing::Level {
 
 #[derive(Parser)]
 #[command(name = "database-mcp", about = "Database MCP Server", version)]
-struct Cli {
+struct Arguments {
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -159,94 +156,67 @@ struct Cli {
     log_level: LogLevel,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Print version information and exit
+/// Top-level subcommand selector.
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Print version information and exit.
     Version,
-    /// Run in stdio mode (default)
-    Stdio,
-    /// Run in HTTP/SSE mode
-    Http {
-        /// Bind host for HTTP transport
-        #[arg(long, default_value = HttpConfig::DEFAULT_HOST)]
-        host: String,
-
-        /// Bind port for HTTP transport
-        #[arg(long, default_value_t = HttpConfig::DEFAULT_PORT)]
-        port: u16,
-
-        /// Allowed CORS origins (comma-separated)
-        #[arg(
-            long = "allowed-origins",
-            value_delimiter = ',',
-            default_values_t = HttpConfig::default_allowed_origins()
-        )]
-        allowed_origins: Vec<String>,
-
-        /// Allowed host names (comma-separated)
-        #[arg(
-            long = "allowed-hosts",
-            value_delimiter = ',',
-            default_values_t = HttpConfig::default_allowed_hosts()
-        )]
-        allowed_hosts: Vec<String>,
-    },
+    /// Run in stdio mode (default).
+    Stdio(StdioCommand),
+    /// Run in HTTP/SSE mode.
+    Http(HttpCommand),
 }
 
-impl From<&Cli> for DatabaseConfig {
-    fn from(cli: &Cli) -> Self {
-        let backend = cli.db_backend;
+impl From<&Arguments> for DatabaseConfig {
+    fn from(arguments: &Arguments) -> Self {
+        let backend = arguments.db_backend;
         Self {
             backend,
-            host: cli.db_host.clone(),
-            port: cli.db_port.unwrap_or_else(|| backend.default_port()),
-            user: cli.db_user.clone().unwrap_or_else(|| backend.default_user().into()),
-            password: cli.db_password.clone(),
-            name: cli.db_name.clone(),
-            charset: cli.db_charset.clone(),
-            ssl: cli.db_ssl,
-            ssl_ca: cli.db_ssl_ca.clone(),
-            ssl_cert: cli.db_ssl_cert.clone(),
-            ssl_key: cli.db_ssl_key.clone(),
-            ssl_verify_cert: cli.db_ssl_verify_cert,
-            read_only: cli.read_only,
-            max_pool_size: cli.max_pool_size,
+            host: arguments.db_host.clone(),
+            port: arguments.db_port.unwrap_or_else(|| backend.default_port()),
+            user: arguments
+                .db_user
+                .clone()
+                .unwrap_or_else(|| backend.default_user().into()),
+            password: arguments.db_password.clone(),
+            name: arguments.db_name.clone(),
+            charset: arguments.db_charset.clone(),
+            ssl: arguments.db_ssl,
+            ssl_ca: arguments.db_ssl_ca.clone(),
+            ssl_cert: arguments.db_ssl_cert.clone(),
+            ssl_key: arguments.db_ssl_key.clone(),
+            ssl_verify_cert: arguments.db_ssl_verify_cert,
+            read_only: arguments.read_only,
+            max_pool_size: arguments.max_pool_size,
         }
     }
 }
 
 impl From<&Command> for Option<HttpConfig> {
     fn from(cmd: &Command) -> Self {
-        if let Command::Http {
-            host,
-            port,
-            allowed_origins,
-            allowed_hosts,
-        } = cmd
-        {
-            Some(HttpConfig {
-                host: host.clone(),
-                port: *port,
-                allowed_origins: allowed_origins.clone(),
-                allowed_hosts: allowed_hosts.clone(),
-            })
-        } else {
-            None
+        match cmd {
+            Command::Http(http) => Some(HttpConfig {
+                host: http.host.clone(),
+                port: http.port,
+                allowed_origins: http.allowed_origins.clone(),
+                allowed_hosts: http.allowed_hosts.clone(),
+            }),
+            _ => None,
         }
     }
 }
 
-impl From<&Cli> for Config {
-    fn from(cli: &Cli) -> Self {
+impl From<&Arguments> for Config {
+    fn from(arguments: &Arguments) -> Self {
         Self {
-            database: DatabaseConfig::from(cli),
-            server: cli.command.as_ref().and_then(Into::into),
+            database: DatabaseConfig::from(arguments),
+            http: arguments.command.as_ref().and_then(Into::into),
         }
     }
 }
 
 /// Creates a [`Server`] with backend tools registered based on configuration.
-async fn create_server(config: &Config) -> Result<Server, Box<dyn std::error::Error>> {
+pub async fn create_server(config: &Config) -> Result<Server, Box<dyn std::error::Error>> {
     let mut server = Server::new();
     match config.database.backend {
         DatabaseBackend::Sqlite => {
@@ -281,20 +251,19 @@ async fn create_server(config: &Config) -> Result<Server, Box<dyn std::error::Er
 /// (should be unreachable via normal CLI usage).
 #[tokio::main]
 pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-
-    if matches!(cli.command, Some(Command::Version)) {
+    let arguments = Arguments::parse();
+    if matches!(arguments.command, Some(Command::Version)) {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(ExitCode::SUCCESS);
     }
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_max_level(tracing::Level::from(cli.log_level))
+        .with_max_level(tracing::Level::from(arguments.log_level))
         .with_ansi(false)
         .init();
 
-    let config = Config::from(&cli);
+    let config = Config::from(&arguments);
     if let Err(errors) = config.validate() {
         eprintln!("Error: configuration validation failed:");
         for error in &errors {
@@ -307,88 +276,13 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    match cli.command {
-        None | Some(Command::Stdio) => {
-            let server = create_server(&config).await?;
-            run_stdio(server).await?;
-        }
-        Some(Command::Http { .. }) => {
-            let http_config = config.server.as_ref().expect("server config is set for HTTP command");
-            run_http(&config, http_config).await?;
-        }
-        Some(Command::Version) => unreachable!("handled before backend initialization"),
+    let server = create_server(&config).await?;
+    match &arguments.command {
+        Some(Command::Http(cmd)) => cmd.execute(&config, server).await?,
+        _ => StdioCommand.execute(server).await?,
     }
 
     Ok(ExitCode::SUCCESS)
-}
-
-async fn run_stdio(server: Server) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting MCP server via stdio transport...");
-
-    let transport = rmcp::transport::io::stdio();
-    let running = server.serve(transport).await?;
-
-    running.waiting().await.ok();
-    Ok(())
-}
-
-async fn run_http(config: &Config, http_config: &HttpConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let bind_addr = format!("{}:{}", http_config.host, http_config.port);
-    info!("Starting MCP server via HTTP transport on {bind_addr}...");
-
-    let ct = CancellationToken::new();
-
-    let cors = tower_http::cors::CorsLayer::new()
-        .allow_origin(
-            http_config
-                .allowed_origins
-                .iter()
-                .filter_map(|o| o.parse().ok())
-                .collect::<Vec<axum::http::HeaderValue>>(),
-        )
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::OPTIONS,
-        ])
-        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT]);
-
-    let config = config.clone();
-    let service = StreamableHttpService::new(
-        move || {
-            // Each HTTP session gets its own server with backend tools registered.
-            // We block on the async backend creation using a runtime handle.
-            let config = config.clone();
-            let handle = tokio::runtime::Handle::current();
-            let server = handle
-                .block_on(async { create_server(&config).await })
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            Ok(server)
-        },
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default()
-            .with_stateful_mode(false)
-            .with_json_response(true)
-            .with_cancellation_token(ct.child_token()),
-    );
-
-    let router = axum::Router::new().nest_service("/mcp", service).layer(cors);
-
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    info!("Listening on http://{bind_addr}/mcp");
-
-    let ct_shutdown = ct.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        info!("Ctrl-C received, shutting down...");
-        ct_shutdown.cancel();
-    });
-
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move { ct.cancelled().await })
-        .await?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -397,28 +291,28 @@ mod tests {
 
     #[test]
     fn parse_db_backend_after_http_subcommand() {
-        let cli = Cli::try_parse_from(["database-mcp", "http", "--db-backend", "mysql"]).unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
-        assert!(matches!(cli.command, Some(Command::Http { .. })));
+        let arguments = Arguments::try_parse_from(["database-mcp", "http", "--db-backend", "mysql"]).unwrap();
+        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
+        assert!(matches!(arguments.command, Some(Command::Http(_))));
     }
 
     #[test]
     fn parse_db_backend_before_http_subcommand() {
-        let cli = Cli::try_parse_from(["database-mcp", "--db-backend", "mysql", "http"]).unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
-        assert!(matches!(cli.command, Some(Command::Http { .. })));
+        let arguments = Arguments::try_parse_from(["database-mcp", "--db-backend", "mysql", "http"]).unwrap();
+        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
+        assert!(matches!(arguments.command, Some(Command::Http(_))));
     }
 
     #[test]
     fn parse_db_backend_with_no_subcommand() {
-        let cli = Cli::try_parse_from(["database-mcp", "--db-backend", "postgres"]).unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Postgres);
-        assert!(cli.command.is_none());
+        let arguments = Arguments::try_parse_from(["database-mcp", "--db-backend", "postgres"]).unwrap();
+        assert_eq!(arguments.db_backend, DatabaseBackend::Postgres);
+        assert!(arguments.command.is_none());
     }
 
     #[test]
     fn parse_multiple_global_args_after_subcommand() {
-        let cli = Cli::try_parse_from([
+        let arguments = Arguments::try_parse_from([
             "database-mcp",
             "http",
             "--db-backend",
@@ -429,47 +323,47 @@ mod tests {
             "mydb",
         ])
         .unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
-        assert_eq!(cli.db_user, Some("root".into()));
-        assert_eq!(cli.db_name, Some("mydb".into()));
+        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
+        assert_eq!(arguments.db_user, Some("root".into()));
+        assert_eq!(arguments.db_name, Some("mydb".into()));
     }
 
     #[test]
     fn parse_db_backend_defaults_to_mysql() {
-        let cli = Cli::try_parse_from(["database-mcp", "http"]).unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Mysql);
+        let arguments = Arguments::try_parse_from(["database-mcp", "http"]).unwrap();
+        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
     }
 
     #[test]
     fn cli_flag_overrides_default_backend() {
-        let cli = Cli::try_parse_from(["database-mcp", "http", "--db-backend", "postgres"]).unwrap();
-        assert_eq!(cli.db_backend, DatabaseBackend::Postgres);
+        let arguments = Arguments::try_parse_from(["database-mcp", "http", "--db-backend", "postgres"]).unwrap();
+        assert_eq!(arguments.db_backend, DatabaseBackend::Postgres);
     }
 
     #[test]
     fn parse_valid_log_levels() {
         for level in ["error", "warn", "info", "debug", "trace"] {
-            let cli = Cli::try_parse_from(["database-mcp", "--log-level", level]).unwrap();
-            assert_eq!(cli.log_level.to_string(), level);
+            let arguments = Arguments::try_parse_from(["database-mcp", "--log-level", level]).unwrap();
+            assert_eq!(arguments.log_level.to_string(), level);
         }
     }
 
     #[test]
     fn parse_invalid_log_level_is_rejected() {
-        assert!(Cli::try_parse_from(["database-mcp", "--log-level", "nonsense"]).is_err());
+        assert!(Arguments::try_parse_from(["database-mcp", "--log-level", "nonsense"]).is_err());
     }
 
     #[test]
     fn log_level_defaults_to_info() {
-        let cli = Cli::try_parse_from(["database-mcp"]).unwrap();
-        assert_eq!(cli.log_level, LogLevel::Info);
+        let arguments = Arguments::try_parse_from(["database-mcp"]).unwrap();
+        assert_eq!(arguments.log_level, LogLevel::Info);
     }
 
     #[test]
     fn parse_log_level_case_insensitive() {
         for level in ["DEBUG", "Info", "TRACE", "Warn", "ERROR"] {
             assert!(
-                Cli::try_parse_from(["database-mcp", "--log-level", level]).is_ok(),
+                Arguments::try_parse_from(["database-mcp", "--log-level", level]).is_ok(),
                 "expected '{level}' to be accepted case-insensitively"
             );
         }
@@ -477,7 +371,7 @@ mod tests {
 
     #[test]
     fn version_flag_is_accepted() {
-        let result = Cli::try_parse_from(["database-mcp", "--version"]);
+        let result = Arguments::try_parse_from(["database-mcp", "--version"]);
         // clap exits early for --version, so try_parse_from returns an Err
         // with DisplayVersion kind — not a "real" error.
         let err = result.err().expect("--version should cause clap to return Err");
@@ -486,7 +380,7 @@ mod tests {
 
     #[test]
     fn short_version_flag_is_accepted() {
-        let err = Cli::try_parse_from(["database-mcp", "-V"])
+        let err = Arguments::try_parse_from(["database-mcp", "-V"])
             .err()
             .expect("-V should cause clap to return Err");
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
@@ -494,7 +388,7 @@ mod tests {
 
     #[test]
     fn version_subcommand_is_parsed() {
-        let cli = Cli::try_parse_from(["database-mcp", "version"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Version)));
+        let arguments = Arguments::try_parse_from(["database-mcp", "version"]).unwrap();
+        assert!(matches!(arguments.command, Some(Command::Version)));
     }
 }
