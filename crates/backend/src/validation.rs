@@ -21,7 +21,7 @@ use sqlparser::parser::Parser;
 /// # Errors
 ///
 /// Returns [`AppError`] if the query is not allowed in read-only mode.
-pub fn validate_read_only_with_dialect(sql: &str, dialect: &dyn Dialect) -> Result<(), AppError> {
+pub fn validate_read_only_with_dialect(sql: &str, dialect: &impl Dialect) -> Result<(), AppError> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Err(AppError::ReadOnlyViolation);

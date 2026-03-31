@@ -1,36 +1,65 @@
-[workspace]
-members = [".", "crates/sqlx_to_json"]
-
 [package]
 name = "database-mcp"
-version = "0.3.1"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "A single-binary MCP server for MySQL, PostgreSQL, and SQLite"
-license = "MIT"
-repository = "https://github.com/haymon-ai/database-mcp"
+license.workspace = true
+repository.workspace = true
 keywords = ["mcp", "database", "mysql", "postgresql", "sqlite"]
 categories = ["database", "command-line-utilities"]
 
-[dependencies]
-rmcp = { version = "1.3", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls", "mysql", "postgres", "sqlite"] }
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-clap = { version = "4", features = ["derive", "env"] }
+[workspace]
+members = [
+    ".",
+    "crates/backend",
+    "crates/config",
+    "crates/mysql",
+    "crates/postgres",
+    "crates/server",
+    "crates/sqlite",
+    "crates/sqlx_to_json",
+]
+
+[workspace.package]
+version = "0.3.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/haymon-ai/database-mcp"
+
+[workspace.dependencies]
+# Internal workspace crates
+backend = { path = "crates/backend" }
+config = { path = "crates/config" }
+mysql = { path = "crates/mysql" }
+postgres = { path = "crates/postgres" }
+server = { path = "crates/server" }
+sqlite = { path = "crates/sqlite" }
+sqlx_to_json = { path = "crates/sqlx_to_json" }
+
+# External dependencies
 axum = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+mimalloc = "0.1"
+moka = { version = "0.12", features = ["future"] }
+rmcp = { version = "1.3", features = [
+    "macros",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlparser = { version = "0.61", features = ["visitor"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls"] }
 thiserror = "2"
-moka = { version = "0.12", features = ["future"] }
-mimalloc = "0.1"
-base64 = "0.22"
-sqlx_to_json = { version = "0.1.0", path = "crates/sqlx_to_json" }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[lints.rust]
+[workspace.lints.rust]
 ambiguous_negative_literals = "warn"
 missing_debug_implementations = "warn"
 redundant_imports = "warn"
@@ -39,17 +68,38 @@ trivial_numeric_casts = "warn"
 unsafe_op_in_unsafe_fn = "warn"
 unused_lifetimes = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
-# Suppress pedantic lints that don't apply to this project
-multiple_crate_versions = "allow"          # Transitive deps, not our control
-struct_excessive_bools = "allow"           # Config struct legitimately has SSL bools
-module_name_repetitions = "allow"          # e.g. db::backend::DatabaseBackend is fine
+multiple_crate_versions = "allow"
+struct_excessive_bools = "allow"
+module_name_repetitions = "allow"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum = { workspace = true }
+backend = { workspace = true }
+clap = { workspace = true }
+config = { workspace = true }
+mimalloc = { workspace = true }
+mysql = { workspace = true }
+postgres = { workspace = true }
+rmcp = { workspace = true }
+server = { workspace = true }
+sqlite = { workspace = true }
+sqlparser = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[test]]
 name = "mysql"
