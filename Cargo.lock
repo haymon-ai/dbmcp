@@ -187,6 +187,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend"
+version = "0.1.0"
+dependencies = [
+ "mcp-core",
+ "serde_json",
+ "sqlparser",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -457,17 +466,17 @@ name = "database-mcp"
 version = "0.3.1"
 dependencies = [
  "axum",
- "base64",
+ "backend",
  "clap",
+ "mcp-core",
  "mimalloc",
- "moka",
+ "mysql",
+ "postgres",
  "rmcp",
- "serde",
  "serde_json",
+ "server",
+ "sqlite",
  "sqlparser",
- "sqlx",
- "sqlx_to_json",
- "thiserror",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -1159,6 +1168,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "mcp-core"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1218,6 +1236,19 @@ dependencies = [
  "smallvec",
  "tagptr",
  "uuid",
+]
+
+[[package]]
+name = "mysql"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "mcp-core",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tracing",
 ]
 
 [[package]]
@@ -1396,6 +1427,21 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+
+[[package]]
+name = "postgres"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "mcp-core",
+ "moka",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "potential_utf"
@@ -1821,6 +1867,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "mcp-core",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,6 +1977,20 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "sqlite"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "mcp-core",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2134,7 +2206,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlx_to_json"
+name = "sqlx-to-json"
 version = "0.1.0"
 dependencies = [
  "base64",

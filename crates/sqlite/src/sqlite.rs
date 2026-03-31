@@ -2,10 +2,10 @@
 //!
 //! Implements [`DatabaseBackend`] for `SQLite` file-based databases.
 
-use crate::config::DatabaseConfig;
-use crate::db::backend::DatabaseBackend;
-use crate::db::identifier::validate_identifier;
-use crate::error::AppError;
+use backend::DatabaseBackend;
+use backend::identifier::validate_identifier;
+use mcp_core::config::DatabaseConfig;
+use mcp_core::error::AppError;
 use serde_json::{Value, json};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
@@ -13,12 +13,10 @@ use sqlx_to_json::RowExt;
 use std::collections::HashMap;
 use tracing::info;
 
-/// Converts [`DatabaseConfig`] into [`SqliteConnectOptions`].
-impl From<&DatabaseConfig> for SqliteConnectOptions {
-    fn from(config: &DatabaseConfig) -> Self {
-        let name = config.name.as_deref().unwrap_or_default();
-        SqliteConnectOptions::new().filename(name)
-    }
+/// Builds [`SqliteConnectOptions`] from a [`DatabaseConfig`].
+fn connect_options(config: &DatabaseConfig) -> SqliteConnectOptions {
+    let name = config.name.as_deref().unwrap_or_default();
+    SqliteConnectOptions::new().filename(name)
 }
 
 /// `SQLite` file-based database backend.
@@ -40,7 +38,7 @@ impl SqliteBackend {
     /// Creates a lazy in-memory backend for tests.
     #[cfg(test)]
     pub(crate) fn in_memory(read_only: bool) -> Self {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_lazy("sqlite::memory:")
             .expect("in-memory SQLite");
@@ -56,7 +54,7 @@ impl SqliteBackend {
         let name = config.name.as_deref().unwrap_or_default();
         let pool = SqlitePoolOptions::new()
             .max_connections(1) // SQLite is single-writer
-            .connect_with(config.into())
+            .connect_with(connect_options(config))
             .await
             .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
 
@@ -187,12 +185,16 @@ impl DatabaseBackend for SqliteBackend {
     fn read_only(&self) -> bool {
         self.read_only
     }
+
+    fn supports_multi_database(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DatabaseBackend;
+    use mcp_core::config::DatabaseBackend;
 
     #[test]
     fn quote_identifier_wraps_in_double_quotes() {
@@ -213,7 +215,7 @@ mod tests {
             name: Some("test.db".into()),
             ..DatabaseConfig::default()
         };
-        let opts = SqliteConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert_eq!(opts.get_filename().to_str().expect("valid path"), "test.db");
     }
@@ -225,7 +227,7 @@ mod tests {
             name: None,
             ..DatabaseConfig::default()
         };
-        let opts = SqliteConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         // Empty string filename — validated elsewhere by Config::validate()
         assert_eq!(opts.get_filename().to_str().expect("valid path"), "");

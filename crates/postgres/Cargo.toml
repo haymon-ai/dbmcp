@@ -1,0 +1,18 @@
+[package]
+name = "postgres"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mcp_core = { path = "../core", package = "mcp-core" }
+backend = { workspace = true }
+sqlx-to-json = { workspace = true }
+sqlx = { workspace = true, features = ["postgres"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+sqlparser = { workspace = true }
+moka = { workspace = true }
+tokio = { version = "1", features = ["rt"] }
+
+[lints]
+workspace = true

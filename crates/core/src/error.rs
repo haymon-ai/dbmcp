@@ -40,9 +40,3 @@ pub enum AppError {
     #[error("Table not found: {0}")]
     TableNotFound(String),
 }
-
-impl From<sqlx::Error> for AppError {
-    fn from(e: sqlx::Error) -> Self {
-        AppError::Connection(e.to_string())
-    }
-}

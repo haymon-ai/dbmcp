@@ -1,0 +1,15 @@
+[package]
+name = "sqlx-to-json"
+version = "0.1.0"
+edition = "2024"
+description = "Database-agnostic row-to-JSON conversion for sqlx"
+license = "MIT"
+repository = "https://github.com/haymon-ai/database-mcp"
+
+[dependencies]
+sqlx = { workspace = true, features = ["mysql", "postgres", "sqlite"] }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+
+[lints]
+workspace = true

@@ -10,14 +10,13 @@
 //! - `http` — runs the MCP server over HTTP with Streamable HTTP transport
 //! - `version` — prints the version and exits
 
-use database_mcp::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
-use database_mcp::db;
-use database_mcp::db::backend::Backend;
-use database_mcp::server::Server;
+use crate::backend::Backend;
+use mcp_core::config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
 use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
+use server::Server;
 use std::process::ExitCode;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -155,6 +154,7 @@ struct Cli {
         long = "log-level",
         env = "LOG_LEVEL",
         default_value_t = LogLevel::Info,
+        ignore_case = true,
         global = true
     )]
     log_level: LogLevel,
@@ -255,6 +255,11 @@ impl From<&Cli> for Config {
 /// - Database connection fails (invalid URL, unreachable host, auth failure).
 /// - TCP bind fails for HTTP transport (port in use, permission denied).
 /// - MCP stdio transport fails to start.
+///
+/// # Panics
+///
+/// Panics if the HTTP subcommand is selected but server config is missing
+/// (should be unreachable via normal CLI usage).
 #[tokio::main]
 pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -284,10 +289,10 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     let backend: Backend = match config.database.backend {
-        DatabaseBackend::Sqlite => Backend::Sqlite(db::sqlite::SqliteBackend::new(&config.database).await?),
-        DatabaseBackend::Postgres => Backend::Postgres(db::postgres::PostgresBackend::new(&config.database).await?),
+        DatabaseBackend::Sqlite => Backend::Sqlite(sqlite::SqliteBackend::new(&config.database).await?),
+        DatabaseBackend::Postgres => Backend::Postgres(postgres::PostgresBackend::new(&config.database).await?),
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
-            Backend::Mysql(db::mysql::MysqlBackend::new(&config.database).await?)
+            Backend::Mysql(mysql::MysqlBackend::new(&config.database).await?)
         }
     };
 
@@ -305,7 +310,7 @@ pub async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn run_stdio(server: Server) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_stdio(server: Server<Backend>) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting MCP server via stdio transport...");
 
     let transport = rmcp::transport::io::stdio();

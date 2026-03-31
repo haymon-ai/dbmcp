@@ -1,6 +1,6 @@
 //! Shared identifier validation for all database backends.
 
-use crate::error::AppError;
+use core::error::AppError;
 
 /// Validates that `name` is a non-empty identifier without control characters.
 ///

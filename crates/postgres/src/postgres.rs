@@ -4,10 +4,10 @@
 //! cross-database operations by maintaining a concurrent cache of connection
 //! pools keyed by database name.
 
-use crate::config::DatabaseConfig;
-use crate::db::backend::DatabaseBackend;
-use crate::db::identifier::validate_identifier;
-use crate::error::AppError;
+use backend::DatabaseBackend;
+use backend::identifier::validate_identifier;
+use mcp_core::config::DatabaseConfig;
+use mcp_core::error::AppError;
 use moka::future::Cache;
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
@@ -19,46 +19,44 @@ use tracing::info;
 /// Maximum number of database connection pools to cache (including the default).
 const POOL_CACHE_CAPACITY: u64 = 6;
 
-/// Converts [`DatabaseConfig`] into [`PgConnectOptions`].
+/// Builds [`PgConnectOptions`] from a [`DatabaseConfig`].
 ///
 /// Uses [`PgConnectOptions::new_without_pgpass`] to avoid unintended
 /// `PG*` environment variable influence, since our config already
 /// resolves values from CLI/env.
-impl From<&DatabaseConfig> for PgConnectOptions {
-    fn from(config: &DatabaseConfig) -> Self {
-        let mut opts = PgConnectOptions::new_without_pgpass()
-            .host(&config.host)
-            .port(config.port)
-            .username(&config.user);
+fn connect_options(config: &DatabaseConfig) -> PgConnectOptions {
+    let mut opts = PgConnectOptions::new_without_pgpass()
+        .host(&config.host)
+        .port(config.port)
+        .username(&config.user);
 
-        if let Some(ref password) = config.password {
-            opts = opts.password(password);
-        }
-        if let Some(ref name) = config.name
-            && !name.is_empty()
-        {
-            opts = opts.database(name);
-        }
-
-        if config.ssl {
-            opts = if config.ssl_verify_cert {
-                opts.ssl_mode(PgSslMode::VerifyCa)
-            } else {
-                opts.ssl_mode(PgSslMode::Require)
-            };
-            if let Some(ref ca) = config.ssl_ca {
-                opts = opts.ssl_root_cert(ca);
-            }
-            if let Some(ref cert) = config.ssl_cert {
-                opts = opts.ssl_client_cert(cert);
-            }
-            if let Some(ref key) = config.ssl_key {
-                opts = opts.ssl_client_key(key);
-            }
-        }
-
-        opts
+    if let Some(ref password) = config.password {
+        opts = opts.password(password);
     }
+    if let Some(ref name) = config.name
+        && !name.is_empty()
+    {
+        opts = opts.database(name);
+    }
+
+    if config.ssl {
+        opts = if config.ssl_verify_cert {
+            opts.ssl_mode(PgSslMode::VerifyCa)
+        } else {
+            opts.ssl_mode(PgSslMode::Require)
+        };
+        if let Some(ref ca) = config.ssl_ca {
+            opts = opts.ssl_root_cert(ca);
+        }
+        if let Some(ref cert) = config.ssl_cert {
+            opts = opts.ssl_client_cert(cert);
+        }
+        if let Some(ref key) = config.ssl_key {
+            opts = opts.ssl_client_key(key);
+        }
+    }
+
+    opts
 }
 
 /// `PostgreSQL` database backend.
@@ -95,7 +93,7 @@ impl PostgresBackend {
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
         let pool = PgPoolOptions::new()
             .max_connections(config.max_pool_size)
-            .connect_with(config.into())
+            .connect_with(connect_options(config))
             .await
             .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
 
@@ -173,7 +171,7 @@ impl PostgresBackend {
                 cfg.name = Some(db_key.to_owned());
                 PgPoolOptions::new()
                     .max_connections(cfg.max_pool_size)
-                    .connect_with((&cfg).into())
+                    .connect_with(connect_options(&cfg))
                     .await
                     .map_err(|e| {
                         AppError::Connection(format!("Failed to connect to PostgreSQL database '{db_key}': {e}"))
@@ -350,12 +348,16 @@ impl DatabaseBackend for PostgresBackend {
     fn read_only(&self) -> bool {
         self.read_only
     }
+
+    fn supports_multi_database(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DatabaseBackend;
+    use mcp_core::config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {
@@ -384,7 +386,7 @@ mod tests {
     #[test]
     fn try_from_basic_config() {
         let config = base_config();
-        let opts = PgConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert_eq!(opts.get_host(), "pg.example.com");
         assert_eq!(opts.get_port(), 5433);
@@ -399,7 +401,7 @@ mod tests {
             ssl_verify_cert: false,
             ..base_config()
         };
-        let opts = PgConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert!(
             matches!(opts.get_ssl_mode(), PgSslMode::Require),
@@ -415,7 +417,7 @@ mod tests {
             ssl_verify_cert: true,
             ..base_config()
         };
-        let opts = PgConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert!(
             matches!(opts.get_ssl_mode(), PgSslMode::VerifyCa),
@@ -430,7 +432,7 @@ mod tests {
             name: None,
             ..base_config()
         };
-        let opts = PgConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert_eq!(opts.get_database(), None);
     }
@@ -441,7 +443,7 @@ mod tests {
             password: None,
             ..base_config()
         };
-        let opts = PgConnectOptions::from(&config);
+        let opts = connect_options(&config);
 
         assert_eq!(opts.get_host(), "pg.example.com");
     }
