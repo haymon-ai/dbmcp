@@ -70,7 +70,7 @@ body:
     attributes:
       label: Operating System
       description: Your OS and version
-      placeholder: "e.g., Ubuntu 24.04, macOS 15.2, Windows 11"
+      placeholder: "e.g., Ubuntu 24.04, Debian 12, Fedora 41"
     validations:
       required: true
 

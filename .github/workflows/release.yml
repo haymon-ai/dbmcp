@@ -25,9 +25,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: database-mcp
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: database-mcp
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
