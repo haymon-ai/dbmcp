@@ -2,6 +2,19 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.4.0](https://github.com/haymon-ai/database-mcp/compare/f9bfb9d2c32078499027fe0fe63fe646c5217af3..v0.4.0) - 2026-03-31
+#### Features
+- add security policy, Dependabot config, and audit workflow (#39) - ([1a2f8a6](https://github.com/haymon-ai/database-mcp/commit/1a2f8a65030f8537b1b8861a2e9b3bbe4423e292)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**docs**) correct download URLs in installation guide - ([17cbf70](https://github.com/haymon-ai/database-mcp/commit/17cbf707febeec2fb61b28e9d3333b778db85e52)) - [@athopen](https://github.com/athopen)
+- use official cocogitto recipe for Cargo version bumping - ([3d6739d](https://github.com/haymon-ai/database-mcp/commit/3d6739d6b3e703ad4b5356ba60ad0c8f2d0c8823)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) restructure into multi-crate workspace (#50) - ([69b3584](https://github.com/haymon-ai/database-mcp/commit/69b3584117727b9e6cc1a186931b6034fe5aab80)) - [@athopen](https://github.com/athopen)
+- flatten tool dispatch by inlining forwarding layer into handlers (#49) - ([d2be107](https://github.com/haymon-ai/database-mcp/commit/d2be107a36fd8577c97c27b238b8edfdfe21abb9)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) merge get_table_schema and get_table_schema_with_relations into single tool (#48) - ([b1410be](https://github.com/haymon-ai/database-mcp/commit/b1410be4717069f01a98db0414ada12884e67085)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.3.1](https://github.com/haymon-ai/database-mcp/compare/47bbb336670cdc0e4542b10f3ff9c74614017644..v0.3.1) - 2026-03-29
 #### Features
 - add structured GitHub issue templates for docs and regressions - ([47bbb33](https://github.com/haymon-ai/database-mcp/commit/47bbb336670cdc0e4542b10f3ff9c74614017644)) - [@athopen](https://github.com/athopen)
