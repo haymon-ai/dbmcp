@@ -22,6 +22,7 @@ use tracing::info;
 use super::http::HttpCommand;
 use super::stdio::StdioCommand;
 
+use crate::consts::{BIN, VERSION};
 use clap::{Parser, Subcommand};
 
 /// Application-level errors for server startup and transport.
@@ -155,22 +156,22 @@ struct Arguments {
 
     /// Enable read-only mode
     #[arg(
-        long = "read-only",
-        env = "MCP_READ_ONLY",
+        long = "db-read-only",
+        env = "DB_READ_ONLY",
         default_value_t = DatabaseConfig::DEFAULT_READ_ONLY,
         global = true
     )]
-    read_only: bool,
+    db_read_only: bool,
 
     /// Maximum connection pool size
     #[arg(
-        long = "max-pool-size",
-        env = "MCP_MAX_POOL_SIZE",
+        long = "db-max-pool-size",
+        env = "DB_MAX_POOL_SIZE",
         default_value_t = DatabaseConfig::DEFAULT_MAX_POOL_SIZE,
         global = true,
         value_parser = clap::value_parser!(u32).range(1..)
     )]
-    max_pool_size: u32,
+    db_max_pool_size: u32,
 
     /// Log level
     #[arg(
@@ -213,8 +214,8 @@ impl From<&Arguments> for DatabaseConfig {
             ssl_cert: arguments.db_ssl_cert.clone(),
             ssl_key: arguments.db_ssl_key.clone(),
             ssl_verify_cert: arguments.db_ssl_verify_cert,
-            read_only: arguments.read_only,
-            max_pool_size: arguments.max_pool_size,
+            read_only: arguments.db_read_only,
+            max_pool_size: arguments.db_max_pool_size,
         }
     }
 }
@@ -321,7 +322,7 @@ async fn create_handler(config: &Config) -> Result<Handler, backend::AppError> {
 pub async fn run() -> Result<ExitCode, RunError> {
     let arguments = Arguments::parse();
     if matches!(arguments.command, Some(Command::Version)) {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        println!("{BIN} {VERSION}");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -357,31 +358,57 @@ pub async fn run() -> Result<ExitCode, RunError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_db_backend_after_http_subcommand() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "http", "--db-backend", "mysql"]).unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
-        assert!(matches!(arguments.command, Some(Command::Http(_))));
+    fn parse(args: &[&str]) -> Arguments {
+        Arguments::try_parse_from(args).unwrap()
     }
 
     #[test]
-    fn parse_db_backend_before_http_subcommand() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "--db-backend", "mysql", "http"]).unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
-        assert!(matches!(arguments.command, Some(Command::Http(_))));
+    fn no_subcommand_defaults_to_stdio() {
+        let args = parse(&[BIN]);
+        assert!(args.command.is_none());
+        assert!(Config::from(&args).http.is_none());
     }
 
     #[test]
-    fn parse_db_backend_with_no_subcommand() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "--db-backend", "postgres"]).unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Postgres);
-        assert!(arguments.command.is_none());
+    fn http_subcommand_populates_http_config() {
+        let args = parse(&[BIN, "http", "--port", "8080"]);
+        let config = Config::from(&args);
+        assert!(config.http.is_some());
+        assert_eq!(config.http.as_ref().unwrap().port, 8080);
     }
 
     #[test]
-    fn parse_multiple_global_args_after_subcommand() {
-        let arguments = Arguments::try_parse_from([
-            "database-mcp",
+    fn http_subcommand_uses_default_port() {
+        let args = parse(&[BIN, "http"]);
+        let config = Config::from(&args);
+        assert_eq!(config.http.as_ref().unwrap().port, HttpConfig::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn db_backend_after_http_subcommand() {
+        let args = parse(&[BIN, "http", "--db-backend", "mysql"]);
+        assert_eq!(args.db_backend, DatabaseBackend::Mysql);
+        assert!(matches!(args.command, Some(Command::Http(_))));
+    }
+
+    #[test]
+    fn db_backend_before_http_subcommand() {
+        let args = parse(&[BIN, "--db-backend", "mysql", "http"]);
+        assert_eq!(args.db_backend, DatabaseBackend::Mysql);
+        assert!(matches!(args.command, Some(Command::Http(_))));
+    }
+
+    #[test]
+    fn db_backend_with_no_subcommand() {
+        let args = parse(&[BIN, "--db-backend", "postgres"]);
+        assert_eq!(args.db_backend, DatabaseBackend::Postgres);
+        assert!(args.command.is_none());
+    }
+
+    #[test]
+    fn multiple_global_args_after_subcommand() {
+        let args = parse(&[
+            BIN,
             "http",
             "--db-backend",
             "mysql",
@@ -389,74 +416,87 @@ mod tests {
             "root",
             "--db-name",
             "mydb",
-        ])
-        .unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
-        assert_eq!(arguments.db_user, Some("root".into()));
-        assert_eq!(arguments.db_name, Some("mydb".into()));
+        ]);
+        assert_eq!(args.db_backend, DatabaseBackend::Mysql);
+        assert_eq!(args.db_user, Some("root".into()));
+        assert_eq!(args.db_name, Some("mydb".into()));
     }
 
     #[test]
-    fn parse_db_backend_defaults_to_mysql() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "http"]).unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Mysql);
+    fn db_backend_defaults_to_mysql() {
+        let args = parse(&[BIN, "http"]);
+        assert_eq!(args.db_backend, DatabaseBackend::Mysql);
     }
 
     #[test]
     fn cli_flag_overrides_default_backend() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "http", "--db-backend", "postgres"]).unwrap();
-        assert_eq!(arguments.db_backend, DatabaseBackend::Postgres);
+        let args = parse(&[BIN, "http", "--db-backend", "postgres"]);
+        assert_eq!(args.db_backend, DatabaseBackend::Postgres);
     }
 
     #[test]
-    fn parse_valid_log_levels() {
+    fn db_read_only_flag() {
+        let args = parse(&[BIN, "--db-read-only"]);
+        assert!(args.db_read_only);
+    }
+
+    #[test]
+    fn db_read_only_defaults_to_true() {
+        let args = parse(&[BIN]);
+        assert!(args.db_read_only);
+    }
+
+    #[test]
+    fn db_max_pool_size_flag() {
+        let args = parse(&[BIN, "--db-max-pool-size", "20"]);
+        assert_eq!(args.db_max_pool_size, 20);
+    }
+
+    #[test]
+    fn valid_log_levels() {
         for level in ["error", "warn", "info", "debug", "trace"] {
-            let arguments = Arguments::try_parse_from(["database-mcp", "--log-level", level]).unwrap();
-            assert_eq!(arguments.log_level.to_string(), level);
+            let args = parse(&[BIN, "--log-level", level]);
+            assert_eq!(args.log_level.to_string(), level);
         }
     }
 
     #[test]
-    fn parse_invalid_log_level_is_rejected() {
-        assert!(Arguments::try_parse_from(["database-mcp", "--log-level", "nonsense"]).is_err());
+    fn invalid_log_level_rejected() {
+        assert!(Arguments::try_parse_from([BIN, "--log-level", "nonsense"]).is_err());
     }
 
     #[test]
     fn log_level_defaults_to_info() {
-        let arguments = Arguments::try_parse_from(["database-mcp"]).unwrap();
-        assert_eq!(arguments.log_level, LogLevel::Info);
+        let args = parse(&[BIN]);
+        assert_eq!(args.log_level, LogLevel::Info);
     }
 
     #[test]
-    fn parse_log_level_case_insensitive() {
+    fn log_level_case_insensitive() {
         for level in ["DEBUG", "Info", "TRACE", "Warn", "ERROR"] {
             assert!(
-                Arguments::try_parse_from(["database-mcp", "--log-level", level]).is_ok(),
+                Arguments::try_parse_from([BIN, "--log-level", level]).is_ok(),
                 "expected '{level}' to be accepted case-insensitively"
             );
         }
     }
 
     #[test]
-    fn version_flag_is_accepted() {
-        let result = Arguments::try_parse_from(["database-mcp", "--version"]);
-        // clap exits early for --version, so try_parse_from returns an Err
-        // with DisplayVersion kind — not a "real" error.
-        let err = result.err().expect("--version should cause clap to return Err");
-        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+    fn version_subcommand() {
+        let args = parse(&[BIN, "version"]);
+        assert!(matches!(args.command, Some(Command::Version)));
     }
 
     #[test]
-    fn short_version_flag_is_accepted() {
-        let err = Arguments::try_parse_from(["database-mcp", "-V"])
+    fn version_flag() {
+        let err = Arguments::try_parse_from([BIN, "--version"])
             .err()
-            .expect("-V should cause clap to return Err");
+            .expect("--version should cause clap to return Err");
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 
     #[test]
-    fn version_subcommand_is_parsed() {
-        let arguments = Arguments::try_parse_from(["database-mcp", "version"]).unwrap();
-        assert!(matches!(arguments.command, Some(Command::Version)));
+    fn invalid_cli_args_rejected() {
+        assert!(Arguments::try_parse_from([BIN, "--nonexistent-flag"]).is_err());
     }
 }

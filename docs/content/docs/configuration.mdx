@@ -120,10 +120,35 @@ Claude Code also supports HTTP transport for remote servers:
 
 **File locations**: `.mcp.json` (project, shareable) · `~/.claude.json` (user, global)
 
+Using Docker:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
+        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "ghcr.io/haymon-ai/database"
+      ],
+      "env": {
+        "DB_BACKEND": "postgres",
+        "DB_HOST": "host.docker.internal",
+        "DB_USER": "postgres",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
 ### Claude Desktop
 
 Edit the config file at:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -133,6 +158,30 @@ Edit the config file at:
       "env": {
         "DB_BACKEND": "postgres",
         "DB_HOST": "localhost",
+        "DB_USER": "postgres",
+        "DB_PASSWORD": "secret",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
+Using Docker:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
+        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "ghcr.io/haymon-ai/database"
+      ],
+      "env": {
+        "DB_BACKEND": "postgres",
+        "DB_HOST": "host.docker.internal",
         "DB_USER": "postgres",
         "DB_PASSWORD": "secret",
         "DB_NAME": "myapp"
@@ -166,12 +215,37 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
 }
 ```
 
+Using Docker:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
+        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "ghcr.io/haymon-ai/database"
+      ],
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "host.docker.internal",
+        "DB_USER": "root",
+        "DB_NAME": "myapp"
+      },
+      "envFile": ".env"
+    }
+  }
+}
+```
+
 Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DB_PASSWORD` can be kept there instead of in the JSON config.
 
 ### Windsurf
 
 Edit the config file at:
-- **macOS / Linux**: `~/.codeium/windsurf/mcp_config.json`
+- **Linux**: `~/.codeium/windsurf/mcp_config.json`
 
 ```json
 {
@@ -181,6 +255,30 @@ Edit the config file at:
       "env": {
         "DB_BACKEND": "mysql",
         "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_PASSWORD": "${env:DB_PASSWORD}",
+        "DB_NAME": "myapp"
+      }
+    }
+  }
+}
+```
+
+Using Docker:
+
+```json
+{
+  "mcpServers": {
+    "database-mcp": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
+        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "ghcr.io/haymon-ai/database"
+      ],
+      "env": {
+        "DB_BACKEND": "mysql",
+        "DB_HOST": "host.docker.internal",
         "DB_USER": "root",
         "DB_PASSWORD": "${env:DB_PASSWORD}",
         "DB_NAME": "myapp"

@@ -1,6 +1,7 @@
 //! Database MCP Server entry point.
 
 mod commands;
+mod consts;
 
 use mimalloc::MiMalloc;
 use std::process::ExitCode;

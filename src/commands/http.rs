@@ -20,16 +20,17 @@ use super::root::RunError;
 #[derive(Debug, Parser)]
 pub struct HttpCommand {
     /// Bind host for HTTP transport.
-    #[arg(long, default_value = HttpConfig::DEFAULT_HOST)]
+    #[arg(long, env = "HTTP_HOST", default_value = HttpConfig::DEFAULT_HOST)]
     pub host: String,
 
     /// Bind port for HTTP transport.
-    #[arg(long, default_value_t = HttpConfig::DEFAULT_PORT)]
+    #[arg(long, env = "HTTP_PORT", default_value_t = HttpConfig::DEFAULT_PORT)]
     pub port: u16,
 
     /// Allowed CORS origins (comma-separated).
     #[arg(
         long = "allowed-origins",
+        env = "HTTP_ALLOWED_ORIGINS",
         value_delimiter = ',',
         default_values_t = HttpConfig::default_allowed_origins()
     )]
@@ -38,6 +39,7 @@ pub struct HttpCommand {
     /// Allowed host names (comma-separated).
     #[arg(
         long = "allowed-hosts",
+        env = "HTTP_ALLOWED_HOSTS",
         value_delimiter = ',',
         default_values_t = HttpConfig::default_allowed_hosts()
     )]

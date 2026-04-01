@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install database-mcp on Linux or macOS
+description: Install database-mcp via Docker, prebuilt binary, or from source
 ---
 
 Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
@@ -27,18 +27,6 @@ tar xzf database-mcp-aarch64-unknown-linux-gnu.tar.gz
 sudo mv database-mcp /usr/local/bin/
 ```
 
-### macOS
-
-**Apple Silicon (M1/M2/M3/M4)**:
-
-```bash
-curl -LO https://github.com/haymon-ai/database/releases/latest/download/database-mcp-aarch64-apple-darwin.tar.gz
-tar xzf database-mcp-aarch64-apple-darwin.tar.gz
-sudo mv database-mcp /usr/local/bin/
-```
-
-> **Intel macOS**: Prebuilt binaries for Intel Macs are not yet available. Use [Build from Source](#build-from-source) instead.
-
 ---
 
 For older versions or other assets, see the [GitHub Releases](https://github.com/haymon-ai/database/releases) page.
@@ -48,6 +36,47 @@ Verify the installation:
 ```bash
 database-mcp --help
 ```
+
+## Docker
+
+No Rust toolchain or compilation needed.
+
+```bash
+docker pull ghcr.io/haymon-ai/database:latest
+```
+
+**stdio mode** (for Claude Desktop, Cursor, and other MCP clients):
+
+```bash
+docker run -i --rm \
+  -e DB_BACKEND=postgres \
+  -e DB_HOST=host.docker.internal \
+  -e DB_USER=postgres \
+  ghcr.io/haymon-ai/database
+```
+
+**HTTP mode** (for web clients and remote access):
+
+```bash
+docker run --rm \
+  -e DB_BACKEND=postgres \
+  -e DB_HOST=host.docker.internal \
+  -e DB_USER=postgres \
+  -p 9001:9001 \
+  ghcr.io/haymon-ai/database http --host 0.0.0.0
+```
+
+**SQLite with a mounted volume**:
+
+```bash
+docker run -i --rm \
+  -e DB_BACKEND=sqlite \
+  -e DB_NAME=/data/my.db \
+  -v /path/to/local/db:/data \
+  ghcr.io/haymon-ai/database
+```
+
+Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/database:<version>`.
 
 ## Package Managers
 
@@ -98,6 +127,7 @@ database-mcp --help
 
 | Method | Ease of Install | Auto Updates | Version Flexibility | Prerequisites | Platform Coverage |
 |--------|----------------|--------------|--------------------|--------------|--------------------|
-| Prebuilt Binary | Simple download | None | Any release | None | Linux, macOS (Apple Silicon) |
+| Docker | `docker pull` | Pull latest tag | Any release tag | Docker | Linux (x86_64, aarch64) |
+| Prebuilt Binary | Simple download | None | Any release | None | Linux (x86_64, aarch64) |
 | Cargo Install | One command | `cargo install` to update | Any published version | Rust toolchain | All platforms Rust supports |
 | Build from Source | Multiple steps | Manual (git pull + rebuild) | Any commit/branch | Git + Rust toolchain | All platforms Rust supports |
