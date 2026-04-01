@@ -4,8 +4,16 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    groups:
+      all-cargo-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    groups:
+      all-actions-deps:
+        patterns:
+          - "*"
