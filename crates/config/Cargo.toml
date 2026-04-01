@@ -1,5 +1,6 @@
 [package]
 name = "database-mcp-config"
+description = "Config for database-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

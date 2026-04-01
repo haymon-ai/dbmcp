@@ -25,7 +25,7 @@ database-mcp-mysql = { path = "crates/mysql", version = "0.5.1" }
 database-mcp-postgres = { path = "crates/postgres", version = "0.5.1" }
 database-mcp-server = { path = "crates/server", version = "0.5.1" }
 database-mcp-sqlite = { path = "crates/sqlite", version = "0.5.1" }
-sqlx-to-json = { path = "crates/sqlx-to-json", version = "0.5.1" }
+sqlx_to_json = { path = "crates/sqlx-to-json", version = "0.5.1" }
 
 # External dependencies
 axum = "0.8"
