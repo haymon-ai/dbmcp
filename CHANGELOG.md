@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.5.0](https://github.com/haymon-ai/database-mcp/compare/bb911f876d63a074c009a3050dc3f6241e9dd0a9..v0.5.0) - 2026-04-01
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) add Docker image and CI pipeline (#51) - ([692df00](https://github.com/haymon-ai/database-mcp/commit/692df0074efdbb9a73a139dfafb8ae9ce5d87282)) - [@athopen](https://github.com/athopen)
+- add glama.json for Glama MCP registry - ([9640a97](https://github.com/haymon-ai/database-mcp/commit/9640a97856de2dd15ab76a72ceec84f553973a86)) - [@athopen](https://github.com/athopen)
+- add server.json for Official MCP Registry publishing - ([bb911f8](https://github.com/haymon-ai/database-mcp/commit/bb911f876d63a074c009a3050dc3f6241e9dd0a9)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.4.0](https://github.com/haymon-ai/database/compare/f9bfb9d2c32078499027fe0fe63fe646c5217af3..v0.4.0) - 2026-03-31
 #### Features
 - add security policy, Dependabot config, and audit workflow (#39) - ([1a2f8a6](https://github.com/haymon-ai/database/commit/1a2f8a65030f8537b1b8861a2e9b3bbe4423e292)) - [@athopen](https://github.com/athopen)
