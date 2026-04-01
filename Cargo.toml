@@ -12,20 +12,20 @@ categories = ["database", "command-line-utilities"]
 members = [".", "crates/*"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/haymon-ai/database"
 
 [workspace.dependencies]
 # Internal workspace crates
-database-mcp-backend = { path = "crates/backend", version = "0.5.0" }
-database-mcp-config = { path = "crates/config", version = "0.5.0" }
-database-mcp-mysql = { path = "crates/mysql", version = "0.5.0" }
-database-mcp-postgres = { path = "crates/postgres", version = "0.5.0" }
-database-mcp-server = { path = "crates/server", version = "0.5.0" }
-database-mcp-sqlite = { path = "crates/sqlite", version = "0.5.0" }
-sqlx-to-json = { path = "crates/sqlx-to-json", version = "0.5.0" }
+database-mcp-backend = { path = "crates/backend", version = "0.5.1" }
+database-mcp-config = { path = "crates/config", version = "0.5.1" }
+database-mcp-mysql = { path = "crates/mysql", version = "0.5.1" }
+database-mcp-postgres = { path = "crates/postgres", version = "0.5.1" }
+database-mcp-server = { path = "crates/server", version = "0.5.1" }
+database-mcp-sqlite = { path = "crates/sqlite", version = "0.5.1" }
+sqlx-to-json = { path = "crates/sqlx-to-json", version = "0.5.1" }
 
 # External dependencies
 axum = "0.8"

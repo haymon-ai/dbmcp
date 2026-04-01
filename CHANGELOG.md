@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.5.1](https://github.com/haymon-ai/database-mcp/compare/9c5b55a15ab4dc0c17a45fdfbd21ac886334061b..v0.5.1) - 2026-04-01
+#### Refactoring
+- add database-mcp- prefix to all workspace crate names (#52) - ([9c5b55a](https://github.com/haymon-ai/database-mcp/commit/9c5b55a15ab4dc0c17a45fdfbd21ac886334061b)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.5.0](https://github.com/haymon-ai/database-mcp/compare/bb911f876d63a074c009a3050dc3f6241e9dd0a9..v0.5.0) - 2026-04-01
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) add Docker image and CI pipeline (#51) - ([692df00](https://github.com/haymon-ai/database-mcp/commit/692df0074efdbb9a73a139dfafb8ae9ce5d87282)) - [@athopen](https://github.com/athopen)
