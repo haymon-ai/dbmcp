@@ -8,7 +8,7 @@ body:
         Thanks for reporting a regression! This template helps us quickly identify what changed.
 
         Before submitting, please:
-        - Search [existing issues](https://github.com/haymon-ai/database-mcp/issues) for duplicates
+        - Search [existing issues](https://github.com/haymon-ai/database/issues) for duplicates
         - Make sure you're using the latest version of database-mcp
 
   - type: checkboxes

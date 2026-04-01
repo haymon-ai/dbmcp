@@ -8,7 +8,7 @@ body:
         Thanks for helping improve our documentation! Please fill out the form below.
 
         Before submitting, please:
-        - Search [existing issues](https://github.com/haymon-ai/database-mcp/issues) for duplicates
+        - Search [existing issues](https://github.com/haymon-ai/database/issues) for duplicates
 
   - type: checkboxes
     id: prerequisites

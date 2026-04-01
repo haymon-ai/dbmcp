@@ -1,0 +1,89 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.haymon/database",
+  "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite",
+  "version": "0.4.0",
+  "websiteUrl": "https://database.haymon.ai",
+  "repository": {
+    "url": "https://github.com/haymon-ai/database",
+    "source": "github"
+  },
+  "environmentVariables": [
+    {
+      "name": "DB_BACKEND",
+      "description": "Database backend (mysql, mariadb, postgres, sqlite)",
+      "isRequired": true
+    },
+    {
+      "name": "DB_HOST",
+      "description": "Database host (default: 127.0.0.1)"
+    },
+    {
+      "name": "DB_PORT",
+      "description": "Database port (default: backend-dependent)"
+    },
+    {
+      "name": "DB_USER",
+      "description": "Database user (default: backend-dependent)"
+    },
+    {
+      "name": "DB_PASSWORD",
+      "description": "Database password",
+      "isSecret": true
+    },
+    {
+      "name": "DB_NAME",
+      "description": "Database name or SQLite file path"
+    },
+    {
+      "name": "DB_CHARSET",
+      "description": "Character set (MySQL/MariaDB only)"
+    },
+    {
+      "name": "DB_SSL",
+      "description": "Enable SSL for database connection",
+      "format": "boolean",
+      "default": "false"
+    },
+    {
+      "name": "DB_SSL_CA",
+      "description": "Path to CA certificate",
+      "format": "filepath"
+    },
+    {
+      "name": "DB_SSL_CERT",
+      "description": "Path to client certificate",
+      "format": "filepath"
+    },
+    {
+      "name": "DB_SSL_KEY",
+      "description": "Path to client key",
+      "format": "filepath",
+      "isSecret": true
+    },
+    {
+      "name": "DB_SSL_VERIFY_CERT",
+      "description": "Verify server certificate",
+      "format": "boolean",
+      "default": "false"
+    },
+    {
+      "name": "MCP_READ_ONLY",
+      "description": "Enable read-only mode",
+      "format": "boolean",
+      "default": "true"
+    },
+    {
+      "name": "MCP_MAX_POOL_SIZE",
+      "description": "Maximum connection pool size",
+      "format": "number",
+      "default": "5"
+    },
+    {
+      "name": "LOG_LEVEL",
+      "description": "Log level: error, warn, info, debug, trace",
+      "default": "info",
+      "choices": ["error", "warn", "info", "debug", "trace"]
+    }
+  ]
+}

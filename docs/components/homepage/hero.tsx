@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-const gitHubUrl = 'https://github.com/haymon-ai/database-mcp';
+const gitHubUrl = 'https://github.com/haymon-ai/database';
 
 export function Hero() {
   return (

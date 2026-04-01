@@ -8,8 +8,8 @@ body:
         Thanks for suggesting a feature! Please fill out the form below.
 
         Before submitting, please:
-        - Search [existing issues](https://github.com/haymon-ai/database-mcp/issues) for duplicates
-        - Check [GitHub Discussions](https://github.com/haymon-ai/database-mcp/discussions) for related conversations
+        - Search [existing issues](https://github.com/haymon-ai/database/issues) for duplicates
+        - Check [GitHub Discussions](https://github.com/haymon-ai/database/discussions) for related conversations
 
   - type: checkboxes
     id: prerequisites

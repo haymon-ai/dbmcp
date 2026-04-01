@@ -1,15 +1,15 @@
 # Database MCP
 
-[![CI](https://github.com/haymon-ai/database-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/database-mcp/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/haymon-ai/database-mcp)](https://github.com/haymon-ai/database-mcp/releases/latest)
+[![CI](https://github.com/haymon-ai/database/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/database/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/haymon-ai/database)](https://github.com/haymon-ai/database/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-database.haymon.ai-black)](https://database.haymon.ai/docs/)
 
 A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases. Connect your AI assistant to MySQL/MariaDB, PostgreSQL, or SQLite with zero runtime dependencies.
 
-**[Website](https://database.haymon.ai)** · **[Documentation](https://database.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/database-mcp/releases)**
+**[Website](https://database.haymon.ai)** · **[Documentation](https://database.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/database/releases)**
 
-![demo](https://raw.githubusercontent.com/haymon-ai/database-mcp/master/docs/public/demo.gif)
+![demo](https://raw.githubusercontent.com/haymon-ai/database/master/docs/public/demo.gif)
 
 ## Features
 
