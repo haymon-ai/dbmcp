@@ -1,7 +1,7 @@
 //! `SQLite` connection configuration and backend definition.
 
-use backend::error::AppError;
-use config::DatabaseConfig;
+use database_mcp_backend::error::AppError;
+use database_mcp_config::DatabaseConfig;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tracing::info;
@@ -45,7 +45,7 @@ impl SqliteBackend {
 
     /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
-        backend::identifier::quote_identifier(name, '"')
+        database_mcp_backend::identifier::quote_identifier(name, '"')
     }
 }
 
@@ -58,7 +58,7 @@ fn connect_options(config: &DatabaseConfig) -> SqliteConnectOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::DatabaseBackend;
+    use database_mcp_config::DatabaseBackend;
 
     #[test]
     fn try_from_sets_filename() {

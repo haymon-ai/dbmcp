@@ -7,10 +7,10 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use backend::validation::validate_read_only_with_dialect;
-use config::{DatabaseBackend, DatabaseConfig};
+use database_mcp_backend::validation::validate_read_only_with_dialect;
+use database_mcp_config::{DatabaseBackend, DatabaseConfig};
+use database_mcp_sqlite::{SqliteBackend, SqliteHandler};
 use rmcp::ServerHandler;
-use sqlite::{SqliteBackend, SqliteHandler};
 
 fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     DatabaseConfig {

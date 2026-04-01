@@ -10,7 +10,7 @@
 //! - `http` — runs the MCP server over HTTP with Streamable HTTP transport
 //! - `version` — prints the version and exits
 
-use config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
+use database_mcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ErrorData, ListToolsResult, PaginatedRequestParams, ServerInfo,
 };
@@ -33,7 +33,7 @@ use clap::{Parser, Subcommand};
 pub enum RunError {
     /// Database backend initialization failed.
     #[error(transparent)]
-    Backend(#[from] backend::AppError),
+    Backend(#[from] database_mcp_backend::AppError),
 
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]
@@ -247,9 +247,9 @@ impl From<&Arguments> for Config {
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Handler {
-    Sqlite(sqlite::SqliteHandler),
-    Postgres(postgres::PostgresHandler),
-    Mysql(mysql::MysqlHandler),
+    Sqlite(database_mcp_sqlite::SqliteHandler),
+    Postgres(database_mcp_postgres::PostgresHandler),
+    Mysql(database_mcp_mysql::MysqlHandler),
 }
 
 /// Delegates a [`ServerHandler`] method call to the inner handler.
@@ -297,12 +297,14 @@ impl ServerHandler for Handler {
 }
 
 /// Creates a [`Handler`] based on the configured database backend.
-async fn create_handler(config: &Config) -> Result<Handler, backend::AppError> {
+async fn create_handler(config: &Config) -> Result<Handler, database_mcp_backend::AppError> {
     let handler = match config.database.backend {
-        DatabaseBackend::Sqlite => Handler::Sqlite(sqlite::SqliteHandler::new(&config.database).await?),
-        DatabaseBackend::Postgres => Handler::Postgres(postgres::PostgresHandler::new(&config.database).await?),
+        DatabaseBackend::Sqlite => Handler::Sqlite(database_mcp_sqlite::SqliteHandler::new(&config.database).await?),
+        DatabaseBackend::Postgres => {
+            Handler::Postgres(database_mcp_postgres::PostgresHandler::new(&config.database).await?)
+        }
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
-            Handler::Mysql(mysql::MysqlHandler::new(&config.database).await?)
+            Handler::Mysql(database_mcp_mysql::MysqlHandler::new(&config.database).await?)
         }
     };
     Ok(handler)

@@ -1,12 +1,12 @@
 [package]
-name = "server"
+name = "database-mcp-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-backend = { path = "../backend" }
+database-mcp-backend = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -3,8 +3,8 @@
 //! Provides methods for listing databases, tables, executing queries,
 //! and creating databases.
 
-use backend::error::AppError;
-use backend::identifier::validate_identifier;
+use database_mcp_backend::error::AppError;
+use database_mcp_backend::identifier::validate_identifier;
 use serde_json::{Value, json};
 use sqlx::Executor;
 use sqlx::mysql::MySqlRow;

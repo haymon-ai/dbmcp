@@ -3,13 +3,13 @@
 //! [`SqliteHandler`] wraps [`SqliteBackend`] and implements
 //! [`ServerHandler`] using rmcp tool macros.
 
-use backend::types::{GetTableSchemaRequest, ListTablesRequest, QueryRequest};
-use config::DatabaseConfig;
+use database_mcp_backend::types::{GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+use database_mcp_config::DatabaseConfig;
+use database_mcp_server::tools;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData;
-use server::tools;
 
 use super::SqliteBackend;
 
@@ -29,7 +29,7 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns an error if the database connection cannot be established.
-    pub async fn new(config: &DatabaseConfig) -> Result<Self, backend::AppError> {
+    pub async fn new(config: &DatabaseConfig) -> Result<Self, database_mcp_backend::AppError> {
         let backend = SqliteBackend::new(config).await?;
         let mut tool_router = Self::tool_router();
         if backend.read_only {
@@ -93,7 +93,12 @@ impl SqliteHandler {
             self.backend.execute_query(&req.sql_query, db),
             &req.sql_query,
             &req.database_name,
-            |sql| backend::validation::validate_read_only_with_dialect(sql, &sqlparser::dialect::SQLiteDialect {}),
+            |sql| {
+                database_mcp_backend::validation::validate_read_only_with_dialect(
+                    sql,
+                    &sqlparser::dialect::SQLiteDialect {},
+                )
+            },
         )
         .await
     }
@@ -123,6 +128,6 @@ impl SqliteHandler {
 #[rmcp::tool_handler(router = self.tool_router)]
 impl ServerHandler for SqliteHandler {
     fn get_info(&self) -> rmcp::model::ServerInfo {
-        server::server_info()
+        database_mcp_server::server_info()
     }
 }

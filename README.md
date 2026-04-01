@@ -209,12 +209,18 @@ curl -X POST http://localhost:9001/mcp \
 
 ## Project Structure
 
-This is a Cargo workspace with two crates:
+This is a Cargo workspace with the following crates:
 
 | Crate | Path | Description |
 |-------|------|-------------|
 | `database-mcp` | `.` (root) | Main binary — CLI, transports, database backends |
-| `sqlx_to_json` | `crates/sqlx_to_json/` | Internal library — type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
+| `database-mcp-backend` | `crates/backend/` | Shared error types, validation, and identifier utilities |
+| `database-mcp-config` | `crates/config/` | Configuration structs and CLI argument mapping |
+| `database-mcp-server` | `crates/server/` | Shared MCP tool implementations and server info |
+| `database-mcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
+| `database-mcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
+| `database-mcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
+| `sqlx-to-json` | `crates/sqlx-to-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
 
 ## Development
 

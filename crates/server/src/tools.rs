@@ -3,7 +3,7 @@
 //! Extracts the common logging, validation, and serialization logic
 //! from per-backend MCP tool handlers into reusable functions.
 
-use backend::error::AppError;
+use database_mcp_backend::error::AppError;
 use rmcp::model::ErrorData;
 use serde::Serialize;
 use serde_json::Value;

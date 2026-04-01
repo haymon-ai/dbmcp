@@ -1,6 +1,6 @@
 //! `SQLite` database query operations.
 
-use backend::error::AppError;
+use database_mcp_backend::error::AppError;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx_to_json::RowExt;

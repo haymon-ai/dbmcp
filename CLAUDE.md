@@ -10,8 +10,8 @@ cargo build --release                          # release build
 cargo run -- --db-backend mysql --db-user root # stdio mode (default)
 cargo run -- http --db-backend mysql --db-user root --host 127.0.0.1 --port 9001
 
-cargo test                    # all tests
-cargo test --lib              # unit tests only
+cargo test                          # all tests
+cargo test --workspace --lib --bins # unit tests only
 cargo test <name>             # single test
 cargo test -- --nocapture     # with stdout
 
@@ -25,10 +25,16 @@ cargo fmt                     # apply formatting
 
 ## Architecture
 
-- **`src/config.rs`** — `Config` flat struct, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `Option<T>` fields with backend-aware defaults via `effective_host()`, `effective_port()`, `effective_user()`. `Config::validate()` accumulates all errors into `Result<(), Vec<ConfigError>>`.
-- **`src/cli.rs`** — Top-level `Cli` struct with `global = true` args. `Command` enum: `Stdio` | `Http`. `From<&Cli> for Config` maps args, then `validate()` runs separately.
-- **`src/db/`** — `DatabaseBackend` trait + `Backend` enum via `enum_dispatch` (zero-cost dispatch). Each backend has `build_connection_url(config)` constructing the sqlx DSN from `effective_*()` methods.
-- **`crates/sqlx_to_json/`** — Internal workspace crate providing the `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow` with a shared `row_to_json_map` helper for column iteration and null handling.
+Cargo workspace: root binary (`database-mcp`) + 7 library crates under `crates/`. Workspace members use `"crates/*"` glob.
+
+- **`src/`** — Binary crate. `commands/root.rs` owns CLI parsing (clap with subcommands), tracing init, config construction, backend dispatch via `Handler` enum. `commands/http.rs` and `commands/stdio.rs` handle transport modes.
+- **`crates/config/`** (`database-mcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `Config::validate()` accumulates errors into `Result<(), Vec<ConfigError>>`.
+- **`crates/backend/`** (`database-mcp-backend`) — Shared `AppError` type, SQL read-only validation (`validation` module), identifier quoting/validation (`identifier` module), and request/response types (`types` module).
+- **`crates/server/`** (`database-mcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
+- **`crates/mysql/`** (`database-mcp-mysql`) — MySQL/MariaDB backend: connection pooling, query operations, schema introspection, MCP handler via `rmcp::tool_router`.
+- **`crates/postgres/`** (`database-mcp-postgres`) — PostgreSQL backend: per-database connection pool cache (moka), query operations, schema introspection, MCP handler.
+- **`crates/sqlite/`** (`database-mcp-sqlite`) — SQLite backend: single-file connection, query operations, schema introspection, MCP handler.
+- **`crates/sqlx-to-json/`** (`sqlx-to-json`) — `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow`.
 - **Transport**: `stdio` (default, for Claude Desktop/Cursor) and `http` (Streamable HTTP with CORS via axum + tower-http).
 
 ## Configuration
@@ -73,9 +79,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and d
 ALWAYS run before considering any task complete:
 
 ```bash
-cargo fmt                     # format
-cargo clippy -- -D warnings   # lint
-cargo test --lib              # unit tests
+cargo fmt                           # format
+cargo clippy -- -D warnings         # lint
+cargo test --workspace --lib --bins # unit tests
 ./tests/run.sh                # integration tests (Docker required)
 ```
 

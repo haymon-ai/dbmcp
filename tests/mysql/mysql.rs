@@ -5,9 +5,9 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use backend::validation::validate_read_only_with_dialect;
-use config::{DatabaseBackend, DatabaseConfig};
-use mysql::MysqlBackend;
+use database_mcp_backend::validation::validate_read_only_with_dialect;
+use database_mcp_config::{DatabaseBackend, DatabaseConfig};
+use database_mcp_mysql::MysqlBackend;
 
 fn test_config() -> DatabaseConfig {
     DatabaseConfig {

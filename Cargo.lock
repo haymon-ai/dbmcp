@@ -187,17 +187,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "backend"
-version = "0.5.0"
-dependencies = [
- "rmcp",
- "serde",
- "serde_json",
- "sqlparser",
- "thiserror",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -342,15 +331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "config"
-version = "0.5.0"
-dependencies = [
- "clap",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,15 +457,15 @@ name = "database-mcp"
 version = "0.5.0"
 dependencies = [
  "axum",
- "backend",
  "clap",
- "config",
+ "database-mcp-backend",
+ "database-mcp-config",
+ "database-mcp-mysql",
+ "database-mcp-postgres",
+ "database-mcp-server",
+ "database-mcp-sqlite",
  "mimalloc",
- "mysql",
- "postgres",
  "rmcp",
- "server",
- "sqlite",
  "sqlparser",
  "thiserror",
  "tokio",
@@ -493,6 +473,85 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "database-mcp-backend"
+version = "0.5.0"
+dependencies = [
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "thiserror",
+]
+
+[[package]]
+name = "database-mcp-config"
+version = "0.5.0"
+dependencies = [
+ "clap",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "database-mcp-mysql"
+version = "0.5.0"
+dependencies = [
+ "database-mcp-backend",
+ "database-mcp-config",
+ "database-mcp-server",
+ "rmcp",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tracing",
+]
+
+[[package]]
+name = "database-mcp-postgres"
+version = "0.5.0"
+dependencies = [
+ "database-mcp-backend",
+ "database-mcp-config",
+ "database-mcp-server",
+ "moka",
+ "rmcp",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "database-mcp-server"
+version = "0.5.0"
+dependencies = [
+ "database-mcp-backend",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "database-mcp-sqlite"
+version = "0.5.0"
+dependencies = [
+ "database-mcp-backend",
+ "database-mcp-config",
+ "database-mcp-server",
+ "rmcp",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-to-json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1241,21 +1300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mysql"
-version = "0.5.0"
-dependencies = [
- "backend",
- "config",
- "rmcp",
- "serde_json",
- "server",
- "sqlparser",
- "sqlx",
- "sqlx_to_json",
- "tracing",
-]
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1431,23 +1475,6 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
-
-[[package]]
-name = "postgres"
-version = "0.5.0"
-dependencies = [
- "backend",
- "config",
- "moka",
- "rmcp",
- "serde_json",
- "server",
- "sqlparser",
- "sqlx",
- "sqlx_to_json",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "potential_utf"
@@ -1873,17 +1900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "server"
-version = "0.5.0"
-dependencies = [
- "backend",
- "rmcp",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1982,22 +1998,6 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "sqlite"
-version = "0.5.0"
-dependencies = [
- "backend",
- "config",
- "rmcp",
- "serde_json",
- "server",
- "sqlparser",
- "sqlx",
- "sqlx_to_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -2213,7 +2213,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlx_to_json"
+name = "sqlx-to-json"
 version = "0.5.0"
 dependencies = [
  "base64",

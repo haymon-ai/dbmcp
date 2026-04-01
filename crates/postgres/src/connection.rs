@@ -1,8 +1,8 @@
 //! `PostgreSQL` connection configuration and backend definition.
 
-use backend::error::AppError;
-use backend::identifier::validate_identifier;
-use config::DatabaseConfig;
+use database_mcp_backend::error::AppError;
+use database_mcp_backend::identifier::validate_identifier;
+use database_mcp_config::DatabaseConfig;
 use moka::future::Cache;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
@@ -82,7 +82,7 @@ impl PostgresBackend {
 
     /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
-        backend::identifier::quote_identifier(name, '"')
+        database_mcp_backend::identifier::quote_identifier(name, '"')
     }
 
     /// Returns a connection pool for the requested database.
@@ -177,7 +177,7 @@ fn connect_options(config: &DatabaseConfig) -> PgConnectOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::DatabaseBackend;
+    use database_mcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

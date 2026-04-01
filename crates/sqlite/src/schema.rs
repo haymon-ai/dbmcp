@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use backend::error::AppError;
-use backend::identifier::validate_identifier;
+use database_mcp_backend::error::AppError;
+use database_mcp_backend::identifier::validate_identifier;
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
