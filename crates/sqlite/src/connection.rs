@@ -22,16 +22,6 @@ impl std::fmt::Debug for SqliteBackend {
 }
 
 impl SqliteBackend {
-    /// Creates a lazy in-memory backend for tests.
-    #[cfg(test)]
-    pub(crate) fn in_memory(read_only: bool) -> Self {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_lazy("sqlite::memory:")
-            .expect("in-memory SQLite");
-        Self { pool, read_only }
-    }
-
     /// Creates a new `SQLite` backend from configuration.
     ///
     /// # Errors

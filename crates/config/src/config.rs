@@ -224,15 +224,16 @@ impl HttpConfig {
 /// Runtime configuration for the MCP server.
 ///
 /// Composes [`DatabaseConfig`] with an optional [`HttpConfig`].
-/// Server config is only present when the HTTP transport is selected.
-/// Logging is configured directly from CLI arguments before `Config`
-/// is constructed, so it is not part of this struct.
+/// HTTP config is present only when the HTTP transport is selected
+/// (via subcommand or `MCP_TRANSPORT` env var). Logging is configured
+/// directly from CLI arguments before `Config` is constructed, so it
+/// is not part of this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Database connection and behavior settings.
     pub database: DatabaseConfig,
 
-    /// HTTP transport settings (present only for the `http` subcommand).
+    /// HTTP transport settings (present only when HTTP transport is active).
     pub http: Option<HttpConfig>,
 }
 

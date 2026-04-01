@@ -8,6 +8,54 @@
     "url": "https://github.com/haymon-ai/database",
     "source": "github"
   },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/haymon-ai/database:0.4.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/haymon-ai/database:0.4.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://{HTTP_HOST}:{HTTP_PORT}/mcp"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "http",
+          "description": "Start in HTTP transport mode",
+          "isRequired": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "HTTP_HOST",
+          "description": "HTTP bind host",
+          "default": "127.0.0.1"
+        },
+        {
+          "name": "HTTP_PORT",
+          "description": "HTTP bind port",
+          "format": "number",
+          "default": "9001"
+        },
+        {
+          "name": "HTTP_ALLOWED_ORIGINS",
+          "description": "Allowed CORS origins (comma-separated)"
+        },
+        {
+          "name": "HTTP_ALLOWED_HOSTS",
+          "description": "Allowed host names (comma-separated)"
+        }
+      ]
+    }
+  ],
   "environmentVariables": [
     {
       "name": "DB_BACKEND",
@@ -68,16 +116,16 @@
       "default": "false"
     },
     {
-      "name": "MCP_READ_ONLY",
+      "name": "DB_READ_ONLY",
       "description": "Enable read-only mode",
       "format": "boolean",
       "default": "true"
     },
     {
-      "name": "MCP_MAX_POOL_SIZE",
+      "name": "DB_MAX_POOL_SIZE",
       "description": "Maximum connection pool size",
       "format": "number",
-      "default": "5"
+      "default": "10"
     },
     {
       "name": "LOG_LEVEL",
