@@ -1,7 +1,10 @@
 //! Database MCP Server entry point.
 
+mod cli;
 mod commands;
 mod consts;
+mod error;
+mod server;
 
 use mimalloc::MiMalloc;
 use std::process::ExitCode;
@@ -10,7 +13,7 @@ use std::process::ExitCode;
 static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() -> ExitCode {
-    match commands::root::run() {
+    match cli::run() {
         Ok(code) => code,
         Err(error) => {
             eprintln!("{error}");

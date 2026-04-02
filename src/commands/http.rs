@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::root::RunError;
+use crate::error::Error;
 
 /// Runs the MCP server in HTTP mode.
 #[derive(Debug, Parser)]
@@ -59,15 +59,11 @@ impl HttpCommand {
     /// Returns an error if:
     /// - HTTP config is missing from the configuration.
     /// - TCP bind fails (port in use, permission denied).
-    pub async fn execute(
-        &self,
-        config: &Config,
-        handler: impl ServerHandler + Clone + 'static,
-    ) -> Result<(), RunError> {
+    pub async fn execute(&self, config: &Config, handler: impl ServerHandler + Clone + 'static) -> Result<(), Error> {
         let http_config = config
             .http
             .as_ref()
-            .ok_or_else(|| RunError::Config("HTTP configuration is missing".into()))?;
+            .ok_or_else(|| Error::Config("HTTP configuration is missing".into()))?;
         let bind_addr = format!("{}:{}", http_config.host, http_config.port);
         info!("Starting MCP server via HTTP transport on {bind_addr}...");
 

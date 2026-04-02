@@ -1,9 +1,6 @@
-//! CLI command definitions and execution.
+//! Transport command modules.
 //!
-//! The [`root`] module contains the CLI entry point and
-//! [`Command`](root::Command) enum. Each subcommand lives in its own
-//! module.
+//! Each submodule handles a specific MCP transport mode.
 
-mod http;
-pub mod root;
-mod stdio;
+pub mod http;
+pub mod stdio;

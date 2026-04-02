@@ -1,59 +1,27 @@
 //! CLI argument parsing and application bootstrapping.
 //!
-//! This module owns the entire bootstrapping pipeline: CLI argument parsing
-//! (via clap with subcommands), tracing initialization, configuration
-//! construction, validation, database backend creation, and MCP transport
-//! dispatch.
-//!
-//! The binary has three subcommands:
-//! - `stdio` (default) — runs the MCP server over stdin/stdout
-//! - `http` — runs the MCP server over HTTP with Streamable HTTP transport
-//! - `version` — prints the version and exits
+//! Contains the [`Arguments`] struct (parsed by clap), the [`Command`]
+//! subcommand enum, [`LogLevel`] selector, [`From`] implementations
+//! that convert parsed arguments into configuration types, and the
+//! [`run`] entry point that owns the entire bootstrapping pipeline.
 
+use clap::{Parser, Subcommand};
 use database_mcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig};
-use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ErrorData, ListToolsResult, PaginatedRequestParams, ServerInfo,
-};
-use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler};
 use std::process::ExitCode;
 use tracing::info;
 
-use super::http::HttpCommand;
-use super::stdio::StdioCommand;
-
+use crate::commands::http::HttpCommand;
+use crate::commands::stdio::StdioCommand;
 use crate::consts::{BIN, VERSION};
-use clap::{Parser, Subcommand};
-
-/// Application-level errors for server startup and transport.
-///
-/// Only instantiated once at program exit, so variant size is irrelevant.
-#[derive(Debug, thiserror::Error)]
-#[allow(clippy::large_enum_variant)]
-pub enum RunError {
-    /// Database backend initialization failed.
-    #[error(transparent)]
-    Backend(#[from] database_mcp_backend::AppError),
-
-    /// MCP transport failed to initialize.
-    #[error("transport error: {0}")]
-    Transport(#[from] rmcp::service::ServerInitializeError),
-
-    /// Network I/O error (e.g., TCP bind failure).
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-
-    /// Missing or invalid configuration at runtime.
-    #[error("{0}")]
-    Config(String),
-}
+use crate::error::Error;
+use crate::server::create_handler;
 
 /// Log severity levels for the MCP server.
 ///
 /// Maps directly to [`tracing::Level`] variants. Used as a
 /// [`clap::ValueEnum`] for type-safe CLI argument parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum LogLevel {
+pub enum LogLevel {
     /// Only errors.
     Error,
     /// Warnings and above.
@@ -90,9 +58,11 @@ impl From<LogLevel> for tracing::Level {
     }
 }
 
-#[derive(Parser)]
+/// Top-level CLI arguments parsed by clap.
+#[derive(Debug, Parser)]
 #[command(name = "database-mcp", about = "Database MCP Server", version)]
 struct Arguments {
+    /// Subcommand selector.
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -186,7 +156,7 @@ struct Arguments {
 
 /// Top-level subcommand selector.
 #[derive(Debug, Subcommand)]
-pub enum Command {
+enum Command {
     /// Print version information and exit.
     Version,
     /// Run in stdio mode (default).
@@ -243,73 +213,6 @@ impl From<&Arguments> for Config {
     }
 }
 
-/// Unified handler enum dispatching to the active backend.
-#[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
-enum Handler {
-    Sqlite(database_mcp_sqlite::SqliteHandler),
-    Postgres(database_mcp_postgres::PostgresHandler),
-    Mysql(database_mcp_mysql::MysqlHandler),
-}
-
-/// Delegates a [`ServerHandler`] method call to the inner handler.
-macro_rules! dispatch {
-    ($self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Handler::Sqlite(h) => h.$method($($arg),*),
-            Handler::Postgres(h) => h.$method($($arg),*),
-            Handler::Mysql(h) => h.$method($($arg),*),
-        }
-    };
-    (await $self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Handler::Sqlite(h) => h.$method($($arg),*).await,
-            Handler::Postgres(h) => h.$method($($arg),*).await,
-            Handler::Mysql(h) => h.$method($($arg),*).await,
-        }
-    };
-}
-
-impl ServerHandler for Handler {
-    fn get_info(&self) -> ServerInfo {
-        dispatch!(self, get_info)
-    }
-
-    async fn list_tools(
-        &self,
-        request: Option<PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        dispatch!(await self, list_tools, request, context)
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        dispatch!(await self, call_tool, request, context)
-    }
-
-    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
-        dispatch!(self, get_tool, name)
-    }
-}
-
-/// Creates a [`Handler`] based on the configured database backend.
-async fn create_handler(config: &Config) -> Result<Handler, database_mcp_backend::AppError> {
-    let handler = match config.database.backend {
-        DatabaseBackend::Sqlite => Handler::Sqlite(database_mcp_sqlite::SqliteHandler::new(&config.database).await?),
-        DatabaseBackend::Postgres => {
-            Handler::Postgres(database_mcp_postgres::PostgresHandler::new(&config.database).await?)
-        }
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
-            Handler::Mysql(database_mcp_mysql::MysqlHandler::new(&config.database).await?)
-        }
-    };
-    Ok(handler)
-}
-
 /// Parses CLI arguments, initializes the application, and runs the MCP server.
 ///
 /// # Errors
@@ -321,7 +224,7 @@ async fn create_handler(config: &Config) -> Result<Handler, database_mcp_backend
 /// - MCP stdio transport fails to start.
 #[tokio::main]
 #[allow(clippy::result_large_err)]
-pub async fn run() -> Result<ExitCode, RunError> {
+pub async fn run() -> Result<ExitCode, Error> {
     let arguments = Arguments::parse();
     if matches!(arguments.command, Some(Command::Version)) {
         println!("{BIN} {VERSION}");
