@@ -9,29 +9,40 @@ use std::sync::Arc;
 use database_mcp_config::{Config, DatabaseBackend};
 use database_mcp_mysql::MysqlAdapter;
 use database_mcp_postgres::PostgresAdapter;
-use database_mcp_server::{Backend, Server};
 use database_mcp_sqlite::SqliteAdapter;
 use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
 use rmcp::{RoleServer, Service};
 
 /// Cloneable, type-erased MCP server.
 ///
-/// Wraps any [`Server<T>`] behind an [`Arc`] using rmcp's [`DynService`]
+/// Wraps any backend adapter behind an [`Arc`] using rmcp's [`DynService`]
 /// for type erasure. All database backends produce the same concrete
 /// type, eliminating the need for enum dispatch.
 #[derive(Clone)]
 pub struct ServerHandler(Arc<dyn DynService<RoleServer>>);
 
 impl ServerHandler {
-    /// Creates a new handler from any backend server.
+    /// Creates a new handler from any backend adapter.
     pub fn new(server: impl ServiceExt<RoleServer>) -> Self {
         Self(Arc::from(server.into_dyn()))
     }
 }
 
-impl<T: Backend> From<T> for ServerHandler {
-    fn from(backend: T) -> Self {
-        Self::new(Server::new(backend))
+impl From<SqliteAdapter> for ServerHandler {
+    fn from(adapter: SqliteAdapter) -> Self {
+        Self::new(adapter)
+    }
+}
+
+impl From<PostgresAdapter> for ServerHandler {
+    fn from(adapter: PostgresAdapter) -> Self {
+        Self::new(adapter)
+    }
+}
+
+impl From<MysqlAdapter> for ServerHandler {
+    fn from(adapter: MysqlAdapter) -> Self {
+        Self::new(adapter)
     }
 }
 

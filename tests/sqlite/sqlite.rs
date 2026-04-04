@@ -169,19 +169,19 @@ async fn it_excludes_list_databases_and_create_database_tools() {
     let backend = database_mcp_sqlite::SqliteAdapter::new(&config)
         .await
         .expect("backend creation failed");
-    let handler = database_mcp_server::Server::new(backend);
+    let router = backend.build_tool_router();
 
     assert!(
-        handler.get_tool("list_databases").is_none(),
+        router.get("list_databases").is_none(),
         "SQLite must not expose list_databases"
     );
     assert!(
-        handler.get_tool("create_database").is_none(),
+        router.get("create_database").is_none(),
         "SQLite must not expose create_database"
     );
 
     // Verify core tools are present
-    assert!(handler.get_tool("list_tables").is_some());
-    assert!(handler.get_tool("read_query").is_some());
-    assert!(handler.get_tool("write_query").is_some());
+    assert!(router.get("list_tables").is_some());
+    assert!(router.get("read_query").is_some());
+    assert!(router.get("write_query").is_some());
 }
