@@ -32,7 +32,7 @@ pub struct GetTableSchemaRequest {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
     #[schemars(description = "The SQL query to execute.")]
-    pub sql_query: String,
+    pub query: String,
     #[schemars(
         description = "The database to run the query against. Required. Use list_databases first to see available databases."
     )]

@@ -1,14 +1,9 @@
 //! Shared MCP server utilities.
 //!
-//! Provides [`server_info`] and [`map_error`] used by per-backend
+//! Provides [`server_info`] used by per-backend
 //! [`ServerHandler`](rmcp::ServerHandler) implementations.
 
-use rmcp::model::{ErrorData, Implementation, ServerCapabilities, ServerInfo};
-
-/// Converts a displayable error into an MCP [`ErrorData`].
-pub fn map_error(e: impl std::fmt::Display) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
-}
+use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 
 /// Returns the shared [`ServerInfo`] for all server implementations.
 ///

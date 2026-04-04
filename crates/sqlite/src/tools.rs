@@ -4,12 +4,13 @@
 //! on [`SqliteAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
-use database_mcp_server::map_error;
 use database_mcp_server::types::{GetTableSchemaRequest, ListTablesRequest, QueryRequest};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData};
 use rmcp::tool;
+
+use database_mcp_sql::validation::validate_read_only_with_dialect;
 
 use super::SqliteAdapter;
 
@@ -43,11 +44,12 @@ impl SqliteAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_list_tables(&self, params: Parameters<ListTablesRequest>) -> Result<CallToolResult, ErrorData> {
-        let req = params.0;
-        let result = self.list_tables(&req.database_name).await.map_err(map_error)?;
-        let json = serde_json::to_string_pretty(&result).map_err(map_error)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+    async fn tool_list_tables(
+        &self,
+        Parameters(request): Parameters<ListTablesRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.list_tables(&request.database_name).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
     /// Get column definitions (type, nullable, key, default) and foreign key
@@ -63,15 +65,12 @@ impl SqliteAdapter {
     )]
     async fn tool_get_table_schema(
         &self,
-        params: Parameters<GetTableSchemaRequest>,
+        Parameters(request): Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let req = params.0;
         let result = self
-            .get_table_schema(&req.database_name, &req.table_name)
-            .await
-            .map_err(map_error)?;
-        let json = serde_json::to_string_pretty(&result).map_err(map_error)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+            .get_table_schema(&request.database_name, &request.table_name)
+            .await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
     /// Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
@@ -84,22 +83,15 @@ impl SqliteAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_read_query(&self, params: Parameters<QueryRequest>) -> Result<CallToolResult, ErrorData> {
-        let req = params.0;
-        database_mcp_sql::validation::validate_read_only_with_dialect(
-            &req.sql_query,
-            &sqlparser::dialect::SQLiteDialect {},
-        )
-        .map_err(map_error)?;
+    async fn tool_read_query(
+        &self,
+        Parameters(request): Parameters<QueryRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        let db = if req.database_name.is_empty() {
-            None
-        } else {
-            Some(req.database_name.as_str())
-        };
-        let result = self.execute_query(&req.sql_query, db).await.map_err(map_error)?;
-        let json = serde_json::to_string_pretty(&result).map_err(map_error)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let result = self.execute_query(&request.query, db).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
     /// Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
@@ -112,15 +104,12 @@ impl SqliteAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_write_query(&self, params: Parameters<QueryRequest>) -> Result<CallToolResult, ErrorData> {
-        let req = params.0;
-        let db = if req.database_name.is_empty() {
-            None
-        } else {
-            Some(req.database_name.as_str())
-        };
-        let result = self.execute_query(&req.sql_query, db).await.map_err(map_error)?;
-        let json = serde_json::to_string_pretty(&result).map_err(map_error)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+    async fn tool_write_query(
+        &self,
+        Parameters(request): Parameters<QueryRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let result = self.execute_query(&request.query, db).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 }
