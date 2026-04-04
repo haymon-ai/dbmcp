@@ -4,7 +4,7 @@
 //! on [`SqliteAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
-use database_mcp_server::types::{GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+use super::types::{GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -33,8 +33,7 @@ impl SqliteAdapter {
 
 #[rmcp::tool_router]
 impl SqliteAdapter {
-    /// List all tables in a specific database.
-    /// Requires `database_name` from `list_databases`.
+    /// List all tables in the connected `SQLite` database.
     #[tool(
         name = "list_tables",
         annotations(
@@ -44,16 +43,13 @@ impl SqliteAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_list_tables(
-        &self,
-        Parameters(request): Parameters<ListTablesRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.list_tables(&request.database_name).await?;
+    async fn tool_list_tables(&self) -> Result<CallToolResult, ErrorData> {
+        let result = self.list_tables().await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
     /// Get column definitions (type, nullable, key, default) and foreign key
-    /// relationships for a table. Requires `database_name` and `table_name`.
+    /// relationships for a table.
     #[tool(
         name = "get_table_schema",
         annotations(
@@ -67,9 +63,7 @@ impl SqliteAdapter {
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .get_table_schema(&request.database_name, &request.table_name)
-            .await?;
+        let result = self.get_table_schema(&request.table_name).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
@@ -89,8 +83,7 @@ impl SqliteAdapter {
     ) -> Result<CallToolResult, ErrorData> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let result = self.execute_query(&request.query, db).await?;
+        let result = self.execute_query(&request.query).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
@@ -108,8 +101,7 @@ impl SqliteAdapter {
         &self,
         Parameters(request): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let result = self.execute_query(&request.query, db).await?;
+        let result = self.execute_query(&request.query).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 }

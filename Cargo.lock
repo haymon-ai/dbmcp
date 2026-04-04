@@ -545,6 +545,7 @@ dependencies = [
  "database-mcp-server",
  "database-mcp-sql",
  "rmcp",
+ "serde",
  "serde_json",
  "sqlparser",
  "sqlx",

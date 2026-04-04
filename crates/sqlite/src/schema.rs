@@ -16,7 +16,7 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, _database: &str, table: &str) -> Result<Value, AppError> {
+    pub async fn get_table_schema(&self, table: &str) -> Result<Value, AppError> {
         validate_identifier(table)?;
 
         // 1. Get basic schema
