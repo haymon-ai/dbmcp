@@ -11,13 +11,13 @@ use serde::Deserialize;
 /// Request to get a table's schema.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetTableSchemaRequest {
-    #[schemars(description = "The table name to inspect. Use list_tables first to see available tables.")]
+    /// The table name to inspect. Use `list_tables` first to see available tables.
     pub table_name: String,
 }
 
 /// Request for `read_query` and `write_query` tools.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
-    #[schemars(description = "The SQL query to execute.")]
+    /// The SQL query to execute.
     pub query: String,
 }
