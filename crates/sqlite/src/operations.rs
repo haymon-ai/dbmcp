@@ -8,12 +8,12 @@ use sqlx_to_json::RowExt;
 use super::SqliteAdapter;
 
 impl SqliteAdapter {
-    /// Lists all tables in a database.
+    /// Lists all tables in the connected database.
     ///
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, _database: &str) -> Result<Vec<String>, AppError> {
+    pub async fn list_tables(&self) -> Result<Vec<String>, AppError> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
         )
@@ -28,7 +28,7 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub async fn execute_query(&self, sql: &str, _database: Option<&str>) -> Result<Value, AppError> {
+    pub async fn execute_query(&self, sql: &str) -> Result<Value, AppError> {
         let rows: Vec<SqliteRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await

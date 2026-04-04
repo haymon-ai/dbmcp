@@ -38,7 +38,7 @@ async fn readonly_backend() -> SqliteAdapter {
 #[tokio::test]
 async fn it_lists_tables() {
     let b = backend().await;
-    let tables = b.list_tables("main").await.expect("failed");
+    let tables = b.list_tables().await.expect("failed");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
             tables.iter().any(|t| t == expected),
@@ -50,7 +50,7 @@ async fn it_lists_tables() {
 #[tokio::test]
 async fn it_gets_table_schema() {
     let b = backend().await;
-    let schema = b.get_table_schema("main", "users").await.expect("failed");
+    let schema = b.get_table_schema("users").await.expect("failed");
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     assert!(obj.contains_key("columns"), "Response should contain columns");
@@ -63,7 +63,7 @@ async fn it_gets_table_schema() {
 #[tokio::test]
 async fn it_gets_table_schema_with_relations() {
     let b = backend().await;
-    let schema = b.get_table_schema("main", "posts").await.expect("failed");
+    let schema = b.get_table_schema("posts").await.expect("failed");
     let columns = schema["columns"].as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
@@ -81,7 +81,7 @@ async fn it_gets_table_schema_with_relations() {
 async fn it_executes_sql() {
     let b = backend().await;
     let results = b
-        .execute_query("SELECT * FROM users ORDER BY id", Some("main"))
+        .execute_query("SELECT * FROM users ORDER BY id")
         .await
         .expect("failed");
     let rows = results.as_array().expect("array");
@@ -105,7 +105,7 @@ async fn it_preserves_json_types() {
 
     // COUNT(*) should return a JSON number, not a string or null
     let results = b
-        .execute_query("SELECT COUNT(*) as cnt FROM users", Some("main"))
+        .execute_query("SELECT COUNT(*) as cnt FROM users")
         .await
         .expect("failed");
     let rows = results.as_array().expect("array");
@@ -115,7 +115,7 @@ async fn it_preserves_json_types() {
 
     // Integer and text columns should have correct types
     let results = b
-        .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1", Some("main"))
+        .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1")
         .await
         .expect("failed");
     let rows = results.as_array().expect("array");
@@ -138,7 +138,7 @@ async fn it_has_consistent_seed_data() {
     async fn check(b: &SqliteAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
-            .execute_query(&sql, Some("main"))
+            .execute_query(&sql)
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
         let rows = results.as_array().expect("array");
