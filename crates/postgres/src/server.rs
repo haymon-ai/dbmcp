@@ -19,7 +19,7 @@ impl Backend for PostgresBackend {
             .with_async_tool::<GetTableSchemaTool>()
             .with_async_tool::<ReadQueryTool>();
 
-        if self.read_only {
+        if self.config.read_only {
             return router;
         }
 

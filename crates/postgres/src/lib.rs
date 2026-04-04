@@ -3,10 +3,10 @@
 //! Provides [`PostgresBackend`] for database operations with MCP
 //! tool registration via [`Backend`](database_mcp_server::Backend).
 
-mod connection;
+mod backend;
 mod operations;
 mod schema;
 mod server;
 mod tools;
 
-pub use connection::PostgresBackend;
+pub use backend::PostgresBackend;

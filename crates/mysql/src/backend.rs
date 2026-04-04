@@ -1,4 +1,4 @@
-//! MySQL/MariaDB connection configuration and backend definition.
+//! MySQL/MariaDB backend definition and connection configuration.
 //!
 //! Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`] and checks
 //! for dangerous server privileges on startup.
@@ -12,14 +12,14 @@ use tracing::{error, info};
 /// MySQL/MariaDB database backend.
 #[derive(Clone)]
 pub struct MysqlBackend {
+    pub(crate) config: DatabaseConfig,
     pub(crate) pool: MySqlPool,
-    pub read_only: bool,
 }
 
 impl std::fmt::Debug for MysqlBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MysqlBackend")
-            .field("read_only", &self.read_only)
+            .field("read_only", &self.config.read_only)
             .finish_non_exhaustive()
     }
 }
@@ -40,11 +40,11 @@ impl MysqlBackend {
         info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
 
         let backend = Self {
+            config: config.clone(),
             pool,
-            read_only: config.read_only,
         };
 
-        if config.read_only {
+        if backend.config.read_only {
             backend.warn_if_file_privilege().await;
         }
 

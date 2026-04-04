@@ -1,4 +1,4 @@
-//! `SQLite` connection configuration and backend definition.
+//! `SQLite` backend definition and connection configuration.
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
@@ -9,14 +9,14 @@ use tracing::info;
 /// `SQLite` file-based database backend.
 #[derive(Clone)]
 pub struct SqliteBackend {
+    pub(crate) config: DatabaseConfig,
     pub(crate) pool: SqlitePool,
-    pub read_only: bool,
 }
 
 impl std::fmt::Debug for SqliteBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteBackend")
-            .field("read_only", &self.read_only)
+            .field("read_only", &self.config.read_only)
             .finish_non_exhaustive()
     }
 }
@@ -38,8 +38,8 @@ impl SqliteBackend {
         info!("SQLite connection initialized: {name}");
 
         Ok(Self {
+            config: config.clone(),
             pool,
-            read_only: config.read_only,
         })
     }
 

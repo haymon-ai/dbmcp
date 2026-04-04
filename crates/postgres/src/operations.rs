@@ -63,7 +63,7 @@ impl PostgresBackend {
     ///
     /// Returns [`AppError`] if read-only or the query fails.
     pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
-        if self.read_only {
+        if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
         validate_identifier(name)?;
