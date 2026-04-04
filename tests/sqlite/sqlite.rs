@@ -7,9 +7,9 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use database_mcp_backend::validation::validate_read_only_with_dialect;
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_sqlite::{SqliteBackend, SqliteHandler};
+use database_mcp_sql::validation::validate_read_only_with_dialect;
+use database_mcp_sqlite::SqliteAdapter;
 use rmcp::ServerHandler;
 
 fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
@@ -23,16 +23,16 @@ fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
     }
 }
 
-async fn backend() -> SqliteBackend {
+async fn backend() -> SqliteAdapter {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let config = sqlite_config(&db_path, false);
-    SqliteBackend::new(&config).await.expect("SQLite open failed")
+    SqliteAdapter::new(&config).await.expect("SQLite open failed")
 }
 
-async fn readonly_backend() -> SqliteBackend {
+async fn readonly_backend() -> SqliteAdapter {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let config = sqlite_config(&db_path, true);
-    SqliteBackend::new(&config).await.expect("SQLite open failed")
+    SqliteAdapter::new(&config).await.expect("SQLite open failed")
 }
 
 #[tokio::test]
@@ -135,7 +135,7 @@ async fn it_preserves_json_types() {
 async fn it_has_consistent_seed_data() {
     let b = backend().await;
 
-    async fn check(b: &SqliteBackend, table: &str, expected: usize) {
+    async fn check(b: &SqliteAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
             .execute_query(&sql, Some("main"))
@@ -166,19 +166,22 @@ async fn it_has_consistent_seed_data() {
 async fn it_excludes_list_databases_and_create_database_tools() {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let config = sqlite_config(&db_path, false);
-    let handler = SqliteHandler::new(&config).await.expect("handler creation failed");
+    let backend = database_mcp_sqlite::SqliteAdapter::new(&config)
+        .await
+        .expect("backend creation failed");
+    let router = backend.build_tool_router();
 
     assert!(
-        handler.get_tool("list_databases").is_none(),
+        router.get("list_databases").is_none(),
         "SQLite must not expose list_databases"
     );
     assert!(
-        handler.get_tool("create_database").is_none(),
+        router.get("create_database").is_none(),
         "SQLite must not expose create_database"
     );
 
     // Verify core tools are present
-    assert!(handler.get_tool("list_tables").is_some());
-    assert!(handler.get_tool("read_query").is_some());
-    assert!(handler.get_tool("write_query").is_some());
+    assert!(router.get("list_tables").is_some());
+    assert!(router.get("read_query").is_some());
+    assert!(router.get("write_query").is_some());
 }

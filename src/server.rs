@@ -1,87 +1,85 @@
-//! Server handler dispatch.
+//! Server creation and type-erased dispatch.
 //!
-//! Contains the unified [`Handler`] enum that wraps all database
-//! backend handlers and dispatches [`ServerHandler`] calls to the
-//! active backend.
+//! Provides [`ServerHandler`], a cloneable, type-erased MCP server
+//! that wraps any database backend. The [`create_handler`] function
+//! connects to the configured database and returns a [`ServerHandler`].
+
+use std::sync::Arc;
 
 use database_mcp_config::{Config, DatabaseBackend};
-use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ErrorData, ListToolsResult, PaginatedRequestParams, ServerInfo,
-};
-use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler};
+use database_mcp_mysql::MysqlAdapter;
+use database_mcp_postgres::PostgresAdapter;
+use database_mcp_sqlite::SqliteAdapter;
+use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
+use rmcp::{RoleServer, Service};
 
-/// Unified handler enum dispatching to the active backend.
+/// Cloneable, type-erased MCP server.
+///
+/// Wraps any backend adapter behind an [`Arc`] using rmcp's [`DynService`]
+/// for type erasure. All database backends produce the same concrete
+/// type, eliminating the need for enum dispatch.
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum Handler {
-    /// `SQLite` file-based backend.
-    Sqlite(database_mcp_sqlite::SqliteHandler),
-    /// `PostgreSQL` backend.
-    Postgres(database_mcp_postgres::PostgresHandler),
-    /// `MySQL` / `MariaDB` backend.
-    Mysql(database_mcp_mysql::MysqlHandler),
-}
+pub struct ServerHandler(Arc<dyn DynService<RoleServer>>);
 
-/// Delegates a [`ServerHandler`] method call to the inner handler.
-macro_rules! dispatch {
-    ($self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Handler::Sqlite(h) => h.$method($($arg),*),
-            Handler::Postgres(h) => h.$method($($arg),*),
-            Handler::Mysql(h) => h.$method($($arg),*),
-        }
-    };
-    (await $self:expr, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Handler::Sqlite(h) => h.$method($($arg),*).await,
-            Handler::Postgres(h) => h.$method($($arg),*).await,
-            Handler::Mysql(h) => h.$method($($arg),*).await,
-        }
-    };
-}
-
-impl ServerHandler for Handler {
-    fn get_info(&self) -> ServerInfo {
-        dispatch!(self, get_info)
+impl ServerHandler {
+    /// Creates a new handler from any backend adapter.
+    pub fn new(server: impl ServiceExt<RoleServer>) -> Self {
+        Self(Arc::from(server.into_dyn()))
     }
+}
 
-    async fn list_tools(
+impl From<SqliteAdapter> for ServerHandler {
+    fn from(adapter: SqliteAdapter) -> Self {
+        Self::new(adapter)
+    }
+}
+
+impl From<PostgresAdapter> for ServerHandler {
+    fn from(adapter: PostgresAdapter) -> Self {
+        Self::new(adapter)
+    }
+}
+
+impl From<MysqlAdapter> for ServerHandler {
+    fn from(adapter: MysqlAdapter) -> Self {
+        Self::new(adapter)
+    }
+}
+
+impl Service<RoleServer> for ServerHandler {
+    fn handle_request(
         &self,
-        request: Option<PaginatedRequestParams>,
+        request: <RoleServer as rmcp::service::ServiceRole>::PeerReq,
         context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        dispatch!(await self, list_tools, request, context)
+    ) -> impl Future<Output = Result<<RoleServer as rmcp::service::ServiceRole>::Resp, rmcp::ErrorData>> + Send + '_
+    {
+        DynService::handle_request(self.0.as_ref(), request, context)
     }
 
-    async fn call_tool(
+    fn handle_notification(
         &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        dispatch!(await self, call_tool, request, context)
+        notification: <RoleServer as rmcp::service::ServiceRole>::PeerNot,
+        context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), rmcp::ErrorData>> + Send + '_ {
+        DynService::handle_notification(self.0.as_ref(), notification, context)
     }
 
-    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
-        dispatch!(self, get_tool, name)
+    fn get_info(&self) -> <RoleServer as rmcp::service::ServiceRole>::Info {
+        DynService::get_info(self.0.as_ref())
     }
 }
 
-/// Creates a [`Handler`] based on the configured database backend.
+/// Creates a [`ServerHandler`] based on the configured database backend.
 ///
 /// # Errors
 ///
 /// Returns an error if the database connection fails (invalid URL,
 /// unreachable host, authentication failure).
-pub async fn create_handler(config: &Config) -> Result<Handler, database_mcp_backend::AppError> {
+pub async fn create_handler(config: &Config) -> Result<ServerHandler, database_mcp_server::AppError> {
     let handler = match config.database.backend {
-        DatabaseBackend::Sqlite => Handler::Sqlite(database_mcp_sqlite::SqliteHandler::new(&config.database).await?),
-        DatabaseBackend::Postgres => {
-            Handler::Postgres(database_mcp_postgres::PostgresHandler::new(&config.database).await?)
-        }
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => {
-            Handler::Mysql(database_mcp_mysql::MysqlHandler::new(&config.database).await?)
-        }
+        DatabaseBackend::Sqlite => SqliteAdapter::new(&config.database).await?.into(),
+        DatabaseBackend::Postgres => PostgresAdapter::new(&config.database).await?.into(),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlAdapter::new(&config.database).await?.into(),
     };
     Ok(handler)
 }

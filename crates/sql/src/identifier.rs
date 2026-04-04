@@ -1,6 +1,6 @@
 //! Shared identifier validation for all database backends.
 
-use crate::error::AppError;
+use database_mcp_server::AppError;
 
 /// Wraps `name` in `quote_char` for safe use in SQL statements.
 ///

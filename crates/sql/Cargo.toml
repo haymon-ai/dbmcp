@@ -1,15 +1,13 @@
 [package]
-name = "database-mcp-backend"
-description = "Backend for database-mcp"
+name = "database-mcp-sql"
+description = "SQL validation and identifier utilities for database-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-rmcp = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+database-mcp-server = { workspace = true }
 sqlparser = { workspace = true }
 thiserror = { workspace = true }
 

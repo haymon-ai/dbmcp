@@ -5,9 +5,9 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use database_mcp_backend::validation::validate_read_only_with_dialect;
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_mysql::MysqlBackend;
+use database_mcp_mysql::MysqlAdapter;
+use database_mcp_sql::validation::validate_read_only_with_dialect;
 
 fn test_config() -> DatabaseConfig {
     DatabaseConfig {
@@ -25,17 +25,17 @@ fn test_config() -> DatabaseConfig {
     }
 }
 
-async fn backend() -> MysqlBackend {
+async fn backend() -> MysqlAdapter {
     let config = test_config();
-    MysqlBackend::new(&config).await.expect("MySQL connection failed")
+    MysqlAdapter::new(&config).await.expect("MySQL connection failed")
 }
 
-async fn readonly_backend() -> MysqlBackend {
+async fn readonly_backend() -> MysqlAdapter {
     let config = DatabaseConfig {
         read_only: true,
         ..test_config()
     };
-    MysqlBackend::new(&config).await.expect("MySQL connection failed")
+    MysqlAdapter::new(&config).await.expect("MySQL connection failed")
 }
 
 #[tokio::test]
@@ -227,7 +227,7 @@ async fn it_uses_default_pool_for_matching_database() {
 async fn it_has_consistent_seed_data() {
     let b = backend().await;
 
-    async fn check(b: &MysqlBackend, table: &str, expected: usize) {
+    async fn check(b: &MysqlAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
             .execute_query(&sql, Some("app"))

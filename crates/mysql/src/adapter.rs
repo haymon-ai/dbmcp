@@ -1,31 +1,31 @@
-//! MySQL/MariaDB connection configuration and backend definition.
+//! MySQL/MariaDB adapter definition and connection configuration.
 //!
 //! Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`] and checks
 //! for dangerous server privileges on startup.
 
-use database_mcp_backend::error::AppError;
 use database_mcp_config::DatabaseConfig;
+use database_mcp_server::AppError;
 use sqlx::MySqlPool;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlSslMode};
 use tracing::{error, info};
 
-/// MySQL/MariaDB database backend.
+/// MySQL/MariaDB database adapter.
 #[derive(Clone)]
-pub struct MysqlBackend {
+pub struct MysqlAdapter {
+    pub(crate) config: DatabaseConfig,
     pub(crate) pool: MySqlPool,
-    pub read_only: bool,
 }
 
-impl std::fmt::Debug for MysqlBackend {
+impl std::fmt::Debug for MysqlAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MysqlBackend")
-            .field("read_only", &self.read_only)
+        f.debug_struct("MysqlAdapter")
+            .field("read_only", &self.config.read_only)
             .finish_non_exhaustive()
     }
 }
 
-impl MysqlBackend {
-    /// Creates a new `MySQL` backend from configuration.
+impl MysqlAdapter {
+    /// Creates a new `MySQL` adapter from configuration.
     ///
     /// # Errors
     ///
@@ -40,11 +40,11 @@ impl MysqlBackend {
         info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
 
         let backend = Self {
+            config: config.clone(),
             pool,
-            read_only: config.read_only,
         };
 
-        if config.read_only {
+        if backend.config.read_only {
             backend.warn_if_file_privilege().await;
         }
 
@@ -53,7 +53,7 @@ impl MysqlBackend {
 
     /// Wraps `name` in backticks for safe use in `MySQL` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
-        database_mcp_backend::identifier::quote_identifier(name, '`')
+        database_mcp_sql::identifier::quote_identifier(name, '`')
     }
 
     /// Wraps a value in single quotes for use as a SQL string literal.

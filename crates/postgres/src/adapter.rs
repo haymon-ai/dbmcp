@@ -1,8 +1,8 @@
-//! `PostgreSQL` connection configuration and backend definition.
+//! `PostgreSQL` adapter definition and connection configuration.
 
-use database_mcp_backend::error::AppError;
-use database_mcp_backend::identifier::validate_identifier;
 use database_mcp_config::DatabaseConfig;
+use database_mcp_server::AppError;
+use database_mcp_sql::identifier::validate_identifier;
 use moka::future::Cache;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
@@ -11,29 +11,28 @@ use tracing::info;
 /// Maximum number of database connection pools to cache (including the default).
 const POOL_CACHE_CAPACITY: u64 = 6;
 
-/// `PostgreSQL` database backend.
+/// `PostgreSQL` database adapter.
 ///
 /// All connection pools — including the default — live in a single
 /// concurrent cache keyed by database name. No external mutex required.
 #[derive(Clone)]
-pub struct PostgresBackend {
-    config: DatabaseConfig,
+pub struct PostgresAdapter {
+    pub(crate) config: DatabaseConfig,
     default_db: String,
     pools: Cache<String, PgPool>,
-    pub read_only: bool,
 }
 
-impl std::fmt::Debug for PostgresBackend {
+impl std::fmt::Debug for PostgresAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PostgresBackend")
-            .field("read_only", &self.read_only)
+        f.debug_struct("PostgresAdapter")
+            .field("read_only", &self.config.read_only)
             .field("default_db", &self.default_db)
             .finish_non_exhaustive()
     }
 }
 
-impl PostgresBackend {
-    /// Creates a new `PostgreSQL` backend from configuration.
+impl PostgresAdapter {
+    /// Creates a new `PostgreSQL` adapter from configuration.
     ///
     /// Stores a clone of the configuration for constructing connection options
     /// for non-default databases at runtime. The initial pool is placed into
@@ -76,13 +75,12 @@ impl PostgresBackend {
             config: config.clone(),
             default_db,
             pools,
-            read_only: config.read_only,
         })
     }
 
     /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
-        database_mcp_backend::identifier::quote_identifier(name, '"')
+        database_mcp_sql::identifier::quote_identifier(name, '"')
     }
 
     /// Returns a connection pool for the requested database.

@@ -3,7 +3,7 @@
 //! Parses SQL using sqlparser's `MySQL` dialect and validates statement
 //! type, single-statement enforcement, and dangerous function blocking.
 
-use crate::error::AppError;
+use database_mcp_server::AppError;
 use sqlparser::ast::{Expr, Function, Statement, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 #[cfg(test)]

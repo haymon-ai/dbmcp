@@ -38,4 +38,20 @@ pub enum AppError {
     /// Table isn't found in database.
     #[error("Table not found: {0}")]
     TableNotFound(String),
+
+    /// JSON serialization failed.
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Serialization(e.to_string())
+    }
+}
+
+impl From<AppError> for rmcp::model::ErrorData {
+    fn from(e: AppError) -> Self {
+        Self::internal_error(e.to_string(), None)
+    }
 }

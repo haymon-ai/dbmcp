@@ -11,7 +11,7 @@
 pub enum Error {
     /// Database backend initialization failed.
     #[error(transparent)]
-    Backend(#[from] database_mcp_backend::AppError),
+    Backend(#[from] database_mcp_server::AppError),
 
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]

@@ -1,28 +1,28 @@
-//! `SQLite` connection configuration and backend definition.
+//! `SQLite` adapter definition and connection configuration.
 
-use database_mcp_backend::error::AppError;
 use database_mcp_config::DatabaseConfig;
+use database_mcp_server::AppError;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tracing::info;
 
-/// `SQLite` file-based database backend.
+/// `SQLite` file-based database adapter.
 #[derive(Clone)]
-pub struct SqliteBackend {
+pub struct SqliteAdapter {
+    pub(crate) config: DatabaseConfig,
     pub(crate) pool: SqlitePool,
-    pub read_only: bool,
 }
 
-impl std::fmt::Debug for SqliteBackend {
+impl std::fmt::Debug for SqliteAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SqliteBackend")
-            .field("read_only", &self.read_only)
+        f.debug_struct("SqliteAdapter")
+            .field("read_only", &self.config.read_only)
             .finish_non_exhaustive()
     }
 }
 
-impl SqliteBackend {
-    /// Creates a new `SQLite` backend from configuration.
+impl SqliteAdapter {
+    /// Creates a new `SQLite` adapter from configuration.
     ///
     /// # Errors
     ///
@@ -38,14 +38,14 @@ impl SqliteBackend {
         info!("SQLite connection initialized: {name}");
 
         Ok(Self {
+            config: config.clone(),
             pool,
-            read_only: config.read_only,
         })
     }
 
     /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
-        database_mcp_backend::identifier::quote_identifier(name, '"')
+        database_mcp_sql::identifier::quote_identifier(name, '"')
     }
 }
 

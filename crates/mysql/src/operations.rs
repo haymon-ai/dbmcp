@@ -3,16 +3,16 @@
 //! Provides methods for listing databases, tables, executing queries,
 //! and creating databases.
 
-use database_mcp_backend::error::AppError;
-use database_mcp_backend::identifier::validate_identifier;
+use database_mcp_server::AppError;
+use database_mcp_sql::identifier::validate_identifier;
 use serde_json::{Value, json};
 use sqlx::Executor;
 use sqlx::mysql::MySqlRow;
 use sqlx_to_json::RowExt;
 
-use super::MysqlBackend;
+use super::MysqlAdapter;
 
-impl MysqlBackend {
+impl MysqlAdapter {
     /// Executes raw SQL and converts rows to JSON maps.
     ///
     /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
@@ -92,7 +92,7 @@ impl MysqlBackend {
     ///
     /// Returns [`AppError`] if read-only or the query fails.
     pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
-        if self.read_only {
+        if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
         validate_identifier(name)?;

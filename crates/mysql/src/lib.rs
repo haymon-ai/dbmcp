@@ -1,12 +1,12 @@
 //! MySQL/MariaDB backend crate.
 //!
-//! Provides [`MysqlBackend`] for database operations and
-//! [`MysqlHandler`] implementing the MCP `ServerHandler` trait.
+//! Provides [`MysqlAdapter`] for database operations with MCP
+//! tool registration via [`ServerHandler`](rmcp::ServerHandler).
 
-mod connection;
+mod adapter;
 mod handler;
 mod operations;
 mod schema;
+mod tools;
 
-pub use connection::MysqlBackend;
-pub use handler::MysqlHandler;
+pub use adapter::MysqlAdapter;

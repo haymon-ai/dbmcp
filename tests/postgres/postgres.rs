@@ -4,9 +4,9 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use database_mcp_backend::validation::validate_read_only_with_dialect;
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresBackend;
+use database_mcp_postgres::PostgresAdapter;
+use database_mcp_sql::validation::validate_read_only_with_dialect;
 
 fn test_config() -> DatabaseConfig {
     DatabaseConfig {
@@ -24,19 +24,19 @@ fn test_config() -> DatabaseConfig {
     }
 }
 
-async fn backend() -> PostgresBackend {
+async fn backend() -> PostgresAdapter {
     let config = test_config();
-    PostgresBackend::new(&config)
+    PostgresAdapter::new(&config)
         .await
         .expect("PostgreSQL connection failed")
 }
 
-async fn readonly_backend() -> PostgresBackend {
+async fn readonly_backend() -> PostgresAdapter {
     let config = DatabaseConfig {
         read_only: true,
         ..test_config()
     };
-    PostgresBackend::new(&config)
+    PostgresAdapter::new(&config)
         .await
         .expect("PostgreSQL connection failed")
 }
@@ -237,7 +237,7 @@ async fn it_uses_default_pool_for_matching_database() {
 async fn it_has_consistent_seed_data() {
     let b = backend().await;
 
-    async fn check(b: &PostgresBackend, table: &str, expected: usize) {
+    async fn check(b: &PostgresAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
             .execute_query(&sql, Some("app"))

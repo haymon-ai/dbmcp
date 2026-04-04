@@ -7,10 +7,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-database-mcp-backend = { workspace = true }
+database-mcp-config = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [lints]

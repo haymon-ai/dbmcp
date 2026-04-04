@@ -1,9 +1,12 @@
-//! Shared MCP server utilities.
+//! Shared MCP server utilities, error types, and request types.
 //!
-//! Provides [`map_error`], [`server_info`], and shared tool implementation
-//! functions used by per-backend handler implementations.
+//! Provides [`AppError`], request types, and [`server_info`] used
+//! by per-backend server implementations.
 
+pub mod error;
 mod server;
-pub mod tools;
+pub mod types;
 
-pub use server::{map_error, server_info};
+pub use error::AppError;
+pub use server::server_info;
+pub use types::{CreateDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};

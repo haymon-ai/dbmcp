@@ -1,14 +1,14 @@
 //! `PostgreSQL` database query operations.
 
-use database_mcp_backend::error::AppError;
-use database_mcp_backend::identifier::validate_identifier;
+use database_mcp_server::AppError;
+use database_mcp_sql::identifier::validate_identifier;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx_to_json::RowExt;
 
-use super::PostgresBackend;
+use super::PostgresAdapter;
 
-impl PostgresBackend {
+impl PostgresAdapter {
     // `list_databases` uses the default pool intentionally — `pg_database`
     // is a server-wide catalog that returns all databases regardless of
     // which database the connection targets.
@@ -63,7 +63,7 @@ impl PostgresBackend {
     ///
     /// Returns [`AppError`] if read-only or the query fails.
     pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
-        if self.read_only {
+        if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
         validate_identifier(name)?;

@@ -1,13 +1,13 @@
 //! `SQLite` database query operations.
 
-use database_mcp_backend::error::AppError;
+use database_mcp_server::AppError;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx_to_json::RowExt;
 
-use super::SqliteBackend;
+use super::SqliteAdapter;
 
-impl SqliteBackend {
+impl SqliteAdapter {
     /// Lists all tables in a database.
     ///
     /// # Errors

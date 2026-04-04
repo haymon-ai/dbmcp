@@ -7,7 +7,7 @@ use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 
 /// Request to list tables in a database.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListTablesRequest {
     #[schemars(
         description = "The database name to list tables from. Required. Use list_databases first to see available databases."
@@ -16,7 +16,7 @@ pub struct ListTablesRequest {
 }
 
 /// Request to get a table's schema.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetTableSchemaRequest {
     #[schemars(
         description = "The database name containing the table. Required. Use list_databases first to see available databases."
@@ -29,10 +29,10 @@ pub struct GetTableSchemaRequest {
 }
 
 /// Request for `read_query` and `write_query` tools.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
     #[schemars(description = "The SQL query to execute.")]
-    pub sql_query: String,
+    pub query: String,
     #[schemars(
         description = "The database to run the query against. Required. Use list_databases first to see available databases."
     )]
@@ -40,7 +40,7 @@ pub struct QueryRequest {
 }
 
 /// Request to create a database.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateDatabaseRequest {
     #[schemars(
         description = "Name of the database to create. Must contain only alphanumeric characters and underscores."

@@ -2,15 +2,15 @@
 
 use std::collections::HashMap;
 
-use database_mcp_backend::error::AppError;
-use database_mcp_backend::identifier::validate_identifier;
+use database_mcp_server::AppError;
+use database_mcp_sql::identifier::validate_identifier;
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
-use super::PostgresBackend;
+use super::PostgresAdapter;
 
-impl PostgresBackend {
+impl PostgresAdapter {
     /// Returns column definitions with foreign key relationships.
     ///
     /// # Errors

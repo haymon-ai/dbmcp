@@ -7,9 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-database-mcp-backend = { workspace = true }
 database-mcp-config = { workspace = true }
 database-mcp-server = { workspace = true }
+database-mcp-sql = { workspace = true }
 rmcp = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }

@@ -458,11 +458,11 @@ version = "0.5.1"
 dependencies = [
  "axum",
  "clap",
- "database-mcp-backend",
  "database-mcp-config",
  "database-mcp-mysql",
  "database-mcp-postgres",
  "database-mcp-server",
+ "database-mcp-sql",
  "database-mcp-sqlite",
  "mimalloc",
  "rmcp",
@@ -473,17 +473,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "database-mcp-backend"
-version = "0.5.1"
-dependencies = [
- "rmcp",
- "serde",
- "serde_json",
- "sqlparser",
- "thiserror",
 ]
 
 [[package]]
@@ -499,9 +488,9 @@ dependencies = [
 name = "database-mcp-mysql"
 version = "0.5.1"
 dependencies = [
- "database-mcp-backend",
  "database-mcp-config",
  "database-mcp-server",
+ "database-mcp-sql",
  "rmcp",
  "serde_json",
  "sqlparser",
@@ -514,9 +503,9 @@ dependencies = [
 name = "database-mcp-postgres"
 version = "0.5.1"
 dependencies = [
- "database-mcp-backend",
  "database-mcp-config",
  "database-mcp-server",
+ "database-mcp-sql",
  "moka",
  "rmcp",
  "serde_json",
@@ -531,20 +520,30 @@ dependencies = [
 name = "database-mcp-server"
 version = "0.5.1"
 dependencies = [
- "database-mcp-backend",
+ "database-mcp-config",
  "rmcp",
  "serde",
  "serde_json",
+ "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "database-mcp-sql"
+version = "0.5.1"
+dependencies = [
+ "database-mcp-server",
+ "sqlparser",
+ "thiserror",
 ]
 
 [[package]]
 name = "database-mcp-sqlite"
 version = "0.5.1"
 dependencies = [
- "database-mcp-backend",
  "database-mcp-config",
  "database-mcp-server",
+ "database-mcp-sql",
  "rmcp",
  "serde_json",
  "sqlparser",

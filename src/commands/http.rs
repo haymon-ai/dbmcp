@@ -6,7 +6,6 @@
 
 use clap::Parser;
 use database_mcp_config::{Config, HttpConfig};
-use rmcp::ServerHandler;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -15,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::error::Error;
+use crate::server::ServerHandler;
 
 /// Runs the MCP server in HTTP mode.
 #[derive(Debug, Parser)]
@@ -59,7 +59,7 @@ impl HttpCommand {
     /// Returns an error if:
     /// - HTTP config is missing from the configuration.
     /// - TCP bind fails (port in use, permission denied).
-    pub async fn execute(&self, config: &Config, handler: impl ServerHandler + Clone + 'static) -> Result<(), Error> {
+    pub async fn execute(&self, config: &Config, handler: ServerHandler) -> Result<(), Error> {
         let http_config = config
             .http
             .as_ref()
