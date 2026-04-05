@@ -394,9 +394,7 @@ mod tests {
 
     #[test]
     fn version_flag() {
-        let err = Arguments::try_parse_from([BIN, "--version"])
-            .err()
-            .expect("--version should cause clap to return Err");
+        let err = Arguments::try_parse_from([BIN, "--version"]).expect_err("--version should cause clap to return Err");
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 

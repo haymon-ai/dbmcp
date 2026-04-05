@@ -14,5 +14,5 @@
 
 - [ ] Linked to an issue (if applicable)
 - [ ] Tests pass (`cargo test`)
-- [ ] Lints pass (`cargo clippy -- -D warnings`)
+- [ ] Lints pass (`cargo clippy --workspace --tests -- -D warnings`)
 - [ ] Formatted (`cargo fmt --check`)
