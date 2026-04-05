@@ -15,23 +15,21 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Human-readable title for the MCP server.
 const TITLE: &str = "Database MCP Server";
 
-/// Product description surfaced to MCP clients.
-const DESCRIPTION: &str = "Database MCP Server for MySQL, MariaDB, PostgreSQL, and SQLite";
-
 /// Website URL, derived from the workspace `Cargo.toml` at compile time.
 const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 
 /// Returns the shared [`ServerInfo`] for all server implementations.
 ///
-/// Builds a complete [`Implementation`] with product metadata.
+/// Builds base [`Implementation`] metadata (name, version, title, URL).
+/// Backend handlers extend this with a backend-specific description
+/// and instructions via the public fields on [`ServerInfo`].
 #[must_use]
 pub fn server_info() -> ServerInfo {
     let capabilities = ServerCapabilities::builder().enable_tools().build();
 
-    ServerInfo::new(capabilities).with_server_info(
-        Implementation::new(NAME, VERSION)
-            .with_title(TITLE)
-            .with_description(DESCRIPTION)
-            .with_website_url(HOMEPAGE),
-    )
+    let server_info = Implementation::new(NAME, VERSION)
+        .with_title(TITLE)
+        .with_website_url(HOMEPAGE);
+
+    ServerInfo::new(capabilities).with_server_info(server_info)
 }
