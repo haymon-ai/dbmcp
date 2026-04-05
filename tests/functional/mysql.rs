@@ -9,8 +9,8 @@ use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_mysql::MysqlAdapter;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 
-fn config(read_only: bool) -> DatabaseConfig {
-    DatabaseConfig {
+async fn adapter(read_only: bool) -> MysqlAdapter {
+    let config = DatabaseConfig {
         backend: DatabaseBackend::Mysql,
         host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port: std::env::var("DB_PORT")
@@ -22,30 +22,21 @@ fn config(read_only: bool) -> DatabaseConfig {
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
-    }
-}
-
-async fn backend() -> MysqlAdapter {
-    MysqlAdapter::new(&config(false))
-        .await
-        .expect("MySQL connection failed")
-}
-
-async fn readonly_backend() -> MysqlAdapter {
-    MysqlAdapter::new(&config(true)).await.expect("MySQL connection failed")
+    };
+    MysqlAdapter::new(&config).await.expect("MySQL connection failed")
 }
 
 #[tokio::test]
 async fn it_lists_databases() {
-    let b = backend().await;
-    let dbs = b.list_databases().await.expect("failed");
+    let adapter = adapter(false).await;
+    let dbs = adapter.list_databases().await.expect("failed");
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
 
 #[tokio::test]
 async fn it_lists_tables() {
-    let b = backend().await;
-    let tables = b.list_tables("app").await.expect("failed");
+    let adapter = adapter(false).await;
+    let tables = adapter.list_tables("app").await.expect("failed");
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
             tables.iter().any(|t| t == expected),
@@ -56,8 +47,8 @@ async fn it_lists_tables() {
 
 #[tokio::test]
 async fn it_gets_table_schema() {
-    let b = backend().await;
-    let schema = b.get_table_schema("app", "users").await.expect("failed");
+    let adapter = adapter(false).await;
+    let schema = adapter.get_table_schema("app", "users").await.expect("failed");
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     assert!(obj.contains_key("columns"), "Response should contain columns");
@@ -69,8 +60,8 @@ async fn it_gets_table_schema() {
 
 #[tokio::test]
 async fn it_gets_table_schema_with_relations() {
-    let b = backend().await;
-    let schema = b.get_table_schema("app", "posts").await.expect("failed");
+    let adapter = adapter(false).await;
+    let schema = adapter.get_table_schema("app", "posts").await.expect("failed");
     let columns = schema["columns"].as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
@@ -86,8 +77,8 @@ async fn it_gets_table_schema_with_relations() {
 
 #[tokio::test]
 async fn it_executes_sql() {
-    let b = backend().await;
-    let results = b
+    let adapter = adapter(false).await;
+    let results = adapter
         .execute_query("SELECT * FROM users ORDER BY id", Some("app"))
         .await
         .expect("failed");
@@ -97,7 +88,7 @@ async fn it_executes_sql() {
 
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
-    let _b = readonly_backend().await;
+    let _adapter = adapter(true).await;
     let dialect = sqlparser::dialect::MySqlDialect {};
     let result = validate_read_only_with_dialect(
         "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
@@ -108,9 +99,9 @@ async fn it_blocks_writes_in_read_only_mode() {
 
 #[tokio::test]
 async fn it_preserves_json_types() {
-    let b = backend().await;
+    let adapter = adapter(false).await;
 
-    let results = b
+    let results = adapter
         .execute_query("SELECT COUNT(*) as cnt FROM users", Some("app"))
         .await
         .expect("failed");
@@ -119,7 +110,7 @@ async fn it_preserves_json_types() {
     assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
     assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
 
-    let results = b
+    let results = adapter
         .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1", Some("app"))
         .await
         .expect("failed");
@@ -138,10 +129,10 @@ async fn it_preserves_json_types() {
 
 #[tokio::test]
 async fn it_creates_database() {
-    let b = backend().await;
-    let result = b.create_database("app_new").await.expect("failed");
+    let adapter = adapter(false).await;
+    let result = adapter.create_database("app_new").await.expect("failed");
     assert!(!result.is_null());
-    let dbs = b.list_databases().await.expect("list failed");
+    let dbs = adapter.list_databases().await.expect("list failed");
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
 }
 
@@ -149,8 +140,8 @@ async fn it_creates_database() {
 
 #[tokio::test]
 async fn it_lists_tables_cross_database() {
-    let b = backend().await;
-    let tables = b.list_tables("analytics").await.expect("failed");
+    let adapter = adapter(false).await;
+    let tables = adapter.list_tables("analytics").await.expect("failed");
     assert!(
         tables.iter().any(|t| t == "events"),
         "Expected 'events' in analytics tables: {tables:?}"
@@ -163,8 +154,8 @@ async fn it_lists_tables_cross_database() {
 
 #[tokio::test]
 async fn it_executes_sql_cross_database() {
-    let b = backend().await;
-    let results = b
+    let adapter = adapter(false).await;
+    let results = adapter
         .execute_query("SELECT * FROM events ORDER BY id", Some("analytics"))
         .await
         .expect("failed");
@@ -174,8 +165,8 @@ async fn it_executes_sql_cross_database() {
 
 #[tokio::test]
 async fn it_gets_table_schema_cross_database() {
-    let b = backend().await;
-    let schema = b.get_table_schema("analytics", "events").await.expect("failed");
+    let adapter = adapter(false).await;
+    let schema = adapter.get_table_schema("analytics", "events").await.expect("failed");
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     let columns = obj["columns"].as_object().expect("columns object");
@@ -189,8 +180,8 @@ async fn it_gets_table_schema_cross_database() {
 
 #[tokio::test]
 async fn it_lists_databases_includes_cross_db() {
-    let b = backend().await;
-    let dbs = b.list_databases().await.expect("failed");
+    let adapter = adapter(false).await;
+    let dbs = adapter.list_databases().await.expect("failed");
     assert!(
         dbs.iter().any(|db| db == "analytics"),
         "Expected 'analytics' in databases: {dbs:?}"
@@ -199,7 +190,7 @@ async fn it_lists_databases_includes_cross_db() {
 
 #[tokio::test]
 async fn it_blocks_writes_cross_database_in_read_only_mode() {
-    let _b = readonly_backend().await;
+    let _adapter = adapter(true).await;
     let dialect = sqlparser::dialect::MySqlDialect {};
     let result = validate_read_only_with_dialect("INSERT INTO events (name) VALUES ('hack')", &dialect);
     assert!(
@@ -210,8 +201,8 @@ async fn it_blocks_writes_cross_database_in_read_only_mode() {
 
 #[tokio::test]
 async fn it_uses_default_pool_for_matching_database() {
-    let b = backend().await;
-    let tables = b.list_tables("app").await.expect("failed");
+    let adapter = adapter(false).await;
+    let tables = adapter.list_tables("app").await.expect("failed");
     assert!(
         tables.iter().any(|t| t == "users"),
         "Expected 'users' when explicitly passing default db: {tables:?}"
@@ -220,9 +211,9 @@ async fn it_uses_default_pool_for_matching_database() {
 
 #[tokio::test]
 async fn it_has_consistent_seed_data() {
-    async fn check(b: &MysqlAdapter, table: &str, expected: usize) {
+    async fn check(adapter: &MysqlAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
-        let results = b
+        let results = adapter
             .execute_query(&sql, Some("app"))
             .await
             .unwrap_or_else(|e| panic!("count {table}: {e}"));
@@ -241,9 +232,9 @@ async fn it_has_consistent_seed_data() {
         assert_eq!(count, expected, "{table}: expected {expected}, got {count}");
     }
 
-    let b = backend().await;
-    check(&b, "users", 3).await;
-    check(&b, "posts", 5).await;
-    check(&b, "tags", 4).await;
-    check(&b, "post_tags", 6).await;
+    let adapter = adapter(false).await;
+    check(&adapter, "users", 3).await;
+    check(&adapter, "posts", 5).await;
+    check(&adapter, "tags", 4).await;
+    check(&adapter, "post_tags", 6).await;
 }
