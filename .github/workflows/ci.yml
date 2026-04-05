@@ -49,7 +49,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo clippy --workspace --tests -- -D warnings
 
   test:
     name: Unit Tests
@@ -82,8 +82,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root < tests/mysql/setup.sql
-      - run: cargo test --test mysql -- --test-threads=1
+        run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root < tests/seed/mysql.sql
+      - name: Approval tests
+        run: cargo test --test approval_mysql -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+      - name: Functional tests
+        run: cargo test --test functional_mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
@@ -110,8 +116,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root < tests/mysql/setup.sql
-      - run: cargo test --test mysql -- --test-threads=1
+        run: docker exec -i ${{ job.services.mysql.id }} mysql -u root < tests/seed/mysql.sql
+      - name: Approval tests
+        run: cargo test --test approval_mysql -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+      - name: Functional tests
+        run: cargo test --test functional_mysql -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
@@ -138,8 +150,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: docker exec -i ${{ job.services.postgres.id }} psql -U postgres < tests/postgres/setup.sql
-      - run: cargo test --test postgres -- --test-threads=1
+        run: docker exec -i ${{ job.services.postgres.id }} psql -U postgres < tests/seed/postgres.sql
+      - name: Approval tests
+        run: cargo test --test approval_postgres -- --test-threads=1
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+      - name: Functional tests
+        run: cargo test --test functional_postgres -- --test-threads=1
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 5432
@@ -153,7 +171,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Seed database
-        run: sqlite3 /tmp/app.db < tests/sqlite/setup.sql
-      - run: cargo test --test sqlite -- --test-threads=1
+        run: sqlite3 /tmp/app.db < tests/seed/sqlite.sql
+      - name: Approval tests
+        run: cargo test --test approval_sqlite -- --test-threads=1
+        env:
+          DB_PATH: /tmp/app.db
+      - name: Functional tests
+        run: cargo test --test functional_sqlite -- --test-threads=1
         env:
           DB_PATH: /tmp/app.db

@@ -15,7 +15,7 @@ cargo test --workspace --lib --bins # unit tests only
 cargo test <name>             # single test
 cargo test -- --nocapture     # with stdout
 
-cargo clippy -- -D warnings   # lint (warnings = errors)
+cargo clippy --workspace --tests -- -D warnings   # lint (warnings = errors)
 cargo fmt --check             # check formatting
 cargo fmt                     # apply formatting
 
@@ -80,7 +80,7 @@ ALWAYS run before considering any task complete:
 
 ```bash
 cargo fmt                           # format
-cargo clippy -- -D warnings         # lint
+cargo clippy --workspace --tests -- -D warnings         # lint
 cargo test --workspace --lib --bins # unit tests
 ./tests/run.sh                # integration tests (Docker required)
 ```

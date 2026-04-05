@@ -1,0 +1,95 @@
+---
+source: tests/approval/sqlite.rs
+expression: tools
+---
+[
+  {
+    "name": "get_table_schema",
+    "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to get a table's schema.",
+      "properties": {
+        "table_name": {
+          "description": "The table name to inspect. Use `list_tables` first to see available tables.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table_name"
+      ],
+      "title": "GetTableSchemaRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_tables",
+    "description": "List all tables in the connected `SQLite` database.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_query",
+    "description": "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for `read_query` and `write_query` tools.",
+      "properties": {
+        "query": {
+          "description": "The SQL query to execute.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "write_query",
+    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for `read_query` and `write_query` tools.",
+      "properties": {
+        "query": {
+          "description": "The SQL query to execute.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  }
+]

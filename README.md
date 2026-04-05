@@ -228,7 +228,7 @@ This is a Cargo workspace with the following crates:
 cargo build              # Development build
 cargo build --release    # Release build (~7 MB)
 cargo test               # Run tests
-cargo clippy -- -D warnings  # Lint
+cargo clippy --workspace --tests -- -D warnings  # Lint
 cargo fmt                # Format
 cargo doc --no-deps      # Build documentation
 ```

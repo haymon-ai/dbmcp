@@ -43,7 +43,7 @@ CI runs `cargo fmt --check` and will reject unformatted code.
 All code must pass Clippy with warnings treated as errors:
 
 ```bash
-cargo clippy -- -D warnings
+cargo clippy --workspace --tests -- -D warnings
 ```
 
 ### Error Handling
@@ -102,7 +102,7 @@ CI automatically runs on every push and pull request:
 
 1. Commit message validation — conventional commit format ([cocogitto](https://github.com/cocogitto/cocogitto))
 2. `cargo fmt --check` — formatting
-3. `cargo clippy -- -D warnings` — linting
+3. `cargo clippy --workspace --tests -- -D warnings` — linting
 4. `cargo test --lib` — unit tests
 5. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
 

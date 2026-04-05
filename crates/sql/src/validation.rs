@@ -77,7 +77,11 @@ pub fn validate_read_only_with_dialect(sql: &str, dialect: &impl Dialect) -> Res
     Ok(())
 }
 
-/// Convenience wrapper using MySQL dialect (for tests).
+/// Convenience wrapper using `MySQL` dialect (for tests).
+///
+/// # Errors
+///
+/// Returns `AppError` if the SQL is not a read-only statement.
 #[cfg(test)]
 pub fn validate_read_only(sql: &str) -> Result<(), AppError> {
     validate_read_only_with_dialect(sql, &MySqlDialect {})

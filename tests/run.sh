@@ -4,12 +4,12 @@ set -euo pipefail
 # =============================================================================
 # run.sh — Run functional tests against database containers
 #
-# Follows the sqlx test pattern: each service in compose.yml uses random port
-# assignment and seeds via /docker-entrypoint-initdb.d/ volume mounts.
+# Each service in compose.yml uses random port assignment and seeds via
+# /docker-entrypoint-initdb.d/ volume mounts.
 #
 # Usage:
 #   ./tests/run.sh                     # Run full matrix
-#   ./tests/run.sh --filter mariadb    # All MariaDB versions
+#   ./tests/run.sh --filter mariadb    # All MariaDB services
 #   ./tests/run.sh --filter mysql_9    # Specific service
 #   ./tests/run.sh --help              # Show usage
 #
@@ -18,20 +18,23 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
 TIMEOUT="${TIMEOUT:-30}"
+TEST_TYPE="${TEST_TYPE:-all}"
 
-# Matrix: service_name:db_type:container_port:test_binary
-#   service_name   — matches compose.yml service
-#   db_type        — DATABASE_TYPE env var for Rust tests
-#   container_port — internal port to resolve via `docker compose port`
-#   test_binary    — cargo test binary name (from [[test]] in Cargo.toml)
+# Matrix: service_name:db_type:container_port
+#   service_name    — matches compose.yml service
+#   db_type         — mysql, postgres, or sqlite
+#   container_port  — internal port to resolve via `docker compose port`
+#
+# Test binary names are derived by convention:
+#   functional → functional_$type (e.g. "functional_mysql", "functional_sqlite")
+#   approval   → approval_$type   (e.g. "approval_mysql", "approval_sqlite")
 MATRIX=(
-    "mariadb_12:mysql:3306:mysql"
-    "mysql_9:mysql:3306:mysql"
-    "postgres_18:postgres:5432:postgres"
-    "sqlite:sqlite:0:sqlite"
+    "mariadb_12:mysql:3306"
+    "mysql_9:mysql:3306"
+    "postgres_18:postgres:5432"
+    "sqlite:sqlite:0"
 )
 
 declare -a RESULTS=()
@@ -56,13 +59,16 @@ Run functional tests against database containers.
 
 Options:
   --filter <pattern>   Run only services matching pattern (substring match)
+  --type <type>        Test type: functional, approval, or all (default: all)
   --help               Show this help message
 
 Examples:
-  ./tests/run.sh                   # Full matrix
-  ./tests/run.sh --filter mariadb  # All MariaDB services
-  ./tests/run.sh --filter postgres # All PostgreSQL services
-  ./tests/run.sh --filter sqlite   # SQLite only
+  ./tests/run.sh                          # Full matrix (all test types)
+  ./tests/run.sh --filter mariadb         # All MariaDB services
+  ./tests/run.sh --filter postgres        # All PostgreSQL services
+  ./tests/run.sh --filter sqlite          # SQLite only
+  ./tests/run.sh --type functional         # Functional tests only
+  ./tests/run.sh --type approval          # Approval/snapshot tests only
 
 Environment:
   TIMEOUT=30   Container readiness timeout in seconds (default: 30)
@@ -85,7 +91,6 @@ check_docker() {
 wait_for_ready() {
     local service="$1"
     local db_type="$2"
-    local host_port="$3"
     local elapsed=0
 
     echo -n "  Waiting for readiness..."
@@ -116,6 +121,19 @@ wait_for_ready() {
     return 1
 }
 
+# Returns space-separated list of test binaries for a given db_type
+test_bins_for() {
+    local db_type="$1"
+    local bins=""
+    if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "functional" ]; then
+        bins="functional_${db_type}"
+    fi
+    if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "approval" ]; then
+        bins="${bins:+$bins }approval_${db_type}"
+    fi
+    echo "$bins"
+}
+
 # ---------------------------------------------------------------------------
 # Run one matrix entry
 # ---------------------------------------------------------------------------
@@ -124,19 +142,21 @@ run_entry() {
     local service="$1"
     local db_type="$2"
     local container_port="$3"
-    local test_bin="$4"
+
+    local test_bins
+    test_bins=$(test_bins_for "$db_type")
 
     echo ""
-    echo "=== Testing ${service} ==="
+    echo "=== Testing ${service} (${TEST_TYPE}) ==="
     local start_time
     start_time=$(date +%s)
 
     local test_exit=0
     local test_output
+    local test_count=0
 
     if [ "$db_type" = "sqlite" ]; then
-        # SQLite: generate database via Docker Compose, then run tests against it
-        local db_path="${SCRIPT_DIR}/sqlite/database.db"
+        local db_path="${SCRIPT_DIR}/database.db"
 
         echo -n "  Generating database via Docker Compose..."
         if ! DOCKER_UID="$(id -u)" DOCKER_GID="$(id -g)" \
@@ -148,15 +168,20 @@ run_entry() {
         echo " OK"
 
         echo "  Running cargo test..."
-        test_output=$(
-            DB_PATH="$db_path" \
-            MCP_READ_ONLY=false \
-            cargo test --test "$test_bin" -- --test-threads=1 2>&1
-        ) || test_exit=$?
+        for bin in $test_bins; do
+            test_output=$(
+                DB_PATH="$db_path" \
+                MCP_READ_ONLY=false \
+                cargo test --test "$bin" -- --test-threads=1 2>&1
+            ) || test_exit=$?
+            echo "$test_output" | grep -E "^(test |test result:)" || true
+            local count
+            count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
+            test_count=$((test_count + count))
+        done
 
         rm -f "$db_path"
     else
-        # Container-based databases (MySQL, MariaDB, PostgreSQL)
         echo -n "  Starting container..."
         if ! docker compose -f "$COMPOSE_FILE" up -d "$service" 2>/dev/null; then
             echo " FAILED"
@@ -168,7 +193,7 @@ run_entry() {
         local host_port
         host_port=$(docker compose -f "$COMPOSE_FILE" port "$service" "$container_port" 2>/dev/null | cut -d: -f2)
 
-        if ! wait_for_ready "$service" "$db_type" "$host_port"; then
+        if ! wait_for_ready "$service" "$db_type"; then
             echo "  Container failed to become healthy. Logs:"
             docker compose -f "$COMPOSE_FILE" logs "$service" 2>/dev/null | tail -20
             docker compose -f "$COMPOSE_FILE" stop "$service" 2>/dev/null || true
@@ -178,21 +203,22 @@ run_entry() {
         fi
 
         echo "  Running cargo test..."
-        test_output=$(
-            DB_HOST=127.0.0.1 DB_PORT="$host_port" \
-            cargo test --test "$test_bin" -- --test-threads=1 2>&1
-        ) || test_exit=$?
+        for bin in $test_bins; do
+            test_output=$(
+                DB_HOST=127.0.0.1 DB_PORT="$host_port" \
+                cargo test --test "$bin" -- --test-threads=1 2>&1
+            ) || test_exit=$?
+            echo "$test_output" | grep -E "^(test |test result:)" || true
+            local count
+            count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
+            test_count=$((test_count + count))
+        done
 
         echo -n "  Stopping container..."
         docker compose -f "$COMPOSE_FILE" stop "$service" 2>/dev/null || true
         docker compose -f "$COMPOSE_FILE" rm -f -v "$service" 2>/dev/null || true
         echo " OK"
     fi
-
-    echo "$test_output" | grep -E "^(test |test result:)" || true
-
-    local test_count
-    test_count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
 
     local duration=$(( $(date +%s) - start_time ))
     if [ "$test_exit" -eq 0 ]; then
@@ -244,22 +270,28 @@ FILTER=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --filter) FILTER="$2"; shift 2 ;;
+        --type) TEST_TYPE="$2"; shift 2 ;;
         --help|-h) usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
 
+case "$TEST_TYPE" in
+    functional|approval|all) ;;
+    *) echo "ERROR: --type must be one of: functional, approval, all"; exit 1 ;;
+esac
+
 check_docker
 
-echo "Database Functional Test Suite"
-echo "=============================="
+echo "Database Functional Test Suite (type: ${TEST_TYPE})"
+echo "=============================================="
 echo "Building project..."
 cargo test --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
 
 for entry in "${MATRIX[@]}"; do
-    IFS=':' read -r service db_type container_port test_bin <<< "$entry"
+    IFS=':' read -r service db_type container_port <<< "$entry"
     [ -n "$FILTER" ] && [[ "$service" != *"$FILTER"* ]] && continue
-    run_entry "$service" "$db_type" "$container_port" "$test_bin"
+    run_entry "$service" "$db_type" "$container_port"
 done
 
 if [ ${#RESULTS[@]} -eq 0 ]; then

@@ -2,7 +2,7 @@ services:
     mariadb_12:
         image: mariadb:12
         volumes:
-            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
             - "13306:3306"
         environment:
@@ -12,7 +12,7 @@ services:
     mysql_9:
         image: mysql:9
         volumes:
-            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
             - "13307:3306"
         environment:
@@ -22,7 +22,7 @@ services:
     postgres_18:
         image: postgres:18-alpine
         volumes:
-            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
             - "15432:5432"
         environment:
@@ -35,5 +35,5 @@ services:
         entrypoint: sh
         command: -c "rm -f /data/database.db && sqlite3 /data/database.db < /seed/setup.sql"
         volumes:
-            - "./sqlite/setup.sql:/seed/setup.sql:ro,z"
-            - "./sqlite:/data:z"
+            - "./seed/sqlite.sql:/seed/setup.sql:ro,z"
+            - ".:/data:z"
