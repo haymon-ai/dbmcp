@@ -1,0 +1,15 @@
+---
+source: tests/approval/postgres.rs
+expression: info
+---
+{
+  "protocolVersion": "2025-06-18",
+  "capabilities": {
+    "tools": {}
+  },
+  "serverInfo": {
+    "name": "database-mcp-server",
+    "version": "[version]"
+  },
+  "instructions": "Database MCP Server - provides database exploration and query tools for PostgreSQL"
+}

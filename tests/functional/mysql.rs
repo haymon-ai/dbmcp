@@ -1,44 +1,27 @@
-//! Functional integration tests for PostgreSQL.
+//! Functional integration tests for MySQL/MariaDB.
 //!
 //! ```bash
-//! ./tests/run.sh --filter postgres
+//! ./tests/run.sh --filter mariadb    # MariaDB
+//! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresAdapter;
+mod common;
+
+use database_mcp_config::DatabaseConfig;
+use database_mcp_mysql::MysqlAdapter;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 
-fn test_config() -> DatabaseConfig {
-    DatabaseConfig {
-        backend: DatabaseBackend::Postgres,
-        host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-        port: std::env::var("DB_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(5432),
-        user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
-        password: std::env::var("DB_PASSWORD").ok(),
-        name: Some("app".into()),
-        read_only: false,
-        ..DatabaseConfig::default()
-    }
+async fn backend() -> MysqlAdapter {
+    let config = common::mysql_config(false);
+    MysqlAdapter::new(&config).await.expect("MySQL connection failed")
 }
 
-async fn backend() -> PostgresAdapter {
-    let config = test_config();
-    PostgresAdapter::new(&config)
-        .await
-        .expect("PostgreSQL connection failed")
-}
-
-async fn readonly_backend() -> PostgresAdapter {
+async fn readonly_backend() -> MysqlAdapter {
     let config = DatabaseConfig {
         read_only: true,
-        ..test_config()
+        ..common::mysql_config(false)
     };
-    PostgresAdapter::new(&config)
-        .await
-        .expect("PostgreSQL connection failed")
+    MysqlAdapter::new(&config).await.expect("MySQL connection failed")
 }
 
 #[tokio::test]
@@ -104,7 +87,7 @@ async fn it_executes_sql() {
 #[tokio::test]
 async fn it_blocks_writes_in_read_only_mode() {
     let _b = readonly_backend().await;
-    let dialect = sqlparser::dialect::PostgreSqlDialect {};
+    let dialect = sqlparser::dialect::MySqlDialect {};
     let result = validate_read_only_with_dialect(
         "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
         &dialect,
@@ -116,7 +99,6 @@ async fn it_blocks_writes_in_read_only_mode() {
 async fn it_preserves_json_types() {
     let b = backend().await;
 
-    // COUNT(*) should return a JSON number, not a string or null
     let results = b
         .execute_query("SELECT COUNT(*) as cnt FROM users", Some("app"))
         .await
@@ -126,7 +108,6 @@ async fn it_preserves_json_types() {
     assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
     assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
 
-    // Integer and text columns should have correct types
     let results = b
         .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1", Some("app"))
         .await
@@ -153,6 +134,8 @@ async fn it_creates_database() {
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
 }
 
+// ---- Cross-database tests ----
+
 #[tokio::test]
 async fn it_lists_tables_cross_database() {
     let b = backend().await;
@@ -161,7 +144,6 @@ async fn it_lists_tables_cross_database() {
         tables.iter().any(|t| t == "events"),
         "Expected 'events' in analytics tables: {tables:?}"
     );
-    // Ensure tables from default db are NOT in the cross-db listing
     assert!(
         !tables.iter().any(|t| t == "users"),
         "Should not see 'users' from default db in analytics: {tables:?}"
@@ -207,7 +189,7 @@ async fn it_lists_databases_includes_cross_db() {
 #[tokio::test]
 async fn it_blocks_writes_cross_database_in_read_only_mode() {
     let _b = readonly_backend().await;
-    let dialect = sqlparser::dialect::PostgreSqlDialect {};
+    let dialect = sqlparser::dialect::MySqlDialect {};
     let result = validate_read_only_with_dialect("INSERT INTO events (name) VALUES ('hack')", &dialect);
     assert!(
         result.is_err(),
@@ -216,16 +198,8 @@ async fn it_blocks_writes_cross_database_in_read_only_mode() {
 }
 
 #[tokio::test]
-async fn it_returns_error_for_nonexistent_database() {
-    let b = backend().await;
-    let result = b.list_tables("nonexistent_db_xyz").await;
-    assert!(result.is_err(), "Expected error for nonexistent database");
-}
-
-#[tokio::test]
 async fn it_uses_default_pool_for_matching_database() {
     let b = backend().await;
-    // Explicitly pass the default database name — should use the default pool
     let tables = b.list_tables("app").await.expect("failed");
     assert!(
         tables.iter().any(|t| t == "users"),
@@ -237,7 +211,7 @@ async fn it_uses_default_pool_for_matching_database() {
 async fn it_has_consistent_seed_data() {
     let b = backend().await;
 
-    async fn check(b: &PostgresAdapter, table: &str, expected: usize) {
+    async fn check(b: &MysqlAdapter, table: &str, expected: usize) {
         let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
         let results = b
             .execute_query(&sql, Some("app"))

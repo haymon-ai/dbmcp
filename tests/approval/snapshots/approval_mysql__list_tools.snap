@@ -1,0 +1,160 @@
+---
+source: tests/approval/mysql.rs
+expression: tools
+---
+[
+  {
+    "name": "create_database",
+    "description": "Create a new database. Not supported for `SQLite`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to create a database.",
+      "properties": {
+        "database_name": {
+          "description": "Name of the database to create. Must contain only alphanumeric characters and underscores.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name"
+      ],
+      "title": "CreateDatabaseRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_table_schema",
+    "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to get a table's schema.",
+      "properties": {
+        "database_name": {
+          "description": "The database name containing the table. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        },
+        "table_name": {
+          "description": "The table name to inspect. Use `list_tables` first to see available tables in the database.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name",
+        "table_name"
+      ],
+      "title": "GetTableSchemaRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_databases",
+    "description": "List all accessible databases on the connected database server.\nCall this first to discover available database names.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_tables",
+    "description": "List all tables in a specific database.\nRequires `database_name` from `list_databases`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to list tables in a database.",
+      "properties": {
+        "database_name": {
+          "description": "The database name to list tables from. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name"
+      ],
+      "title": "ListTablesRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_query",
+    "description": "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for `read_query` and `write_query` tools.",
+      "properties": {
+        "database_name": {
+          "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The SQL query to execute.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "database_name"
+      ],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "write_query",
+    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for `read_query` and `write_query` tools.",
+      "properties": {
+        "database_name": {
+          "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The SQL query to execute.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "database_name"
+      ],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  }
+]

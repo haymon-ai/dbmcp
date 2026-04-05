@@ -7,31 +7,20 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
+mod common;
+
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use database_mcp_sqlite::SqliteAdapter;
-use rmcp::ServerHandler;
-
-fn sqlite_config(db_path: &str, read_only: bool) -> DatabaseConfig {
-    DatabaseConfig {
-        backend: DatabaseBackend::Sqlite,
-        port: 0,
-        user: String::new(),
-        name: Some(db_path.to_string()),
-        read_only,
-        ..DatabaseConfig::default()
-    }
-}
 
 async fn backend() -> SqliteAdapter {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
-    let config = sqlite_config(&db_path, false);
+    let config = common::sqlite_config(&db_path, false);
     SqliteAdapter::new(&config).await.expect("SQLite open failed")
 }
 
 async fn readonly_backend() -> SqliteAdapter {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
-    let config = sqlite_config(&db_path, true);
+    let config = common::sqlite_config(&db_path, true);
     SqliteAdapter::new(&config).await.expect("SQLite open failed")
 }
 
@@ -103,7 +92,6 @@ async fn it_blocks_writes_in_read_only_mode() {
 async fn it_preserves_json_types() {
     let b = backend().await;
 
-    // COUNT(*) should return a JSON number, not a string or null
     let results = b
         .execute_query("SELECT COUNT(*) as cnt FROM users")
         .await
@@ -113,7 +101,6 @@ async fn it_preserves_json_types() {
     assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
     assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
 
-    // Integer and text columns should have correct types
     let results = b
         .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1")
         .await
@@ -165,7 +152,7 @@ async fn it_has_consistent_seed_data() {
 #[tokio::test]
 async fn it_excludes_list_databases_and_create_database_tools() {
     let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
-    let config = sqlite_config(&db_path, false);
+    let config = common::sqlite_config(&db_path, false);
     let backend = database_mcp_sqlite::SqliteAdapter::new(&config)
         .await
         .expect("backend creation failed");
@@ -180,7 +167,6 @@ async fn it_excludes_list_databases_and_create_database_tools() {
         "SQLite must not expose create_database"
     );
 
-    // Verify core tools are present
     assert!(router.get("list_tables").is_some());
     assert!(router.get("read_query").is_some());
     assert!(router.get("write_query").is_some());

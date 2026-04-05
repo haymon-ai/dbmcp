@@ -25,5 +25,8 @@ Thumbs.db
 *.tmp
 *.swp
 
+# Test artifacts
+tests/database.db
+
 # Added by cargo
 /target
