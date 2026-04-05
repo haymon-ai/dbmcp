@@ -3,6 +3,7 @@ name = "database-mcp-postgres"
 description = "PostgreSQL for database-mcp"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 

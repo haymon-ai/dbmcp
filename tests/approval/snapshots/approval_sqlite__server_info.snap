@@ -1,5 +1,6 @@
 ---
 source: tests/approval/sqlite.rs
+assertion_line: 25
 expression: info
 ---
 {
@@ -8,8 +9,11 @@ expression: info
     "tools": {}
   },
   "serverInfo": {
-    "name": "database-mcp-server",
-    "version": "[version]"
+    "name": "database-mcp",
+    "title": "Database MCP Server",
+    "version": "[version]",
+    "description": "Database MCP Server for SQLite",
+    "websiteUrl": "https://database.haymon.ai"
   },
-  "instructions": "Database MCP Server - provides database exploration and query tools for SQLite"
+  "instructions": "## Workflow\n\n1. Call `list_tables` to discover tables in the connected database.\n2. Call `get_table_schema` with a `table_name` to inspect columns, types, and foreign keys before writing queries.\n3. Use `read_query` for read-only SQL (SELECT, EXPLAIN).\n4. Use `write_query` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n## Constraints\n\n- The `write_query` tool is hidden when read-only mode is active.\n- Multi-statement queries are not supported. Send one statement per request."
 }

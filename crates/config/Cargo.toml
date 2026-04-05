@@ -3,6 +3,7 @@ name = "database-mcp-config"
 description = "Config for database-mcp"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 

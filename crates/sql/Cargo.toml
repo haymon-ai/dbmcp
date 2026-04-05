@@ -3,6 +3,7 @@ name = "database-mcp-sql"
 description = "SQL validation and identifier utilities for database-mcp"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 

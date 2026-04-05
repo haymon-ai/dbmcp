@@ -2,7 +2,8 @@
 name = "database-mcp"
 version.workspace = true
 edition.workspace = true
-description = "A single-binary MCP server for MySQL, PostgreSQL, and SQLite"
+description.workspace = true
+homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords = ["mcp", "database", "mysql", "postgresql", "sqlite"]
@@ -14,6 +15,8 @@ members = [".", "crates/*"]
 [workspace.package]
 version = "0.5.1"
 edition = "2024"
+description = "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite"
+homepage = "https://database.haymon.ai"
 license = "MIT"
 repository = "https://github.com/haymon-ai/database"
 

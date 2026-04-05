@@ -9,9 +9,11 @@ use std::sync::Arc;
 use database_mcp_config::{Config, DatabaseBackend};
 use database_mcp_mysql::MysqlAdapter;
 use database_mcp_postgres::PostgresAdapter;
+use database_mcp_server::AppError;
 use database_mcp_sqlite::SqliteAdapter;
+use rmcp::RoleServer;
+use rmcp::Service;
 use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
-use rmcp::{RoleServer, Service};
 
 /// Cloneable, type-erased MCP server.
 ///
@@ -75,7 +77,7 @@ impl Service<RoleServer> for ServerHandler {
 ///
 /// Returns an error if the database connection fails (invalid URL,
 /// unreachable host, authentication failure).
-pub async fn create_handler(config: &Config) -> Result<ServerHandler, database_mcp_server::AppError> {
+pub async fn create_handler(config: &Config) -> Result<ServerHandler, AppError> {
     let handler = match config.database.backend {
         DatabaseBackend::Sqlite => SqliteAdapter::new(&config.database).await?.into(),
         DatabaseBackend::Postgres => PostgresAdapter::new(&config.database).await?.into(),
