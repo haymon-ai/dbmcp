@@ -16,7 +16,7 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
+    pub(crate) async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
         validate_identifier(table)?;
         let db = if database.is_empty() { None } else { Some(database) };
         let pool = self.get_pool(db).await?;

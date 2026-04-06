@@ -43,7 +43,7 @@ impl SqliteAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_list_tables(&self) -> Result<CallToolResult, ErrorData> {
+    pub async fn tool_list_tables(&self) -> Result<CallToolResult, ErrorData> {
         let result = self.list_tables().await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
@@ -59,7 +59,7 @@ impl SqliteAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_get_table_schema(
+    pub async fn tool_get_table_schema(
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -77,7 +77,7 @@ impl SqliteAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_read_query(
+    pub async fn tool_read_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -97,7 +97,7 @@ impl SqliteAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_write_query(
+    pub async fn tool_write_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, ErrorData> {

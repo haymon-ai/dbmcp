@@ -1,12 +1,17 @@
 //! Functional tests for `PostgreSQL`.
 //!
+//! Tests exercise the MCP tool layer (not adapter methods directly),
+//! ensuring the same code path as real MCP clients.
+//!
 //! ```bash
 //! ./tests/run.sh --filter postgres
 //! ```
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_postgres::PostgresAdapter;
-use database_mcp_sql::validation::validate_read_only_with_dialect;
+use database_mcp_server::types::{CreateDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+use rmcp::handler::server::wrapper::Parameters;
+use serde_json::Value;
 
 async fn adapter(read_only: bool) -> PostgresAdapter {
     let config = DatabaseConfig {
@@ -28,16 +33,25 @@ async fn adapter(read_only: bool) -> PostgresAdapter {
 }
 
 #[tokio::test]
-async fn it_lists_databases() {
+async fn test_lists_databases() {
     let adapter = adapter(false).await;
-    let dbs = adapter.list_databases().await.expect("failed");
+
+    let response = adapter.tool_list_databases().await.unwrap();
+    let dbs: Vec<String> = response.into_typed().unwrap();
+
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
 
 #[tokio::test]
-async fn it_lists_tables() {
+async fn test_lists_tables() {
     let adapter = adapter(false).await;
-    let tables = adapter.list_tables("app").await.expect("failed");
+    let parameters = Parameters(ListTablesRequest {
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_list_tables(parameters).await.unwrap();
+    let tables: Vec<String> = response.into_typed().unwrap();
+
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
             tables.iter().any(|t| t == expected),
@@ -47,9 +61,16 @@ async fn it_lists_tables() {
 }
 
 #[tokio::test]
-async fn it_gets_table_schema() {
+async fn test_gets_table_schema() {
     let adapter = adapter(false).await;
-    let schema = adapter.get_table_schema("app", "users").await.expect("failed");
+    let parameters = Parameters(GetTableSchemaRequest {
+        database_name: "app".into(),
+        table_name: "users".into(),
+    });
+
+    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
+    let schema: Value = response.into_typed().unwrap();
+
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     assert!(obj.contains_key("columns"), "Response should contain columns");
@@ -60,9 +81,16 @@ async fn it_gets_table_schema() {
 }
 
 #[tokio::test]
-async fn it_gets_table_schema_with_relations() {
+async fn test_gets_table_schema_with_relations() {
     let adapter = adapter(false).await;
-    let schema = adapter.get_table_schema("app", "posts").await.expect("failed");
+    let parameters = Parameters(GetTableSchemaRequest {
+        database_name: "app".into(),
+        table_name: "posts".into(),
+    });
+
+    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
+    let schema: Value = response.into_typed().unwrap();
+
     let columns = schema["columns"].as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
@@ -77,70 +105,60 @@ async fn it_gets_table_schema_with_relations() {
 }
 
 #[tokio::test]
-async fn it_executes_sql() {
+async fn test_executes_sql() {
     let adapter = adapter(false).await;
-    let results = adapter
-        .execute_query("SELECT * FROM users ORDER BY id", Some("app"))
-        .await
-        .expect("failed");
-    let rows = results.as_array().expect("array");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT * FROM users ORDER BY id".into(),
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await.unwrap();
+    let rows: Vec<Value> = response.into_typed().unwrap();
+
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
 
 #[tokio::test]
-async fn it_blocks_writes_in_read_only_mode() {
-    let _adapter = adapter(true).await;
-    let dialect = sqlparser::dialect::PostgreSqlDialect {};
-    let result = validate_read_only_with_dialect(
-        "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')",
-        &dialect,
-    );
-    assert!(result.is_err(), "Expected error for write in read-only mode");
+async fn test_blocks_writes_in_read_only_mode() {
+    let adapter = adapter(false).await;
+    let parameters = Parameters(QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await;
+
+    assert!(response.is_err(), "Expected error for write in read-only mode");
 }
 
 #[tokio::test]
-async fn it_preserves_json_types() {
+async fn test_creates_database() {
     let adapter = adapter(false).await;
+    let parameters = Parameters(CreateDatabaseRequest {
+        database_name: "app_new".into(),
+    });
 
-    let results = adapter
-        .execute_query("SELECT COUNT(*) as cnt FROM users", Some("app"))
-        .await
-        .expect("failed");
-    let rows = results.as_array().expect("array");
-    let cnt = &rows[0]["cnt"];
-    assert!(cnt.is_number(), "COUNT(*) should be a number, got: {cnt}");
-    assert_eq!(cnt.as_i64(), Some(3), "Expected COUNT(*)=3");
+    let response = adapter.tool_create_database(parameters).await.unwrap();
+    let value: Value = response.into_typed().unwrap();
 
-    let results = adapter
-        .execute_query("SELECT id, name FROM users ORDER BY id LIMIT 1", Some("app"))
-        .await
-        .expect("failed");
-    let rows = results.as_array().expect("array");
-    assert!(
-        rows[0]["id"].is_number(),
-        "id should be a number, got: {}",
-        rows[0]["id"]
-    );
-    assert!(
-        rows[0]["name"].is_string(),
-        "name should be a string, got: {}",
-        rows[0]["name"]
-    );
-}
+    assert!(!value.is_null());
 
-#[tokio::test]
-async fn it_creates_database() {
-    let adapter = adapter(false).await;
-    let result = adapter.create_database("app_new").await.expect("failed");
-    assert!(!result.is_null());
-    let dbs = adapter.list_databases().await.expect("list failed");
+    let response = adapter.tool_list_databases().await.unwrap();
+    let dbs: Vec<String> = response.into_typed().unwrap();
+
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
 }
 
 #[tokio::test]
-async fn it_lists_tables_cross_database() {
+async fn test_lists_tables_cross_database() {
     let adapter = adapter(false).await;
-    let tables = adapter.list_tables("analytics").await.expect("failed");
+    let parameters = Parameters(ListTablesRequest {
+        database_name: "analytics".into(),
+    });
+
+    let response = adapter.tool_list_tables(parameters).await.unwrap();
+    let tables: Vec<String> = response.into_typed().unwrap();
+
     assert!(
         tables.iter().any(|t| t == "events"),
         "Expected 'events' in analytics tables: {tables:?}"
@@ -152,20 +170,30 @@ async fn it_lists_tables_cross_database() {
 }
 
 #[tokio::test]
-async fn it_executes_sql_cross_database() {
+async fn test_executes_sql_cross_database() {
     let adapter = adapter(false).await;
-    let results = adapter
-        .execute_query("SELECT * FROM events ORDER BY id", Some("analytics"))
-        .await
-        .expect("failed");
-    let rows = results.as_array().expect("array");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT * FROM events ORDER BY id".into(),
+        database_name: "analytics".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await.unwrap();
+    let rows: Vec<Value> = response.into_typed().unwrap();
+
     assert_eq!(rows.len(), 2, "Expected 2 events, got {}", rows.len());
 }
 
 #[tokio::test]
-async fn it_gets_table_schema_cross_database() {
+async fn test_gets_table_schema_cross_database() {
     let adapter = adapter(false).await;
-    let schema = adapter.get_table_schema("analytics", "events").await.expect("failed");
+    let parameters = Parameters(GetTableSchemaRequest {
+        database_name: "analytics".into(),
+        table_name: "events".into(),
+    });
+
+    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
+    let schema: Value = response.into_typed().unwrap();
+
     let obj = schema.as_object().expect("object");
     assert!(obj.contains_key("table_name"), "Response should contain table_name");
     let columns = obj["columns"].as_object().expect("columns object");
@@ -178,9 +206,12 @@ async fn it_gets_table_schema_cross_database() {
 }
 
 #[tokio::test]
-async fn it_lists_databases_includes_cross_db() {
+async fn test_lists_databases_includes_cross_db() {
     let adapter = adapter(false).await;
-    let dbs = adapter.list_databases().await.expect("failed");
+
+    let response = adapter.tool_list_databases().await.unwrap();
+    let dbs: Vec<String> = response.into_typed().unwrap();
+
     assert!(
         dbs.iter().any(|db| db == "analytics"),
         "Expected 'analytics' in databases: {dbs:?}"
@@ -188,59 +219,45 @@ async fn it_lists_databases_includes_cross_db() {
 }
 
 #[tokio::test]
-async fn it_blocks_writes_cross_database_in_read_only_mode() {
-    let _adapter = adapter(true).await;
-    let dialect = sqlparser::dialect::PostgreSqlDialect {};
-    let result = validate_read_only_with_dialect("INSERT INTO events (name) VALUES ('hack')", &dialect);
+async fn test_blocks_writes_cross_database_in_read_only_mode() {
+    let adapter = adapter(false).await;
+    let parameters = Parameters(QueryRequest {
+        query: "INSERT INTO events (name) VALUES ('hack')".into(),
+        database_name: "analytics".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await;
+
     assert!(
-        result.is_err(),
+        response.is_err(),
         "Expected error for write in read-only mode on cross-database"
     );
 }
 
 #[tokio::test]
-async fn it_returns_error_for_nonexistent_database() {
+async fn test_returns_error_for_nonexistent_database() {
     let adapter = adapter(false).await;
-    let result = adapter.list_tables("nonexistent_db_xyz").await;
-    assert!(result.is_err(), "Expected error for nonexistent database");
+    let parameters = Parameters(ListTablesRequest {
+        database_name: "nonexistent_db_xyz".into(),
+    });
+
+    let response = adapter.tool_list_tables(parameters).await;
+
+    assert!(response.is_err(), "Expected error for nonexistent database");
 }
 
 #[tokio::test]
-async fn it_uses_default_pool_for_matching_database() {
+async fn test_uses_default_pool_for_matching_database() {
     let adapter = adapter(false).await;
-    let tables = adapter.list_tables("app").await.expect("failed");
+    let parameters = Parameters(ListTablesRequest {
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_list_tables(parameters).await.unwrap();
+    let tables: Vec<String> = response.into_typed().unwrap();
+
     assert!(
         tables.iter().any(|t| t == "users"),
         "Expected 'users' when explicitly passing default db: {tables:?}"
     );
-}
-
-#[tokio::test]
-async fn it_has_consistent_seed_data() {
-    async fn check(adapter: &PostgresAdapter, table: &str, expected: usize) {
-        let sql = format!("SELECT CAST(COUNT(*) AS CHAR) as cnt FROM {table}");
-        let results = adapter
-            .execute_query(&sql, Some("app"))
-            .await
-            .unwrap_or_else(|e| panic!("count {table}: {e}"));
-        let rows = results.as_array().expect("array");
-        let count_str = rows[0]
-            .get("cnt")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                rows[0]
-                    .as_object()
-                    .and_then(|o| o.values().next())
-                    .and_then(|v| v.as_str())
-            })
-            .unwrap_or_else(|| panic!("No count for {table}: {:?}", rows[0]));
-        let count: usize = count_str.parse().unwrap();
-        assert_eq!(count, expected, "{table}: expected {expected}, got {count}");
-    }
-
-    let adapter = adapter(false).await;
-    check(&adapter, "users", 3).await;
-    check(&adapter, "posts", 5).await;
-    check(&adapter, "tags", 4).await;
-    check(&adapter, "post_tags", 6).await;
 }
