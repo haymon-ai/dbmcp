@@ -4,6 +4,7 @@
 //! on [`MysqlAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
+use super::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
 };
@@ -18,7 +19,7 @@ use super::MysqlAdapter;
 
 impl MysqlAdapter {
     /// Names of tools that require write access.
-    const WRITE_TOOL_NAMES: &[&str] = &["write_query", "create_database", "drop_database"];
+    const WRITE_TOOL_NAMES: &[&str] = &["write_query", "create_database", "drop_database", "drop_table"];
 
     /// Builds the tool router, excluding write tools in read-only mode.
     #[must_use]
@@ -146,6 +147,24 @@ impl MysqlAdapter {
         Parameters(request): Parameters<CreateDatabaseRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self.create_database(&request.database_name).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    }
+
+    /// Drop a table from a database.
+    #[tool(
+        name = "drop_table",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn tool_drop_table(
+        &self,
+        Parameters(request): Parameters<DropTableRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.drop_table(&request.database_name, &request.table_name).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 

@@ -13,6 +13,7 @@ database-mcp-server = { workspace = true }
 database-mcp-sql = { workspace = true }
 moka = { workspace = true }
 rmcp = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true, features = ["postgres"] }

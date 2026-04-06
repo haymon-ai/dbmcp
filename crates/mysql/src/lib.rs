@@ -8,5 +8,6 @@ mod handler;
 mod operations;
 mod schema;
 mod tools;
+pub mod types;
 
 pub use adapter::MysqlAdapter;
