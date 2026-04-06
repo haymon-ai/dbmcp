@@ -1,4 +1,7 @@
 //! `PostgreSQL` database query operations.
+//!
+//! Provides methods for listing databases, tables, executing queries,
+//! creating databases, and dropping databases.
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
@@ -84,6 +87,51 @@ impl PostgresAdapter {
         Ok(json!({
             "status": "success",
             "message": format!("Database '{name}' created successfully."),
+            "database_name": name,
+        }))
+    }
+
+    /// Drops an existing database.
+    ///
+    /// Refuses to drop the currently connected (default) database and
+    /// evicts the corresponding pool cache entry after a successful drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
+    /// [`AppError::InvalidIdentifier`] for invalid names,
+    /// or [`AppError::Query`] if the target is the active database
+    /// or the backend reports an error.
+    pub(crate) async fn drop_database(&self, name: &str) -> Result<Value, AppError> {
+        if self.config.read_only {
+            return Err(AppError::ReadOnlyViolation);
+        }
+        validate_identifier(name)?;
+
+        // Guard: prevent dropping the currently connected database.
+        if self.default_db == name {
+            return Err(AppError::Query(format!(
+                "Cannot drop the currently connected database '{name}'."
+            )));
+        }
+
+        let pool = self.get_pool(None).await?;
+
+        let drop_sql = format!("DROP DATABASE {}", Self::quote_identifier(name));
+        execute_with_timeout(
+            self.config.query_timeout,
+            &drop_sql,
+            sqlx::query(&drop_sql).execute(&pool),
+        )
+        .await?;
+
+        // Evict the pool for the dropped database so stale connections
+        // are not reused.
+        self.pools.invalidate(name).await;
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Database '{name}' dropped successfully."),
             "database_name": name,
         }))
     }

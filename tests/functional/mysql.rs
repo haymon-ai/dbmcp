@@ -10,7 +10,9 @@
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_mysql::MysqlAdapter;
-use database_mcp_server::types::{CreateDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+use database_mcp_server::types::{
+    CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
@@ -150,6 +152,73 @@ async fn test_creates_database() {
     let dbs: Vec<String> = response.into_typed().unwrap();
 
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
+}
+
+#[tokio::test]
+async fn test_drops_database() {
+    let adapter = adapter(false).await;
+
+    // Verify seeded database exists
+    let response = adapter.tool_list_databases().await.unwrap();
+    let dbs: Vec<String> = response.into_typed().unwrap();
+    assert!(dbs.iter().any(|db| db == "canary"), "canary should exist before drop");
+
+    // Drop it
+    let drop_params = Parameters(DropDatabaseRequest {
+        database_name: "canary".into(),
+    });
+    let response = adapter.tool_drop_database(drop_params).await.unwrap();
+    let value: Value = response.into_typed().unwrap();
+    assert_eq!(value["status"], "success");
+
+    // Verify it's gone
+    let response = adapter.tool_list_databases().await.unwrap();
+    let dbs: Vec<String> = response.into_typed().unwrap();
+    assert!(
+        !dbs.iter().any(|db| db == "canary"),
+        "canary should not exist after drop"
+    );
+}
+
+#[tokio::test]
+async fn test_drop_active_database_blocked() {
+    let adapter = adapter(false).await;
+    let parameters = Parameters(DropDatabaseRequest {
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_drop_database(parameters).await;
+
+    assert!(response.is_err(), "Expected error when dropping active database");
+    let err_msg = format!("{:?}", response.unwrap_err());
+    assert!(
+        err_msg.contains("currently connected"),
+        "Expected 'currently connected' in error, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_drop_nonexistent_database() {
+    let adapter = adapter(false).await;
+    let parameters = Parameters(DropDatabaseRequest {
+        database_name: "nonexistent_db_xyz".into(),
+    });
+
+    let response = adapter.tool_drop_database(parameters).await;
+
+    assert!(response.is_err(), "Expected error for nonexistent database");
+}
+
+#[tokio::test]
+async fn test_drop_database_invalid_identifier() {
+    let adapter = adapter(false).await;
+    let parameters = Parameters(DropDatabaseRequest {
+        database_name: String::new(),
+    });
+
+    let response = adapter.tool_drop_database(parameters).await;
+
+    assert!(response.is_err(), "Expected error for empty database name");
 }
 
 // ---- Cross-database tests ----

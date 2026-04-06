@@ -78,3 +78,8 @@ CREATE TABLE `analytics`.`events` (
 INSERT INTO `analytics`.`events` (`name`, `payload`) VALUES
     ('signup', '{"user": "alice"}'),
     ('login', '{"user": "bob"}');
+
+-- canary database (used by drop_database tests)
+
+DROP DATABASE IF EXISTS `canary`;
+CREATE DATABASE `canary`;

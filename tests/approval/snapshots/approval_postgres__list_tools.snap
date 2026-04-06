@@ -1,11 +1,12 @@
 ---
 source: tests/approval/postgres.rs
+assertion_line: 44
 expression: tools
 ---
 [
   {
     "name": "create_database",
-    "description": "Create a new database. Not supported for `SQLite`.",
+    "description": "Create a new database.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request to create a database.",
@@ -24,6 +25,31 @@ expression: tools
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "drop_database",
+    "description": "Drop an existing database. Cannot drop the currently connected database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to drop a database.",
+      "properties": {
+        "database_name": {
+          "description": "Name of the database to drop. Must contain only alphanumeric characters and underscores.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name"
+      ],
+      "title": "DropDatabaseRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
       "idempotentHint": false,
       "openWorldHint": false
     }

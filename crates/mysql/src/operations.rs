@@ -1,7 +1,7 @@
 //! MySQL/MariaDB database query operations.
 //!
 //! Provides methods for listing databases, tables, executing queries,
-//! and creating databases.
+//! creating databases, and dropping databases.
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
@@ -132,6 +132,46 @@ impl MysqlAdapter {
         Ok(json!({
             "status": "success",
             "message": format!("Database '{name}' created successfully."),
+            "database_name": name,
+        }))
+    }
+
+    /// Drops an existing database.
+    ///
+    /// Refuses to drop the currently connected database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
+    /// [`AppError::InvalidIdentifier`] for invalid names,
+    /// or [`AppError::Query`] if the target is the active database
+    /// or the backend reports an error.
+    pub(crate) async fn drop_database(&self, name: &str) -> Result<Value, AppError> {
+        if self.config.read_only {
+            return Err(AppError::ReadOnlyViolation);
+        }
+        validate_identifier(name)?;
+
+        // Guard: prevent dropping the currently connected database.
+        if let Some(ref active) = self.config.name
+            && active.eq_ignore_ascii_case(name)
+        {
+            return Err(AppError::Query(format!(
+                "Cannot drop the currently connected database '{name}'."
+            )));
+        }
+
+        let drop_sql = format!("DROP DATABASE {}", Self::quote_identifier(name));
+        execute_with_timeout(
+            self.config.query_timeout,
+            &drop_sql,
+            sqlx::query(&drop_sql).execute(&self.pool),
+        )
+        .await?;
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Database '{name}' dropped successfully."),
             "database_name": name,
         }))
     }

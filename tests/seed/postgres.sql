@@ -82,3 +82,9 @@ CREATE TABLE events (
 INSERT INTO events (name, payload) VALUES
     ('signup', '{"user": "alice"}'),
     ('login', '{"user": "bob"}');
+
+-- canary database (used by drop_database tests)
+
+\c postgres
+DROP DATABASE IF EXISTS canary;
+CREATE DATABASE canary;
