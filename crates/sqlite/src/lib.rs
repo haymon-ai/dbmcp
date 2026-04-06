@@ -8,6 +8,6 @@ mod handler;
 mod operations;
 mod schema;
 mod tools;
-mod types;
+pub mod types;
 
 pub use adapter::SqliteAdapter;

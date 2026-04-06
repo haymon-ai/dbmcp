@@ -17,7 +17,7 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
         let pool = self.get_pool(None).await?;
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
@@ -32,7 +32,7 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
         let db = if database.is_empty() { None } else { Some(database) };
         let pool = self.get_pool(db).await?;
         let rows: Vec<(String,)> =
@@ -48,7 +48,7 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
+    pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         let pool = self.get_pool(database).await?;
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&pool)
@@ -62,7 +62,7 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if read-only or the query fails.
-    pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn create_database(&self, name: &str) -> Result<Value, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }

@@ -18,7 +18,7 @@ impl MysqlAdapter {
     /// Uses the text protocol via `Executor::fetch_all(&str)` instead of prepared
     /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
     /// statements, and the text protocol returns all values as strings.
-    pub(super) async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
+    pub(crate) async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         // Acquire a single connection so USE and the query run on the same session
         let mut conn = self
             .pool
@@ -44,7 +44,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
         let results = self
             .query_to_json(
                 "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
@@ -63,7 +63,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
         validate_identifier(database)?;
         let sql = format!(
             "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
@@ -82,7 +82,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
+    pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         self.query_to_json(sql, database).await
     }
 
@@ -91,7 +91,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if read-only or the query fails.
-    pub async fn create_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn create_database(&self, name: &str) -> Result<Value, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }

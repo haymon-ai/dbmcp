@@ -44,7 +44,7 @@ impl MysqlAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_list_databases(&self) -> Result<CallToolResult, ErrorData> {
+    pub async fn tool_list_databases(&self) -> Result<CallToolResult, ErrorData> {
         let result = self.list_databases().await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
@@ -60,7 +60,7 @@ impl MysqlAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_list_tables(
+    pub async fn tool_list_tables(
         &self,
         Parameters(request): Parameters<ListTablesRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -79,7 +79,7 @@ impl MysqlAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_get_table_schema(
+    pub async fn tool_get_table_schema(
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -99,7 +99,7 @@ impl MysqlAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_read_query(
+    pub async fn tool_read_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -120,7 +120,7 @@ impl MysqlAdapter {
             open_world_hint = true
         )
     )]
-    async fn tool_write_query(
+    pub async fn tool_write_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -139,7 +139,7 @@ impl MysqlAdapter {
             open_world_hint = false
         )
     )]
-    async fn tool_create_database(
+    pub async fn tool_create_database(
         &self,
         Parameters(request): Parameters<CreateDatabaseRequest>,
     ) -> Result<CallToolResult, ErrorData> {
