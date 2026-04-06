@@ -91,6 +91,45 @@ impl PostgresAdapter {
         }))
     }
 
+    /// Drops a table from a database.
+    ///
+    /// Validates identifiers, then executes `DROP TABLE`. When `cascade`
+    /// is true the statement uses `CASCADE` to also remove dependent
+    /// foreign-key constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
+    /// [`AppError::InvalidIdentifier`] for invalid names,
+    /// or [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn drop_table(&self, database: &str, table: &str, cascade: bool) -> Result<Value, AppError> {
+        if self.config.read_only {
+            return Err(AppError::ReadOnlyViolation);
+        }
+        validate_identifier(database)?;
+        validate_identifier(table)?;
+
+        let pool = self.get_pool(Some(database)).await?;
+
+        let mut drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
+        if cascade {
+            drop_sql.push_str(" CASCADE");
+        }
+
+        execute_with_timeout(
+            self.config.query_timeout,
+            &drop_sql,
+            sqlx::query(&drop_sql).execute(&pool),
+        )
+        .await?;
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Table '{table}' dropped successfully."),
+            "table_name": table,
+        }))
+    }
+
     /// Drops an existing database.
     ///
     /// Refuses to drop the currently connected (default) database and

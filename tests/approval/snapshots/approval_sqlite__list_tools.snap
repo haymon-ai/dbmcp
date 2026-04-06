@@ -1,8 +1,34 @@
 ---
 source: tests/approval/sqlite.rs
+assertion_line: 36
 expression: tools
 ---
 [
+  {
+    "name": "drop_table",
+    "description": "Drop a table from the database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to drop a table.",
+      "properties": {
+        "table_name": {
+          "description": "Name of the table to drop. Must contain only alphanumeric characters and underscores.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table_name"
+      ],
+      "title": "DropTableRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
   {
     "name": "get_table_schema",
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table.",

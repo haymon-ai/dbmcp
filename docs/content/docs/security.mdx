@@ -11,7 +11,7 @@ By default, Database MCP runs in **read-only mode**. This controls which tools t
 
 ### Tool-Level Access Control
 
-In read-only mode, write tools (`write_query`, `create_database`) are not registered with the MCP client. The AI assistant never sees them in the tool list, which prevents it from attempting write operations entirely.
+In read-only mode, write tools (`write_query`, `create_database`, `drop_database`, `drop_table`) are not registered with the MCP client. The AI assistant never sees them in the tool list, which prevents it from attempting write operations entirely.
 
 When read-only mode is disabled, the full tool set becomes available. See [Features](/docs/features#tool-availability) for the complete tool availability matrix.
 
@@ -54,4 +54,4 @@ Database and table names are validated to contain only alphanumeric characters a
 
 ## Disabling Read-Only Mode
 
-Read-only mode can be explicitly disabled if you need write access. Set the `DB_READ_ONLY` environment variable to `false` or pass the `--db-read-only false` flag. This makes `write_query` and `create_database` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
+Read-only mode can be explicitly disabled if you need write access. Set the `DB_READ_ONLY` environment variable to `false` or pass the `--db-read-only false` flag. This makes `write_query`, `create_database`, `drop_database`, and `drop_table` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.

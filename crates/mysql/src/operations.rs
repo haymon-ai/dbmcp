@@ -136,6 +136,46 @@ impl MysqlAdapter {
         }))
     }
 
+    /// Drops a table from a database.
+    ///
+    /// Switches to the target database with `USE`, then executes
+    /// `DROP TABLE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
+    /// [`AppError::InvalidIdentifier`] for invalid names,
+    /// or [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn drop_table(&self, database: &str, table: &str) -> Result<Value, AppError> {
+        if self.config.read_only {
+            return Err(AppError::ReadOnlyViolation);
+        }
+        validate_identifier(database)?;
+        validate_identifier(table)?;
+
+        let pool = self.pool.clone();
+        let db = database.to_string();
+        let drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
+        let drop_sql_label = drop_sql.clone();
+
+        execute_with_timeout(self.config.query_timeout, &drop_sql_label, async move {
+            let mut conn = pool.acquire().await?;
+
+            let use_sql = format!("USE {}", Self::quote_identifier(&db));
+            conn.execute(use_sql.as_str()).await?;
+
+            conn.execute(drop_sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(())
+        })
+        .await?;
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Table '{table}' dropped successfully."),
+            "table_name": table,
+        }))
+    }
+
     /// Drops an existing database.
     ///
     /// Refuses to drop the currently connected database.

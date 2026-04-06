@@ -4,7 +4,7 @@
 //! on [`SqliteAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
-use super::types::{GetTableSchemaRequest, QueryRequest};
+use super::types::{DropTableRequest, GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -16,7 +16,7 @@ use super::SqliteAdapter;
 
 impl SqliteAdapter {
     /// Names of tools that require write access.
-    const WRITE_TOOL_NAMES: &[&str] = &["write_query"];
+    const WRITE_TOOL_NAMES: &[&str] = &["write_query", "drop_table"];
 
     /// Builds the tool router, excluding write tools in read-only mode.
     #[must_use]
@@ -84,6 +84,24 @@ impl SqliteAdapter {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
 
         let result = self.execute_query(&request.query).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    }
+
+    /// Drop a table from the database.
+    #[tool(
+        name = "drop_table",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn tool_drop_table(
+        &self,
+        Parameters(request): Parameters<DropTableRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.drop_table(&request.table_name).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 

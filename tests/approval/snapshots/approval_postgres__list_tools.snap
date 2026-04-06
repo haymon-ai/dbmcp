@@ -55,6 +55,41 @@ expression: tools
     }
   },
   {
+    "name": "drop_table",
+    "description": "Drop a table from a database. Checks for foreign key dependencies\nvia the database engine — use `cascade` to force on `PostgreSQL`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to drop a table.",
+      "properties": {
+        "cascade": {
+          "default": false,
+          "description": "If true, use CASCADE to also drop dependent foreign key constraints. Defaults to false.",
+          "type": "boolean"
+        },
+        "database_name": {
+          "description": "The database containing the table. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        },
+        "table_name": {
+          "description": "Name of the table to drop. Must contain only alphanumeric characters and underscores.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name",
+        "table_name"
+      ],
+      "title": "DropTableRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "get_table_schema",
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.",
     "inputSchema": {
