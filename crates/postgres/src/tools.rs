@@ -6,7 +6,8 @@
 
 use super::types::DropTableRequest;
 use database_mcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
+    QueryRequest,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -147,6 +148,26 @@ impl PostgresAdapter {
         Parameters(request): Parameters<CreateDatabaseRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self.create_database(&request.database_name).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    }
+
+    /// Return the execution plan for a SQL query.
+    #[tool(
+        name = "explain_query",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    pub async fn tool_explain_query(
+        &self,
+        Parameters(request): Parameters<ExplainQueryRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .explain_query(&request.database_name, &request.query, request.analyze)
+            .await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 

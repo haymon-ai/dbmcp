@@ -4,7 +4,7 @@
 //! on [`SqliteAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
-use super::types::{DropTableRequest, GetTableSchemaRequest, QueryRequest};
+use super::types::{DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -84,6 +84,24 @@ impl SqliteAdapter {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
 
         let result = self.execute_query(&request.query).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    }
+
+    /// Return the execution plan for a SQL query.
+    #[tool(
+        name = "explain_query",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    pub async fn tool_explain_query(
+        &self,
+        Parameters(request): Parameters<ExplainQueryRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.explain_query(&request.query).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 

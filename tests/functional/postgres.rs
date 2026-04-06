@@ -11,7 +11,8 @@ use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_postgres::PostgresAdapter;
 use database_mcp_postgres::types::DropTableRequest;
 use database_mcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
+    QueryRequest,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
@@ -336,8 +337,6 @@ async fn test_uses_default_pool_for_matching_database() {
     );
 }
 
-// ---- Query timeout tests ----
-
 #[tokio::test]
 async fn test_query_timeout_cancels_slow_query() {
     let config = DatabaseConfig {
@@ -386,8 +385,6 @@ async fn test_query_timeout_disabled_with_none() {
     let response = adapter.tool_read_query(parameters).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
-
-// ---- Drop table tests ----
 
 #[tokio::test]
 async fn test_drop_table_success() {
@@ -533,4 +530,88 @@ async fn test_drop_table_invalid_identifier() {
 
     let response = adapter.tool_drop_table(drop_params).await;
     assert!(response.is_err(), "Expected error for empty table name");
+}
+
+#[tokio::test]
+async fn test_explain_query_select() {
+    let adapter = adapter(false).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "SELECT * FROM users".into(),
+        analyze: false,
+    });
+
+    let response = adapter.tool_explain_query(params).await.unwrap();
+    let plan: Vec<Value> = response.into_typed().unwrap();
+    assert!(!plan.is_empty(), "Expected non-empty execution plan");
+}
+
+#[tokio::test]
+async fn test_explain_query_analyze() {
+    let adapter = adapter(false).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "SELECT * FROM users".into(),
+        analyze: true,
+    });
+
+    let response = adapter.tool_explain_query(params).await.unwrap();
+    let plan: Vec<Value> = response.into_typed().unwrap();
+    assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
+}
+
+#[tokio::test]
+async fn test_explain_query_analyze_write_blocked_read_only() {
+    let adapter = adapter(true).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+        analyze: true,
+    });
+
+    let response = adapter.tool_explain_query(params).await;
+    assert!(
+        response.is_err(),
+        "Expected error for EXPLAIN ANALYZE on write statement in read-only mode"
+    );
+}
+
+#[tokio::test]
+async fn test_explain_query_plain_write_allowed() {
+    let adapter = adapter(true).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+        analyze: false,
+    });
+
+    let response = adapter.tool_explain_query(params).await.unwrap();
+    let plan: Vec<Value> = response.into_typed().unwrap();
+    assert!(
+        !plan.is_empty(),
+        "Plain EXPLAIN should work for write statements even in read-only mode"
+    );
+}
+
+#[tokio::test]
+async fn test_explain_query_always_visible() {
+    let adapter = adapter(true).await;
+    let router = adapter.build_tool_router();
+
+    let tool_list = router.list_all();
+    let has_explain = tool_list.iter().any(|t| t.name == "explain_query");
+    assert!(has_explain, "explain_query should be visible in read-only mode");
+}
+
+#[tokio::test]
+async fn test_explain_query_invalid_query() {
+    let adapter = adapter(false).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "NOT VALID SQL AT ALL".into(),
+        analyze: false,
+    });
+
+    let response = adapter.tool_explain_query(params).await;
+    assert!(response.is_err(), "Expected error for invalid SQL");
 }

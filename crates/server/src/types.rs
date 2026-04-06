@@ -44,3 +44,15 @@ pub struct DropDatabaseRequest {
     /// Name of the database to drop. Must contain only alphanumeric characters and underscores.
     pub database_name: String,
 }
+
+/// Request to explain a query's execution plan.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ExplainQueryRequest {
+    /// The database to explain against. Required. Use `list_databases` first to see available databases.
+    pub database_name: String,
+    /// The SQL query to explain.
+    pub query: String,
+    /// If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.
+    #[serde(default)]
+    pub analyze: bool,
+}

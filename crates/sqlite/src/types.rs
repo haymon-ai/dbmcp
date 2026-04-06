@@ -28,3 +28,10 @@ pub struct DropTableRequest {
     /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
     pub table_name: String,
 }
+
+/// Request to explain a query's execution plan.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ExplainQueryRequest {
+    /// The SQL query to explain.
+    pub query: String,
+}

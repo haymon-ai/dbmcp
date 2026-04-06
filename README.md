@@ -14,7 +14,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **8 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`, `drop_database`, `drop_table`
+- **9 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`, `drop_database`, `drop_table`, `explain_query`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -179,6 +179,10 @@ Drops an existing database. Refuses to drop the currently connected database. On
 ### drop_table
 
 Drops a table from a database. If the table has foreign key dependents, the database error is surfaced to the user. On PostgreSQL, a `cascade` parameter is available to force the drop with `CASCADE`. Only available when read-only mode is disabled. Parameters: `database_name`, `table_name`, `cascade` (PostgreSQL only).
+
+### explain_query
+
+Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB). In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements since it actually executes the query. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database_name`, `analyze` (PostgreSQL/MySQL only).
 
 ## Security
 

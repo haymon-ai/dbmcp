@@ -11,7 +11,7 @@
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteAdapter;
-use database_mcp_sqlite::types::{DropTableRequest, GetTableSchemaRequest, QueryRequest};
+use database_mcp_sqlite::types::{DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
@@ -111,8 +111,6 @@ async fn test_blocks_writes_in_read_only_mode() {
     assert!(response.is_err(), "Expected error for write in read-only mode");
 }
 
-// ---- Query timeout tests ----
-
 #[tokio::test]
 async fn test_query_timeout_fast_query_succeeds() {
     let config = DatabaseConfig {
@@ -142,8 +140,6 @@ async fn test_query_timeout_disabled_with_none() {
     let response = adapter.tool_read_query(parameters).await;
     assert!(response.is_ok(), "Query should succeed without timeout");
 }
-
-// ---- Drop table tests ----
 
 #[tokio::test]
 async fn test_drop_table_success() {
@@ -181,4 +177,16 @@ async fn test_drop_table_nonexistent() {
 
     let response = adapter.tool_drop_table(drop_params).await;
     assert!(response.is_err(), "Expected error for nonexistent table");
+}
+
+#[tokio::test]
+async fn test_explain_query_select() {
+    let adapter = adapter(false).await;
+    let params = Parameters(ExplainQueryRequest {
+        query: "SELECT * FROM users".into(),
+    });
+
+    let response = adapter.tool_explain_query(params).await.unwrap();
+    let plan: Vec<Value> = response.into_typed().unwrap();
+    assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }

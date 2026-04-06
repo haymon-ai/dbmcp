@@ -12,7 +12,8 @@ use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_mysql::MysqlAdapter;
 use database_mcp_mysql::types::DropTableRequest;
 use database_mcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
+    QueryRequest,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
@@ -222,8 +223,6 @@ async fn test_drop_database_invalid_identifier() {
     assert!(response.is_err(), "Expected error for empty database name");
 }
 
-// ---- Cross-database tests ----
-
 #[tokio::test]
 async fn test_lists_tables_cross_database() {
     let adapter = adapter(false).await;
@@ -325,8 +324,6 @@ async fn test_uses_default_pool_for_matching_database() {
     );
 }
 
-// ---- Query timeout tests ----
-
 #[tokio::test]
 async fn test_query_timeout_cancels_slow_query() {
     let config = DatabaseConfig {
@@ -371,8 +368,6 @@ async fn test_query_timeout_disabled_with_zero() {
     let response = adapter.tool_read_query(parameters).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
-
-// ---- Drop table tests ----
 
 #[tokio::test]
 async fn test_drop_table_success() {
@@ -455,4 +450,34 @@ async fn test_drop_table_invalid_identifier() {
 
     let response = adapter.tool_drop_table(drop_params).await;
     assert!(response.is_err(), "Expected error for empty table name");
+}
+
+#[tokio::test]
+async fn test_explain_query_select() {
+    let adapter = adapter(false).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "SELECT * FROM users".into(),
+        analyze: false,
+    });
+
+    let response = adapter.tool_explain_query(params).await.unwrap();
+    let plan: Vec<Value> = response.into_typed().unwrap();
+    assert!(!plan.is_empty(), "Expected non-empty execution plan");
+}
+
+#[tokio::test]
+async fn test_explain_query_analyze_write_blocked_read_only() {
+    let adapter = adapter(true).await;
+    let params = Parameters(ExplainQueryRequest {
+        database_name: "app".into(),
+        query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+        analyze: true,
+    });
+
+    let response = adapter.tool_explain_query(params).await;
+    assert!(
+        response.is_err(),
+        "Expected error for EXPLAIN ANALYZE on write statement in read-only mode"
+    );
 }
