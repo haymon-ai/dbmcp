@@ -54,6 +54,25 @@ impl SqliteAdapter {
         }))
     }
 
+    /// Returns the execution plan for a query.
+    ///
+    /// Always uses `EXPLAIN QUERY PLAN` — `SQLite` does not support
+    /// `EXPLAIN ANALYZE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn explain_query(&self, query: &str) -> Result<Value, AppError> {
+        let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
+        let rows: Vec<SqliteRow> = execute_with_timeout(
+            self.config.query_timeout,
+            &explain_sql,
+            sqlx::query(&explain_sql).fetch_all(&self.pool),
+        )
+        .await?;
+        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+    }
+
     /// Executes a SQL query and returns rows as JSON.
     ///
     /// # Errors

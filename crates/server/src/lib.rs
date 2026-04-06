@@ -9,4 +9,4 @@ pub mod types;
 
 pub use error::AppError;
 pub use server::server_info;
-pub use types::{CreateDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+pub use types::{CreateDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};

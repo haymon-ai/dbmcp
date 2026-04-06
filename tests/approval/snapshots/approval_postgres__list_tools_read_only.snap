@@ -1,8 +1,44 @@
 ---
 source: tests/approval/postgres.rs
+assertion_line: 53
 expression: tools
 ---
 [
+  {
+    "name": "explain_query",
+    "description": "Return the execution plan for a SQL query.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to explain a query's execution plan.",
+      "properties": {
+        "analyze": {
+          "default": false,
+          "description": "If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.",
+          "type": "boolean"
+        },
+        "database_name": {
+          "description": "The database to explain against. Required. Use `list_databases` first to see available databases.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The SQL query to explain.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database_name",
+        "query"
+      ],
+      "title": "ExplainQueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
   {
     "name": "get_table_schema",
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.",

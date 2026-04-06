@@ -1,11 +1,12 @@
 //! MySQL/MariaDB database query operations.
 //!
 //! Provides methods for listing databases, tables, executing queries,
-//! creating databases, and dropping databases.
+//! creating databases, dropping databases, and explaining queries.
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::validation::validate_read_only_with_dialect;
 use serde_json::{Value, json};
 use sqlx::Executor;
 use sqlx::mysql::MySqlRow;
@@ -91,6 +92,30 @@ impl MysqlAdapter {
     /// Returns [`AppError`] if the query fails.
     pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         self.query_to_json(sql, database).await
+    }
+
+    /// Returns the execution plan for a query.
+    ///
+    /// When `analyze` is true and read-only mode is enabled, the inner
+    /// query is validated to be read-only before executing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
+    /// read-only mode is enabled, and the query is a write statement.
+    /// Returns [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn explain_query(&self, database: &str, query: &str, analyze: bool) -> Result<Value, AppError> {
+        if analyze && self.config.read_only {
+            validate_read_only_with_dialect(query, &sqlparser::dialect::MySqlDialect {})?;
+        }
+
+        let explain_sql = if analyze {
+            format!("EXPLAIN ANALYZE {query}")
+        } else {
+            format!("EXPLAIN FORMAT=JSON {query}")
+        };
+
+        self.query_to_json(&explain_sql, Some(database)).await
     }
 
     /// Creates a database if it doesn't exist.

@@ -1,11 +1,12 @@
 //! `PostgreSQL` database query operations.
 //!
 //! Provides methods for listing databases, tables, executing queries,
-//! creating databases, and dropping databases.
+//! creating databases, dropping databases, and explaining queries.
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::validation::validate_read_only_with_dialect;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx_to_json::RowExt;
@@ -52,6 +53,39 @@ impl PostgresAdapter {
         let pool = self.get_pool(database).await?;
         let rows: Vec<PgRow> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&pool)).await?;
+        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+    }
+
+    /// Returns the execution plan for a query.
+    ///
+    /// When `analyze` is true and read-only mode is enabled, the inner
+    /// query is validated to be read-only before executing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
+    /// read-only mode is enabled, and the query is a write statement.
+    /// Returns [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn explain_query(&self, database: &str, query: &str, analyze: bool) -> Result<Value, AppError> {
+        if analyze && self.config.read_only {
+            validate_read_only_with_dialect(query, &sqlparser::dialect::PostgreSqlDialect {})?;
+        }
+
+        let pool = self.get_pool(Some(database)).await?;
+
+        let explain_sql = if analyze {
+            format!("EXPLAIN (ANALYZE, FORMAT JSON) {query}")
+        } else {
+            format!("EXPLAIN (FORMAT JSON) {query}")
+        };
+
+        let rows: Vec<PgRow> = execute_with_timeout(
+            self.config.query_timeout,
+            &explain_sql,
+            sqlx::query(&explain_sql).fetch_all(&pool),
+        )
+        .await?;
+
         Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 

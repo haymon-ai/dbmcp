@@ -1,8 +1,34 @@
 ---
 source: tests/approval/sqlite.rs
+assertion_line: 45
 expression: tools
 ---
 [
+  {
+    "name": "explain_query",
+    "description": "Return the execution plan for a SQL query.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request to explain a query's execution plan.",
+      "properties": {
+        "query": {
+          "description": "The SQL query to explain.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "ExplainQueryRequest",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
   {
     "name": "get_table_schema",
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table.",
