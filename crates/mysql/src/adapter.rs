@@ -3,6 +3,8 @@
 //! Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`] and checks
 //! for dangerous server privileges on startup.
 
+use std::time::Duration;
+
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
 use sqlx::MySqlPool;
@@ -31,11 +33,15 @@ impl MysqlAdapter {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = MySqlPoolOptions::new()
-            .max_connections(config.max_pool_size)
+        let pool = pool_options(config)
             .connect_with(connect_options(config))
             .await
-            .map_err(|e| AppError::Connection(format!("Failed to connect to MySQL: {e}")))?;
+            .map_err(|e| {
+                let timeout_hint = config
+                    .connection_timeout
+                    .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
+                AppError::Connection(format!("Failed to connect to MySQL{timeout_hint}: {e}"))
+            })?;
 
         info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
 
@@ -108,6 +114,21 @@ impl MysqlAdapter {
     }
 }
 
+/// Builds [`MySqlPoolOptions`] with lifecycle defaults from a [`DatabaseConfig`].
+fn pool_options(config: &DatabaseConfig) -> MySqlPoolOptions {
+    let mut opts = MySqlPoolOptions::new()
+        .max_connections(config.max_pool_size)
+        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
+        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+
+    if let Some(timeout) = config.connection_timeout {
+        opts = opts.acquire_timeout(Duration::from_secs(timeout));
+    }
+
+    opts
+}
+
 /// Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`].
 fn connect_options(config: &DatabaseConfig) -> MySqlConnectOptions {
     let mut opts = MySqlConnectOptions::new()
@@ -162,6 +183,43 @@ mod tests {
             name: Some("mydb".into()),
             ..DatabaseConfig::default()
         }
+    }
+
+    #[test]
+    fn pool_options_applies_defaults() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_max_connections(), config.max_pool_size);
+        assert_eq!(opts.get_min_connections(), DatabaseConfig::DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(
+            opts.get_idle_timeout(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        );
+        assert_eq!(
+            opts.get_max_lifetime(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS))
+        );
+    }
+
+    #[test]
+    fn pool_options_applies_connection_timeout() {
+        let config = DatabaseConfig {
+            connection_timeout: Some(7),
+            ..base_config()
+        };
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn pool_options_without_connection_timeout_uses_sqlx_default() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        // sqlx defaults acquire_timeout to 30s when not overridden
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(30));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! `SQLite` adapter definition and connection configuration.
 
+use std::time::Duration;
+
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
 use sqlx::SqlitePool;
@@ -28,13 +30,17 @@ impl SqliteAdapter {
     ///
     /// Returns [`AppError::Connection`] if the database file cannot be opened.
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let name = config.name.as_deref().unwrap_or_default();
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1) // SQLite is single-writer
+        let pool = pool_options(config)
             .connect_with(connect_options(config))
             .await
-            .map_err(|e| AppError::Connection(format!("Failed to open SQLite: {e}")))?;
+            .map_err(|e| {
+                let timeout_hint = config
+                    .connection_timeout
+                    .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
+                AppError::Connection(format!("Failed to open SQLite{timeout_hint}: {e}"))
+            })?;
 
+        let name = config.name.as_deref().unwrap_or_default();
         info!("SQLite connection initialized: {name}");
 
         Ok(Self {
@@ -49,6 +55,21 @@ impl SqliteAdapter {
     }
 }
 
+/// Builds [`SqlitePoolOptions`] with lifecycle defaults from a [`DatabaseConfig`].
+fn pool_options(config: &DatabaseConfig) -> SqlitePoolOptions {
+    let mut opts = SqlitePoolOptions::new()
+        .max_connections(1) // SQLite is a single-writer
+        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
+        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+
+    if let Some(timeout) = config.connection_timeout {
+        opts = opts.acquire_timeout(Duration::from_secs(timeout));
+    }
+
+    opts
+}
+
 /// Builds [`SqliteConnectOptions`] from a [`DatabaseConfig`].
 fn connect_options(config: &DatabaseConfig) -> SqliteConnectOptions {
     let name = config.name.as_deref().unwrap_or_default();
@@ -60,14 +81,64 @@ mod tests {
     use super::*;
     use database_mcp_config::DatabaseBackend;
 
-    #[test]
-    fn try_from_sets_filename() {
-        let config = DatabaseConfig {
+    fn base_config() -> DatabaseConfig {
+        DatabaseConfig {
             backend: DatabaseBackend::Sqlite,
             name: Some("test.db".into()),
             ..DatabaseConfig::default()
+        }
+    }
+
+    #[test]
+    fn pool_options_applies_defaults() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_max_connections(), 1, "SQLite must be single-writer");
+        assert_eq!(opts.get_min_connections(), DatabaseConfig::DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(
+            opts.get_idle_timeout(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        );
+        assert_eq!(
+            opts.get_max_lifetime(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS))
+        );
+    }
+
+    #[test]
+    fn pool_options_applies_connection_timeout() {
+        let config = DatabaseConfig {
+            connection_timeout: Some(7),
+            ..base_config()
         };
-        let opts = connect_options(&config);
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn pool_options_without_connection_timeout_uses_sqlx_default() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn pool_options_ignores_max_pool_size() {
+        let config = DatabaseConfig {
+            max_pool_size: 20,
+            ..base_config()
+        };
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_max_connections(), 1, "SQLite must always be single-writer");
+    }
+
+    #[test]
+    fn try_from_sets_filename() {
+        let opts = connect_options(&base_config());
 
         assert_eq!(opts.get_filename().to_str().expect("valid path"), "test.db");
     }
@@ -75,9 +146,8 @@ mod tests {
     #[test]
     fn try_from_empty_name_defaults() {
         let config = DatabaseConfig {
-            backend: DatabaseBackend::Sqlite,
             name: None,
-            ..DatabaseConfig::default()
+            ..base_config()
         };
         let opts = connect_options(&config);
 

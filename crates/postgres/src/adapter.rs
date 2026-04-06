@@ -1,5 +1,7 @@
 //! `PostgreSQL` adapter definition and connection configuration.
 
+use std::time::Duration;
+
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
@@ -42,11 +44,10 @@ impl PostgresAdapter {
     ///
     /// Returns [`AppError::Connection`] if the connection fails.
     pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = PgPoolOptions::new()
-            .max_connections(config.max_pool_size)
+        let pool = pool_options(config)
             .connect_with(connect_options(config))
             .await
-            .map_err(|e| AppError::Connection(format!("Failed to connect to PostgreSQL: {e}")))?;
+            .map_err(|e| connection_error("PostgreSQL", config, &e))?;
 
         info!(
             "PostgreSQL connection pool initialized (max size: {})",
@@ -109,18 +110,16 @@ impl PostgresAdapter {
         let config = self.config.clone();
         let db_key_owned = db_key.to_owned();
 
+        let label = format!("PostgreSQL database '{db_key}'");
         let pool = self
             .pools
             .try_get_with(db_key_owned, async {
                 let mut cfg = config;
                 cfg.name = Some(db_key.to_owned());
-                PgPoolOptions::new()
-                    .max_connections(cfg.max_pool_size)
+                pool_options(&cfg)
                     .connect_with(connect_options(&cfg))
                     .await
-                    .map_err(|e| {
-                        AppError::Connection(format!("Failed to connect to PostgreSQL database '{db_key}': {e}"))
-                    })
+                    .map_err(|e| connection_error(&label, &cfg, &e))
             })
             .await
             .map_err(|e| match e.as_ref() {
@@ -130,6 +129,21 @@ impl PostgresAdapter {
 
         Ok(pool)
     }
+}
+
+/// Builds [`PgPoolOptions`] with lifecycle defaults from a [`DatabaseConfig`].
+fn pool_options(config: &DatabaseConfig) -> PgPoolOptions {
+    let mut opts = PgPoolOptions::new()
+        .max_connections(config.max_pool_size)
+        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
+        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+
+    if let Some(timeout) = config.connection_timeout {
+        opts = opts.acquire_timeout(Duration::from_secs(timeout));
+    }
+
+    opts
 }
 
 /// Builds [`PgConnectOptions`] from a [`DatabaseConfig`].
@@ -172,6 +186,14 @@ fn connect_options(config: &DatabaseConfig) -> PgConnectOptions {
     opts
 }
 
+/// Formats a connection error with optional timeout hint.
+fn connection_error(label: &str, config: &DatabaseConfig, err: &sqlx::Error) -> AppError {
+    let timeout_hint = config
+        .connection_timeout
+        .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
+    AppError::Connection(format!("Failed to connect to {label}{timeout_hint}: {err}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +209,42 @@ mod tests {
             name: Some("mydb".into()),
             ..DatabaseConfig::default()
         }
+    }
+
+    #[test]
+    fn pool_options_applies_defaults() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_max_connections(), config.max_pool_size);
+        assert_eq!(opts.get_min_connections(), DatabaseConfig::DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(
+            opts.get_idle_timeout(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+        );
+        assert_eq!(
+            opts.get_max_lifetime(),
+            Some(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS))
+        );
+    }
+
+    #[test]
+    fn pool_options_applies_connection_timeout() {
+        let config = DatabaseConfig {
+            connection_timeout: Some(7),
+            ..base_config()
+        };
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn pool_options_without_connection_timeout_uses_sqlx_default() {
+        let config = base_config();
+        let opts = pool_options(&config);
+
+        assert_eq!(opts.get_acquire_timeout(), Duration::from_secs(30));
     }
 
     #[test]

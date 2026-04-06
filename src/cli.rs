@@ -143,6 +143,15 @@ struct Arguments {
     )]
     db_max_pool_size: u32,
 
+    /// Connection timeout in seconds
+    #[arg(
+        long = "db-connection-timeout",
+        env = "DB_CONNECTION_TIMEOUT",
+        global = true,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    db_connection_timeout: Option<u64>,
+
     /// Log level
     #[arg(
         long = "log-level",
@@ -186,6 +195,7 @@ impl From<&Arguments> for DatabaseConfig {
             ssl_verify_cert: arguments.db_ssl_verify_cert,
             read_only: arguments.db_read_only,
             max_pool_size: arguments.db_max_pool_size,
+            connection_timeout: arguments.db_connection_timeout,
         }
     }
 }
@@ -355,6 +365,30 @@ mod tests {
     fn db_max_pool_size_flag() {
         let args = parse(&[BIN, "--db-max-pool-size", "20"]);
         assert_eq!(args.db_max_pool_size, 20);
+    }
+
+    #[test]
+    fn db_connection_timeout_flag() {
+        let args = parse(&[BIN, "--db-connection-timeout", "5"]);
+        assert_eq!(args.db_connection_timeout, Some(5));
+    }
+
+    #[test]
+    fn db_connection_timeout_defaults_to_none() {
+        let args = parse(&[BIN]);
+        assert_eq!(args.db_connection_timeout, None);
+    }
+
+    #[test]
+    fn db_connection_timeout_zero_rejected() {
+        assert!(Arguments::try_parse_from([BIN, "--db-connection-timeout", "0"]).is_err());
+    }
+
+    #[test]
+    fn db_connection_timeout_wired_to_config() {
+        let args = parse(&[BIN, "--db-connection-timeout", "10"]);
+        let config = Config::from(&args);
+        assert_eq!(config.database.connection_timeout, Some(10));
     }
 
     #[test]

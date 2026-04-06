@@ -122,6 +122,9 @@ pub struct DatabaseConfig {
 
     /// Maximum database connection pool size.
     pub max_pool_size: u32,
+
+    /// Connection timeout in seconds (`None` = driver default).
+    pub connection_timeout: Option<u64>,
 }
 
 impl std::fmt::Debug for DatabaseConfig {
@@ -141,6 +144,7 @@ impl std::fmt::Debug for DatabaseConfig {
             .field("ssl_verify_cert", &self.ssl_verify_cert)
             .field("read_only", &self.read_only)
             .field("max_pool_size", &self.max_pool_size)
+            .field("connection_timeout", &self.connection_timeout)
             .finish()
     }
 }
@@ -157,7 +161,13 @@ impl DatabaseConfig {
     /// Default read-only mode.
     pub const DEFAULT_READ_ONLY: bool = true;
     /// Default connection pool size.
-    pub const DEFAULT_MAX_POOL_SIZE: u32 = 10;
+    pub const DEFAULT_MAX_POOL_SIZE: u32 = 5;
+    /// Default idle timeout in seconds (10 minutes).
+    pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 600;
+    /// Default max lifetime in seconds (30 minutes).
+    pub const DEFAULT_MAX_LIFETIME_SECS: u64 = 1800;
+    /// Default minimum connections in pool.
+    pub const DEFAULT_MIN_CONNECTIONS: u32 = 1;
 }
 
 impl Default for DatabaseConfig {
@@ -177,6 +187,7 @@ impl Default for DatabaseConfig {
             ssl_verify_cert: Self::DEFAULT_SSL_VERIFY_CERT,
             read_only: Self::DEFAULT_READ_ONLY,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
+            connection_timeout: None,
         }
     }
 }

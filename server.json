@@ -160,7 +160,12 @@
       "type": "named",
       "name": "--db-max-pool-size",
       "description": "Maximum connection pool size",
-      "default": "10"
+      "default": "5"
+    },
+    {
+      "type": "named",
+      "name": "--db-connection-timeout",
+      "description": "Connection timeout in seconds"
     },
     {
       "type": "named",
@@ -238,7 +243,12 @@
       "name": "DB_MAX_POOL_SIZE",
       "description": "Maximum connection pool size",
       "format": "number",
-      "default": "10"
+      "default": "5"
+    },
+    {
+      "name": "DB_CONNECTION_TIMEOUT",
+      "description": "Connection timeout in seconds",
+      "format": "number"
     },
     {
       "name": "LOG_LEVEL",

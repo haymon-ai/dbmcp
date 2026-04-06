@@ -54,4 +54,4 @@ Database and table names are validated to contain only alphanumeric characters a
 
 ## Disabling Read-Only Mode
 
-Read-only mode can be explicitly disabled if you need write access. Set the `MCP_READ_ONLY` environment variable to `false` or pass the `--read-only false` flag. This makes `write_query` and `create_database` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
+Read-only mode can be explicitly disabled if you need write access. Set the `DB_READ_ONLY` environment variable to `false` or pass the `--db-read-only false` flag. This makes `write_query` and `create_database` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
