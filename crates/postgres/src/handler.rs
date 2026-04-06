@@ -20,12 +20,13 @@ const INSTRUCTIONS: &str = r"## Workflow
 4. Use `read_query` for read-only SQL (SELECT, SHOW, EXPLAIN).
 5. Use `write_query` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
 6. Use `create_database` to create a new database.
+7. Use `drop_database` to drop an existing database.
 
 Tools accept an optional `database_name` parameter to query across databases without reconnecting.
 
 ## Constraints
 
-- The `write_query` and `create_database` tools are hidden when read-only mode is active.
+- The `write_query`, `create_database`, and `drop_database` tools are hidden when read-only mode is active.
 - Multi-statement queries are not supported. Send one statement per request.";
 
 #[rmcp::tool_handler(router = self.build_tool_router())]

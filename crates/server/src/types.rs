@@ -37,3 +37,10 @@ pub struct CreateDatabaseRequest {
     /// Name of the database to create. Must contain only alphanumeric characters and underscores.
     pub database_name: String,
 }
+
+/// Request to drop a database.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct DropDatabaseRequest {
+    /// Name of the database to drop. Must contain only alphanumeric characters and underscores.
+    pub database_name: String,
+}

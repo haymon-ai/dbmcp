@@ -20,8 +20,8 @@ const POOL_CACHE_CAPACITY: u64 = 6;
 #[derive(Clone)]
 pub struct PostgresAdapter {
     pub(crate) config: DatabaseConfig,
-    default_db: String,
-    pools: Cache<String, PgPool>,
+    pub(crate) default_db: String,
+    pub(crate) pools: Cache<String, PgPool>,
 }
 
 impl std::fmt::Debug for PostgresAdapter {

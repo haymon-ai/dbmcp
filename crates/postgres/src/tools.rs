@@ -4,7 +4,9 @@
 //! on [`PostgresAdapter`], eliminating manual [`ToolBase`] and
 //! [`AsyncTool`] implementations.
 
-use database_mcp_server::types::{CreateDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};
+use database_mcp_server::types::{
+    CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -16,7 +18,7 @@ use super::PostgresAdapter;
 
 impl PostgresAdapter {
     /// Names of tools that require write access.
-    const WRITE_TOOL_NAMES: &[&str] = &["write_query", "create_database"];
+    const WRITE_TOOL_NAMES: &[&str] = &["write_query", "create_database", "drop_database"];
 
     /// Builds the tool router, excluding write tools in read-only mode.
     #[must_use]
@@ -129,7 +131,7 @@ impl PostgresAdapter {
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 
-    /// Create a new database. Not supported for `SQLite`.
+    /// Create a new database.
     #[tool(
         name = "create_database",
         annotations(
@@ -144,6 +146,24 @@ impl PostgresAdapter {
         Parameters(request): Parameters<CreateDatabaseRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self.create_database(&request.database_name).await?;
+        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    }
+
+    /// Drop an existing database. Cannot drop the currently connected database.
+    #[tool(
+        name = "drop_database",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn tool_drop_database(
+        &self,
+        Parameters(request): Parameters<DropDatabaseRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.drop_database(&request.database_name).await?;
         Ok(CallToolResult::success(vec![Content::json(result)?]))
     }
 }
