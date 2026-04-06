@@ -14,7 +14,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **6 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`
+- **8 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`, `drop_database`, `drop_table`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -171,6 +171,14 @@ Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only a
 ### create_database
 
 Creates a database if it doesn't exist. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database_name`.
+
+### drop_database
+
+Drops an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database_name`.
+
+### drop_table
+
+Drops a table from a database. If the table has foreign key dependents, the database error is surfaced to the user. On PostgreSQL, a `cascade` parameter is available to force the drop with `CASCADE`. Only available when read-only mode is disabled. Parameters: `database_name`, `table_name`, `cascade` (PostgreSQL only).
 
 ## Security
 

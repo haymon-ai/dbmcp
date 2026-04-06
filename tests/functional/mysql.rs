@@ -10,6 +10,7 @@
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_mysql::MysqlAdapter;
+use database_mcp_mysql::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
 };
@@ -369,4 +370,89 @@ async fn test_query_timeout_disabled_with_zero() {
 
     let response = adapter.tool_read_query(parameters).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
+}
+
+// ---- Drop table tests ----
+
+#[tokio::test]
+async fn test_drop_table_success() {
+    let adapter = adapter(false).await;
+
+    // Create a temporary table
+    let create = Parameters(QueryRequest {
+        query: "CREATE TABLE drop_test_simple (id INT PRIMARY KEY)".into(),
+        database_name: "app".into(),
+    });
+    adapter.tool_write_query(create).await.unwrap();
+
+    // Drop it
+    let drop_params = Parameters(DropTableRequest {
+        database_name: "app".into(),
+        table_name: "drop_test_simple".into(),
+    });
+    let response = adapter.tool_drop_table(drop_params).await.unwrap();
+    let value: Value = response.into_typed().unwrap();
+    assert_eq!(value["status"], "success");
+
+    // Verify it's gone
+    let tables_params = Parameters(ListTablesRequest {
+        database_name: "app".into(),
+    });
+    let response = adapter.tool_list_tables(tables_params).await.unwrap();
+    let tables: Vec<String> = response.into_typed().unwrap();
+    assert!(
+        !tables.iter().any(|t| t == "drop_test_simple"),
+        "Table should not exist after drop"
+    );
+}
+
+#[tokio::test]
+async fn test_drop_table_fk_error() {
+    let adapter = adapter(false).await;
+
+    // Create parent and child tables with FK
+    let create_parent = Parameters(QueryRequest {
+        query: "CREATE TABLE drop_test_parent (id INT PRIMARY KEY) ENGINE=InnoDB".into(),
+        database_name: "app".into(),
+    });
+    adapter.tool_write_query(create_parent).await.unwrap();
+
+    let create_child = Parameters(QueryRequest {
+        query: "CREATE TABLE drop_test_child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES drop_test_parent(id)) ENGINE=InnoDB".into(),
+        database_name: "app".into(),
+    });
+    adapter.tool_write_query(create_child).await.unwrap();
+
+    // Attempt to drop parent — should fail due to FK
+    let drop_params = Parameters(DropTableRequest {
+        database_name: "app".into(),
+        table_name: "drop_test_parent".into(),
+    });
+    let response = adapter.tool_drop_table(drop_params).await;
+    assert!(response.is_err(), "Expected FK constraint error");
+
+    // Clean up
+    let cleanup_child = Parameters(QueryRequest {
+        query: "DROP TABLE drop_test_child".into(),
+        database_name: "app".into(),
+    });
+    adapter.tool_write_query(cleanup_child).await.unwrap();
+
+    let cleanup_parent = Parameters(QueryRequest {
+        query: "DROP TABLE drop_test_parent".into(),
+        database_name: "app".into(),
+    });
+    adapter.tool_write_query(cleanup_parent).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_drop_table_invalid_identifier() {
+    let adapter = adapter(false).await;
+    let drop_params = Parameters(DropTableRequest {
+        database_name: "app".into(),
+        table_name: String::new(),
+    });
+
+    let response = adapter.tool_drop_table(drop_params).await;
+    assert!(response.is_err(), "Expected error for empty table name");
 }

@@ -32,8 +32,10 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 | `read_query` | Yes | Yes | Yes | No |
 | `write_query` | Yes | Yes | Yes | Yes |
 | `create_database` | Yes | Yes | No | Yes |
+| `drop_database` | Yes | Yes | No | Yes |
+| `drop_table` | Yes | Yes | Yes | Yes |
 
-SQLite is file-based with a single database, so `list_databases` and `create_database` are not applicable.
+SQLite is file-based with a single database, so `list_databases`, `create_database`, and `drop_database` are not applicable.
 
 ### `list_databases`
 
@@ -58,6 +60,14 @@ Execute a write SQL query (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DRO
 ### `create_database`
 
 Create a new database. Only available when read-only mode is disabled. Not supported for SQLite.
+
+### `drop_database`
+
+Drop an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not supported for SQLite.
+
+### `drop_table`
+
+Drop a table from a database. If the table has foreign key dependents, the database error is surfaced directly — no silent failures. On PostgreSQL, a `cascade` parameter is available to force the drop using `CASCADE`, which also removes dependent foreign key constraints. Only available when read-only mode is disabled.
 
 ## Transport Modes
 

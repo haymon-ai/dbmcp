@@ -11,7 +11,7 @@
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteAdapter;
-use database_mcp_sqlite::types::{GetTableSchemaRequest, QueryRequest};
+use database_mcp_sqlite::types::{DropTableRequest, GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
@@ -141,4 +141,44 @@ async fn test_query_timeout_disabled_with_none() {
 
     let response = adapter.tool_read_query(parameters).await;
     assert!(response.is_ok(), "Query should succeed without timeout");
+}
+
+// ---- Drop table tests ----
+
+#[tokio::test]
+async fn test_drop_table_success() {
+    let adapter = adapter(false).await;
+
+    // Create a temporary table
+    let create = Parameters(QueryRequest {
+        query: "CREATE TABLE drop_test_simple (id INTEGER PRIMARY KEY)".into(),
+    });
+    adapter.tool_write_query(create).await.unwrap();
+
+    // Drop it
+    let drop_params = Parameters(DropTableRequest {
+        table_name: "drop_test_simple".into(),
+    });
+    let response = adapter.tool_drop_table(drop_params).await.unwrap();
+    let value: Value = response.into_typed().unwrap();
+    assert_eq!(value["status"], "success");
+
+    // Verify it's gone
+    let response = adapter.tool_list_tables().await.unwrap();
+    let tables: Vec<String> = response.into_typed().unwrap();
+    assert!(
+        !tables.iter().any(|t| t == "drop_test_simple"),
+        "Table should not exist after drop"
+    );
+}
+
+#[tokio::test]
+async fn test_drop_table_nonexistent() {
+    let adapter = adapter(false).await;
+    let drop_params = Parameters(DropTableRequest {
+        table_name: "nonexistent_table_xyz".into(),
+    });
+
+    let response = adapter.tool_drop_table(drop_params).await;
+    assert!(response.is_err(), "Expected error for nonexistent table");
 }

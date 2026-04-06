@@ -1,8 +1,9 @@
 //! `SQLite` database query operations.
 
 use database_mcp_server::AppError;
+use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::sqlite::SqliteRow;
 use sqlx_to_json::RowExt;
 
@@ -23,6 +24,34 @@ impl SqliteAdapter {
         )
         .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Drops a table from the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
+    /// [`AppError::InvalidIdentifier`] for invalid names,
+    /// or [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn drop_table(&self, table: &str) -> Result<Value, AppError> {
+        if self.config.read_only {
+            return Err(AppError::ReadOnlyViolation);
+        }
+        validate_identifier(table)?;
+
+        let drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
+        execute_with_timeout(
+            self.config.query_timeout,
+            &drop_sql,
+            sqlx::query(&drop_sql).execute(&self.pool),
+        )
+        .await?;
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Table '{table}' dropped successfully."),
+            "table_name": table,
+        }))
     }
 
     /// Executes a SQL query and returns rows as JSON.

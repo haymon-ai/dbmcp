@@ -21,3 +21,10 @@ pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
 }
+
+/// Request to drop a table.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct DropTableRequest {
+    /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
+    pub table_name: String,
+}
