@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use database_mcp_config::DatabaseConfig;
+use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_server::AppError;
 use sqlx::MySqlPool;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlSslMode};
@@ -55,6 +55,23 @@ impl MysqlAdapter {
         }
 
         Ok(backend)
+    }
+
+    /// Creates a `MySQL` adapter from an existing connection pool.
+    ///
+    /// Useful for test scenarios where the pool is managed externally
+    /// (e.g. by `#[sqlx::test]`). Uses default configuration with only
+    /// the `read_only` flag applied.
+    #[must_use]
+    pub fn from_pool(pool: MySqlPool, read_only: bool) -> Self {
+        Self {
+            config: DatabaseConfig {
+                backend: DatabaseBackend::Mysql,
+                read_only,
+                ..DatabaseConfig::default()
+            },
+            pool,
+        }
     }
 
     /// Wraps `name` in backticks for safe use in `MySQL` SQL statements.
@@ -171,7 +188,6 @@ fn connect_options(config: &DatabaseConfig) -> MySqlConnectOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

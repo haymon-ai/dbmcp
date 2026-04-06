@@ -202,10 +202,18 @@ run_entry() {
             OVERALL_EXIT=1; return
         fi
 
+        # Build DATABASE_URL for #[sqlx::test] macro (approval tests)
+        local database_url
+        case "$db_type" in
+            mysql)    database_url="mysql://root@127.0.0.1:${host_port}/mysql" ;;
+            postgres) database_url="postgres://postgres@127.0.0.1:${host_port}/postgres" ;;
+        esac
+
         echo "  Running cargo test..."
         for bin in $test_bins; do
             test_output=$(
                 DB_HOST=127.0.0.1 DB_PORT="$host_port" \
+                DATABASE_URL="$database_url" \
                 cargo test --test "$bin" -- --test-threads=1 2>&1
             ) || test_exit=$?
             echo "$test_output" | grep -E "^(test |test result:)" || true

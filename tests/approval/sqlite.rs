@@ -4,23 +4,12 @@
 
 mod common;
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteAdapter;
+use sqlx::SqlitePool;
 
-/// Creates a `SQLite` adapter from the `DB_PATH` environment variable.
-async fn adapter(read_only: bool) -> SqliteAdapter {
-    let config = DatabaseConfig {
-        backend: DatabaseBackend::Sqlite,
-        name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
-        read_only,
-        ..DatabaseConfig::default()
-    };
-    SqliteAdapter::new(&config).await.expect("SQLite open failed")
-}
-
-#[tokio::test]
-async fn test_server_info() {
-    common::run_with_client(adapter(false).await, |peer| async move {
+#[sqlx::test]
+async fn test_server_info(pool: SqlitePool) {
+    common::run_with_client(SqliteAdapter::from_pool(pool, false), |peer| async move {
         let info = peer.peer_info().expect("missing peer_info");
         insta::assert_json_snapshot!("server_info", info, {
             ".serverInfo.version" => "[version]"
@@ -29,18 +18,18 @@ async fn test_server_info() {
     .await;
 }
 
-#[tokio::test]
-async fn test_list_tools() {
-    common::run_with_client(adapter(false).await, |peer| async move {
+#[sqlx::test]
+async fn test_list_tools(pool: SqlitePool) {
+    common::run_with_client(SqliteAdapter::from_pool(pool, false), |peer| async move {
         let tools = peer.list_all_tools().await.expect("list_all_tools failed");
         insta::assert_json_snapshot!("list_tools", tools);
     })
     .await;
 }
 
-#[tokio::test]
-async fn test_list_tools_read_only() {
-    common::run_with_client(adapter(true).await, |peer| async move {
+#[sqlx::test]
+async fn test_list_tools_read_only(pool: SqlitePool) {
+    common::run_with_client(SqliteAdapter::from_pool(pool, true), |peer| async move {
         let tools = peer.list_all_tools().await.expect("list_all_tools failed");
         insta::assert_json_snapshot!("list_tools_read_only", tools);
     })

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use database_mcp_config::DatabaseConfig;
+use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
 use moka::future::Cache;
@@ -77,6 +77,37 @@ impl PostgresAdapter {
             default_db,
             pools,
         })
+    }
+
+    /// Creates a `PostgreSQL` adapter from an existing connection pool.
+    ///
+    /// Useful for test scenarios where the pool is managed externally
+    /// (e.g. by `#[sqlx::test]`). Uses default configuration with only
+    /// the `read_only` flag applied. The provided pool is cached as
+    /// the default database pool.
+    pub async fn from_pool(pool: PgPool, read_only: bool) -> Self {
+        let default_db = "postgres".to_owned();
+
+        let pools = Cache::builder()
+            .max_capacity(POOL_CACHE_CAPACITY)
+            .eviction_listener(|_key, pool: PgPool, _cause| {
+                tokio::spawn(async move {
+                    pool.close().await;
+                });
+            })
+            .build();
+
+        pools.insert(default_db.clone(), pool).await;
+
+        Self {
+            config: DatabaseConfig {
+                backend: DatabaseBackend::Postgres,
+                read_only,
+                ..DatabaseConfig::default()
+            },
+            default_db,
+            pools,
+        }
     }
 
     /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
@@ -197,7 +228,6 @@ fn connection_error(label: &str, config: &DatabaseConfig, err: &sqlx::Error) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

@@ -501,6 +501,7 @@ dependencies = [
  "rmcp",
  "serde_json",
  "sqlparser",
+ "sqlx",
  "thiserror",
  "tokio",
  "tokio-util",

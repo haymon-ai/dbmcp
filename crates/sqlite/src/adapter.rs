@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use database_mcp_config::DatabaseConfig;
+use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_server::AppError;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -49,6 +49,23 @@ impl SqliteAdapter {
         })
     }
 
+    /// Creates a `SQLite` adapter from an existing connection pool.
+    ///
+    /// Useful for test scenarios where the pool is managed externally
+    /// (e.g. by `#[sqlx::test]`). Uses default configuration with only
+    /// the `read_only` flag applied.
+    #[must_use]
+    pub fn from_pool(pool: SqlitePool, read_only: bool) -> Self {
+        Self {
+            config: DatabaseConfig {
+                backend: DatabaseBackend::Sqlite,
+                read_only,
+                ..DatabaseConfig::default()
+            },
+            pool,
+        }
+    }
+
     /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
         database_mcp_sql::identifier::quote_identifier(name, '"')
@@ -79,7 +96,6 @@ fn connect_options(config: &DatabaseConfig) -> SqliteConnectOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {
