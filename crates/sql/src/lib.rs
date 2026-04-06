@@ -4,4 +4,5 @@
 //! identifiers, and [`validation`] for read-only query enforcement.
 
 pub mod identifier;
+pub mod timeout;
 pub mod validation;

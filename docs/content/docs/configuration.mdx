@@ -64,6 +64,7 @@ When `--db-ssl` is enabled, the server validates that any provided certificate p
 | `--db-read-only` | `DB_READ_ONLY` | `true` | Enable read-only mode |
 | `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
 | `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
+| `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds (`0` = disabled) |
 | `--log-level` | `LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
 
 > **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`write_query`, `create_database`) are hidden from the AI assistant. Only read tools are available, and `read_query` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `--db-read-only=false` or `DB_READ_ONLY=false` to enable write tools.

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::postgres::PgRow;
@@ -22,17 +23,17 @@ impl PostgresAdapter {
         let pool = self.get_pool(db).await?;
 
         // 1. Get basic schema
-        let rows: Vec<PgRow> = sqlx::query(
-            r"SELECT column_name, data_type, is_nullable, column_default,
+        let schema_sql = r"SELECT column_name, data_type, is_nullable, column_default,
                       character_maximum_length
                FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = $1
-               ORDER BY ordinal_position",
+               ORDER BY ordinal_position";
+        let rows: Vec<PgRow> = execute_with_timeout(
+            self.config.query_timeout,
+            schema_sql,
+            sqlx::query(schema_sql).bind(table).fetch_all(&pool),
         )
-        .bind(table)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        .await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.to_string()));
@@ -58,8 +59,7 @@ impl PostgresAdapter {
         }
 
         // 2. Get FK relationships
-        let fk_rows: Vec<PgRow> = sqlx::query(
-            r"SELECT
+        let fk_sql = r"SELECT
                 kcu.column_name,
                 tc.constraint_name,
                 ccu.table_name AS referenced_table,
@@ -78,12 +78,13 @@ impl PostgresAdapter {
                 AND rc.constraint_schema = tc.table_schema
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_name = $1
-                AND tc.table_schema = 'public'",
+                AND tc.table_schema = 'public'";
+        let fk_rows: Vec<PgRow> = execute_with_timeout(
+            self.config.query_timeout,
+            fk_sql,
+            sqlx::query(fk_sql).bind(table).fetch_all(&pool),
         )
-        .bind(table)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        .await?;
 
         for fk_row in &fk_rows {
             let col_name: String = fk_row.try_get("column_name").unwrap_or_default();

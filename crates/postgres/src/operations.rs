@@ -2,6 +2,7 @@
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx_to_json::RowExt;
@@ -19,11 +20,9 @@ impl PostgresAdapter {
     /// Returns [`AppError`] if the query fails.
     pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
         let pool = self.get_pool(None).await?;
+        let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
         let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
-                .fetch_all(&pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -35,11 +34,9 @@ impl PostgresAdapter {
     pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
         let db = if database.is_empty() { None } else { Some(database) };
         let pool = self.get_pool(db).await?;
+        let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
         let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
-                .fetch_all(&pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -50,10 +47,8 @@ impl PostgresAdapter {
     /// Returns [`AppError`] if the query fails.
     pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         let pool = self.get_pool(database).await?;
-        let rows: Vec<PgRow> = sqlx::query(sql)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<PgRow> =
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&pool)).await?;
         Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 
@@ -71,16 +66,20 @@ impl PostgresAdapter {
         let pool = self.get_pool(None).await?;
 
         // PostgreSQL CREATE DATABASE can't use parameterized queries
-        sqlx::query(&format!("CREATE DATABASE {}", Self::quote_identifier(name)))
-            .execute(&pool)
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("already exists") {
-                    return AppError::Query(format!("Database '{name}' already exists."));
-                }
-                AppError::Query(msg)
-            })?;
+        let create_sql = format!("CREATE DATABASE {}", Self::quote_identifier(name));
+        execute_with_timeout(
+            self.config.query_timeout,
+            &create_sql,
+            sqlx::query(&create_sql).execute(&pool),
+        )
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("already exists") {
+                return AppError::Query(format!("Database '{name}' already exists."));
+            }
+            e
+        })?;
 
         Ok(json!({
             "status": "success",

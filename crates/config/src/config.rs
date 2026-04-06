@@ -125,6 +125,12 @@ pub struct DatabaseConfig {
 
     /// Connection timeout in seconds (`None` = driver default).
     pub connection_timeout: Option<u64>,
+
+    /// Query execution timeout in seconds.
+    ///
+    /// `None` means "use default" (30 s when constructed via CLI).
+    /// `Some(0)` disables the timeout entirely.
+    pub query_timeout: Option<u64>,
 }
 
 impl std::fmt::Debug for DatabaseConfig {
@@ -145,6 +151,7 @@ impl std::fmt::Debug for DatabaseConfig {
             .field("read_only", &self.read_only)
             .field("max_pool_size", &self.max_pool_size)
             .field("connection_timeout", &self.connection_timeout)
+            .field("query_timeout", &self.query_timeout)
             .finish()
     }
 }
@@ -168,6 +175,8 @@ impl DatabaseConfig {
     pub const DEFAULT_MAX_LIFETIME_SECS: u64 = 1800;
     /// Default minimum connections in pool.
     pub const DEFAULT_MIN_CONNECTIONS: u32 = 1;
+    /// Default query execution timeout in seconds.
+    pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
 }
 
 impl Default for DatabaseConfig {
@@ -188,6 +197,7 @@ impl Default for DatabaseConfig {
             read_only: Self::DEFAULT_READ_ONLY,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
+            query_timeout: None,
         }
     }
 }
@@ -433,5 +443,27 @@ mod tests {
     fn mariadb_backend_is_valid() {
         let config = base_config(DatabaseBackend::Mariadb);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn query_timeout_default_is_none() {
+        let config = DatabaseConfig::default();
+        assert!(config.query_timeout.is_none());
+    }
+
+    #[test]
+    fn debug_includes_query_timeout() {
+        let config = Config {
+            database: DatabaseConfig {
+                query_timeout: Some(30),
+                ..db_config(DatabaseBackend::Mysql)
+            },
+            ..base_config(DatabaseBackend::Mysql)
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            debug.contains("query_timeout: Some(30)"),
+            "expected query_timeout in debug output: {debug}"
+        );
     }
 }

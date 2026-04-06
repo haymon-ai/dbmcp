@@ -31,6 +31,15 @@ pub enum AppError {
     #[error("Invalid identifier '{0}': must not be empty, whitespace-only, or contain control characters")]
     InvalidIdentifier(String),
 
+    /// Query exceeded the configured timeout.
+    #[error("Query timed out after {elapsed_secs:.1}s: {sql}")]
+    QueryTimeout {
+        /// Wall-clock seconds elapsed before cancellation.
+        elapsed_secs: f64,
+        /// The SQL statement that was cancelled.
+        sql: String,
+    },
+
     /// Database query execution failed.
     #[error("Database error: {0}")]
     Query(String),
@@ -53,5 +62,24 @@ impl From<serde_json::Error> for AppError {
 impl From<AppError> for rmcp::model::ErrorData {
     fn from(e: AppError) -> Self {
         Self::internal_error(e.to_string(), None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_timeout_display_includes_elapsed_and_sql() {
+        let err = AppError::QueryTimeout {
+            elapsed_secs: 30.123_456,
+            sql: "SELECT * FROM big_table".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("30.1"), "expected elapsed in message: {msg}");
+        assert!(
+            msg.contains("SELECT * FROM big_table"),
+            "expected SQL in message: {msg}"
+        );
     }
 }

@@ -15,13 +15,17 @@ use database_mcp_sqlite::types::{GetTableSchemaRequest, QueryRequest};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
-async fn adapter(read_only: bool) -> SqliteAdapter {
-    let config = DatabaseConfig {
+fn base_db_config(read_only: bool) -> DatabaseConfig {
+    DatabaseConfig {
         backend: DatabaseBackend::Sqlite,
         name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
         read_only,
         ..DatabaseConfig::default()
-    };
+    }
+}
+
+async fn adapter(read_only: bool) -> SqliteAdapter {
+    let config = base_db_config(read_only);
     SqliteAdapter::new(&config).await.expect("SQLite open failed")
 }
 
@@ -105,4 +109,36 @@ async fn test_blocks_writes_in_read_only_mode() {
     let response = adapter.tool_read_query(parameters).await;
 
     assert!(response.is_err(), "Expected error for write in read-only mode");
+}
+
+// ---- Query timeout tests ----
+
+#[tokio::test]
+async fn test_query_timeout_fast_query_succeeds() {
+    let config = DatabaseConfig {
+        query_timeout: Some(5),
+        ..base_db_config(false)
+    };
+    let adapter = SqliteAdapter::new(&config).await.expect("SQLite open failed");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT 1 AS value".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await;
+    assert!(response.is_ok(), "Fast query should succeed within timeout");
+}
+
+#[tokio::test]
+async fn test_query_timeout_disabled_with_none() {
+    let config = DatabaseConfig {
+        query_timeout: None,
+        ..base_db_config(false)
+    };
+    let adapter = SqliteAdapter::new(&config).await.expect("SQLite open failed");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT * FROM users ORDER BY id".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await;
+    assert!(response.is_ok(), "Query should succeed without timeout");
 }

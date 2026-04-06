@@ -169,6 +169,12 @@
     },
     {
       "type": "named",
+      "name": "--db-query-timeout",
+      "description": "Query execution timeout in seconds (0 = disabled)",
+      "default": "30"
+    },
+    {
+      "type": "named",
       "name": "--log-level",
       "description": "Log level: error, warn, info, debug, trace",
       "default": "info"
@@ -249,6 +255,12 @@
       "name": "DB_CONNECTION_TIMEOUT",
       "description": "Connection timeout in seconds",
       "format": "number"
+    },
+    {
+      "name": "DB_QUERY_TIMEOUT",
+      "description": "Query execution timeout in seconds (0 = disabled)",
+      "format": "number",
+      "default": "30"
     },
     {
       "name": "LOG_LEVEL",

@@ -13,8 +13,8 @@ use database_mcp_server::types::{CreateDatabaseRequest, GetTableSchemaRequest, L
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
-async fn adapter(read_only: bool) -> PostgresAdapter {
-    let config = DatabaseConfig {
+fn base_db_config(read_only: bool) -> DatabaseConfig {
+    DatabaseConfig {
         backend: DatabaseBackend::Postgres,
         host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port: std::env::var("DB_PORT")
@@ -26,7 +26,11 @@ async fn adapter(read_only: bool) -> PostgresAdapter {
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
-    };
+    }
+}
+
+async fn adapter(read_only: bool) -> PostgresAdapter {
+    let config = base_db_config(read_only);
     PostgresAdapter::new(&config)
         .await
         .expect("PostgreSQL connection failed")
@@ -260,4 +264,55 @@ async fn test_uses_default_pool_for_matching_database() {
         tables.iter().any(|t| t == "users"),
         "Expected 'users' when explicitly passing default db: {tables:?}"
     );
+}
+
+// ---- Query timeout tests ----
+
+#[tokio::test]
+async fn test_query_timeout_cancels_slow_query() {
+    let config = DatabaseConfig {
+        query_timeout: Some(2),
+        ..base_db_config(false)
+    };
+    let adapter = PostgresAdapter::new(&config)
+        .await
+        .expect("PostgreSQL connection failed");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT pg_sleep(30)".into(),
+        database_name: "app".into(),
+    });
+
+    let start = std::time::Instant::now();
+    let response = adapter.tool_read_query(parameters).await;
+    let elapsed = start.elapsed();
+
+    assert!(response.is_err(), "Expected timeout error");
+    let err_msg = format!("{:?}", response.unwrap_err());
+    assert!(
+        err_msg.contains("timed out"),
+        "Expected timeout message, got: {err_msg}"
+    );
+    assert!(
+        elapsed.as_secs() < 10,
+        "Timeout should fire in ~2s, not {:.1}s",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[tokio::test]
+async fn test_query_timeout_disabled_with_none() {
+    let config = DatabaseConfig {
+        query_timeout: None,
+        ..base_db_config(false)
+    };
+    let adapter = PostgresAdapter::new(&config)
+        .await
+        .expect("PostgreSQL connection failed");
+    let parameters = Parameters(QueryRequest {
+        query: "SELECT 1 AS value".into(),
+        database_name: "app".into(),
+    });
+
+    let response = adapter.tool_read_query(parameters).await;
+    assert!(response.is_ok(), "Fast query should succeed without timeout");
 }

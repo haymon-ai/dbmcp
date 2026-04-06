@@ -1,6 +1,7 @@
 //! `SQLite` database query operations.
 
 use database_mcp_server::AppError;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx_to_json::RowExt;
@@ -14,12 +15,13 @@ impl SqliteAdapter {
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
     pub(crate) async fn list_tables(&self) -> Result<Vec<String>, AppError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
+        let rows: Vec<(String,)> = execute_with_timeout(
+            self.config.query_timeout,
+            sql,
+            sqlx::query_as(sql).fetch_all(&self.pool),
         )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -29,10 +31,8 @@ impl SqliteAdapter {
     ///
     /// Returns [`AppError`] if the query fails.
     pub(crate) async fn execute_query(&self, sql: &str) -> Result<Value, AppError> {
-        let rows: Vec<SqliteRow> = sqlx::query(sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let rows: Vec<SqliteRow> =
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&self.pool)).await?;
         Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 }

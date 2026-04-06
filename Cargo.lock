@@ -569,6 +569,7 @@ dependencies = [
  "database-mcp-server",
  "sqlparser",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

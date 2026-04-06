@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -20,10 +21,13 @@ impl SqliteAdapter {
         validate_identifier(table)?;
 
         // 1. Get basic schema
-        let rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info({})", Self::quote_identifier(table)))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let pragma_sql = format!("PRAGMA table_info({})", Self::quote_identifier(table));
+        let rows: Vec<SqliteRow> = execute_with_timeout(
+            self.config.query_timeout,
+            &pragma_sql,
+            sqlx::query(&pragma_sql).fetch_all(&self.pool),
+        )
+        .await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.to_string()));
@@ -50,11 +54,13 @@ impl SqliteAdapter {
         }
 
         // 2. Get FK info via PRAGMA
-        let fk_rows: Vec<SqliteRow> =
-            sqlx::query(&format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table)))
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
+        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table));
+        let fk_rows: Vec<SqliteRow> = execute_with_timeout(
+            self.config.query_timeout,
+            &fk_pragma_sql,
+            sqlx::query(&fk_pragma_sql).fetch_all(&self.pool),
+        )
+        .await?;
 
         for fk_row in &fk_rows {
             let from_col: String = fk_row.try_get("from").unwrap_or_default();

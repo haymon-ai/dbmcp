@@ -5,6 +5,7 @@
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
 use sqlx::Executor;
 use sqlx::mysql::MySqlRow;
@@ -19,24 +20,30 @@ impl MysqlAdapter {
     /// statements, because `MySQL` 9+ doesn't support SHOW commands as prepared
     /// statements, and the text protocol returns all values as strings.
     pub(crate) async fn query_to_json(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
-        // Acquire a single connection so USE and the query run on the same session
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| AppError::Connection(e.to_string()))?;
-
-        // Switch database if needed
+        // Validate before entering the timeout scope so validation errors
+        // are not confused with timeouts.
         if let Some(db) = database {
             validate_identifier(db)?;
-            let use_sql = format!("USE {}", Self::quote_identifier(db));
-            conn.execute(use_sql.as_str())
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
         }
 
-        let rows: Vec<MySqlRow> = conn.fetch_all(sql).await.map_err(|e| AppError::Query(e.to_string()))?;
-        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+        let pool = self.pool.clone();
+        let db = database.map(String::from);
+        let sql_owned = sql.to_string();
+
+        // The timeout wraps the entire acquire → USE → fetch sequence
+        // because from the caller's perspective, this is one operation.
+        execute_with_timeout(self.config.query_timeout, sql, async move {
+            let mut conn = pool.acquire().await?;
+
+            if let Some(db) = &db {
+                let use_sql = format!("USE {}", Self::quote_identifier(db));
+                conn.execute(use_sql.as_str()).await?;
+            }
+
+            let rows: Vec<MySqlRow> = conn.fetch_all(sql_owned.as_str()).await?;
+            Ok::<_, sqlx::Error>(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+        })
+        .await
     }
 
     /// Lists all accessible databases.
@@ -98,12 +105,13 @@ impl MysqlAdapter {
         validate_identifier(name)?;
 
         // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
-        let exists: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?")
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
+        let check_sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?";
+        let exists: Option<Vec<u8>> = execute_with_timeout(
+            self.config.query_timeout,
+            check_sql,
+            sqlx::query_scalar(check_sql).bind(name).fetch_optional(&self.pool),
+        )
+        .await?;
 
         if exists.is_some() {
             return Ok(json!({
@@ -113,13 +121,13 @@ impl MysqlAdapter {
             }));
         }
 
-        sqlx::query(&format!(
-            "CREATE DATABASE IF NOT EXISTS {}",
-            Self::quote_identifier(name)
-        ))
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Query(e.to_string()))?;
+        let create_sql = format!("CREATE DATABASE IF NOT EXISTS {}", Self::quote_identifier(name));
+        execute_with_timeout(
+            self.config.query_timeout,
+            &create_sql,
+            sqlx::query(&create_sql).execute(&self.pool),
+        )
+        .await?;
 
         Ok(json!({
             "status": "success",

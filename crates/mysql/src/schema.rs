@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::mysql::MySqlRow;
@@ -72,12 +73,12 @@ impl MysqlAdapter {
             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
         ";
 
-        let fk_rows: Vec<MySqlRow> = sqlx::query(fk_sql)
-            .bind(database)
-            .bind(table)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))?;
+        let fk_rows: Vec<MySqlRow> = execute_with_timeout(
+            self.config.query_timeout,
+            fk_sql,
+            sqlx::query(fk_sql).bind(database).bind(table).fetch_all(&self.pool),
+        )
+        .await?;
 
         for fk_row in &fk_rows {
             let col_name: Option<String> = fk_row.try_get("column_name").ok();

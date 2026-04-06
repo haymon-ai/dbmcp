@@ -152,6 +152,16 @@ struct Arguments {
     )]
     db_connection_timeout: Option<u64>,
 
+    /// Query execution timeout in seconds (0 = disabled)
+    #[arg(
+        long = "db-query-timeout",
+        env = "DB_QUERY_TIMEOUT",
+        default_value_t = DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS,
+        global = true,
+        value_parser = clap::value_parser!(u64)
+    )]
+    db_query_timeout: u64,
+
     /// Log level
     #[arg(
         long = "log-level",
@@ -196,6 +206,11 @@ impl From<&Arguments> for DatabaseConfig {
             read_only: arguments.db_read_only,
             max_pool_size: arguments.db_max_pool_size,
             connection_timeout: arguments.db_connection_timeout,
+            query_timeout: if arguments.db_query_timeout == 0 {
+                None
+            } else {
+                Some(arguments.db_query_timeout)
+            },
         }
     }
 }
