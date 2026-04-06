@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.haymon/database",
   "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "websiteUrl": "https://database.haymon.ai",
   "repository": {
     "url": "https://github.com/haymon-ai/database",
@@ -11,7 +11,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/database:0.5.1",
+      "identifier": "ghcr.io/haymon-ai/database:0.5.2",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
@@ -26,7 +26,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/database:0.5.1",
+      "identifier": "ghcr.io/haymon-ai/database:0.5.2",
       "runtimeHint": "docker",
       "transport": {
         "type": "streamable-http",

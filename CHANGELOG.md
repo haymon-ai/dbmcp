@@ -2,6 +2,18 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.5.2](https://github.com/haymon-ai/database-mcp/compare/3c220fc3609b344e1c371fba68a27b6bbd0401a6..v0.5.2) - 2026-04-06
+#### Features
+- extend server info with full Implementation metadata (#66) - ([df4b47f](https://github.com/haymon-ai/database-mcp/commit/df4b47fa19fd537f1971173245709d25b1949935)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- migrate functional tests to MCP tool layer (#67) (#67) - ([5c75d8f](https://github.com/haymon-ai/database-mcp/commit/5c75d8f8164acabbd536c38ddd78ca309010e661)) - [@athopen](https://github.com/athopen)
+- replace schemars description attributes with doc comments (#64) - ([398b9ae](https://github.com/haymon-ai/database-mcp/commit/398b9aeccbaadecf4cfd8224e5561d79b1fcd437)) - [@athopen](https://github.com/athopen)
+- introduce SQLite-local request types without database_name (#63) - ([c7b1f2a](https://github.com/haymon-ai/database-mcp/commit/c7b1f2acbb7663e2f9ea88db6e8f4f10a7babd8b)) - [@athopen](https://github.com/athopen)
+- restructure crate architecture and use rmcp tool macros (#62) - ([beb2ce9](https://github.com/haymon-ai/database-mcp/commit/beb2ce9e4b942c3ac57a9d7cf95870ec1c01e551)) - [@athopen](https://github.com/athopen)
+- modularize binary crate into focused modules (#61) - ([f5b0f0f](https://github.com/haymon-ai/database-mcp/commit/f5b0f0fd5d8e50898787aebf18c728bc2811711f)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.5.1](https://github.com/haymon-ai/database-mcp/compare/9c5b55a15ab4dc0c17a45fdfbd21ac886334061b..v0.5.1) - 2026-04-01
 #### Refactoring
 - add database-mcp- prefix to all workspace crate names (#52) - ([9c5b55a](https://github.com/haymon-ai/database-mcp/commit/9c5b55a15ab4dc0c17a45fdfbd21ac886334061b)) - [@athopen](https://github.com/athopen)
