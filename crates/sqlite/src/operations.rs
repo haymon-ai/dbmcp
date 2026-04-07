@@ -1,6 +1,7 @@
 //! `SQLite` database query operations.
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::ListTablesResponse;
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
@@ -15,7 +16,7 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub(crate) async fn list_tables(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
         let rows: Vec<(String,)> = execute_with_timeout(
             self.config.query_timeout,
@@ -23,7 +24,9 @@ impl SqliteAdapter {
             sqlx::query_as(sql).fetch_all(&self.pool),
         )
         .await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        Ok(ListTablesResponse {
+            tables: rows.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     /// Drops a table from the database.

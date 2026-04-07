@@ -49,8 +49,7 @@ impl PostgresAdapter {
         )
     )]
     pub async fn tool_list_databases(&self) -> Result<Json<ListDatabasesResponse>, ErrorData> {
-        let databases = self.list_databases().await?;
-        Ok(Json(ListDatabasesResponse { databases }))
+        Ok(Json(self.list_databases().await?))
     }
 
     /// List all tables in a specific database.
@@ -68,8 +67,7 @@ impl PostgresAdapter {
         &self,
         Parameters(request): Parameters<ListTablesRequest>,
     ) -> Result<Json<ListTablesResponse>, ErrorData> {
-        let tables = self.list_tables(&request.database_name).await?;
-        Ok(Json(ListTablesResponse { tables }))
+        Ok(Json(self.list_tables(&request).await?))
     }
 
     /// Get column definitions (type, nullable, key, default) and foreign key

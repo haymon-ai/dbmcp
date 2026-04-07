@@ -4,6 +4,7 @@
 //! creating databases, dropping databases, and explaining queries.
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::{ListDatabasesResponse, ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
@@ -22,12 +23,14 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
         let pool = self.get_pool(None).await?;
         let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
         let rows: Vec<(String,)> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        Ok(ListDatabasesResponse {
+            databases: rows.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     /// Lists all tables in a database.
@@ -35,13 +38,15 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
-        let db = if database.is_empty() { None } else { Some(database) };
+    pub(crate) async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
+        let db = if request.database_name.is_empty() { None } else { Some(request.database_name.as_str()) };
         let pool = self.get_pool(db).await?;
         let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
         let rows: Vec<(String,)> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        Ok(ListTablesResponse {
+            tables: rows.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     /// Executes a SQL query and returns rows as JSON.

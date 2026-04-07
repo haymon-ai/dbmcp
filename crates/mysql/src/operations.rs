@@ -4,6 +4,7 @@
 //! creating databases, dropping databases, and explaining queries.
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::{ListDatabasesResponse, ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
@@ -52,7 +53,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
         let results = self
             .query_to_json(
                 "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
@@ -60,10 +61,12 @@ impl MysqlAdapter {
             )
             .await?;
         let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
-        Ok(rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-            .collect())
+        Ok(ListDatabasesResponse {
+            databases: rows
+                .iter()
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
+                .collect(),
+        })
     }
 
     /// Lists all tables in a database.
@@ -71,18 +74,20 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
-        validate_identifier(database)?;
+    pub(crate) async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
+        validate_identifier(&request.database_name)?;
         let sql = format!(
             "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
-            Self::quote_string(database)
+            Self::quote_string(&request.database_name)
         );
         let results = self.query_to_json(&sql, None).await?;
         let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
-        Ok(rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-            .collect())
+        Ok(ListTablesResponse {
+            tables: rows
+                .iter()
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
+                .collect(),
+        })
     }
 
     /// Executes a SQL query and returns rows as JSON.

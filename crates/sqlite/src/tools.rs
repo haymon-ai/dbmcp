@@ -45,8 +45,7 @@ impl SqliteAdapter {
         )
     )]
     pub async fn tool_list_tables(&self) -> Result<Json<ListTablesResponse>, ErrorData> {
-        let tables = self.list_tables().await?;
-        Ok(Json(ListTablesResponse { tables }))
+        Ok(Json(self.list_tables().await?))
     }
 
     /// Get column definitions (type, nullable, key, default) and foreign key
