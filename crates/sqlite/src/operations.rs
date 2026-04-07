@@ -19,13 +19,10 @@ impl SqliteAdapter {
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
     pub(crate) async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
+        let pool = self.pool.clone();
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
-        let rows: Vec<(String,)> = execute_with_timeout(
-            self.config.query_timeout,
-            sql,
-            sqlx::query_as(sql).fetch_all(&self.pool),
-        )
-        .await?;
+        let rows: Vec<(String,)> =
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
         Ok(ListTablesResponse {
             tables: rows.into_iter().map(|r| r.0).collect(),
         })
@@ -45,11 +42,12 @@ impl SqliteAdapter {
         let table = &request.table_name;
         validate_identifier(table)?;
 
+        let pool = self.pool.clone();
         let drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
         execute_with_timeout(
             self.config.query_timeout,
             &drop_sql,
-            sqlx::query(&drop_sql).execute(&self.pool),
+            sqlx::query(&drop_sql).execute(&pool),
         )
         .await?;
 
@@ -67,11 +65,12 @@ impl SqliteAdapter {
     ///
     /// Returns [`AppError::Query`] if the backend reports an error.
     pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
+        let pool = self.pool.clone();
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", request.query);
         let rows: Vec<SqliteRow> = execute_with_timeout(
             self.config.query_timeout,
             &explain_sql,
-            sqlx::query(&explain_sql).fetch_all(&self.pool),
+            sqlx::query(&explain_sql).fetch_all(&pool),
         )
         .await?;
         Ok(QueryResponse {
@@ -81,8 +80,9 @@ impl SqliteAdapter {
 
     /// Executes a SQL query and returns rows as JSON.
     async fn execute_query(&self, sql: &str) -> Result<Value, AppError> {
+        let pool = self.pool.clone();
         let rows: Vec<SqliteRow> =
-            execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&self.pool)).await?;
+            execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&pool)).await?;
         Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
     }
 

@@ -33,16 +33,14 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
     }
 }
 
-async fn adapter(read_only: bool) -> PostgresAdapter {
+fn adapter(read_only: bool) -> PostgresAdapter {
     let config = base_db_config(read_only);
     PostgresAdapter::new(&config)
-        .await
-        .expect("PostgreSQL connection failed")
 }
 
 #[tokio::test]
 async fn test_lists_databases() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     let response = adapter.tool_list_databases().await.unwrap();
     let dbs = response.0.databases;
@@ -52,7 +50,7 @@ async fn test_lists_databases() {
 
 #[tokio::test]
 async fn test_lists_tables() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(ListTablesRequest {
         database_name: "app".into(),
     });
@@ -70,7 +68,7 @@ async fn test_lists_tables() {
 
 #[tokio::test]
 async fn test_gets_table_schema() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(GetTableSchemaRequest {
         database_name: "app".into(),
         table_name: "users".into(),
@@ -88,7 +86,7 @@ async fn test_gets_table_schema() {
 
 #[tokio::test]
 async fn test_gets_table_schema_with_relations() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(GetTableSchemaRequest {
         database_name: "app".into(),
         table_name: "posts".into(),
@@ -112,7 +110,7 @@ async fn test_gets_table_schema_with_relations() {
 
 #[tokio::test]
 async fn test_executes_sql() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         database_name: "app".into(),
@@ -126,7 +124,7 @@ async fn test_executes_sql() {
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
         database_name: "app".into(),
@@ -139,7 +137,7 @@ async fn test_blocks_writes_in_read_only_mode() {
 
 #[tokio::test]
 async fn test_creates_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(CreateDatabaseRequest {
         database_name: "app_new".into(),
     });
@@ -155,7 +153,7 @@ async fn test_creates_database() {
 
 #[tokio::test]
 async fn test_drops_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     // Verify seeded database exists
     let response = adapter.tool_list_databases().await.unwrap();
@@ -180,7 +178,7 @@ async fn test_drops_database() {
 
 #[tokio::test]
 async fn test_drop_active_database_blocked() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(DropDatabaseRequest {
         database_name: "app".into(),
     });
@@ -199,7 +197,7 @@ async fn test_drop_active_database_blocked() {
 
 #[tokio::test]
 async fn test_drop_nonexistent_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(DropDatabaseRequest {
         database_name: "nonexistent_db_xyz".into(),
     });
@@ -211,7 +209,7 @@ async fn test_drop_nonexistent_database() {
 
 #[tokio::test]
 async fn test_drop_database_invalid_identifier() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(DropDatabaseRequest {
         database_name: String::new(),
     });
@@ -223,7 +221,7 @@ async fn test_drop_database_invalid_identifier() {
 
 #[tokio::test]
 async fn test_lists_tables_cross_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(ListTablesRequest {
         database_name: "analytics".into(),
     });
@@ -243,7 +241,7 @@ async fn test_lists_tables_cross_database() {
 
 #[tokio::test]
 async fn test_executes_sql_cross_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "SELECT * FROM events ORDER BY id".into(),
         database_name: "analytics".into(),
@@ -257,7 +255,7 @@ async fn test_executes_sql_cross_database() {
 
 #[tokio::test]
 async fn test_gets_table_schema_cross_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(GetTableSchemaRequest {
         database_name: "analytics".into(),
         table_name: "events".into(),
@@ -278,7 +276,7 @@ async fn test_gets_table_schema_cross_database() {
 
 #[tokio::test]
 async fn test_lists_databases_includes_cross_db() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     let response = adapter.tool_list_databases().await.unwrap();
     let dbs = response.0.databases;
@@ -291,7 +289,7 @@ async fn test_lists_databases_includes_cross_db() {
 
 #[tokio::test]
 async fn test_blocks_writes_cross_database_in_read_only_mode() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "INSERT INTO events (name) VALUES ('hack')".into(),
         database_name: "analytics".into(),
@@ -307,7 +305,7 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
 
 #[tokio::test]
 async fn test_returns_error_for_nonexistent_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(ListTablesRequest {
         database_name: "nonexistent_db_xyz".into(),
     });
@@ -319,7 +317,7 @@ async fn test_returns_error_for_nonexistent_database() {
 
 #[tokio::test]
 async fn test_uses_default_pool_for_matching_database() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(ListTablesRequest {
         database_name: "app".into(),
     });
@@ -339,9 +337,7 @@ async fn test_query_timeout_cancels_slow_query() {
         query_timeout: Some(2),
         ..base_db_config(false)
     };
-    let adapter = PostgresAdapter::new(&config)
-        .await
-        .expect("PostgreSQL connection failed");
+    let adapter = PostgresAdapter::new(&config);
     let parameters = Parameters(QueryRequest {
         query: "SELECT pg_sleep(30)".into(),
         database_name: "app".into(),
@@ -370,9 +366,7 @@ async fn test_query_timeout_disabled_with_none() {
         query_timeout: None,
         ..base_db_config(false)
     };
-    let adapter = PostgresAdapter::new(&config)
-        .await
-        .expect("PostgreSQL connection failed");
+    let adapter = PostgresAdapter::new(&config);
     let parameters = Parameters(QueryRequest {
         query: "SELECT 1 AS value".into(),
         database_name: "app".into(),
@@ -384,7 +378,7 @@ async fn test_query_timeout_disabled_with_none() {
 
 #[tokio::test]
 async fn test_drop_table_success() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     // Create a temporary table
     let create = Parameters(QueryRequest {
@@ -416,7 +410,7 @@ async fn test_drop_table_success() {
 
 #[tokio::test]
 async fn test_drop_table_fk_error() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     // Create parent and child tables with FK
     let create_parent = Parameters(QueryRequest {
@@ -457,7 +451,7 @@ async fn test_drop_table_fk_error() {
 
 #[tokio::test]
 async fn test_drop_table_cascade() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     // Create parent and child tables with FK
     let create_parent = Parameters(QueryRequest {
@@ -491,7 +485,7 @@ async fn test_drop_table_cascade() {
 
 #[tokio::test]
 async fn test_drop_table_read_only_hidden() {
-    let adapter = adapter(true).await;
+    let adapter = adapter(true);
     let router = adapter.build_tool_router();
 
     // drop_table should not be in the router when read_only
@@ -502,7 +496,7 @@ async fn test_drop_table_read_only_hidden() {
 
 #[tokio::test]
 async fn test_drop_table_nonexistent() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let drop_params = Parameters(DropTableRequest {
         database_name: "app".into(),
         table_name: "nonexistent_table_xyz".into(),
@@ -515,7 +509,7 @@ async fn test_drop_table_nonexistent() {
 
 #[tokio::test]
 async fn test_drop_table_invalid_identifier() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let drop_params = Parameters(DropTableRequest {
         database_name: "app".into(),
         table_name: String::new(),
@@ -528,7 +522,7 @@ async fn test_drop_table_invalid_identifier() {
 
 #[tokio::test]
 async fn test_explain_query_select() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let params = Parameters(ExplainQueryRequest {
         database_name: "app".into(),
         query: "SELECT * FROM users".into(),
@@ -542,7 +536,7 @@ async fn test_explain_query_select() {
 
 #[tokio::test]
 async fn test_explain_query_analyze() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let params = Parameters(ExplainQueryRequest {
         database_name: "app".into(),
         query: "SELECT * FROM users".into(),
@@ -556,7 +550,7 @@ async fn test_explain_query_analyze() {
 
 #[tokio::test]
 async fn test_explain_query_analyze_write_blocked_read_only() {
-    let adapter = adapter(true).await;
+    let adapter = adapter(true);
     let params = Parameters(ExplainQueryRequest {
         database_name: "app".into(),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
@@ -572,7 +566,7 @@ async fn test_explain_query_analyze_write_blocked_read_only() {
 
 #[tokio::test]
 async fn test_explain_query_plain_write_allowed() {
-    let adapter = adapter(true).await;
+    let adapter = adapter(true);
     let params = Parameters(ExplainQueryRequest {
         database_name: "app".into(),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
@@ -589,7 +583,7 @@ async fn test_explain_query_plain_write_allowed() {
 
 #[tokio::test]
 async fn test_explain_query_always_visible() {
-    let adapter = adapter(true).await;
+    let adapter = adapter(true);
     let router = adapter.build_tool_router();
 
     let tool_list = router.list_all();
@@ -599,7 +593,7 @@ async fn test_explain_query_always_visible() {
 
 #[tokio::test]
 async fn test_explain_query_invalid_query() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let params = Parameters(ExplainQueryRequest {
         database_name: "app".into(),
         query: "NOT VALID SQL AT ALL".into(),

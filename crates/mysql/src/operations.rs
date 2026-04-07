@@ -162,12 +162,14 @@ impl MysqlAdapter {
         let name = &request.database_name;
         validate_identifier(name)?;
 
+        let pool = self.pool.clone();
+
         // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
         let check_sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?";
         let exists: Option<Vec<u8>> = execute_with_timeout(
             self.config.query_timeout,
             check_sql,
-            sqlx::query_scalar(check_sql).bind(name).fetch_optional(&self.pool),
+            sqlx::query_scalar(check_sql).bind(name).fetch_optional(&pool),
         )
         .await?;
 
@@ -181,7 +183,7 @@ impl MysqlAdapter {
         execute_with_timeout(
             self.config.query_timeout,
             &create_sql,
-            sqlx::query(&create_sql).execute(&self.pool),
+            sqlx::query(&create_sql).execute(&pool),
         )
         .await?;
 
@@ -256,11 +258,12 @@ impl MysqlAdapter {
             )));
         }
 
+        let pool = self.pool.clone();
         let drop_sql = format!("DROP DATABASE {}", Self::quote_identifier(name));
         execute_with_timeout(
             self.config.query_timeout,
             &drop_sql,
-            sqlx::query(&drop_sql).execute(&self.pool),
+            sqlx::query(&drop_sql).execute(&pool),
         )
         .await?;
 

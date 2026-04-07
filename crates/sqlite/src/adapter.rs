@@ -1,14 +1,20 @@
 //! `SQLite` adapter definition and connection configuration.
+//!
+//! Creates a lazy connection pool via [`SqlitePoolOptions::connect_lazy_with`].
+//! No file I/O happens until the first tool invocation.
 
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tracing::info;
 
 /// `SQLite` file-based database adapter.
+///
+/// The connection pool is created with [`SqlitePoolOptions::connect_lazy_with`],
+/// which defers all file I/O until the first query. Connection errors
+/// surface as tool-level errors returned to the MCP client.
 #[derive(Clone)]
 pub struct SqliteAdapter {
     pub(crate) config: DatabaseConfig,
@@ -24,29 +30,19 @@ impl std::fmt::Debug for SqliteAdapter {
 }
 
 impl SqliteAdapter {
-    /// Creates a new `SQLite` adapter from configuration.
+    /// Creates a new `SQLite` adapter with a lazy connection pool.
     ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Connection`] if the database file cannot be opened.
-    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = pool_options(config)
-            .connect_with(connect_options(config))
-            .await
-            .map_err(|e| {
-                let timeout_hint = config
-                    .connection_timeout
-                    .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
-                AppError::Connection(format!("Failed to open SQLite{timeout_hint}: {e}"))
-            })?;
-
+    /// Does **not** open the database file. The pool connects on-demand
+    /// when the first query is executed.
+    #[must_use]
+    pub fn new(config: &DatabaseConfig) -> Self {
+        let pool = pool_options(config).connect_lazy_with(connect_options(config));
         let name = config.name.as_deref().unwrap_or_default();
-        info!("SQLite connection initialized: {name}");
-
-        Ok(Self {
+        info!("SQLite lazy connection pool created: {name}");
+        Self {
             config: config.clone(),
             pool,
-        })
+        }
     }
 
     /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
@@ -153,5 +149,13 @@ mod tests {
 
         // Empty string filename — validated elsewhere by Config::validate()
         assert_eq!(opts.get_filename().to_str().expect("valid path"), "");
+    }
+
+    #[tokio::test]
+    async fn new_creates_lazy_pool() {
+        let config = base_config();
+        let adapter = SqliteAdapter::new(&config);
+        // Pool exists but has no active connections (lazy).
+        assert_eq!(adapter.pool.size(), 0);
     }
 }

@@ -1,4 +1,8 @@
 //! `PostgreSQL` adapter definition and connection configuration.
+//!
+//! Creates a lazy default pool via [`PgPoolOptions::connect_lazy_with`].
+//! Non-default database pools are created on demand and cached in a
+//! moka [`Cache`].
 
 use std::time::Duration;
 
@@ -15,12 +19,15 @@ const POOL_CACHE_CAPACITY: u64 = 6;
 
 /// `PostgreSQL` database adapter.
 ///
-/// All connection pools — including the default — live in a single
-/// concurrent cache keyed by database name. No external mutex required.
+/// The default connection pool is created with
+/// [`PgPoolOptions::connect_lazy_with`], which defers all network I/O
+/// until the first query. Non-default database pools are created on
+/// demand via the moka [`Cache`].
 #[derive(Clone)]
 pub struct PostgresAdapter {
     pub(crate) config: DatabaseConfig,
     pub(crate) default_db: String,
+    default_pool: PgPool,
     pub(crate) pools: Cache<String, PgPool>,
 }
 
@@ -34,32 +41,25 @@ impl std::fmt::Debug for PostgresAdapter {
 }
 
 impl PostgresAdapter {
-    /// Creates a new `PostgreSQL` adapter from configuration.
+    /// Creates a new `PostgreSQL` adapter with a lazy connection pool.
     ///
-    /// Stores a clone of the configuration for constructing connection options
-    /// for non-default databases at runtime. The initial pool is placed into
-    /// the shared cache keyed by the configured database name.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Connection`] if the connection fails.
-    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = pool_options(config)
-            .connect_with(connect_options(config))
-            .await
-            .map_err(|e| connection_error("PostgreSQL", config, &e))?;
-
-        info!(
-            "PostgreSQL connection pool initialized (max size: {})",
-            config.max_pool_size
-        );
-
+    /// Does **not** establish a database connection. The default pool
+    /// connects on-demand when the first query is executed.
+    #[must_use]
+    pub fn new(config: &DatabaseConfig) -> Self {
         // PostgreSQL defaults to a database named after the connecting user.
         let default_db = config
             .name
             .as_deref()
             .filter(|n| !n.is_empty())
             .map_or_else(|| config.user.clone(), String::from);
+
+        let default_pool = pool_options(config).connect_lazy_with(connect_options(config));
+
+        info!(
+            "PostgreSQL lazy connection pool created (max size: {})",
+            config.max_pool_size
+        );
 
         let pools = Cache::builder()
             .max_capacity(POOL_CACHE_CAPACITY)
@@ -70,13 +70,12 @@ impl PostgresAdapter {
             })
             .build();
 
-        pools.insert(default_db.clone(), pool).await;
-
-        Ok(Self {
+        Self {
             config: config.clone(),
             default_db,
+            default_pool,
             pools,
-        })
+        }
     }
 
     /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
@@ -86,46 +85,45 @@ impl PostgresAdapter {
 
     /// Returns a connection pool for the requested database.
     ///
-    /// Resolves `None` or empty names to the default pool. On a cache miss
-    /// a new pool is created and cached. Evicted pools are closed via the
-    /// cache's eviction listener.
+    /// Resolves `None` or empty names to the default lazy pool. On a
+    /// cache miss for a non-default database, a new lazy pool is created
+    /// and cached. Evicted pools are closed via the cache's eviction
+    /// listener.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::InvalidIdentifier`] if the database name fails
-    /// validation, or [`AppError::Connection`] if the new pool cannot connect.
+    /// validation.
     pub(crate) async fn get_pool(&self, database: Option<&str>) -> Result<PgPool, AppError> {
         let db_key = match database {
             Some(name) if !name.is_empty() => name,
-            _ => &self.default_db,
+            _ => return Ok(self.default_pool.clone()),
         };
 
+        // Check if it's the default database by name.
+        if db_key == self.default_db {
+            return Ok(self.default_pool.clone());
+        }
+
+        // Non-default database: check cache first.
         if let Some(pool) = self.pools.get(db_key).await {
             return Ok(pool);
         }
 
-        // Cache miss — validate then create a new pool.
+        // Cache miss — validate then create a new lazy pool.
         validate_identifier(db_key)?;
 
         let config = self.config.clone();
         let db_key_owned = db_key.to_owned();
 
-        let label = format!("PostgreSQL database '{db_key}'");
         let pool = self
             .pools
-            .try_get_with(db_key_owned, async {
+            .get_with(db_key_owned, async {
                 let mut cfg = config;
                 cfg.name = Some(db_key.to_owned());
-                pool_options(&cfg)
-                    .connect_with(connect_options(&cfg))
-                    .await
-                    .map_err(|e| connection_error(&label, &cfg, &e))
+                pool_options(&cfg).connect_lazy_with(connect_options(&cfg))
             })
-            .await
-            .map_err(|e| match e.as_ref() {
-                AppError::Connection(msg) => AppError::Connection(msg.clone()),
-                other => AppError::Connection(other.to_string()),
-            })?;
+            .await;
 
         Ok(pool)
     }
@@ -184,14 +182,6 @@ fn connect_options(config: &DatabaseConfig) -> PgConnectOptions {
     }
 
     opts
-}
-
-/// Formats a connection error with optional timeout hint.
-fn connection_error(label: &str, config: &DatabaseConfig, err: &sqlx::Error) -> AppError {
-    let timeout_hint = config
-        .connection_timeout
-        .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
-    AppError::Connection(format!("Failed to connect to {label}{timeout_hint}: {err}"))
 }
 
 #[cfg(test)]
@@ -310,5 +300,24 @@ mod tests {
         let opts = connect_options(&config);
 
         assert_eq!(opts.get_host(), "pg.example.com");
+    }
+
+    #[tokio::test]
+    async fn new_creates_lazy_pool() {
+        let config = base_config();
+        let adapter = PostgresAdapter::new(&config);
+        assert_eq!(adapter.default_db, "mydb");
+        // Pool exists but has no active connections (lazy).
+        assert_eq!(adapter.default_pool.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn new_defaults_db_to_username() {
+        let config = DatabaseConfig {
+            name: None,
+            ..base_config()
+        };
+        let adapter = PostgresAdapter::new(&config);
+        assert_eq!(adapter.default_db, "pgadmin");
     }
 }

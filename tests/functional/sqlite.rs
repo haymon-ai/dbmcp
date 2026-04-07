@@ -24,14 +24,14 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
     }
 }
 
-async fn adapter(read_only: bool) -> SqliteAdapter {
+fn adapter(read_only: bool) -> SqliteAdapter {
     let config = base_db_config(read_only);
-    SqliteAdapter::new(&config).await.expect("SQLite open failed")
+    SqliteAdapter::new(&config)
 }
 
 #[tokio::test]
 async fn test_lists_tables() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     let response = adapter.tool_list_tables().await.unwrap();
     let tables = response.0.tables;
@@ -46,7 +46,7 @@ async fn test_lists_tables() {
 
 #[tokio::test]
 async fn test_gets_table_schema() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(GetTableSchemaRequest {
         table_name: "users".into(),
     });
@@ -63,7 +63,7 @@ async fn test_gets_table_schema() {
 
 #[tokio::test]
 async fn test_gets_table_schema_with_relations() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(GetTableSchemaRequest {
         table_name: "posts".into(),
     });
@@ -86,7 +86,7 @@ async fn test_gets_table_schema_with_relations() {
 
 #[tokio::test]
 async fn test_executes_sql() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
     });
@@ -99,7 +99,7 @@ async fn test_executes_sql() {
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let parameters = Parameters(QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
     });
@@ -115,7 +115,7 @@ async fn test_query_timeout_fast_query_succeeds() {
         query_timeout: Some(5),
         ..base_db_config(false)
     };
-    let adapter = SqliteAdapter::new(&config).await.expect("SQLite open failed");
+    let adapter = SqliteAdapter::new(&config);
     let parameters = Parameters(QueryRequest {
         query: "SELECT 1 AS value".into(),
     });
@@ -130,7 +130,7 @@ async fn test_query_timeout_disabled_with_none() {
         query_timeout: None,
         ..base_db_config(false)
     };
-    let adapter = SqliteAdapter::new(&config).await.expect("SQLite open failed");
+    let adapter = SqliteAdapter::new(&config);
     let parameters = Parameters(QueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
     });
@@ -141,7 +141,7 @@ async fn test_query_timeout_disabled_with_none() {
 
 #[tokio::test]
 async fn test_drop_table_success() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
 
     // Create a temporary table
     let create = Parameters(QueryRequest {
@@ -167,7 +167,7 @@ async fn test_drop_table_success() {
 
 #[tokio::test]
 async fn test_drop_table_nonexistent() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let drop_params = Parameters(DropTableRequest {
         table_name: "nonexistent_table_xyz".into(),
     });
@@ -178,7 +178,7 @@ async fn test_drop_table_nonexistent() {
 
 #[tokio::test]
 async fn test_explain_query_select() {
-    let adapter = adapter(false).await;
+    let adapter = adapter(false);
     let params = Parameters(ExplainQueryRequest {
         query: "SELECT * FROM users".into(),
     });

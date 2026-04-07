@@ -1,17 +1,21 @@
 //! MySQL/MariaDB adapter definition and connection configuration.
 //!
-//! Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`] and checks
-//! for dangerous server privileges on startup.
+//! Builds [`MySqlConnectOptions`] from a [`DatabaseConfig`] and creates
+//! a lazy connection pool via [`MySqlPoolOptions::connect_lazy_with`].
+//! No network I/O happens until the first tool invocation.
 
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
 use sqlx::MySqlPool;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlSslMode};
-use tracing::{error, info};
+use tracing::info;
 
 /// MySQL/MariaDB database adapter.
+///
+/// The connection pool is created with [`MySqlPoolOptions::connect_lazy_with`],
+/// which defers all network I/O until the first query. Connection errors
+/// surface as tool-level errors returned to the MCP client.
 #[derive(Clone)]
 pub struct MysqlAdapter {
     pub(crate) config: DatabaseConfig,
@@ -27,34 +31,21 @@ impl std::fmt::Debug for MysqlAdapter {
 }
 
 impl MysqlAdapter {
-    /// Creates a new `MySQL` adapter from configuration.
+    /// Creates a new `MySQL` adapter with a lazy connection pool.
     ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Connection`] if the connection fails.
-    pub async fn new(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = pool_options(config)
-            .connect_with(connect_options(config))
-            .await
-            .map_err(|e| {
-                let timeout_hint = config
-                    .connection_timeout
-                    .map_or(String::new(), |t| format!(" (connection timeout: {t}s)"));
-                AppError::Connection(format!("Failed to connect to MySQL{timeout_hint}: {e}"))
-            })?;
-
-        info!("MySQL connection pool initialized (max size: {})", config.max_pool_size);
-
-        let backend = Self {
+    /// Does **not** establish a database connection. The pool connects
+    /// on-demand when the first query is executed.
+    #[must_use]
+    pub fn new(config: &DatabaseConfig) -> Self {
+        let pool = pool_options(config).connect_lazy_with(connect_options(config));
+        info!(
+            "MySQL lazy connection pool created (max size: {})",
+            config.max_pool_size
+        );
+        Self {
             config: config.clone(),
             pool,
-        };
-
-        if backend.config.read_only {
-            backend.warn_if_file_privilege().await;
         }
-
-        Ok(backend)
     }
 
     /// Wraps `name` in backticks for safe use in `MySQL` SQL statements.
@@ -68,49 +59,6 @@ impl MysqlAdapter {
     pub(crate) fn quote_string(value: &str) -> String {
         let escaped = value.replace('\'', "''");
         format!("'{escaped}'")
-    }
-
-    async fn warn_if_file_privilege(&self) {
-        let result: Result<(), AppError> = async {
-            let current_user: Option<String> = sqlx::query_scalar("SELECT CURRENT_USER()")
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
-
-            let Some(current_user) = current_user else {
-                return Ok(());
-            };
-
-            let quoted_user = if let Some((user, host)) = current_user.split_once('@') {
-                format!("'{user}'@'{host}'")
-            } else {
-                format!("'{current_user}'")
-            };
-
-            let grants: Vec<String> = sqlx::query_scalar(&format!("SHOW GRANTS FOR {quoted_user}"))
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| AppError::Query(e.to_string()))?;
-
-            let has_file_priv = grants.iter().any(|grant| {
-                let upper = grant.to_uppercase();
-                upper.contains("FILE") && upper.contains("ON *.*")
-            });
-
-            if has_file_priv {
-                error!(
-                    "Connected database user has the global FILE privilege. \
-                     Revoke FILE for the database user you are connecting as."
-                );
-            }
-
-            Ok(())
-        }
-        .await;
-
-        if let Err(e) = result {
-            tracing::debug!("Unable to determine whether FILE privilege is enabled: {e}");
-        }
     }
 }
 
@@ -297,5 +245,14 @@ mod tests {
         let opts = connect_options(&config);
 
         assert_eq!(opts.get_database(), None);
+    }
+
+    #[tokio::test]
+    async fn new_creates_lazy_pool() {
+        let config = base_config();
+        let adapter = MysqlAdapter::new(&config);
+        assert!(adapter.config.read_only);
+        // Pool exists but has no active connections (lazy).
+        assert_eq!(adapter.pool.size(), 0);
     }
 }
