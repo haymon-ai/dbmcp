@@ -7,11 +7,11 @@
 use super::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesResponse,
-    ListTablesRequest, ListTablesResponse, MessageResponse, QueryRequest, TableSchemaResponse,
+    ListTablesRequest, ListTablesResponse, MessageResponse, QueryRequest, QueryResponse, TableSchemaResponse,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{CallToolResult, Content, ErrorData};
+use rmcp::model::ErrorData;
 use rmcp::tool;
 
 use database_mcp_sql::validation::validate_read_only_with_dialect;
@@ -101,11 +101,10 @@ impl PostgresAdapter {
     pub async fn tool_read_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<Json<QueryResponse>, ErrorData> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
 
-        let result = self.read_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+        Ok(Json(self.read_query(&request).await?))
     }
 
     /// Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
@@ -121,9 +120,8 @@ impl PostgresAdapter {
     pub async fn tool_write_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.write_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.write_query(&request).await?))
     }
 
     /// Create a new database.
@@ -156,9 +154,8 @@ impl PostgresAdapter {
     pub async fn tool_explain_query(
         &self,
         Parameters(request): Parameters<ExplainQueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.explain_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.explain_query(&request).await?))
     }
 
     /// Drop a table from a database. Checks for foreign key dependencies

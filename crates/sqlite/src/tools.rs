@@ -5,10 +5,10 @@
 //! [`AsyncTool`] implementations.
 
 use super::types::{DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, QueryRequest};
-use database_mcp_server::types::{ListTablesResponse, MessageResponse, TableSchemaResponse};
+use database_mcp_server::types::{ListTablesResponse, MessageResponse, QueryResponse, TableSchemaResponse};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{CallToolResult, Content, ErrorData};
+use rmcp::model::ErrorData;
 use rmcp::tool;
 
 use database_mcp_sql::validation::validate_read_only_with_dialect;
@@ -79,11 +79,10 @@ impl SqliteAdapter {
     pub async fn tool_read_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<Json<QueryResponse>, ErrorData> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        let result = self.read_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+        Ok(Json(self.read_query(&request).await?))
     }
 
     /// Return the execution plan for a SQL query.
@@ -99,9 +98,8 @@ impl SqliteAdapter {
     pub async fn tool_explain_query(
         &self,
         Parameters(request): Parameters<ExplainQueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.explain_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.explain_query(&request).await?))
     }
 
     /// Drop a table from the database.
@@ -134,8 +132,7 @@ impl SqliteAdapter {
     pub async fn tool_write_query(
         &self,
         Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.write_query(&request).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.write_query(&request).await?))
     }
 }

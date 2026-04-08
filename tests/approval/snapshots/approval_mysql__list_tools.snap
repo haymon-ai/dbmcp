@@ -157,6 +157,20 @@ expression: tools
       "title": "ExplainQueryRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query` tool.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -311,6 +325,20 @@ expression: tools
       "title": "QueryRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query` tool.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -339,6 +367,20 @@ expression: tools
         "database_name"
       ],
       "title": "QueryRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query` tool.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
       "type": "object"
     },
     "annotations": {

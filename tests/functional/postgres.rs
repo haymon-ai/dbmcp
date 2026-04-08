@@ -119,7 +119,7 @@ async fn test_executes_sql() {
     });
 
     let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.into_typed().unwrap();
+    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
@@ -250,7 +250,7 @@ async fn test_executes_sql_cross_database() {
     });
 
     let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.into_typed().unwrap();
+    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 2, "Expected 2 events, got {}", rows.len());
 }
@@ -352,7 +352,7 @@ async fn test_query_timeout_cancels_slow_query() {
     let elapsed = start.elapsed();
 
     assert!(response.is_err(), "Expected timeout error");
-    let err_msg = format!("{:?}", response.unwrap_err());
+    let err_msg = format!("{:?}", response.map(|_| ()).unwrap_err());
     assert!(
         err_msg.contains("timed out"),
         "Expected timeout message, got: {err_msg}"
@@ -536,7 +536,7 @@ async fn test_explain_query_select() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
 
@@ -550,7 +550,7 @@ async fn test_explain_query_analyze() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
 }
 
@@ -580,7 +580,7 @@ async fn test_explain_query_plain_write_allowed() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(
         !plan.is_empty(),
         "Plain EXPLAIN should work for write statements even in read-only mode"

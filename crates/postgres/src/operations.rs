@@ -7,7 +7,7 @@ use super::types::DropTableRequest;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesResponse, ListTablesRequest,
-    ListTablesResponse, MessageResponse, QueryRequest,
+    ListTablesResponse, MessageResponse, QueryRequest, QueryResponse,
 };
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
@@ -70,9 +70,10 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<Value, AppError> {
+    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
         let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        self.execute_query(&request.query, db).await
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Executes a write SQL query.
@@ -80,9 +81,10 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<Value, AppError> {
+    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
         let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        self.execute_query(&request.query, db).await
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Returns the execution plan for a query.
@@ -95,7 +97,7 @@ impl PostgresAdapter {
     /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<Value, AppError> {
+    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
         if request.analyze && self.config.read_only {
             validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
@@ -115,7 +117,9 @@ impl PostgresAdapter {
         )
         .await?;
 
-        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+        Ok(QueryResponse {
+            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+        })
     }
 
     /// Creates a database if it doesn't exist.

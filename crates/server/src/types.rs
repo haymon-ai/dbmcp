@@ -62,6 +62,13 @@ pub struct QueryRequest {
     pub database_name: String,
 }
 
+/// Response for the `read_query`, `write_query`, and `explain_query` tools.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct QueryResponse {
+    /// Result rows, each a JSON object keyed by a column name.
+    pub rows: Value,
+}
+
 /// Request for the `create_database` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateDatabaseRequest {

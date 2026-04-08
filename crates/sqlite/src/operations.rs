@@ -2,7 +2,7 @@
 
 use super::types::{DropTableRequest, ExplainQueryRequest, QueryRequest};
 use database_mcp_server::AppError;
-use database_mcp_server::types::{ListTablesResponse, MessageResponse};
+use database_mcp_server::types::{ListTablesResponse, MessageResponse, QueryResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::Value;
@@ -65,7 +65,7 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<Value, AppError> {
+    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", request.query);
         let rows: Vec<SqliteRow> = execute_with_timeout(
             self.config.query_timeout,
@@ -73,7 +73,9 @@ impl SqliteAdapter {
             sqlx::query(&explain_sql).fetch_all(&self.pool),
         )
         .await?;
-        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+        Ok(QueryResponse {
+            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+        })
     }
 
     /// Executes a SQL query and returns rows as JSON.
@@ -88,8 +90,9 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<Value, AppError> {
-        self.execute_query(&request.query).await
+    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        let rows = self.execute_query(&request.query).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Executes a write SQL query.
@@ -97,8 +100,9 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<Value, AppError> {
-        self.execute_query(&request.query).await
+    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        let rows = self.execute_query(&request.query).await?;
+        Ok(QueryResponse { rows })
     }
 }
 
