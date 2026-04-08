@@ -77,12 +77,10 @@ async fn test_gets_table_schema() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let obj = schema.as_object().expect("object");
-    assert!(obj.contains_key("table_name"), "Response should contain table_name");
-    assert!(obj.contains_key("columns"), "Response should contain columns");
-    let columns = obj["columns"].as_object().expect("columns object");
+    assert_eq!(schema.table_name, "users");
+    let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "email", "created_at"] {
         assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
     }
@@ -97,9 +95,9 @@ async fn test_gets_table_schema_with_relations() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let columns = schema["columns"].as_object().expect("columns object");
+    let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
     assert!(
@@ -266,11 +264,10 @@ async fn test_gets_table_schema_cross_database() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let obj = schema.as_object().expect("object");
-    assert!(obj.contains_key("table_name"), "Response should contain table_name");
-    let columns = obj["columns"].as_object().expect("columns object");
+    assert_eq!(schema.table_name, "events");
+    let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "payload", "created_at"] {
         assert!(
             columns.contains_key(col),

@@ -47,6 +47,25 @@ expression: tools
       "title": "GetTableSchemaRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `get_table_schema` tool.",
+      "properties": {
+        "columns": {
+          "description": "Column definitions keyed by column name."
+        },
+        "table_name": {
+          "description": "Name of the inspected table.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table_name",
+        "columns"
+      ],
+      "title": "TableSchemaResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,

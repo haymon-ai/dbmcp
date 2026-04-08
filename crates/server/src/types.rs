@@ -5,6 +5,7 @@
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Response for tools with no structured return data.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -41,6 +42,15 @@ pub struct GetTableSchemaRequest {
     pub database_name: String,
     /// The table name to inspect. Use `list_tables` first to see available tables in the database.
     pub table_name: String,
+}
+
+/// Response for the `get_table_schema` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TableSchemaResponse {
+    /// Name of the inspected table.
+    pub table_name: String,
+    /// Column definitions keyed by column name.
+    pub columns: Value,
 }
 
 /// Request for the `read_query` and `write_query` tools.

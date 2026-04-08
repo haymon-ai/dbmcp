@@ -7,7 +7,7 @@
 use super::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesResponse,
-    ListTablesRequest, ListTablesResponse, MessageResponse, QueryRequest,
+    ListTablesRequest, ListTablesResponse, MessageResponse, QueryRequest, TableSchemaResponse,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -84,11 +84,8 @@ impl PostgresAdapter {
     pub async fn tool_get_table_schema(
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .get_table_schema(&request.database_name, &request.table_name)
-            .await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<TableSchemaResponse>, ErrorData> {
+        Ok(Json(self.get_table_schema(&request).await?))
     }
 
     /// Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).

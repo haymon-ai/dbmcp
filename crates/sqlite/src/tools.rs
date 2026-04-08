@@ -5,7 +5,7 @@
 //! [`AsyncTool`] implementations.
 
 use super::types::{DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, QueryRequest};
-use database_mcp_server::types::{ListTablesResponse, MessageResponse};
+use database_mcp_server::types::{ListTablesResponse, MessageResponse, TableSchemaResponse};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -62,9 +62,8 @@ impl SqliteAdapter {
     pub async fn tool_get_table_schema(
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.get_table_schema(&request.table_name).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<TableSchemaResponse>, ErrorData> {
+        Ok(Json(self.get_table_schema(&request).await?))
     }
 
     /// Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
