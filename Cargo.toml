@@ -55,7 +55,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Dev/test dependencies
 insta = { version = "1", features = ["json", "redactions"] }
-reqwest = { version = "0.12", features = ["json"] }
 
 [workspace.lints.rust]
 ambiguous_negative_literals = "warn"
@@ -87,11 +86,9 @@ database-mcp-config = { workspace = true }
 database-mcp-mysql = { workspace = true }
 database-mcp-postgres = { workspace = true }
 database-mcp-server = { workspace = true }
-database-mcp-sql = { workspace = true }
 database-mcp-sqlite = { workspace = true }
 mimalloc = { workspace = true }
 rmcp = { workspace = true }
-sqlparser = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -104,10 +101,8 @@ database-mcp-config = { workspace = true }
 database-mcp-mysql = { workspace = true }
 database-mcp-postgres = { workspace = true }
 database-mcp-server = { workspace = true }
-database-mcp-sql = { workspace = true }
 database-mcp-sqlite = { workspace = true }
 insta = { workspace = true }
-reqwest = { workspace = true }
 rmcp = { version = "1.3", features = [
     "client",
     "macros",
@@ -116,7 +111,6 @@ rmcp = { version = "1.3", features = [
     "transport-streamable-http-server",
 ] }
 serde_json = { workspace = true }
-sqlparser = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true }
 
