@@ -34,7 +34,7 @@ async fn test_lists_tables() {
     let adapter = adapter(false).await;
 
     let response = adapter.tool_list_tables().await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -52,12 +52,10 @@ async fn test_gets_table_schema() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let obj = schema.as_object().expect("object");
-    assert!(obj.contains_key("table_name"), "Response should contain table_name");
-    assert!(obj.contains_key("columns"), "Response should contain columns");
-    let columns = obj["columns"].as_object().expect("columns object");
+    assert_eq!(schema.table_name, "users");
+    let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "email", "created_at"] {
         assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
     }
@@ -71,9 +69,9 @@ async fn test_gets_table_schema_with_relations() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let columns = schema["columns"].as_object().expect("columns object");
+    let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
     assert!(
@@ -94,7 +92,7 @@ async fn test_executes_sql() {
     });
 
     let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.into_typed().unwrap();
+    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
@@ -156,12 +154,11 @@ async fn test_drop_table_success() {
         table_name: "drop_test_simple".into(),
     });
     let response = adapter.tool_drop_table(drop_params).await.unwrap();
-    let value: Value = response.into_typed().unwrap();
-    assert_eq!(value["status"], "success");
+    assert!(response.0.message.contains("dropped successfully"));
 
     // Verify it's gone
     let response = adapter.tool_list_tables().await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -187,6 +184,6 @@ async fn test_explain_query_select() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }

@@ -9,7 +9,7 @@ expression: tools
     "description": "Return the execution plan for a SQL query.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to explain a query's execution plan.",
+      "description": "Request for the `explain_query` tool.",
       "properties": {
         "query": {
           "description": "The SQL query to explain.",
@@ -20,6 +20,20 @@ expression: tools
         "query"
       ],
       "title": "ExplainQueryRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
       "type": "object"
     },
     "annotations": {
@@ -34,7 +48,7 @@ expression: tools
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to get a table's schema.",
+      "description": "Request for the `get_table_schema` tool.",
       "properties": {
         "table_name": {
           "description": "The table name to inspect. Use `list_tables` first to see available tables.",
@@ -45,6 +59,25 @@ expression: tools
         "table_name"
       ],
       "title": "GetTableSchemaRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `get_table_schema` tool.",
+      "properties": {
+        "columns": {
+          "description": "Column definitions keyed by column name."
+        },
+        "table_name": {
+          "description": "Name of the inspected table.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table_name",
+        "columns"
+      ],
+      "title": "TableSchemaResponse",
       "type": "object"
     },
     "annotations": {
@@ -61,6 +94,24 @@ expression: tools
       "properties": {},
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `list_tables` tool.",
+      "properties": {
+        "tables": {
+          "description": "Sorted list of table names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tables"
+      ],
+      "title": "ListTablesResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -73,7 +124,7 @@ expression: tools
     "description": "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for `read_query` and `write_query` tools.",
+      "description": "Request for the `read_query` and `write_query` tools.",
       "properties": {
         "query": {
           "description": "The SQL query to execute.",
@@ -84,6 +135,20 @@ expression: tools
         "query"
       ],
       "title": "QueryRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
       "type": "object"
     },
     "annotations": {

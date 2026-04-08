@@ -45,7 +45,7 @@ async fn test_lists_databases() {
     let adapter = adapter(false).await;
 
     let response = adapter.tool_list_databases().await.unwrap();
-    let dbs: Vec<String> = response.into_typed().unwrap();
+    let dbs = response.0.databases;
 
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
@@ -58,7 +58,7 @@ async fn test_lists_tables() {
     });
 
     let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -77,12 +77,10 @@ async fn test_gets_table_schema() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let obj = schema.as_object().expect("object");
-    assert!(obj.contains_key("table_name"), "Response should contain table_name");
-    assert!(obj.contains_key("columns"), "Response should contain columns");
-    let columns = obj["columns"].as_object().expect("columns object");
+    assert_eq!(schema.table_name, "users");
+    let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "email", "created_at"] {
         assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
     }
@@ -97,9 +95,9 @@ async fn test_gets_table_schema_with_relations() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let columns = schema["columns"].as_object().expect("columns object");
+    let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
     assert!(
@@ -121,7 +119,7 @@ async fn test_executes_sql() {
     });
 
     let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.into_typed().unwrap();
+    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
@@ -147,12 +145,10 @@ async fn test_creates_database() {
     });
 
     let response = adapter.tool_create_database(parameters).await.unwrap();
-    let value: Value = response.into_typed().unwrap();
-
-    assert!(!value.is_null());
+    assert!(response.0.message.contains("created successfully"));
 
     let response = adapter.tool_list_databases().await.unwrap();
-    let dbs: Vec<String> = response.into_typed().unwrap();
+    let dbs = response.0.databases;
 
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
 }
@@ -163,7 +159,7 @@ async fn test_drops_database() {
 
     // Verify seeded database exists
     let response = adapter.tool_list_databases().await.unwrap();
-    let dbs: Vec<String> = response.into_typed().unwrap();
+    let dbs = response.0.databases;
     assert!(dbs.iter().any(|db| db == "canary"), "canary should exist before drop");
 
     // Drop it
@@ -171,12 +167,11 @@ async fn test_drops_database() {
         database_name: "canary".into(),
     });
     let response = adapter.tool_drop_database(drop_params).await.unwrap();
-    let value: Value = response.into_typed().unwrap();
-    assert_eq!(value["status"], "success");
+    assert!(response.0.message.contains("dropped successfully"));
 
     // Verify it's gone
     let response = adapter.tool_list_databases().await.unwrap();
-    let dbs: Vec<String> = response.into_typed().unwrap();
+    let dbs = response.0.databases;
     assert!(
         !dbs.iter().any(|db| db == "canary"),
         "canary should not exist after drop"
@@ -192,8 +187,10 @@ async fn test_drop_active_database_blocked() {
 
     let response = adapter.tool_drop_database(parameters).await;
 
-    assert!(response.is_err(), "Expected error when dropping active database");
-    let err_msg = format!("{:?}", response.unwrap_err());
+    let err_msg = format!(
+        "{:?}",
+        response.err().expect("Expected error when dropping active database")
+    );
     assert!(
         err_msg.contains("currently connected"),
         "Expected 'currently connected' in error, got: {err_msg}"
@@ -232,7 +229,7 @@ async fn test_lists_tables_cross_database() {
     });
 
     let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
 
     assert!(
         tables.iter().any(|t| t == "events"),
@@ -253,7 +250,7 @@ async fn test_executes_sql_cross_database() {
     });
 
     let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.into_typed().unwrap();
+    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 2, "Expected 2 events, got {}", rows.len());
 }
@@ -267,11 +264,10 @@ async fn test_gets_table_schema_cross_database() {
     });
 
     let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema: Value = response.into_typed().unwrap();
+    let schema = &response.0;
 
-    let obj = schema.as_object().expect("object");
-    assert!(obj.contains_key("table_name"), "Response should contain table_name");
-    let columns = obj["columns"].as_object().expect("columns object");
+    assert_eq!(schema.table_name, "events");
+    let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "payload", "created_at"] {
         assert!(
             columns.contains_key(col),
@@ -285,7 +281,7 @@ async fn test_lists_databases_includes_cross_db() {
     let adapter = adapter(false).await;
 
     let response = adapter.tool_list_databases().await.unwrap();
-    let dbs: Vec<String> = response.into_typed().unwrap();
+    let dbs = response.0.databases;
 
     assert!(
         dbs.iter().any(|db| db == "analytics"),
@@ -329,7 +325,7 @@ async fn test_uses_default_pool_for_matching_database() {
     });
 
     let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
 
     assert!(
         tables.iter().any(|t| t == "users"),
@@ -356,7 +352,7 @@ async fn test_query_timeout_cancels_slow_query() {
     let elapsed = start.elapsed();
 
     assert!(response.is_err(), "Expected timeout error");
-    let err_msg = format!("{:?}", response.unwrap_err());
+    let err_msg = format!("{:?}", response.map(|_| ()).unwrap_err());
     assert!(
         err_msg.contains("timed out"),
         "Expected timeout message, got: {err_msg}"
@@ -404,15 +400,14 @@ async fn test_drop_table_success() {
         cascade: false,
     });
     let response = adapter.tool_drop_table(drop_params).await.unwrap();
-    let value: Value = response.into_typed().unwrap();
-    assert_eq!(value["status"], "success");
+    assert!(response.0.message.contains("dropped successfully"));
 
     // Verify it's gone
     let tables_params = Parameters(ListTablesRequest {
         database_name: "app".into(),
     });
     let response = adapter.tool_list_tables(tables_params).await.unwrap();
-    let tables: Vec<String> = response.into_typed().unwrap();
+    let tables = response.0.tables;
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -484,8 +479,7 @@ async fn test_drop_table_cascade() {
         cascade: true,
     });
     let response = adapter.tool_drop_table(drop_params).await.unwrap();
-    let value: Value = response.into_typed().unwrap();
-    assert_eq!(value["status"], "success");
+    assert!(response.0.message.contains("dropped successfully"));
 
     // Clean up child table (still exists, just lost FK constraint)
     let cleanup = Parameters(QueryRequest {
@@ -542,7 +536,7 @@ async fn test_explain_query_select() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
 
@@ -556,7 +550,7 @@ async fn test_explain_query_analyze() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
 }
 
@@ -586,7 +580,7 @@ async fn test_explain_query_plain_write_allowed() {
     });
 
     let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan: Vec<Value> = response.into_typed().unwrap();
+    let plan = response.0.rows.as_array().expect("rows should be an array");
     assert!(
         !plan.is_empty(),
         "Plain EXPLAIN should work for write statements even in read-only mode"

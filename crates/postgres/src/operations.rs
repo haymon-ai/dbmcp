@@ -3,11 +3,16 @@
 //! Provides methods for listing databases, tables, executing queries,
 //! creating databases, dropping databases, and explaining queries.
 
+use super::types::DropTableRequest;
 use database_mcp_server::AppError;
+use database_mcp_server::types::{
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesResponse, ListTablesRequest,
+    ListTablesResponse, MessageResponse, QueryRequest, QueryResponse,
+};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::postgres::PgRow;
 use sqlx_to_json::RowExt;
 
@@ -22,12 +27,14 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
         let pool = self.get_pool(None).await?;
         let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
         let rows: Vec<(String,)> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        Ok(ListDatabasesResponse {
+            databases: rows.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     /// Lists all tables in a database.
@@ -35,25 +42,53 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
-        let db = if database.is_empty() { None } else { Some(database) };
+    pub(crate) async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
+        let db = if request.database_name.is_empty() {
+            None
+        } else {
+            Some(request.database_name.as_str())
+        };
         let pool = self.get_pool(db).await?;
         let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
         let rows: Vec<(String,)> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        Ok(ListTablesResponse {
+            tables: rows.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     /// Executes a SQL query and returns rows as JSON.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
         let pool = self.get_pool(database).await?;
         let rows: Vec<PgRow> =
             execute_with_timeout(self.config.query_timeout, sql, sqlx::query(sql).fetch_all(&pool)).await?;
         Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+    }
+
+    /// Executes a read-only SQL query.
+    ///
+    /// Validates that the query is read-only before executing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] if the query is not
+    /// read-only, or [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
+    }
+
+    /// Executes a write SQL query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the query fails.
+    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Returns the execution plan for a query.
@@ -66,17 +101,17 @@ impl PostgresAdapter {
     /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn explain_query(&self, database: &str, query: &str, analyze: bool) -> Result<Value, AppError> {
-        if analyze && self.config.read_only {
-            validate_read_only_with_dialect(query, &sqlparser::dialect::PostgreSqlDialect {})?;
+    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
+        if request.analyze && self.config.read_only {
+            validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
 
-        let pool = self.get_pool(Some(database)).await?;
+        let pool = self.get_pool(Some(&request.database_name)).await?;
 
-        let explain_sql = if analyze {
-            format!("EXPLAIN (ANALYZE, FORMAT JSON) {query}")
+        let explain_sql = if request.analyze {
+            format!("EXPLAIN (ANALYZE, FORMAT JSON) {}", request.query)
         } else {
-            format!("EXPLAIN (FORMAT JSON) {query}")
+            format!("EXPLAIN (FORMAT JSON) {}", request.query)
         };
 
         let rows: Vec<PgRow> = execute_with_timeout(
@@ -86,7 +121,9 @@ impl PostgresAdapter {
         )
         .await?;
 
-        Ok(Value::Array(rows.iter().map(RowExt::to_json).collect()))
+        Ok(QueryResponse {
+            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+        })
     }
 
     /// Creates a database if it doesn't exist.
@@ -94,10 +131,11 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if read-only or the query fails.
-    pub(crate) async fn create_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let name = &request.database_name;
         validate_identifier(name)?;
 
         let pool = self.get_pool(None).await?;
@@ -118,11 +156,9 @@ impl PostgresAdapter {
             e
         })?;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Database '{name}' created successfully."),
-            "database_name": name,
-        }))
+        Ok(MessageResponse {
+            message: format!("Database '{name}' created successfully."),
+        })
     }
 
     /// Drops a table from a database.
@@ -136,17 +172,19 @@ impl PostgresAdapter {
     /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
     /// [`AppError::InvalidIdentifier`] for invalid names,
     /// or [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn drop_table(&self, database: &str, table: &str, cascade: bool) -> Result<Value, AppError> {
+    pub(crate) async fn drop_table(&self, request: &DropTableRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let database = &request.database_name;
+        let table = &request.table_name;
         validate_identifier(database)?;
         validate_identifier(table)?;
 
         let pool = self.get_pool(Some(database)).await?;
 
         let mut drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
-        if cascade {
+        if request.cascade {
             drop_sql.push_str(" CASCADE");
         }
 
@@ -157,11 +195,9 @@ impl PostgresAdapter {
         )
         .await?;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Table '{table}' dropped successfully."),
-            "table_name": table,
-        }))
+        Ok(MessageResponse {
+            message: format!("Table '{table}' dropped successfully."),
+        })
     }
 
     /// Drops an existing database.
@@ -175,14 +211,15 @@ impl PostgresAdapter {
     /// [`AppError::InvalidIdentifier`] for invalid names,
     /// or [`AppError::Query`] if the target is the active database
     /// or the backend reports an error.
-    pub(crate) async fn drop_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn drop_database(&self, request: &DropDatabaseRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let name = &request.database_name;
         validate_identifier(name)?;
 
         // Guard: prevent dropping the currently connected database.
-        if self.default_db == name {
+        if self.default_db == *name {
             return Err(AppError::Query(format!(
                 "Cannot drop the currently connected database '{name}'."
             )));
@@ -202,10 +239,8 @@ impl PostgresAdapter {
         // are not reused.
         self.pools.invalidate(name).await;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Database '{name}' dropped successfully."),
-            "database_name": name,
-        }))
+        Ok(MessageResponse {
+            message: format!("Database '{name}' dropped successfully."),
+        })
     }
 }
