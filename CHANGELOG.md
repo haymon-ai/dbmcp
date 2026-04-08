@@ -2,6 +2,20 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.6.0](https://github.com/haymon-ai/database-mcp/compare/2e442034fb521424e209c3498b192dd55d328d9a..v0.6.0) - 2026-04-08
+#### Features
+- defer database connection via lazy pool initialization (#81) (#84) - ([34b0d56](https://github.com/haymon-ai/database-mcp/commit/34b0d5671bebfa56481c6b0d01932d0d5e31d475)) - [@athopen](https://github.com/athopen)
+- add structured output schemas for all MCP tools (#83) - ([9ba8430](https://github.com/haymon-ai/database-mcp/commit/9ba84308782ffb048b4003d1eaa23ed402ab4539)) - [@athopen](https://github.com/athopen)
+- add explain_query tool for execution plan analysis (#77) - ([6f255e0](https://github.com/haymon-ai/database-mcp/commit/6f255e0a27cbdf8ec2e95a4b120b891e9a1c3b7b)) - [@athopen](https://github.com/athopen)
+- add drop_table tool (#76) - ([e505e74](https://github.com/haymon-ai/database-mcp/commit/e505e74feb38d1c1a954183e3c340a857b090826)) - [@athopen](https://github.com/athopen)
+- add drop_database tool (#72) (#75) - ([c564dc8](https://github.com/haymon-ai/database-mcp/commit/c564dc8417da4250670daf139e9fb777b753aa3c)) - [@athopen](https://github.com/athopen)
+- add per-query execution timeout with 30s default (#69) - ([697f70a](https://github.com/haymon-ai/database-mcp/commit/697f70ab35f9846114ebbf16850f0fbb23216802)) - [@athopen](https://github.com/athopen)
+- add connection timeout and pool lifecycle defaults (#68) - ([2e44203](https://github.com/haymon-ai/database-mcp/commit/2e442034fb521424e209c3498b192dd55d328d9a)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- update yanked fastrand 2.4.0 to 2.4.1 (#79) - ([861d9ff](https://github.com/haymon-ai/database-mcp/commit/861d9ff65e833d44222643a56ecbecbe272db8a5)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.5.2](https://github.com/haymon-ai/database-mcp/compare/3c220fc3609b344e1c371fba68a27b6bbd0401a6..v0.5.2) - 2026-04-06
 #### Features
 - extend server info with full Implementation metadata (#66) - ([df4b47f](https://github.com/haymon-ai/database-mcp/commit/df4b47fa19fd537f1971173245709d25b1949935)) - [@athopen](https://github.com/athopen)
