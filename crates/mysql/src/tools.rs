@@ -6,15 +6,13 @@
 
 use super::types::DropTableRequest;
 use database_mcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
-    QueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesResponse,
+    ListTablesRequest, ListTablesResponse, MessageResponse, QueryRequest, QueryResponse, TableSchemaResponse,
 };
 use rmcp::handler::server::tool::ToolRouter;
-use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, ErrorData};
+use rmcp::handler::server::wrapper::{Json, Parameters};
+use rmcp::model::ErrorData;
 use rmcp::tool;
-
-use database_mcp_sql::validation::validate_read_only_with_dialect;
 
 use super::MysqlAdapter;
 
@@ -48,9 +46,42 @@ impl MysqlAdapter {
             open_world_hint = false
         )
     )]
-    pub async fn tool_list_databases(&self) -> Result<CallToolResult, ErrorData> {
-        let result = self.list_databases().await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    pub async fn tool_list_databases(&self) -> Result<Json<ListDatabasesResponse>, ErrorData> {
+        Ok(Json(self.list_databases().await?))
+    }
+
+    /// Create a new database.
+    #[tool(
+        name = "create_database",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn tool_create_database(
+        &self,
+        Parameters(request): Parameters<CreateDatabaseRequest>,
+    ) -> Result<Json<MessageResponse>, ErrorData> {
+        Ok(Json(self.create_database(&request).await?))
+    }
+
+    /// Drop an existing database. Cannot drop the currently connected database.
+    #[tool(
+        name = "drop_database",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    pub async fn tool_drop_database(
+        &self,
+        Parameters(request): Parameters<DropDatabaseRequest>,
+    ) -> Result<Json<MessageResponse>, ErrorData> {
+        Ok(Json(self.drop_database(&request).await?))
     }
 
     /// List all tables in a specific database.
@@ -67,9 +98,8 @@ impl MysqlAdapter {
     pub async fn tool_list_tables(
         &self,
         Parameters(request): Parameters<ListTablesRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.list_tables(&request.database_name).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<ListTablesResponse>, ErrorData> {
+        Ok(Json(self.list_tables(&request).await?))
     }
 
     /// Get column definitions (type, nullable, key, default) and foreign key
@@ -86,89 +116,8 @@ impl MysqlAdapter {
     pub async fn tool_get_table_schema(
         &self,
         Parameters(request): Parameters<GetTableSchemaRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .get_table_schema(&request.database_name, &request.table_name)
-            .await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
-    }
-
-    /// Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
-    #[tool(
-        name = "read_query",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = true
-        )
-    )]
-    pub async fn tool_read_query(
-        &self,
-        Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        validate_read_only_with_dialect(&request.query, &sqlparser::dialect::MySqlDialect {})?;
-
-        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let result = self.execute_query(&request.query, db).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
-    }
-
-    /// Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-    #[tool(
-        name = "write_query",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = true,
-            idempotent_hint = false,
-            open_world_hint = true
-        )
-    )]
-    pub async fn tool_write_query(
-        &self,
-        Parameters(request): Parameters<QueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let result = self.execute_query(&request.query, db).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
-    }
-
-    /// Create a new database.
-    #[tool(
-        name = "create_database",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = false,
-            open_world_hint = false
-        )
-    )]
-    pub async fn tool_create_database(
-        &self,
-        Parameters(request): Parameters<CreateDatabaseRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.create_database(&request.database_name).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
-    }
-
-    /// Return the execution plan for a SQL query.
-    #[tool(
-        name = "explain_query",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = true
-        )
-    )]
-    pub async fn tool_explain_query(
-        &self,
-        Parameters(request): Parameters<ExplainQueryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .explain_query(&request.database_name, &request.query, request.analyze)
-            .await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<TableSchemaResponse>, ErrorData> {
+        Ok(Json(self.get_table_schema(&request).await?))
     }
 
     /// Drop a table from a database.
@@ -184,26 +133,58 @@ impl MysqlAdapter {
     pub async fn tool_drop_table(
         &self,
         Parameters(request): Parameters<DropTableRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.drop_table(&request.database_name, &request.table_name).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+    ) -> Result<Json<MessageResponse>, ErrorData> {
+        Ok(Json(self.drop_table(&request).await?))
     }
 
-    /// Drop an existing database. Cannot drop the currently connected database.
+    /// Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
     #[tool(
-        name = "drop_database",
+        name = "read_query",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    pub async fn tool_read_query(
+        &self,
+        Parameters(request): Parameters<QueryRequest>,
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.read_query(&request).await?))
+    }
+
+    /// Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+    #[tool(
+        name = "write_query",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
             idempotent_hint = false,
-            open_world_hint = false
+            open_world_hint = true
         )
     )]
-    pub async fn tool_drop_database(
+    pub async fn tool_write_query(
         &self,
-        Parameters(request): Parameters<DropDatabaseRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self.drop_database(&request.database_name).await?;
-        Ok(CallToolResult::success(vec![Content::json(result)?]))
+        Parameters(request): Parameters<QueryRequest>,
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.write_query(&request).await?))
+    }
+
+    /// Return the execution plan for a SQL query.
+    #[tool(
+        name = "explain_query",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = true
+        )
+    )]
+    pub async fn tool_explain_query(
+        &self,
+        Parameters(request): Parameters<ExplainQueryRequest>,
+    ) -> Result<Json<QueryResponse>, ErrorData> {
+        Ok(Json(self.explain_query(&request).await?))
     }
 }

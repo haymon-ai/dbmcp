@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
@@ -17,9 +18,17 @@ impl PostgresAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub(crate) async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
+    pub(crate) async fn get_table_schema(
+        &self,
+        request: &GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, AppError> {
+        let table = &request.table_name;
         validate_identifier(table)?;
-        let db = if database.is_empty() { None } else { Some(database) };
+        let db = if request.database_name.is_empty() {
+            None
+        } else {
+            Some(request.database_name.as_str())
+        };
         let pool = self.get_pool(db).await?;
 
         // 1. Get basic schema
@@ -36,7 +45,7 @@ impl PostgresAdapter {
         .await?;
 
         if rows.is_empty() {
-            return Err(AppError::TableNotFound(table.to_string()));
+            return Err(AppError::TableNotFound(table.clone()));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -104,9 +113,9 @@ impl PostgresAdapter {
             }
         }
 
-        Ok(json!({
-            "table_name": table,
-            "columns": columns,
-        }))
+        Ok(TableSchemaResponse {
+            table_name: table.clone(),
+            columns: json!(columns),
+        })
     }
 }

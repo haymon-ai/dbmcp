@@ -9,7 +9,7 @@ expression: tools
     "description": "Create a new database.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to create a database.",
+      "description": "Request for the `create_database` tool.",
       "properties": {
         "database_name": {
           "description": "Name of the database to create. Must contain only alphanumeric characters and underscores.",
@@ -20,6 +20,21 @@ expression: tools
         "database_name"
       ],
       "title": "CreateDatabaseRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for tools with no structured return data.",
+      "properties": {
+        "message": {
+          "description": "Description of the completed operation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "MessageResponse",
       "type": "object"
     },
     "annotations": {
@@ -34,7 +49,7 @@ expression: tools
     "description": "Drop an existing database. Cannot drop the currently connected database.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to drop a database.",
+      "description": "Request for the `drop_database` tool.",
       "properties": {
         "database_name": {
           "description": "Name of the database to drop. Must contain only alphanumeric characters and underscores.",
@@ -45,6 +60,21 @@ expression: tools
         "database_name"
       ],
       "title": "DropDatabaseRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for tools with no structured return data.",
+      "properties": {
+        "message": {
+          "description": "Description of the completed operation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "MessageResponse",
       "type": "object"
     },
     "annotations": {
@@ -59,7 +89,7 @@ expression: tools
     "description": "Drop a table from a database. Checks for foreign key dependencies\nvia the database engine — use `cascade` to force on `PostgreSQL`.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to drop a table.",
+      "description": "Request for the `drop_table` tool.",
       "properties": {
         "cascade": {
           "default": false,
@@ -82,6 +112,21 @@ expression: tools
       "title": "DropTableRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for tools with no structured return data.",
+      "properties": {
+        "message": {
+          "description": "Description of the completed operation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "MessageResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true,
@@ -94,7 +139,7 @@ expression: tools
     "description": "Return the execution plan for a SQL query.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to explain a query's execution plan.",
+      "description": "Request for the `explain_query` tool.",
       "properties": {
         "analyze": {
           "default": false,
@@ -117,6 +162,20 @@ expression: tools
       "title": "ExplainQueryRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -129,7 +188,7 @@ expression: tools
     "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to get a table's schema.",
+      "description": "Request for the `get_table_schema` tool.",
       "properties": {
         "database_name": {
           "description": "The database name containing the table. Required. Use `list_databases` first to see available databases.",
@@ -147,6 +206,25 @@ expression: tools
       "title": "GetTableSchemaRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `get_table_schema` tool.",
+      "properties": {
+        "columns": {
+          "description": "Column definitions keyed by column name."
+        },
+        "table_name": {
+          "description": "Name of the inspected table.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table_name",
+        "columns"
+      ],
+      "title": "TableSchemaResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -161,6 +239,24 @@ expression: tools
       "properties": {},
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `list_databases` tool.",
+      "properties": {
+        "databases": {
+          "description": "Sorted list of database names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "databases"
+      ],
+      "title": "ListDatabasesResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -173,7 +269,7 @@ expression: tools
     "description": "List all tables in a specific database.\nRequires `database_name` from `list_databases`.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request to list tables in a database.",
+      "description": "Request for the `list_tables` tool.",
       "properties": {
         "database_name": {
           "description": "The database name to list tables from. Required. Use `list_databases` first to see available databases.",
@@ -184,6 +280,24 @@ expression: tools
         "database_name"
       ],
       "title": "ListTablesRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `list_tables` tool.",
+      "properties": {
+        "tables": {
+          "description": "Sorted list of table names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tables"
+      ],
+      "title": "ListTablesResponse",
       "type": "object"
     },
     "annotations": {
@@ -198,7 +312,7 @@ expression: tools
     "description": "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for `read_query` and `write_query` tools.",
+      "description": "Request for the `read_query` and `write_query` tools.",
       "properties": {
         "database_name": {
           "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
@@ -216,6 +330,20 @@ expression: tools
       "title": "QueryRequest",
       "type": "object"
     },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
+      "type": "object"
+    },
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -228,7 +356,7 @@ expression: tools
     "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for `read_query` and `write_query` tools.",
+      "description": "Request for the `read_query` and `write_query` tools.",
       "properties": {
         "database_name": {
           "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
@@ -244,6 +372,20 @@ expression: tools
         "database_name"
       ],
       "title": "QueryRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name."
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "QueryResponse",
       "type": "object"
     },
     "annotations": {

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::TableSchemaResponse;
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
@@ -10,6 +11,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 use super::SqliteAdapter;
+use super::types::GetTableSchemaRequest;
 
 impl SqliteAdapter {
     /// Returns column definitions with foreign key relationships.
@@ -17,7 +19,11 @@ impl SqliteAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub(crate) async fn get_table_schema(&self, table: &str) -> Result<Value, AppError> {
+    pub(crate) async fn get_table_schema(
+        &self,
+        request: &GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, AppError> {
+        let table = &request.table_name;
         validate_identifier(table)?;
 
         // 1. Get basic schema
@@ -30,7 +36,7 @@ impl SqliteAdapter {
         .await?;
 
         if rows.is_empty() {
-            return Err(AppError::TableNotFound(table.to_string()));
+            return Err(AppError::TableNotFound(table.clone()));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -84,9 +90,9 @@ impl SqliteAdapter {
             }
         }
 
-        Ok(json!({
-            "table_name": table,
-            "columns": columns,
-        }))
+        Ok(TableSchemaResponse {
+            table_name: table.clone(),
+            columns: json!(columns),
+        })
     }
 }

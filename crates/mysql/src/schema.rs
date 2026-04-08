@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use database_mcp_server::AppError;
+use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use serde_json::{Value, json};
@@ -20,7 +21,12 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub(crate) async fn get_table_schema(&self, database: &str, table: &str) -> Result<Value, AppError> {
+    pub(crate) async fn get_table_schema(
+        &self,
+        request: &GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, AppError> {
+        let database = &request.database_name;
+        let table = &request.table_name;
         validate_identifier(database)?;
         validate_identifier(table)?;
 
@@ -104,9 +110,9 @@ impl MysqlAdapter {
             }
         }
 
-        Ok(json!({
-            "table_name": table,
-            "columns": columns,
-        }))
+        Ok(TableSchemaResponse {
+            table_name: table.clone(),
+            columns: json!(columns),
+        })
     }
 }

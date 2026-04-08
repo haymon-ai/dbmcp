@@ -8,28 +8,28 @@ use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 
-/// Request to get a table's schema.
+/// Request for the `get_table_schema` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetTableSchemaRequest {
     /// The table name to inspect. Use `list_tables` first to see available tables.
     pub table_name: String,
 }
 
-/// Request for `read_query` and `write_query` tools.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct QueryRequest {
-    /// The SQL query to execute.
-    pub query: String,
-}
-
-/// Request to drop a table.
+/// Request for the `drop_table` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct DropTableRequest {
     /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
     pub table_name: String,
 }
 
-/// Request to explain a query's execution plan.
+/// Request for the `read_query` and `write_query` tools.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct QueryRequest {
+    /// The SQL query to execute.
+    pub query: String,
+}
+
+/// Request for the `explain_query` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ExplainQueryRequest {
     /// The SQL query to explain.

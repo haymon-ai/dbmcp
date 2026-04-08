@@ -3,11 +3,16 @@
 //! Provides methods for listing databases, tables, executing queries,
 //! creating databases, dropping databases, and explaining queries.
 
+use super::types::DropTableRequest;
 use database_mcp_server::AppError;
+use database_mcp_server::types::{
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesResponse, ListTablesRequest,
+    ListTablesResponse, MessageResponse, QueryRequest, QueryResponse,
+};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::Executor;
 use sqlx::mysql::MySqlRow;
 use sqlx_to_json::RowExt;
@@ -52,7 +57,7 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn list_databases(&self) -> Result<Vec<String>, AppError> {
+    pub(crate) async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
         let results = self
             .query_to_json(
                 "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
@@ -60,10 +65,12 @@ impl MysqlAdapter {
             )
             .await?;
         let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
-        Ok(rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-            .collect())
+        Ok(ListDatabasesResponse {
+            databases: rows
+                .iter()
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
+                .collect(),
+        })
     }
 
     /// Lists all tables in a database.
@@ -71,27 +78,51 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub(crate) async fn list_tables(&self, database: &str) -> Result<Vec<String>, AppError> {
-        validate_identifier(database)?;
+    pub(crate) async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
+        validate_identifier(&request.database_name)?;
         let sql = format!(
             "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
-            Self::quote_string(database)
+            Self::quote_string(&request.database_name)
         );
         let results = self.query_to_json(&sql, None).await?;
         let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
-        Ok(rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-            .collect())
+        Ok(ListTablesResponse {
+            tables: rows
+                .iter()
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
+                .collect(),
+        })
     }
 
     /// Executes a SQL query and returns rows as JSON.
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
+        self.query_to_json(sql, database).await
+    }
+
+    /// Executes a read-only SQL query.
+    ///
+    /// Validates that the query is read-only before executing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ReadOnlyViolation`] if the query is not
+    /// read-only, or [`AppError::Query`] if the backend reports an error.
+    pub(crate) async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        validate_read_only_with_dialect(&request.query, &sqlparser::dialect::MySqlDialect {})?;
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
+    }
+
+    /// Executes a write SQL query.
     ///
     /// # Errors
     ///
     /// Returns [`AppError`] if the query fails.
-    pub(crate) async fn execute_query(&self, sql: &str, database: Option<&str>) -> Result<Value, AppError> {
-        self.query_to_json(sql, database).await
+    pub(crate) async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
+        let rows = self.execute_query(&request.query, db).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Returns the execution plan for a query.
@@ -104,18 +135,19 @@ impl MysqlAdapter {
     /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn explain_query(&self, database: &str, query: &str, analyze: bool) -> Result<Value, AppError> {
-        if analyze && self.config.read_only {
-            validate_read_only_with_dialect(query, &sqlparser::dialect::MySqlDialect {})?;
+    pub(crate) async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
+        if request.analyze && self.config.read_only {
+            validate_read_only_with_dialect(&request.query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
-        let explain_sql = if analyze {
-            format!("EXPLAIN ANALYZE {query}")
+        let explain_sql = if request.analyze {
+            format!("EXPLAIN ANALYZE {}", request.query)
         } else {
-            format!("EXPLAIN FORMAT=JSON {query}")
+            format!("EXPLAIN FORMAT=JSON {}", request.query)
         };
 
-        self.query_to_json(&explain_sql, Some(database)).await
+        let rows = self.query_to_json(&explain_sql, Some(&request.database_name)).await?;
+        Ok(QueryResponse { rows })
     }
 
     /// Creates a database if it doesn't exist.
@@ -123,10 +155,11 @@ impl MysqlAdapter {
     /// # Errors
     ///
     /// Returns [`AppError`] if read-only or the query fails.
-    pub(crate) async fn create_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let name = &request.database_name;
         validate_identifier(name)?;
 
         // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
@@ -139,11 +172,9 @@ impl MysqlAdapter {
         .await?;
 
         if exists.is_some() {
-            return Ok(json!({
-                "status": "exists",
-                "message": format!("Database '{name}' already exists."),
-                "database_name": name,
-            }));
+            return Ok(MessageResponse {
+                message: format!("Database '{name}' already exists."),
+            });
         }
 
         let create_sql = format!("CREATE DATABASE IF NOT EXISTS {}", Self::quote_identifier(name));
@@ -154,11 +185,9 @@ impl MysqlAdapter {
         )
         .await?;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Database '{name}' created successfully."),
-            "database_name": name,
-        }))
+        Ok(MessageResponse {
+            message: format!("Database '{name}' created successfully."),
+        })
     }
 
     /// Drops a table from a database.
@@ -171,15 +200,17 @@ impl MysqlAdapter {
     /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
     /// [`AppError::InvalidIdentifier`] for invalid names,
     /// or [`AppError::Query`] if the backend reports an error.
-    pub(crate) async fn drop_table(&self, database: &str, table: &str) -> Result<Value, AppError> {
+    pub(crate) async fn drop_table(&self, request: &DropTableRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let database = &request.database_name;
+        let table = &request.table_name;
         validate_identifier(database)?;
         validate_identifier(table)?;
 
         let pool = self.pool.clone();
-        let db = database.to_string();
+        let db = database.clone();
         let drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
         let drop_sql_label = drop_sql.clone();
 
@@ -194,11 +225,9 @@ impl MysqlAdapter {
         })
         .await?;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Table '{table}' dropped successfully."),
-            "table_name": table,
-        }))
+        Ok(MessageResponse {
+            message: format!("Table '{table}' dropped successfully."),
+        })
     }
 
     /// Drops an existing database.
@@ -211,10 +240,11 @@ impl MysqlAdapter {
     /// [`AppError::InvalidIdentifier`] for invalid names,
     /// or [`AppError::Query`] if the target is the active database
     /// or the backend reports an error.
-    pub(crate) async fn drop_database(&self, name: &str) -> Result<Value, AppError> {
+    pub(crate) async fn drop_database(&self, request: &DropDatabaseRequest) -> Result<MessageResponse, AppError> {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
+        let name = &request.database_name;
         validate_identifier(name)?;
 
         // Guard: prevent dropping the currently connected database.
@@ -234,10 +264,8 @@ impl MysqlAdapter {
         )
         .await?;
 
-        Ok(json!({
-            "status": "success",
-            "message": format!("Database '{name}' dropped successfully."),
-            "database_name": name,
-        }))
+        Ok(MessageResponse {
+            message: format!("Database '{name}' dropped successfully."),
+        })
     }
 }
