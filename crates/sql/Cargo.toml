@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 database-mcp-server = { workspace = true }
 sqlparser = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [lints]
