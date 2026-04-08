@@ -2,14 +2,14 @@
 //!
 //! Provides [`ServerHandler`], a cloneable, type-erased MCP server
 //! that wraps any database backend. The [`create_handler`] function
-//! connects to the configured database and returns a [`ServerHandler`].
+//! constructs the appropriate adapter and returns a [`ServerHandler`]
+//! without establishing a database connection.
 
 use std::sync::Arc;
 
 use database_mcp_config::{Config, DatabaseBackend};
 use database_mcp_mysql::MysqlAdapter;
 use database_mcp_postgres::PostgresAdapter;
-use database_mcp_server::AppError;
 use database_mcp_sqlite::SqliteAdapter;
 use rmcp::RoleServer;
 use rmcp::Service;
@@ -73,15 +73,15 @@ impl Service<RoleServer> for ServerHandler {
 
 /// Creates a [`ServerHandler`] based on the configured database backend.
 ///
-/// # Errors
-///
-/// Returns an error if the database connection fails (invalid URL,
-/// unreachable host, authentication failure).
-pub async fn create_handler(config: &Config) -> Result<ServerHandler, AppError> {
-    let handler = match config.database.backend {
-        DatabaseBackend::Sqlite => SqliteAdapter::new(&config.database).await?.into(),
-        DatabaseBackend::Postgres => PostgresAdapter::new(&config.database).await?.into(),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlAdapter::new(&config.database).await?.into(),
-    };
-    Ok(handler)
+/// Does **not** establish a database connection. Each adapter defers
+/// pool creation until the first tool invocation, allowing the MCP
+/// server to start and respond to protocol messages even when the
+/// database is unreachable.
+#[must_use]
+pub fn create_handler(config: &Config) -> ServerHandler {
+    match config.database.backend {
+        DatabaseBackend::Sqlite => SqliteAdapter::new(&config.database).into(),
+        DatabaseBackend::Postgres => PostgresAdapter::new(&config.database).into(),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlAdapter::new(&config.database).into(),
+    }
 }

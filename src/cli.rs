@@ -275,7 +275,7 @@ pub async fn run() -> Result<ExitCode, Error> {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    let handler = create_handler(&config).await?;
+    let handler = create_handler(&config);
     match &arguments.command {
         Some(Command::Http(cmd)) => cmd.execute(&config, handler).await?,
         _ => StdioCommand.execute(handler).await?,

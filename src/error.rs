@@ -9,10 +9,6 @@
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
-    /// Database backend initialization failed.
-    #[error(transparent)]
-    Backend(#[from] database_mcp_server::AppError),
-
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]
     Transport(#[from] rmcp::service::ServerInitializeError),

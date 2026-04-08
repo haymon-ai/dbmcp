@@ -531,6 +531,7 @@ dependencies = [
  "sqlparser",
  "sqlx",
  "sqlx_to_json",
+ "tokio",
  "tracing",
 ]
 
