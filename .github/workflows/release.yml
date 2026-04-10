@@ -122,7 +122,7 @@ jobs:
 
   registry-modelcontextprotocol-io:
     name: Publish to registry.modelcontextprotocol.io
-    needs: [release]
+    needs: [ghcr-io]
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
