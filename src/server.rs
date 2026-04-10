@@ -30,24 +30,6 @@ impl ServerHandler {
     }
 }
 
-impl From<SqliteHandler> for ServerHandler {
-    fn from(handler: SqliteHandler) -> Self {
-        Self::new(handler)
-    }
-}
-
-impl From<PostgresHandler> for ServerHandler {
-    fn from(handler: PostgresHandler) -> Self {
-        Self::new(handler)
-    }
-}
-
-impl From<MysqlHandler> for ServerHandler {
-    fn from(handler: MysqlHandler) -> Self {
-        Self::new(handler)
-    }
-}
-
 impl Service<RoleServer> for ServerHandler {
     fn handle_request(
         &self,
@@ -80,8 +62,8 @@ impl Service<RoleServer> for ServerHandler {
 #[must_use]
 pub fn create_handler(config: &Config) -> ServerHandler {
     match config.database.backend {
-        DatabaseBackend::Sqlite => SqliteHandler::new(&config.database).into(),
-        DatabaseBackend::Postgres => PostgresHandler::new(&config.database).into(),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(&config.database).into(),
+        DatabaseBackend::Sqlite => ServerHandler::new(SqliteHandler::new(&config.database)),
+        DatabaseBackend::Postgres => ServerHandler::new(PostgresHandler::new(&config.database)),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ServerHandler::new(MysqlHandler::new(&config.database)),
     }
 }
