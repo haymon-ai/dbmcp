@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.6.1](https://github.com/haymon-ai/database-mcp/compare/45f73a649ffce25cd1e17b3ff24e6b2c1d8971b8..v0.6.1) - 2026-04-10
+#### Features
+- (**ci**) automate release publishing to ghcr.io, MCP Registry, and crates.io (#86) - ([45f73a6](https://github.com/haymon-ai/database-mcp/commit/45f73a649ffce25cd1e17b3ff24e6b2c1d8971b8)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- add code of conduct - ([7d8b740](https://github.com/haymon-ai/database-mcp/commit/7d8b740de8926d04461b8fc35d7f7c576ed4e3f5)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**handlers**) replace rmcp tool macros with per-tool ZSTs (#87) - ([024a4e9](https://github.com/haymon-ai/database-mcp/commit/024a4e902c30c5a39fa540c4b06716e99f644c3d)) - [@athopen](https://github.com/athopen)
+- (**server**) drop unused From impls for ServerHandler - ([2860656](https://github.com/haymon-ai/database-mcp/commit/28606562977a48446bec1b534dd1950ad0e5dabd)) - athopen
+
+- - -
+
 ## [v0.6.0](https://github.com/haymon-ai/database-mcp/compare/2e442034fb521424e209c3498b192dd55d328d9a..v0.6.0) - 2026-04-08
 #### Features
 - defer database connection via lazy pool initialization (#81) (#84) - ([34b0d56](https://github.com/haymon-ai/database-mcp/commit/34b0d5671bebfa56481c6b0d01932d0d5e31d475)) - [@athopen](https://github.com/athopen)
