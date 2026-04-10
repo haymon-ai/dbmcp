@@ -1,13 +1,10 @@
 //! `PostgreSQL` backend crate.
 //!
-//! Provides [`PostgresAdapter`] for database operations with MCP
+//! Provides [`PostgresHandler`] for database operations with MCP
 //! tool registration via [`ServerHandler`](rmcp::ServerHandler).
 
-mod adapter;
 mod handler;
-mod operations;
-mod schema;
 mod tools;
 pub mod types;
 
-pub use adapter::PostgresAdapter;
+pub use handler::PostgresHandler;

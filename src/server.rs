@@ -8,9 +8,9 @@
 use std::sync::Arc;
 
 use database_mcp_config::{Config, DatabaseBackend};
-use database_mcp_mysql::MysqlAdapter;
-use database_mcp_postgres::PostgresAdapter;
-use database_mcp_sqlite::SqliteAdapter;
+use database_mcp_mysql::MysqlHandler;
+use database_mcp_postgres::PostgresHandler;
+use database_mcp_sqlite::SqliteHandler;
 use rmcp::RoleServer;
 use rmcp::Service;
 use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
@@ -30,21 +30,21 @@ impl ServerHandler {
     }
 }
 
-impl From<SqliteAdapter> for ServerHandler {
-    fn from(adapter: SqliteAdapter) -> Self {
-        Self::new(adapter)
+impl From<SqliteHandler> for ServerHandler {
+    fn from(handler: SqliteHandler) -> Self {
+        Self::new(handler)
     }
 }
 
-impl From<PostgresAdapter> for ServerHandler {
-    fn from(adapter: PostgresAdapter) -> Self {
-        Self::new(adapter)
+impl From<PostgresHandler> for ServerHandler {
+    fn from(handler: PostgresHandler) -> Self {
+        Self::new(handler)
     }
 }
 
-impl From<MysqlAdapter> for ServerHandler {
-    fn from(adapter: MysqlAdapter) -> Self {
-        Self::new(adapter)
+impl From<MysqlHandler> for ServerHandler {
+    fn from(handler: MysqlHandler) -> Self {
+        Self::new(handler)
     }
 }
 
@@ -80,8 +80,8 @@ impl Service<RoleServer> for ServerHandler {
 #[must_use]
 pub fn create_handler(config: &Config) -> ServerHandler {
     match config.database.backend {
-        DatabaseBackend::Sqlite => SqliteAdapter::new(&config.database).into(),
-        DatabaseBackend::Postgres => PostgresAdapter::new(&config.database).into(),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlAdapter::new(&config.database).into(),
+        DatabaseBackend::Sqlite => SqliteHandler::new(&config.database).into(),
+        DatabaseBackend::Postgres => PostgresHandler::new(&config.database).into(),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(&config.database).into(),
     }
 }
