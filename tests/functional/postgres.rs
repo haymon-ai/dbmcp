@@ -1,20 +1,19 @@
 //! Functional tests for `PostgreSQL`.
 //!
-//! Tests exercise the MCP tool layer (not adapter methods directly),
-//! ensuring the same code path as real MCP clients.
+//! Tests exercise the handler methods directly, which is the same code
+//! path the per-tool ZSTs delegate to.
 //!
 //! ```bash
 //! ./tests/run.sh --filter postgres
 //! ```
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresAdapter;
+use database_mcp_postgres::PostgresHandler;
 use database_mcp_postgres::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
     QueryRequest,
 };
-use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -33,30 +32,30 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
     }
 }
 
-fn adapter(read_only: bool) -> PostgresAdapter {
+fn handler(read_only: bool) -> PostgresHandler {
     let config = base_db_config(read_only);
-    PostgresAdapter::new(&config)
+    PostgresHandler::new(&config)
 }
 
 #[tokio::test]
 async fn test_lists_databases() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
-    let response = adapter.tool_list_databases().await.unwrap();
-    let dbs = response.0.databases;
+    let response = handler.list_databases().await.unwrap();
+    let dbs = response.databases;
 
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }
 
 #[tokio::test]
 async fn test_lists_tables() {
-    let adapter = adapter(false);
-    let parameters = Parameters(ListTablesRequest {
+    let handler = handler(false);
+    let request = ListTablesRequest {
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables = response.0.tables;
+    let response = handler.list_tables(&request).await.unwrap();
+    let tables = response.tables;
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -68,14 +67,13 @@ async fn test_lists_tables() {
 
 #[tokio::test]
 async fn test_gets_table_schema() {
-    let adapter = adapter(false);
-    let parameters = Parameters(GetTableSchemaRequest {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
         database_name: "app".into(),
         table_name: "users".into(),
-    });
+    };
 
-    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema = &response.0;
+    let schema = handler.get_table_schema(&request).await.unwrap();
 
     assert_eq!(schema.table_name, "users");
     let columns = schema.columns.as_object().expect("columns object");
@@ -86,14 +84,13 @@ async fn test_gets_table_schema() {
 
 #[tokio::test]
 async fn test_gets_table_schema_with_relations() {
-    let adapter = adapter(false);
-    let parameters = Parameters(GetTableSchemaRequest {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
         database_name: "app".into(),
         table_name: "posts".into(),
-    });
+    };
 
-    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema = &response.0;
+    let schema = handler.get_table_schema(&request).await.unwrap();
 
     let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
@@ -110,66 +107,66 @@ async fn test_gets_table_schema_with_relations() {
 
 #[tokio::test]
 async fn test_executes_sql() {
-    let adapter = adapter(false);
-    let parameters = Parameters(QueryRequest {
+    let handler = handler(false);
+    let request = QueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
+    let response = handler.read_query(&request).await.unwrap();
+    let rows: Vec<Value> = response.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
 }
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
-    let adapter = adapter(false);
-    let parameters = Parameters(QueryRequest {
+    let handler = handler(false);
+    let request = QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_read_query(parameters).await;
+    let response = handler.read_query(&request).await;
 
     assert!(response.is_err(), "Expected error for write in read-only mode");
 }
 
 #[tokio::test]
 async fn test_creates_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(CreateDatabaseRequest {
+    let handler = handler(false);
+    let request = CreateDatabaseRequest {
         database_name: "app_new".into(),
-    });
+    };
 
-    let response = adapter.tool_create_database(parameters).await.unwrap();
-    assert!(response.0.message.contains("created successfully"));
+    let response = handler.create_database(&request).await.unwrap();
+    assert!(response.message.contains("created successfully"));
 
-    let response = adapter.tool_list_databases().await.unwrap();
-    let dbs = response.0.databases;
+    let response = handler.list_databases().await.unwrap();
+    let dbs = response.databases;
 
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
 }
 
 #[tokio::test]
 async fn test_drops_database() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
     // Verify seeded database exists
-    let response = adapter.tool_list_databases().await.unwrap();
-    let dbs = response.0.databases;
+    let response = handler.list_databases().await.unwrap();
+    let dbs = response.databases;
     assert!(dbs.iter().any(|db| db == "canary"), "canary should exist before drop");
 
     // Drop it
-    let drop_params = Parameters(DropDatabaseRequest {
+    let drop_request = DropDatabaseRequest {
         database_name: "canary".into(),
-    });
-    let response = adapter.tool_drop_database(drop_params).await.unwrap();
-    assert!(response.0.message.contains("dropped successfully"));
+    };
+    let response = handler.drop_database(&drop_request).await.unwrap();
+    assert!(response.message.contains("dropped successfully"));
 
     // Verify it's gone
-    let response = adapter.tool_list_databases().await.unwrap();
-    let dbs = response.0.databases;
+    let response = handler.list_databases().await.unwrap();
+    let dbs = response.databases;
     assert!(
         !dbs.iter().any(|db| db == "canary"),
         "canary should not exist after drop"
@@ -178,16 +175,16 @@ async fn test_drops_database() {
 
 #[tokio::test]
 async fn test_drop_active_database_blocked() {
-    let adapter = adapter(false);
-    let parameters = Parameters(DropDatabaseRequest {
+    let handler = handler(false);
+    let request = DropDatabaseRequest {
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_drop_database(parameters).await;
+    let response = handler.drop_database(&request).await;
 
     let err_msg = format!(
         "{:?}",
-        response.err().expect("Expected error when dropping active database")
+        response.expect_err("Expected error when dropping active database")
     );
     assert!(
         err_msg.contains("currently connected"),
@@ -197,37 +194,37 @@ async fn test_drop_active_database_blocked() {
 
 #[tokio::test]
 async fn test_drop_nonexistent_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(DropDatabaseRequest {
+    let handler = handler(false);
+    let request = DropDatabaseRequest {
         database_name: "nonexistent_db_xyz".into(),
-    });
+    };
 
-    let response = adapter.tool_drop_database(parameters).await;
+    let response = handler.drop_database(&request).await;
 
     assert!(response.is_err(), "Expected error for nonexistent database");
 }
 
 #[tokio::test]
 async fn test_drop_database_invalid_identifier() {
-    let adapter = adapter(false);
-    let parameters = Parameters(DropDatabaseRequest {
+    let handler = handler(false);
+    let request = DropDatabaseRequest {
         database_name: String::new(),
-    });
+    };
 
-    let response = adapter.tool_drop_database(parameters).await;
+    let response = handler.drop_database(&request).await;
 
     assert!(response.is_err(), "Expected error for empty database name");
 }
 
 #[tokio::test]
 async fn test_lists_tables_cross_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(ListTablesRequest {
+    let handler = handler(false);
+    let request = ListTablesRequest {
         database_name: "analytics".into(),
-    });
+    };
 
-    let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables = response.0.tables;
+    let response = handler.list_tables(&request).await.unwrap();
+    let tables = response.tables;
 
     assert!(
         tables.iter().any(|t| t == "events"),
@@ -241,31 +238,30 @@ async fn test_lists_tables_cross_database() {
 
 #[tokio::test]
 async fn test_executes_sql_cross_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(QueryRequest {
+    let handler = handler(false);
+    let request = QueryRequest {
         query: "SELECT * FROM events ORDER BY id".into(),
         database_name: "analytics".into(),
-    });
+    };
 
-    let response = adapter.tool_read_query(parameters).await.unwrap();
-    let rows: Vec<Value> = response.0.rows.as_array().expect("rows should be an array").clone();
+    let response = handler.read_query(&request).await.unwrap();
+    let rows: Vec<Value> = response.rows.as_array().expect("rows should be an array").clone();
 
     assert_eq!(rows.len(), 2, "Expected 2 events, got {}", rows.len());
 }
 
 #[tokio::test]
 async fn test_gets_table_schema_cross_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(GetTableSchemaRequest {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
         database_name: "analytics".into(),
         table_name: "events".into(),
-    });
+    };
 
-    let response = adapter.tool_get_table_schema(parameters).await.unwrap();
-    let schema = &response.0;
+    let response = handler.get_table_schema(&request).await.unwrap();
 
-    assert_eq!(schema.table_name, "events");
-    let columns = schema.columns.as_object().expect("columns object");
+    assert_eq!(response.table_name, "events");
+    let columns = response.columns.as_object().expect("columns object");
     for col in ["id", "name", "payload", "created_at"] {
         assert!(
             columns.contains_key(col),
@@ -276,10 +272,10 @@ async fn test_gets_table_schema_cross_database() {
 
 #[tokio::test]
 async fn test_lists_databases_includes_cross_db() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
-    let response = adapter.tool_list_databases().await.unwrap();
-    let dbs = response.0.databases;
+    let response = handler.list_databases().await.unwrap();
+    let dbs = response.databases;
 
     assert!(
         dbs.iter().any(|db| db == "analytics"),
@@ -289,13 +285,13 @@ async fn test_lists_databases_includes_cross_db() {
 
 #[tokio::test]
 async fn test_blocks_writes_cross_database_in_read_only_mode() {
-    let adapter = adapter(false);
-    let parameters = Parameters(QueryRequest {
+    let handler = handler(false);
+    let request = QueryRequest {
         query: "INSERT INTO events (name) VALUES ('hack')".into(),
         database_name: "analytics".into(),
-    });
+    };
 
-    let response = adapter.tool_read_query(parameters).await;
+    let response = handler.read_query(&request).await;
 
     assert!(
         response.is_err(),
@@ -305,25 +301,25 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
 
 #[tokio::test]
 async fn test_returns_error_for_nonexistent_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(ListTablesRequest {
+    let handler = handler(false);
+    let request = ListTablesRequest {
         database_name: "nonexistent_db_xyz".into(),
-    });
+    };
 
-    let response = adapter.tool_list_tables(parameters).await;
+    let response = handler.list_tables(&request).await;
 
     assert!(response.is_err(), "Expected error for nonexistent database");
 }
 
 #[tokio::test]
 async fn test_uses_default_pool_for_matching_database() {
-    let adapter = adapter(false);
-    let parameters = Parameters(ListTablesRequest {
+    let handler = handler(false);
+    let request = ListTablesRequest {
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_list_tables(parameters).await.unwrap();
-    let tables = response.0.tables;
+    let response = handler.list_tables(&request).await.unwrap();
+    let tables = response.tables;
 
     assert!(
         tables.iter().any(|t| t == "users"),
@@ -337,18 +333,18 @@ async fn test_query_timeout_cancels_slow_query() {
         query_timeout: Some(2),
         ..base_db_config(false)
     };
-    let adapter = PostgresAdapter::new(&config);
-    let parameters = Parameters(QueryRequest {
+    let handler = PostgresHandler::new(&config);
+    let request = QueryRequest {
         query: "SELECT pg_sleep(30)".into(),
         database_name: "app".into(),
-    });
+    };
 
     let start = std::time::Instant::now();
-    let response = adapter.tool_read_query(parameters).await;
+    let response = handler.read_query(&request).await;
     let elapsed = start.elapsed();
 
     assert!(response.is_err(), "Expected timeout error");
-    let err_msg = format!("{:?}", response.map(|_| ()).unwrap_err());
+    let err_msg = response.map(|_| ()).unwrap_err().to_string();
     assert!(
         err_msg.contains("timed out"),
         "Expected timeout message, got: {err_msg}"
@@ -366,42 +362,42 @@ async fn test_query_timeout_disabled_with_none() {
         query_timeout: None,
         ..base_db_config(false)
     };
-    let adapter = PostgresAdapter::new(&config);
-    let parameters = Parameters(QueryRequest {
+    let handler = PostgresHandler::new(&config);
+    let request = QueryRequest {
         query: "SELECT 1 AS value".into(),
         database_name: "app".into(),
-    });
+    };
 
-    let response = adapter.tool_read_query(parameters).await;
+    let response = handler.read_query(&request).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
 
 #[tokio::test]
 async fn test_drop_table_success() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
     // Create a temporary table
-    let create = Parameters(QueryRequest {
+    let create = QueryRequest {
         query: "CREATE TABLE drop_test_simple (id SERIAL PRIMARY KEY)".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(create).await.unwrap();
+    };
+    handler.write_query(&create).await.unwrap();
 
     // Drop it
-    let drop_params = Parameters(DropTableRequest {
+    let drop_request = DropTableRequest {
         database_name: "app".into(),
         table_name: "drop_test_simple".into(),
         cascade: false,
-    });
-    let response = adapter.tool_drop_table(drop_params).await.unwrap();
-    assert!(response.0.message.contains("dropped successfully"));
+    };
+    let response = handler.drop_table(&drop_request).await.unwrap();
+    assert!(response.message.contains("dropped successfully"));
 
     // Verify it's gone
-    let tables_params = Parameters(ListTablesRequest {
+    let tables_request = ListTablesRequest {
         database_name: "app".into(),
-    });
-    let response = adapter.tool_list_tables(tables_params).await.unwrap();
-    let tables = response.0.tables;
+    };
+    let response = handler.list_tables(&tables_request).await.unwrap();
+    let tables = response.tables;
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -410,154 +406,143 @@ async fn test_drop_table_success() {
 
 #[tokio::test]
 async fn test_drop_table_fk_error() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
     // Create parent and child tables with FK
-    let create_parent = Parameters(QueryRequest {
+    let create_parent = QueryRequest {
         query: "CREATE TABLE drop_test_parent (id SERIAL PRIMARY KEY)".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(create_parent).await.unwrap();
+    };
+    handler.write_query(&create_parent).await.unwrap();
 
-    let create_child = Parameters(QueryRequest {
+    let create_child = QueryRequest {
         query: "CREATE TABLE drop_test_child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES drop_test_parent(id))"
             .into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(create_child).await.unwrap();
+    };
+    handler.write_query(&create_child).await.unwrap();
 
     // Attempt to drop parent without cascade — should fail
-    let drop_params = Parameters(DropTableRequest {
+    let drop_request = DropTableRequest {
         database_name: "app".into(),
         table_name: "drop_test_parent".into(),
         cascade: false,
-    });
-    let response = adapter.tool_drop_table(drop_params).await;
+    };
+    let response = handler.drop_table(&drop_request).await;
     assert!(response.is_err(), "Expected FK constraint error");
 
     // Clean up
-    let cleanup_child = Parameters(QueryRequest {
+    let cleanup_child = QueryRequest {
         query: "DROP TABLE drop_test_child".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(cleanup_child).await.unwrap();
+    };
+    handler.write_query(&cleanup_child).await.unwrap();
 
-    let cleanup_parent = Parameters(QueryRequest {
+    let cleanup_parent = QueryRequest {
         query: "DROP TABLE drop_test_parent".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(cleanup_parent).await.unwrap();
+    };
+    handler.write_query(&cleanup_parent).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_drop_table_cascade() {
-    let adapter = adapter(false);
+    let handler = handler(false);
 
     // Create parent and child tables with FK
-    let create_parent = Parameters(QueryRequest {
+    let create_parent = QueryRequest {
         query: "CREATE TABLE drop_test_cascade_parent (id SERIAL PRIMARY KEY)".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(create_parent).await.unwrap();
+    };
+    handler.write_query(&create_parent).await.unwrap();
 
-    let create_child = Parameters(QueryRequest {
+    let create_child = QueryRequest {
         query: "CREATE TABLE drop_test_cascade_child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES drop_test_cascade_parent(id))".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(create_child).await.unwrap();
+    };
+    handler.write_query(&create_child).await.unwrap();
 
     // Drop parent with cascade — should succeed
-    let drop_params = Parameters(DropTableRequest {
+    let drop_request = DropTableRequest {
         database_name: "app".into(),
         table_name: "drop_test_cascade_parent".into(),
         cascade: true,
-    });
-    let response = adapter.tool_drop_table(drop_params).await.unwrap();
-    assert!(response.0.message.contains("dropped successfully"));
+    };
+    let response = handler.drop_table(&drop_request).await.unwrap();
+    assert!(response.message.contains("dropped successfully"));
 
     // Clean up child table (still exists, just lost FK constraint)
-    let cleanup = Parameters(QueryRequest {
+    let cleanup = QueryRequest {
         query: "DROP TABLE IF EXISTS drop_test_cascade_child".into(),
         database_name: "app".into(),
-    });
-    adapter.tool_write_query(cleanup).await.unwrap();
-}
-
-#[tokio::test]
-async fn test_drop_table_read_only_hidden() {
-    let adapter = adapter(true);
-    let router = adapter.build_tool_router();
-
-    // drop_table should not be in the router when read_only
-    let tool_list = router.list_all();
-    let has_drop_table = tool_list.iter().any(|t| t.name == "drop_table");
-    assert!(!has_drop_table, "drop_table should be hidden in read-only mode");
+    };
+    handler.write_query(&cleanup).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_drop_table_nonexistent() {
-    let adapter = adapter(false);
-    let drop_params = Parameters(DropTableRequest {
+    let handler = handler(false);
+    let drop_request = DropTableRequest {
         database_name: "app".into(),
         table_name: "nonexistent_table_xyz".into(),
         cascade: false,
-    });
+    };
 
-    let response = adapter.tool_drop_table(drop_params).await;
+    let response = handler.drop_table(&drop_request).await;
     assert!(response.is_err(), "Expected error for nonexistent table");
 }
 
 #[tokio::test]
 async fn test_drop_table_invalid_identifier() {
-    let adapter = adapter(false);
-    let drop_params = Parameters(DropTableRequest {
+    let handler = handler(false);
+    let drop_request = DropTableRequest {
         database_name: "app".into(),
         table_name: String::new(),
         cascade: false,
-    });
+    };
 
-    let response = adapter.tool_drop_table(drop_params).await;
+    let response = handler.drop_table(&drop_request).await;
     assert!(response.is_err(), "Expected error for empty table name");
 }
 
 #[tokio::test]
 async fn test_explain_query_select() {
-    let adapter = adapter(false);
-    let params = Parameters(ExplainQueryRequest {
+    let handler = handler(false);
+    let request = ExplainQueryRequest {
         database_name: "app".into(),
         query: "SELECT * FROM users".into(),
         analyze: false,
-    });
+    };
 
-    let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan = response.0.rows.as_array().expect("rows should be an array");
+    let response = handler.explain_query(&request).await.unwrap();
+    let plan = response.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
 
 #[tokio::test]
 async fn test_explain_query_analyze() {
-    let adapter = adapter(false);
-    let params = Parameters(ExplainQueryRequest {
+    let handler = handler(false);
+    let request = ExplainQueryRequest {
         database_name: "app".into(),
         query: "SELECT * FROM users".into(),
         analyze: true,
-    });
+    };
 
-    let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan = response.0.rows.as_array().expect("rows should be an array");
+    let response = handler.explain_query(&request).await.unwrap();
+    let plan = response.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
 }
 
 #[tokio::test]
 async fn test_explain_query_analyze_write_blocked_read_only() {
-    let adapter = adapter(true);
-    let params = Parameters(ExplainQueryRequest {
+    let handler = handler(true);
+    let request = ExplainQueryRequest {
         database_name: "app".into(),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
         analyze: true,
-    });
+    };
 
-    let response = adapter.tool_explain_query(params).await;
+    let response = handler.explain_query(&request).await;
     assert!(
         response.is_err(),
         "Expected error for EXPLAIN ANALYZE on write statement in read-only mode"
@@ -566,15 +551,15 @@ async fn test_explain_query_analyze_write_blocked_read_only() {
 
 #[tokio::test]
 async fn test_explain_query_plain_write_allowed() {
-    let adapter = adapter(true);
-    let params = Parameters(ExplainQueryRequest {
+    let handler = handler(true);
+    let request = ExplainQueryRequest {
         database_name: "app".into(),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
         analyze: false,
-    });
+    };
 
-    let response = adapter.tool_explain_query(params).await.unwrap();
-    let plan = response.0.rows.as_array().expect("rows should be an array");
+    let response = handler.explain_query(&request).await.unwrap();
+    let plan = response.rows.as_array().expect("rows should be an array");
     assert!(
         !plan.is_empty(),
         "Plain EXPLAIN should work for write statements even in read-only mode"
@@ -582,24 +567,14 @@ async fn test_explain_query_plain_write_allowed() {
 }
 
 #[tokio::test]
-async fn test_explain_query_always_visible() {
-    let adapter = adapter(true);
-    let router = adapter.build_tool_router();
-
-    let tool_list = router.list_all();
-    let has_explain = tool_list.iter().any(|t| t.name == "explain_query");
-    assert!(has_explain, "explain_query should be visible in read-only mode");
-}
-
-#[tokio::test]
 async fn test_explain_query_invalid_query() {
-    let adapter = adapter(false);
-    let params = Parameters(ExplainQueryRequest {
+    let handler = handler(false);
+    let request = ExplainQueryRequest {
         database_name: "app".into(),
         query: "NOT VALID SQL AT ALL".into(),
         analyze: false,
-    });
+    };
 
-    let response = adapter.tool_explain_query(params).await;
+    let response = handler.explain_query(&request).await;
     assert!(response.is_err(), "Expected error for invalid SQL");
 }

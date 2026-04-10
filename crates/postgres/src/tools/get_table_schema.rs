@@ -1,27 +1,65 @@
-//! `PostgreSQL` table schema introspection.
+//! MCP tool: `get_table_schema`.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
+use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
-use super::PostgresAdapter;
+use crate::PostgresHandler;
 
-impl PostgresAdapter {
+/// Marker type for the `get_table_schema` MCP tool.
+pub(crate) struct GetTableSchemaTool;
+
+impl GetTableSchemaTool {
+    const NAME: &'static str = "get_table_schema";
+    const DESCRIPTION: &'static str = "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.";
+}
+
+impl ToolBase for GetTableSchemaTool {
+    type Parameter = GetTableSchemaRequest;
+    type Output = TableSchemaResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        Self::NAME.into()
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(Self::DESCRIPTION.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(false),
+        )
+    }
+}
+
+impl AsyncTool<PostgresHandler> for GetTableSchemaTool {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        Ok(handler.get_table_schema(&params).await?)
+    }
+}
+
+impl PostgresHandler {
     /// Returns column definitions with foreign key relationships.
     ///
     /// # Errors
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
-    pub(crate) async fn get_table_schema(
-        &self,
-        request: &GetTableSchemaRequest,
-    ) -> Result<TableSchemaResponse, AppError> {
+    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
         let table = &request.table_name;
         validate_identifier(table)?;
         let db = if request.database_name.is_empty() {

@@ -5,10 +5,10 @@
 mod common;
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresAdapter;
+use database_mcp_postgres::PostgresHandler;
 
 /// Creates a `PostgreSQL` adapter from `DB_HOST` and `DB_PORT` environment variables.
-fn adapter(read_only: bool) -> PostgresAdapter {
+fn adapter(read_only: bool) -> PostgresHandler {
     let config = DatabaseConfig {
         backend: DatabaseBackend::Postgres,
         host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
@@ -21,7 +21,7 @@ fn adapter(read_only: bool) -> PostgresAdapter {
         read_only,
         ..DatabaseConfig::default()
     };
-    PostgresAdapter::new(&config)
+    PostgresHandler::new(&config)
 }
 
 #[tokio::test]

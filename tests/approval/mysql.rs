@@ -5,10 +5,10 @@
 mod common;
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_mysql::MysqlAdapter;
+use database_mcp_mysql::MysqlHandler;
 
 /// Creates a `MySQL` adapter from `DB_HOST` and `DB_PORT` environment variables.
-fn adapter(read_only: bool) -> MysqlAdapter {
+fn adapter(read_only: bool) -> MysqlHandler {
     let config = DatabaseConfig {
         backend: DatabaseBackend::Mysql,
         host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
@@ -20,7 +20,7 @@ fn adapter(read_only: bool) -> MysqlAdapter {
         read_only,
         ..DatabaseConfig::default()
     };
-    MysqlAdapter::new(&config)
+    MysqlHandler::new(&config)
 }
 
 #[tokio::test]
