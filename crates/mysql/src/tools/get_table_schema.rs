@@ -5,13 +5,13 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
+use database_mcp_sql::connection::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
 use sqlx::Row;
-use sqlx::mysql::MySqlRow;
+use sqlx_to_json::RowExt;
 
 use crate::MysqlHandler;
 
@@ -68,27 +68,27 @@ impl MysqlHandler {
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",
-            Self::quote_identifier(database),
-            Self::quote_identifier(table)
+            self.connection.quote_identifier(database),
+            self.connection.quote_identifier(table)
         );
-        let schema_results = self.query_to_json(&describe_sql, None).await?;
-        let schema_rows = schema_results.as_array().map_or([].as_slice(), Vec::as_slice);
+        let schema_rows = self.connection.fetch(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
             return Err(AppError::TableNotFound(format!("{database}.{table}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
-        for row in schema_rows {
-            if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
+        for row in &schema_rows {
+            let row_json = RowExt::to_json(row);
+            if let Some(col_name) = row_json.get("Field").and_then(|v| v.as_str()) {
                 columns.insert(
                     col_name.to_string(),
                     json!({
-                        "type": row.get("Type").unwrap_or(&Value::Null),
-                        "nullable": row.get("Null").and_then(|v| v.as_str()).is_some_and(|s| s.to_uppercase() == "YES"),
-                        "key": row.get("Key").unwrap_or(&Value::Null),
-                        "default": row.get("Default").unwrap_or(&Value::Null),
-                        "extra": row.get("Extra").unwrap_or(&Value::Null),
+                        "type": row_json.get("Type").unwrap_or(&Value::Null),
+                        "nullable": row_json.get("Null").and_then(|v| v.as_str()).is_some_and(|s| s.to_uppercase() == "YES"),
+                        "key": row_json.get("Key").unwrap_or(&Value::Null),
+                        "default": row_json.get("Default").unwrap_or(&Value::Null),
+                        "extra": row_json.get("Extra").unwrap_or(&Value::Null),
                         "foreign_key": Value::Null,
                     }),
                 );
@@ -114,12 +114,10 @@ impl MysqlHandler {
             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
         ";
 
-        let fk_rows: Vec<MySqlRow> = execute_with_timeout(
-            self.config.query_timeout,
-            fk_sql,
-            sqlx::query(fk_sql).bind(database).bind(table).fetch_all(&self.pool),
-        )
-        .await?;
+        let fk_rows = self
+            .connection
+            .fetch(sqlx::query(fk_sql).bind(database).bind(table), None)
+            .await?;
 
         for fk_row in &fk_rows {
             let col_name: Option<String> = fk_row.try_get("column_name").ok();

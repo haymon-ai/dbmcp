@@ -545,6 +545,7 @@ version = "0.6.1"
 dependencies = [
  "database-mcp-server",
  "sqlparser",
+ "sqlx",
  "tokio",
 ]
 

@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::ListTablesResponse;
-use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::connection::Connection as _;
 use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+use sqlx::Row;
 
 use crate::SqliteHandler;
 
@@ -61,12 +62,13 @@ impl SqliteHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
-        let pool = self.pool.clone();
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
-        let rows: Vec<(String,)> =
-            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
-        Ok(ListTablesResponse {
-            tables: rows.into_iter().map(|r| r.0).collect(),
-        })
+        let rows = self.connection.fetch(sql, None).await?;
+        let tables = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>(0))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Query(format!("failed to decode table name: {e}")))?;
+        Ok(ListTablesResponse { tables })
     }
 }

@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 database-mcp-server = { workspace = true }
 sqlparser = { workspace = true }
+sqlx = { workspace = true, features = ["mysql", "postgres", "sqlite"] }
 tokio = { workspace = true }
 
 [lints]

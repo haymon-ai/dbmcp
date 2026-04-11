@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
-use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::connection::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -61,10 +61,8 @@ impl PostgresHandler {
         } else {
             Some(request.database_name.as_str())
         };
-        let pool = self.get_pool(db).await?;
         let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
-        let rows: Vec<(String,)> =
-            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
+        let rows: Vec<(String,)> = self.connection.fetch(sqlx::query_as(sql), db).await?;
         Ok(ListTablesResponse {
             tables: rows.into_iter().map(|r| r.0).collect(),
         })

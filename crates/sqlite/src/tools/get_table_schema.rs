@@ -5,13 +5,12 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::TableSchemaResponse;
+use database_mcp_sql::connection::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
 use sqlx::Row;
-use sqlx::sqlite::SqliteRow;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
@@ -66,13 +65,8 @@ impl SqliteHandler {
         validate_identifier(table)?;
 
         // 1. Get basic schema
-        let pragma_sql = format!("PRAGMA table_info({})", Self::quote_identifier(table));
-        let rows: Vec<SqliteRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &pragma_sql,
-            sqlx::query(&pragma_sql).fetch_all(&self.pool),
-        )
-        .await?;
+        let pragma_sql = format!("PRAGMA table_info({})", self.connection.quote_identifier(table));
+        let rows = self.connection.fetch(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.clone()));
@@ -99,13 +93,8 @@ impl SqliteHandler {
         }
 
         // 2. Get FK info via PRAGMA
-        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table));
-        let fk_rows: Vec<SqliteRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &fk_pragma_sql,
-            sqlx::query(&fk_pragma_sql).fetch_all(&self.pool),
-        )
-        .await?;
+        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", self.connection.quote_identifier(table));
+        let fk_rows = self.connection.fetch(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
             let from_col: String = fk_row.try_get("from").unwrap_or_default();

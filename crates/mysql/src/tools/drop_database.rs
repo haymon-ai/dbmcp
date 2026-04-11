@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{DropDatabaseRequest, MessageResponse};
+use database_mcp_sql::connection::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -76,14 +76,8 @@ impl MysqlHandler {
             )));
         }
 
-        let pool = self.pool.clone();
-        let drop_sql = format!("DROP DATABASE {}", Self::quote_identifier(name));
-        execute_with_timeout(
-            self.config.query_timeout,
-            &drop_sql,
-            sqlx::query(&drop_sql).execute(&pool),
-        )
-        .await?;
+        let drop_sql = format!("DROP DATABASE {}", self.connection.quote_identifier(name));
+        self.connection.execute(drop_sql.as_str(), None).await?;
 
         Ok(MessageResponse {
             message: format!("Database '{name}' dropped successfully."),
