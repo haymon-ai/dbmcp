@@ -14,7 +14,7 @@ use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
 use crate::consts::{BIN, VERSION};
 use crate::error::Error;
-use crate::server::create_handler;
+use crate::server::create_server;
 
 /// Log severity levels for the MCP server.
 ///
@@ -275,10 +275,10 @@ pub async fn run() -> Result<ExitCode, Error> {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    let handler = create_handler(&config);
+    let server = create_server(&config);
     match &arguments.command {
-        Some(Command::Http(cmd)) => cmd.execute(&config, handler).await?,
-        _ => StdioCommand.execute(handler).await?,
+        Some(Command::Http(cmd)) => cmd.execute(&config, server).await?,
+        _ => StdioCommand.execute(server).await?,
     }
 
     Ok(ExitCode::SUCCESS)

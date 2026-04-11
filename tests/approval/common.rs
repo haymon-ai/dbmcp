@@ -3,22 +3,22 @@
 //! Provides duplex transport setup and client lifecycle management
 //! used by tool schema snapshot tests.
 
+use database_mcp_server::Server;
 use rmcp::service::{Peer, RunningService, ServiceExt};
 
-/// Connects an MCP adapter over a duplex transport, runs a closure, then cleans up.
+/// Connects a [`Server`] over a duplex transport, runs a closure, then cleans up.
 ///
 /// Handles the full client lifecycle: duplex creation, server spawn, closure
 /// execution, client cancellation, and server join.
-pub async fn run_with_client<S, F, Fut>(adapter: S, f: F)
+pub async fn run_with_client<F, Fut>(server: Server, f: F)
 where
-    S: ServiceExt<rmcp::RoleServer> + Send + 'static,
     F: FnOnce(Peer<rmcp::RoleClient>) -> Fut,
     Fut: Future<Output = ()>,
 {
     let (server_transport, client_transport) = tokio::io::duplex(4096);
 
     let server_handle = tokio::spawn(async move {
-        let running = adapter.serve(server_transport).await.expect("server serve failed");
+        let running = server.serve(server_transport).await.expect("server serve failed");
         running.waiting().await.ok();
     });
 

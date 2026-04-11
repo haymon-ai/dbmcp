@@ -8,5 +8,5 @@ mod server;
 pub mod types;
 
 pub use error::AppError;
-pub use server::server_info;
+pub use server::{Server, server_info};
 pub use types::{CreateDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest};

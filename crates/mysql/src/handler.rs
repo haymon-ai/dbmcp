@@ -7,8 +7,7 @@
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
-use database_mcp_server::server_info;
+use database_mcp_server::{AppError, Server, server_info};
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::RoleServer;
@@ -135,6 +134,13 @@ impl MysqlHandler {
             Ok::<_, sqlx::Error>(Value::Array(rows.iter().map(RowExt::to_json).collect()))
         })
         .await
+    }
+}
+
+impl From<MysqlHandler> for Server {
+    /// Wraps a [`MysqlHandler`] in the type-erased MCP server.
+    fn from(handler: MysqlHandler) -> Self {
+        Self::new(handler)
     }
 }
 

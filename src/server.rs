@@ -1,69 +1,28 @@
-//! Server creation and type-erased dispatch.
+//! Backend-selection factory for the type-erased MCP server.
 //!
-//! Provides [`ServerHandler`], a cloneable, type-erased MCP server
-//! that wraps any database backend. The [`create_handler`] function
-//! constructs the appropriate adapter and returns a [`ServerHandler`]
-//! without establishing a database connection.
-
-use std::sync::Arc;
+//! The cloneable [`Server`] wrapper itself lives in
+//! [`database_mcp_server`]; this module only owns [`create_server`],
+//! which maps a configured [`DatabaseBackend`] onto the matching
+//! concrete adapter.
 
 use database_mcp_config::{Config, DatabaseBackend};
 use database_mcp_mysql::MysqlHandler;
 use database_mcp_postgres::PostgresHandler;
 use database_mcp_sqlite::SqliteHandler;
-use rmcp::RoleServer;
-use rmcp::Service;
-use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
 
-/// Cloneable, type-erased MCP server.
-///
-/// Wraps any backend adapter behind an [`Arc`] using rmcp's [`DynService`]
-/// for type erasure. All database backends produce the same concrete
-/// type, eliminating the need for enum dispatch.
-#[derive(Clone)]
-pub struct ServerHandler(Arc<dyn DynService<RoleServer>>);
+pub use database_mcp_server::Server;
 
-impl ServerHandler {
-    /// Creates a new handler from any backend adapter.
-    pub fn new(server: impl ServiceExt<RoleServer>) -> Self {
-        Self(Arc::from(server.into_dyn()))
-    }
-}
-
-impl Service<RoleServer> for ServerHandler {
-    fn handle_request(
-        &self,
-        request: <RoleServer as rmcp::service::ServiceRole>::PeerReq,
-        context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<<RoleServer as rmcp::service::ServiceRole>::Resp, rmcp::ErrorData>> + Send + '_
-    {
-        DynService::handle_request(self.0.as_ref(), request, context)
-    }
-
-    fn handle_notification(
-        &self,
-        notification: <RoleServer as rmcp::service::ServiceRole>::PeerNot,
-        context: NotificationContext<RoleServer>,
-    ) -> impl Future<Output = Result<(), rmcp::ErrorData>> + Send + '_ {
-        DynService::handle_notification(self.0.as_ref(), notification, context)
-    }
-
-    fn get_info(&self) -> <RoleServer as rmcp::service::ServiceRole>::Info {
-        DynService::get_info(self.0.as_ref())
-    }
-}
-
-/// Creates a [`ServerHandler`] based on the configured database backend.
+/// Creates a [`Server`] based on the configured database backend.
 ///
 /// Does **not** establish a database connection. Each adapter defers
 /// pool creation until the first tool invocation, allowing the MCP
 /// server to start and respond to protocol messages even when the
 /// database is unreachable.
 #[must_use]
-pub fn create_handler(config: &Config) -> ServerHandler {
+pub fn create_server(config: &Config) -> Server {
     match config.database.backend {
-        DatabaseBackend::Sqlite => ServerHandler::new(SqliteHandler::new(&config.database)),
-        DatabaseBackend::Postgres => ServerHandler::new(PostgresHandler::new(&config.database)),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ServerHandler::new(MysqlHandler::new(&config.database)),
+        DatabaseBackend::Sqlite => SqliteHandler::new(&config.database).into(),
+        DatabaseBackend::Postgres => PostgresHandler::new(&config.database).into(),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(&config.database).into(),
     }
 }

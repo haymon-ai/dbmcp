@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::server_info;
+use database_mcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
@@ -74,6 +74,13 @@ impl SqliteHandler {
     /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
     pub(crate) fn quote_identifier(name: &str) -> String {
         database_mcp_sql::identifier::quote_identifier(name, '"')
+    }
+}
+
+impl From<SqliteHandler> for Server {
+    /// Wraps a [`SqliteHandler`] in the type-erased MCP server.
+    fn from(handler: SqliteHandler) -> Self {
+        Self::new(handler)
     }
 }
 

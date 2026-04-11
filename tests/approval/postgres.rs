@@ -6,9 +6,10 @@ mod common;
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_postgres::PostgresHandler;
+use database_mcp_server::Server;
 
-/// Creates a `PostgreSQL` adapter from `DB_HOST` and `DB_PORT` environment variables.
-fn adapter(read_only: bool) -> PostgresHandler {
+/// Creates a `PostgreSQL`-backed [`Server`] from `DB_HOST` and `DB_PORT` environment variables.
+fn server(read_only: bool) -> Server {
     let config = DatabaseConfig {
         backend: DatabaseBackend::Postgres,
         host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
@@ -21,12 +22,12 @@ fn adapter(read_only: bool) -> PostgresHandler {
         read_only,
         ..DatabaseConfig::default()
     };
-    PostgresHandler::new(&config)
+    PostgresHandler::new(&config).into()
 }
 
 #[tokio::test]
 async fn test_server_info() {
-    common::run_with_client(adapter(false), |peer| async move {
+    common::run_with_client(server(false), |peer| async move {
         let info = peer.peer_info().expect("missing peer_info");
         insta::assert_json_snapshot!("server_info", info, {
             ".serverInfo.version" => "[version]"
@@ -37,7 +38,7 @@ async fn test_server_info() {
 
 #[tokio::test]
 async fn test_list_tools() {
-    common::run_with_client(adapter(false), |peer| async move {
+    common::run_with_client(server(false), |peer| async move {
         let tools = peer.list_all_tools().await.expect("list_all_tools failed");
         insta::assert_json_snapshot!("list_tools", tools);
     })
@@ -46,7 +47,7 @@ async fn test_list_tools() {
 
 #[tokio::test]
 async fn test_list_tools_read_only() {
-    common::run_with_client(adapter(true), |peer| async move {
+    common::run_with_client(server(true), |peer| async move {
         let tools = peer.list_all_tools().await.expect("list_all_tools failed");
         insta::assert_json_snapshot!("list_tools_read_only", tools);
     })

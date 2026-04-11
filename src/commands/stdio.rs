@@ -8,7 +8,7 @@ use rmcp::ServiceExt;
 use rmcp::service::ServerInitializeError;
 use tracing::info;
 
-use crate::server::ServerHandler;
+use crate::server::Server;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
@@ -23,11 +23,11 @@ impl StdioCommand {
     ///
     /// Returns an error if the stdio transport fails to initialize or
     /// the server encounters a fatal protocol error.
-    pub async fn execute(&self, handler: ServerHandler) -> Result<(), ServerInitializeError> {
+    pub async fn execute(&self, server: Server) -> Result<(), ServerInitializeError> {
         info!("Starting MCP server via stdio transport...");
 
         let transport = rmcp::transport::io::stdio();
-        let running = handler.serve(transport).await?;
+        let running = server.serve(transport).await?;
 
         running.waiting().await.ok();
         Ok(())

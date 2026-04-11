@@ -7,8 +7,7 @@
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
-use database_mcp_server::server_info;
+use database_mcp_server::{AppError, Server, server_info};
 use database_mcp_sql::identifier::validate_identifier;
 use moka::future::Cache;
 use rmcp::RoleServer;
@@ -162,6 +161,13 @@ impl PostgresHandler {
             .await;
 
         Ok(pool)
+    }
+}
+
+impl From<PostgresHandler> for Server {
+    /// Wraps a [`PostgresHandler`] in the type-erased MCP server.
+    fn from(handler: PostgresHandler) -> Self {
+        Self::new(handler)
     }
 }
 
