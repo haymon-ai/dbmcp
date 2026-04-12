@@ -17,7 +17,29 @@ pub(crate) struct ExplainQueryTool;
 
 impl ExplainQueryTool {
     const NAME: &'static str = "explain_query";
-    const DESCRIPTION: &'static str = "Return the execution plan for a SQL query.";
+    const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured output via EXPLAIN QUERY PLAN.
+
+<usecase>
+Use when:
+- A query runs slowly and you need to understand why
+- Understanding how SQLite will scan tables and use indexes
+- Deciding whether to add an index
+</usecase>
+
+<when_not_to_use>
+- Running actual queries → use read_query or write_query
+- Checking table structure → use get_table_schema
+</when_not_to_use>
+
+<examples>
+✓ "Why is my SELECT on orders slow?" → explain_query(query="SELECT ...")
+✓ "How will SQLite execute this join?" → explain_query
+✗ "Run this SELECT" → use read_query
+</examples>
+
+<what_it_returns>
+A JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.
+</what_it_returns>"#;
 }
 
 impl ToolBase for ExplainQueryTool {

@@ -18,7 +18,23 @@ pub(crate) struct ListDatabasesTool;
 
 impl ListDatabasesTool {
     const NAME: &'static str = "list_databases";
-    const DESCRIPTION: &'static str = "List all accessible databases on the connected database server.\nCall this first to discover available database names.";
+    const DESCRIPTION: &'static str = r#"List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.
+
+<usecase>
+ALWAYS call this tool FIRST when:
+- You need to explore what databases exist on the server
+- You need a database name for list_tables, get_table_schema, or query tools
+- The user asks what data is available
+</usecase>
+
+<examples>
+✓ "What databases are on this server?"
+✓ "Show me what's available" → call list_databases first
+</examples>
+
+<what_it_returns>
+A sorted JSON array of database name strings.
+</what_it_returns>"#;
 }
 
 impl ToolBase for ListDatabasesTool {

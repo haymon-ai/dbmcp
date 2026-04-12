@@ -16,7 +16,26 @@ pub(crate) struct CreateDatabaseTool;
 
 impl CreateDatabaseTool {
     const NAME: &'static str = "create_database";
-    const DESCRIPTION: &'static str = "Create a new database.";
+    const DESCRIPTION: &'static str = r#"Create a new database on the connected server.
+
+<usecase>
+Use when:
+- Setting up a new database for a project or application
+- The user asks to create a database
+</usecase>
+
+<examples>
+✓ "Create a database called analytics" → create_database(database_name="analytics")
+✗ "Create a table" → use write_query with CREATE TABLE
+</examples>
+
+<important>
+Database names must contain only alphanumeric characters and underscores.
+</important>
+
+<what_it_returns>
+A confirmation message with the created database name.
+</what_it_returns>"#;
 }
 
 impl ToolBase for CreateDatabaseTool {

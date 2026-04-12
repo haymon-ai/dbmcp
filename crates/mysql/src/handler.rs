@@ -31,12 +31,14 @@ const INSTRUCTIONS: &str = r"## Workflow
 3. Call `get_table_schema` with `database_name` and `table_name` to inspect columns, types, and foreign keys before writing queries.
 4. Use `read_query` for read-only SQL (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
 5. Use `write_query` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-6. Use `create_database` to create a new database.
-7. Use `drop_database` to drop an existing database.
+6. Use `explain_query` to analyze query execution plans and diagnose slow queries.
+7. Use `create_database` to create a new database.
+8. Use `drop_database` to drop an existing database.
+9. Use `drop_table` to remove a table from a database.
 
 ## Constraints
 
-- The `write_query`, `create_database`, and `drop_database` tools are hidden when read-only mode is active.
+- The `write_query`, `create_database`, `drop_database`, and `drop_table` tools are hidden when read-only mode is active.
 - Multi-statement queries are not supported. Send one statement per request.";
 
 /// MySQL/MariaDB database handler.

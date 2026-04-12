@@ -27,12 +27,14 @@ const INSTRUCTIONS: &str = r"## Workflow
 
 1. Call `list_tables` to discover tables in the connected database.
 2. Call `get_table_schema` with a `table_name` to inspect columns, types, and foreign keys before writing queries.
-3. Use `read_query` for read-only SQL (SELECT, EXPLAIN).
+3. Use `read_query` for read-only SQL (SELECT).
 4. Use `write_query` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+5. Use `explain_query` to analyze query execution plans and diagnose slow queries.
+6. Use `drop_table` to remove a table from the database.
 
 ## Constraints
 
-- The `write_query` tool is hidden when read-only mode is active.
+- The `write_query` and `drop_table` tools are hidden when read-only mode is active.
 - Multi-statement queries are not supported. Send one statement per request.";
 
 /// `SQLite` file-based database handler.
@@ -168,15 +170,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_tables_metadata_matches_macro_parity() {
+    async fn list_tables_annotations() {
         let router = handler(false).tool_router;
         let tool = router.get("list_tables").expect("list_tables registered");
-
-        assert_eq!(tool.name, "list_tables");
-        assert_eq!(
-            tool.description.as_deref(),
-            Some("List all tables in the connected `SQLite` database.")
-        );
 
         let annotations = tool.annotations.as_ref().expect("annotations present");
         assert_eq!(annotations.read_only_hint, Some(true));

@@ -1,12 +1,12 @@
 ---
 source: tests/approval/sqlite.rs
-assertion_line: 36
+assertion_line: 37
 expression: tools
 ---
 [
   {
     "name": "drop_table",
-    "description": "Drop a table from the database.",
+    "description": "Drop a table from the database.\n\n<usecase>\nUse when:\n- Removing a table that is no longer needed\n- Cleaning up test or temporary tables\n</usecase>\n\n<examples>\n✓ \"Drop the temp_logs table\" → drop_table(table_name=\"temp_logs\")\n✗ \"Delete rows from a table\" → use write_query with DELETE\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the table and ALL its data. This action cannot be undone.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped table name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `drop_table` tool.",
@@ -46,7 +46,7 @@ expression: tools
   },
   {
     "name": "explain_query",
-    "description": "Return the execution plan for a SQL query.",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use read_query or write_query\n- Checking table structure → use get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explain_query(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explain_query\n✗ \"Run this SELECT\" → use read_query\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `explain_query` tool.",
@@ -85,7 +85,7 @@ expression: tools
   },
   {
     "name": "get_table_schema",
-    "description": "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table.",
+    "description": "Get column definitions and foreign key relationships for a table. Requires `table_name` — call `list_tables` first.\n\n<usecase>\nALWAYS call this before writing queries to understand:\n- Column names and data types\n- Which columns are nullable, primary keys, or have defaults\n- Foreign key relationships for writing JOINs\n</usecase>\n\n<examples>\n✓ \"What columns does the orders table have?\" → get_table_schema(table_name=\"orders\")\n✓ Before writing a SELECT → get_table_schema first to confirm column names\n✓ \"How are users and orders related?\" → check foreign keys in both tables\n</examples>\n\n<what_it_returns>\nA JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `get_table_schema` tool.",
@@ -129,7 +129,7 @@ expression: tools
   },
   {
     "name": "list_tables",
-    "description": "List all tables in the connected `SQLite` database.",
+    "description": "List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what tables exist in the database\n- You need a table name for get_table_schema or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What tables are in this database?\"\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -161,7 +161,7 @@ expression: tools
   },
   {
     "name": "read_query",
-    "description": "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use write_query\n- Query performance analysis → use explain_query\n- Discovering tables or columns → use list_tables or get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use write_query\n✗ \"EXPLAIN SELECT ...\" → use explain_query for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `read_query` and `write_query` tools.",
@@ -200,7 +200,7 @@ expression: tools
   },
   {
     "name": "write_query",
-    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).",
+    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT) → use read_query\n- Query performance analysis → use explain_query\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use read_query\n</examples>\n\n<what_it_returns>\nA JSON array of affected/returning row objects, each keyed by column name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `read_query` and `write_query` tools.",

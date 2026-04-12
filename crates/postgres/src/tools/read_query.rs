@@ -17,7 +17,32 @@ pub(crate) struct ReadQueryTool;
 
 impl ReadQueryTool {
     const NAME: &'static str = "read_query";
-    const DESCRIPTION: &'static str = "Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).";
+    const DESCRIPTION: &'static str = r#"Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN. Accepts an optional `database_name` to query across databases without reconnecting.
+
+<usecase>
+Use when:
+- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)
+- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING
+- Listing server configuration parameters (SHOW)
+</usecase>
+
+<when_not_to_use>
+- Data changes (INSERT, UPDATE, DELETE) → use write_query
+- Query performance analysis → use explain_query
+- Discovering tables or columns → use list_tables or get_table_schema
+</when_not_to_use>
+
+<examples>
+✓ "SELECT * FROM users WHERE status = 'active'"
+✓ "SELECT COUNT(*) FROM orders GROUP BY region"
+✓ "SHOW server_version"
+✗ "INSERT INTO users ..." → use write_query
+✗ "EXPLAIN SELECT ..." → use explain_query for structured analysis
+</examples>
+
+<what_it_returns>
+A JSON array of row objects, each keyed by column name.
+</what_it_returns>"#;
 }
 
 impl ToolBase for ReadQueryTool {
