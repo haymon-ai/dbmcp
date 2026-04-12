@@ -16,8 +16,24 @@ pub(crate) struct ListTablesTool;
 
 impl ListTablesTool {
     const NAME: &'static str = "list_tables";
-    const DESCRIPTION: &'static str =
-        "List all tables in a specific database.\nRequires `database_name` from `list_databases`.";
+    const DESCRIPTION: &'static str = r#"List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.
+
+<usecase>
+Use when:
+- Exploring a database to find relevant tables
+- Verifying a table exists before querying or inspecting it
+- The user asks what tables are in a database
+</usecase>
+
+<examples>
+✓ "What tables are in the mydb database?" → list_tables(database_name="mydb")
+✓ "Does a users table exist?" → list_tables to check
+✗ "Show me the columns of users" → use get_table_schema instead
+</examples>
+
+<what_it_returns>
+A sorted JSON array of table name strings.
+</what_it_returns>"#;
 }
 
 impl ToolBase for ListTablesTool {

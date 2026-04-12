@@ -18,7 +18,24 @@ pub(crate) struct GetTableSchemaTool;
 
 impl GetTableSchemaTool {
     const NAME: &'static str = "get_table_schema";
-    const DESCRIPTION: &'static str = "Get column definitions (type, nullable, key, default) and foreign key\nrelationships for a table. Requires `database_name` and `table_name`.";
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database_name` and `table_name` — call `list_databases` and `list_tables` first.
+
+<usecase>
+ALWAYS call this before writing queries to understand:
+- Column names and data types
+- Which columns are nullable, primary keys, or have defaults
+- Foreign key relationships for writing JOINs
+</usecase>
+
+<examples>
+✓ "What columns does the orders table have?" → get_table_schema(database_name="mydb", table_name="orders")
+✓ Before writing a SELECT → get_table_schema first to confirm column names
+✓ "How are users and orders related?" → check foreign keys in both tables
+</examples>
+
+<what_it_returns>
+A JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.
+</what_it_returns>"#;
 }
 
 impl ToolBase for GetTableSchemaTool {

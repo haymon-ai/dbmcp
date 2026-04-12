@@ -16,7 +16,27 @@ pub(crate) struct DropDatabaseTool;
 
 impl DropDatabaseTool {
     const NAME: &'static str = "drop_database";
-    const DESCRIPTION: &'static str = "Drop an existing database. Cannot drop the currently connected database.";
+    const DESCRIPTION: &'static str = r#"Drop an existing database from the connected server.
+
+<usecase>
+Use when:
+- Removing a database that is no longer needed
+- Cleaning up test or temporary databases
+</usecase>
+
+<examples>
+✓ "Drop the test_db database" → drop_database(database_name="test_db")
+✗ "Drop a table" → use drop_table instead
+</examples>
+
+<safety>
+IMPORTANT: This permanently deletes the database and ALL its data. This action cannot be undone.
+Cannot drop the database you are currently connected to.
+</safety>
+
+<what_it_returns>
+A confirmation message with the dropped database name.
+</what_it_returns>"#;
 }
 
 impl ToolBase for DropDatabaseTool {

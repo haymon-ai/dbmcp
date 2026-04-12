@@ -18,7 +18,24 @@ pub(crate) struct ListTablesTool;
 
 impl ListTablesTool {
     const NAME: &'static str = "list_tables";
-    const DESCRIPTION: &'static str = "List all tables in the connected `SQLite` database.";
+    const DESCRIPTION: &'static str = r#"List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.
+
+<usecase>
+ALWAYS call this tool FIRST when:
+- You need to explore what tables exist in the database
+- You need a table name for get_table_schema or query tools
+- The user asks what data is available
+</usecase>
+
+<examples>
+✓ "What tables are in this database?"
+✓ "Does a users table exist?" → list_tables to check
+✗ "Show me the columns of users" → use get_table_schema instead
+</examples>
+
+<what_it_returns>
+A sorted JSON array of table name strings.
+</what_it_returns>"#;
 }
 
 impl ToolBase for ListTablesTool {
