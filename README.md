@@ -19,6 +19,20 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
 
+## Install
+
+```bash
+curl -fsSL https://database.haymon.ai/install.sh | bash
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://database.haymon.ai/install.ps1 | iex
+```
+
+See the [installation docs](https://database.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
+
 ## Quick Start
 
 ### Using `.mcp.json` (recommended)
