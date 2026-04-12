@@ -2,6 +2,20 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.6.2](https://github.com/haymon-ai/database-mcp/compare/80f716f9f927484b61acbd0e7c78b6818c243955..v0.6.2) - 2026-04-12
+#### Features
+- (**install**) add one-liner install scripts for macOS, Linux, and Windows (#100) - ([b9a11d0](https://github.com/haymon-ai/database-mcp/commit/b9a11d0f47c1101d76deef4f5bd9e8b78d75fb12)) - [@athopen](https://github.com/athopen)
+- (**release**) add macOS and Windows builds (#96) (#99) - ([04a17aa](https://github.com/haymon-ai/database-mcp/commit/04a17aa5060debd10f423e3e514b1748f6cca4e4)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**deps**) update rand 0.10.0 to 0.10.1 (RUSTSEC-2026-0097) (#92) - ([c5ba04d](https://github.com/haymon-ai/database-mcp/commit/c5ba04d6bb9d9df789eef2fbebb8a685bdab8ae0)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- (**tools**) improve MCP tool descriptions with structured XML sections (#94) - ([330a822](https://github.com/haymon-ai/database-mcp/commit/330a822dcd4acabb22affe9d7cf9035157dbc038)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**server**) relocate Server wrapper to server crate (#88) - ([fe4a9e7](https://github.com/haymon-ai/database-mcp/commit/fe4a9e7c846e6c74ed70337fd015ba763a0b8630)) - [@athopen](https://github.com/athopen)
+- (**sql**) unify connection management and add comprehensive tests (#89) - ([c894019](https://github.com/haymon-ai/database-mcp/commit/c894019b33624f3f4276cee0ec548bc92ad573c9)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.6.1](https://github.com/haymon-ai/database-mcp/compare/45f73a649ffce25cd1e17b3ff24e6b2c1d8971b8..v0.6.1) - 2026-04-10
 #### Features
 - (**ci**) automate release publishing to ghcr.io, MCP Registry, and crates.io (#86) - ([45f73a6](https://github.com/haymon-ai/database-mcp/commit/45f73a649ffce25cd1e17b3ff24e6b2c1d8971b8)) - [@athopen](https://github.com/athopen)
