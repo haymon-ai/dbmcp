@@ -4,13 +4,11 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
-use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
-use sqlx::postgres::PgRow;
-use sqlx_to_json::RowExt;
 
 use crate::PostgresHandler;
 
@@ -68,23 +66,19 @@ impl PostgresHandler {
             validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
 
-        let pool = self.get_pool(Some(&request.database_name)).await?;
-
         let explain_sql = if request.analyze {
             format!("EXPLAIN (ANALYZE, FORMAT JSON) {}", request.query)
         } else {
             format!("EXPLAIN (FORMAT JSON) {}", request.query)
         };
 
-        let rows: Vec<PgRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &explain_sql,
-            sqlx::query(&explain_sql).fetch_all(&pool),
-        )
-        .await?;
+        let rows = self
+            .connection
+            .fetch(&explain_sql, Some(&request.database_name))
+            .await?;
 
         Ok(QueryResponse {
-            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+            rows: Value::Array(rows),
         })
     }
 }

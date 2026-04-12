@@ -12,6 +12,15 @@ pub fn quote_identifier(name: &str, quote_char: char) -> String {
     format!("{quote_char}{escaped}{quote_char}")
 }
 
+/// Wraps `value` in single quotes for safe use as a SQL string literal.
+///
+/// Escapes internal single quotes by doubling them.
+#[must_use]
+pub fn quote_string(value: &str) -> String {
+    let escaped = value.replace('\'', "''");
+    format!("'{escaped}'")
+}
+
 /// Validates that `name` is a non-empty identifier without control characters.
 ///
 /// # Errors
@@ -82,5 +91,21 @@ mod tests {
     fn quote_with_backticks() {
         assert_eq!(quote_identifier("users", '`'), "`users`");
         assert_eq!(quote_identifier("test`db", '`'), "`test``db`");
+    }
+
+    #[test]
+    fn quote_string_normal() {
+        assert_eq!(quote_string("my_db"), "'my_db'");
+    }
+
+    #[test]
+    fn quote_string_empty() {
+        assert_eq!(quote_string(""), "''");
+    }
+
+    #[test]
+    fn quote_string_with_single_quotes() {
+        assert_eq!(quote_string("it's"), "'it''s'");
+        assert_eq!(quote_string("a'b'c"), "'a''b''c'");
     }
 }

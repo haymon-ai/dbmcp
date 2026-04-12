@@ -31,6 +31,13 @@ pub enum AppError {
     #[error("Invalid identifier '{0}': must not be empty, whitespace-only, or contain control characters")]
     InvalidIdentifier(String),
 
+    /// Pool cache is at capacity and no idle pool can be evicted.
+    #[error("pool cache is full ({cap} pools, all in use); retry later")]
+    PoolCacheFull {
+        /// Maximum number of cached pools configured.
+        cap: usize,
+    },
+
     /// Query exceeded the configured timeout.
     #[error("Query timed out after {elapsed_secs:.1}s: {sql}")]
     QueryTimeout {

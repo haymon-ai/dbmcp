@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{DropDatabaseRequest, MessageResponse};
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -69,25 +69,18 @@ impl PostgresHandler {
         validate_identifier(name)?;
 
         // Guard: prevent dropping the currently connected database.
-        if self.default_db == *name {
+        if self.connection.default_database_name() == name.as_str() {
             return Err(AppError::Query(format!(
                 "Cannot drop the currently connected database '{name}'."
             )));
         }
 
-        let pool = self.get_pool(None).await?;
-
-        let drop_sql = format!("DROP DATABASE {}", Self::quote_identifier(name));
-        execute_with_timeout(
-            self.config.query_timeout,
-            &drop_sql,
-            sqlx::query(&drop_sql).execute(&pool),
-        )
-        .await?;
+        let drop_sql = format!("DROP DATABASE {}", self.connection.quote_identifier(name));
+        self.connection.execute(drop_sql.as_str(), None).await?;
 
         // Evict the pool for the dropped database so stale connections
         // are not reused.
-        self.pools.invalidate(name).await;
+        self.connection.invalidate(name).await;
 
         Ok(MessageResponse {
             message: format!("Database '{name}' dropped successfully."),

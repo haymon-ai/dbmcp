@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::ListDatabasesResponse;
-use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::Connection as _;
 use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+use serde_json::Value;
 
 use crate::PostgresHandler;
 
@@ -65,12 +66,13 @@ impl PostgresHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
-        let pool = self.get_pool(None).await?;
         let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        let rows: Vec<(String,)> =
-            execute_with_timeout(self.config.query_timeout, sql, sqlx::query_as(sql).fetch_all(&pool)).await?;
+        let rows = self.connection.fetch(sql, None).await?;
         Ok(ListDatabasesResponse {
-            databases: rows.into_iter().map(|r| r.0).collect(),
+            databases: rows
+                .iter()
+                .filter_map(|r| r.get("datname").and_then(Value::as_str).map(str::to_owned))
+                .collect(),
         })
     }
 }

@@ -4,9 +4,11 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
+use serde_json::Value;
 
 use crate::MysqlHandler;
 
@@ -70,7 +72,12 @@ impl MysqlHandler {
             format!("EXPLAIN FORMAT=JSON {}", request.query)
         };
 
-        let rows = self.query_to_json(&explain_sql, Some(&request.database_name)).await?;
-        Ok(QueryResponse { rows })
+        let rows = self
+            .connection
+            .fetch(explain_sql.as_str(), Some(request.database_name.as_str()))
+            .await?;
+        Ok(QueryResponse {
+            rows: Value::Array(rows),
+        })
     }
 }

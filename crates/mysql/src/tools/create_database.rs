@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -62,16 +62,11 @@ impl MysqlHandler {
         let name = &request.database_name;
         validate_identifier(name)?;
 
-        let pool = self.pool.clone();
-
-        // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
-        let check_sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?";
-        let exists: Option<Vec<u8>> = execute_with_timeout(
-            self.config.query_timeout,
-            check_sql,
-            sqlx::query_scalar(check_sql).bind(name).fetch_optional(&pool),
-        )
-        .await?;
+        let check_sql = format!(
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = {}",
+            self.connection.quote_string(name),
+        );
+        let exists = self.connection.fetch_optional(check_sql.as_str(), None).await?;
 
         if exists.is_some() {
             return Ok(MessageResponse {
@@ -79,13 +74,11 @@ impl MysqlHandler {
             });
         }
 
-        let create_sql = format!("CREATE DATABASE IF NOT EXISTS {}", Self::quote_identifier(name));
-        execute_with_timeout(
-            self.config.query_timeout,
-            &create_sql,
-            sqlx::query(&create_sql).execute(&pool),
-        )
-        .await?;
+        let create_sql = format!(
+            "CREATE DATABASE IF NOT EXISTS {}",
+            self.connection.quote_identifier(name)
+        );
+        self.connection.execute(create_sql.as_str(), None).await?;
 
         Ok(MessageResponse {
             message: format!("Database '{name}' created successfully."),

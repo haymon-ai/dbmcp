@@ -4,13 +4,11 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::QueryResponse;
-use database_mcp_sql::timeout::execute_with_timeout;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
-use sqlx::sqlite::SqliteRow;
-use sqlx_to_json::RowExt;
 
 use crate::SqliteHandler;
 use crate::types::QueryRequest;
@@ -64,15 +62,9 @@ impl SqliteHandler {
     /// read-only, or [`AppError::Query`] if the backend reports an error.
     pub async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
-        let pool = self.pool.clone();
-        let rows: Vec<SqliteRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &request.query,
-            sqlx::query(&request.query).fetch_all(&pool),
-        )
-        .await?;
+        let rows = self.connection.fetch(request.query.as_str(), None).await?;
         Ok(QueryResponse {
-            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+            rows: Value::Array(rows),
         })
     }
 }

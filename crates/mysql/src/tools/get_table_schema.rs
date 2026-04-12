@@ -5,13 +5,11 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
-use sqlx::Row;
-use sqlx::mysql::MySqlRow;
 
 use crate::MysqlHandler;
 
@@ -68,18 +66,17 @@ impl MysqlHandler {
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",
-            Self::quote_identifier(database),
-            Self::quote_identifier(table)
+            self.connection.quote_identifier(database),
+            self.connection.quote_identifier(table)
         );
-        let schema_results = self.query_to_json(&describe_sql, None).await?;
-        let schema_rows = schema_results.as_array().map_or([].as_slice(), Vec::as_slice);
+        let schema_rows = self.connection.fetch(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
             return Err(AppError::TableNotFound(format!("{database}.{table}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
-        for row in schema_rows {
+        for row in &schema_rows {
             if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
                 columns.insert(
                     col_name.to_string(),
@@ -96,8 +93,8 @@ impl MysqlHandler {
         }
 
         // 2. Get FK relationships
-        let fk_sql = r"
-            SELECT
+        let fk_sql = format!(
+            "SELECT
                 kcu.COLUMN_NAME as column_name,
                 kcu.CONSTRAINT_NAME as constraint_name,
                 kcu.REFERENCED_TABLE_NAME as referenced_table,
@@ -108,38 +105,29 @@ impl MysqlHandler {
             INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
                 ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
                 AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
-            WHERE kcu.TABLE_SCHEMA = ?
-              AND kcu.TABLE_NAME = ?
+            WHERE kcu.TABLE_SCHEMA = {}
+              AND kcu.TABLE_NAME = {}
               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
-            ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
-        ";
+            ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+            self.connection.quote_string(database),
+            self.connection.quote_string(table),
+        );
 
-        let fk_rows: Vec<MySqlRow> = execute_with_timeout(
-            self.config.query_timeout,
-            fk_sql,
-            sqlx::query(fk_sql).bind(database).bind(table).fetch_all(&self.pool),
-        )
-        .await?;
+        let fk_rows = self.connection.fetch(fk_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
-            let col_name: Option<String> = fk_row.try_get("column_name").ok();
-            if let Some(col_name) = col_name
-                && let Some(col_info) = columns.get_mut(&col_name)
+            if let Some(col_name) = fk_row.get("column_name").and_then(|v| v.as_str())
+                && let Some(col_info) = columns.get_mut(col_name)
                 && let Some(obj) = col_info.as_object_mut()
             {
-                let constraint_name: Option<String> = fk_row.try_get("constraint_name").ok();
-                let referenced_table: Option<String> = fk_row.try_get("referenced_table").ok();
-                let referenced_column: Option<String> = fk_row.try_get("referenced_column").ok();
-                let on_update: Option<String> = fk_row.try_get("on_update").ok();
-                let on_delete: Option<String> = fk_row.try_get("on_delete").ok();
                 obj.insert(
                     "foreign_key".to_string(),
                     json!({
-                        "constraint_name": constraint_name,
-                        "referenced_table": referenced_table,
-                        "referenced_column": referenced_column,
-                        "on_update": on_update,
-                        "on_delete": on_delete,
+                        "constraint_name": fk_row.get("constraint_name"),
+                        "referenced_table": fk_row.get("referenced_table"),
+                        "referenced_column": fk_row.get("referenced_column"),
+                        "on_update": fk_row.get("on_update"),
+                        "on_delete": fk_row.get("on_delete"),
                     }),
                 );
             }

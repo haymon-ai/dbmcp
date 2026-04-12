@@ -5,13 +5,11 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::TableSchemaResponse;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
-use sqlx::Row;
-use sqlx::sqlite::SqliteRow;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
@@ -66,13 +64,8 @@ impl SqliteHandler {
         validate_identifier(table)?;
 
         // 1. Get basic schema
-        let pragma_sql = format!("PRAGMA table_info({})", Self::quote_identifier(table));
-        let rows: Vec<SqliteRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &pragma_sql,
-            sqlx::query(&pragma_sql).fetch_all(&self.pool),
-        )
-        .await?;
+        let pragma_sql = format!("PRAGMA table_info({})", self.connection.quote_identifier(table));
+        let rows = self.connection.fetch(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.clone()));
@@ -80,11 +73,11 @@ impl SqliteHandler {
 
         let mut columns: HashMap<String, Value> = HashMap::new();
         for row in &rows {
-            let col_name: String = row.try_get("name").unwrap_or_default();
-            let col_type: String = row.try_get("type").unwrap_or_default();
-            let notnull: i32 = row.try_get("notnull").unwrap_or(0);
-            let default: Option<String> = row.try_get("dflt_value").ok();
-            let pk: i32 = row.try_get("pk").unwrap_or(0);
+            let col_name = row.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+            let col_type = row.get("type").and_then(Value::as_str).unwrap_or_default().to_owned();
+            let notnull = row.get("notnull").and_then(Value::as_i64).unwrap_or(0);
+            let default = row.get("dflt_value").and_then(Value::as_str).map(str::to_owned);
+            let pk = row.get("pk").and_then(Value::as_i64).unwrap_or(0);
             columns.insert(
                 col_name,
                 json!({
@@ -99,23 +92,34 @@ impl SqliteHandler {
         }
 
         // 2. Get FK info via PRAGMA
-        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", Self::quote_identifier(table));
-        let fk_rows: Vec<SqliteRow> = execute_with_timeout(
-            self.config.query_timeout,
-            &fk_pragma_sql,
-            sqlx::query(&fk_pragma_sql).fetch_all(&self.pool),
-        )
-        .await?;
+        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", self.connection.quote_identifier(table));
+        let fk_rows = self.connection.fetch(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
-            let from_col: String = fk_row.try_get("from").unwrap_or_default();
+            let from_col = fk_row
+                .get("from")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
             if let Some(col_info) = columns.get_mut(&from_col)
                 && let Some(obj) = col_info.as_object_mut()
             {
-                let ref_table: String = fk_row.try_get("table").unwrap_or_default();
-                let ref_col: String = fk_row.try_get("to").unwrap_or_default();
-                let on_update: String = fk_row.try_get("on_update").unwrap_or_default();
-                let on_delete: String = fk_row.try_get("on_delete").unwrap_or_default();
+                let ref_table = fk_row
+                    .get("table")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let ref_col = fk_row.get("to").and_then(Value::as_str).unwrap_or_default().to_owned();
+                let on_update = fk_row
+                    .get("on_update")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let on_delete = fk_row
+                    .get("on_delete")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
                 obj.insert(
                     "foreign_key".to_string(),
                     json!({

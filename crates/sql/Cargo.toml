@@ -9,7 +9,10 @@ repository.workspace = true
 
 [dependencies]
 database-mcp-server = { workspace = true }
+serde_json = { workspace = true }
 sqlparser = { workspace = true }
+sqlx = { workspace = true }
+sqlx_to_json = { workspace = true }
 tokio = { workspace = true }
 
 [lints]

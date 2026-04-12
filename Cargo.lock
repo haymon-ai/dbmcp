@@ -501,6 +501,7 @@ dependencies = [
  "database-mcp-config",
  "database-mcp-server",
  "database-mcp-sql",
+ "moka",
  "rmcp",
  "serde",
  "serde_json",
@@ -544,7 +545,10 @@ name = "database-mcp-sql"
 version = "0.6.1"
 dependencies = [
  "database-mcp-server",
+ "serde_json",
  "sqlparser",
+ "sqlx",
+ "sqlx_to_json",
  "tokio",
 ]
 

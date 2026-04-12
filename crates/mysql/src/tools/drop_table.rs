@@ -4,11 +4,10 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::MessageResponse;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlx::Executor;
 
 use crate::MysqlHandler;
 use crate::types::DropTableRequest;
@@ -71,21 +70,8 @@ impl MysqlHandler {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
-        let pool = self.pool.clone();
-        let db = database.clone();
-        let drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
-        let drop_sql_label = drop_sql.clone();
-
-        execute_with_timeout(self.config.query_timeout, &drop_sql_label, async move {
-            let mut conn = pool.acquire().await?;
-
-            let use_sql = format!("USE {}", Self::quote_identifier(&db));
-            conn.execute(use_sql.as_str()).await?;
-
-            conn.execute(drop_sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(())
-        })
-        .await?;
+        let drop_sql = format!("DROP TABLE {}", self.connection.quote_identifier(table));
+        self.connection.execute(drop_sql.as_str(), Some(database)).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

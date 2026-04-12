@@ -11,16 +11,15 @@ repository.workspace = true
 database-mcp-config = { workspace = true }
 database-mcp-server = { workspace = true }
 database-mcp-sql = { workspace = true }
+moka = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true, features = ["mysql"] }
 sqlx_to_json = { workspace = true }
-tracing = { workspace = true }
-
-[dev-dependencies]
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [lints]
 workspace = true

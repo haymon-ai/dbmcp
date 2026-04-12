@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -59,10 +60,9 @@ impl MysqlHandler {
         validate_identifier(&request.database_name)?;
         let sql = format!(
             "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
-            Self::quote_string(&request.database_name)
+            self.connection.quote_string(&request.database_name)
         );
-        let results = self.query_to_json(&sql, None).await?;
-        let rows = results.as_array().map_or([].as_slice(), Vec::as_slice);
+        let rows = self.connection.fetch(sql.as_str(), None).await?;
         Ok(ListTablesResponse {
             tables: rows
                 .iter()

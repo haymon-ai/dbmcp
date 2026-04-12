@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::MessageResponse;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
-use database_mcp_sql::timeout::execute_with_timeout;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -71,19 +71,12 @@ impl PostgresHandler {
         validate_identifier(database)?;
         validate_identifier(table)?;
 
-        let pool = self.get_pool(Some(database)).await?;
-
-        let mut drop_sql = format!("DROP TABLE {}", Self::quote_identifier(table));
+        let mut drop_sql = format!("DROP TABLE {}", self.connection.quote_identifier(table));
         if request.cascade {
             drop_sql.push_str(" CASCADE");
         }
 
-        execute_with_timeout(
-            self.config.query_timeout,
-            &drop_sql,
-            sqlx::query(&drop_sql).execute(&pool),
-        )
-        .await?;
+        self.connection.execute(drop_sql.as_str(), Some(database)).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

@@ -400,6 +400,23 @@ mod tests {
     }
 
     #[test]
+    fn db_query_timeout_zero_disables() {
+        let args = parse(&[BIN, "--db-query-timeout", "0"]);
+        let config = Config::from(&args);
+        assert_eq!(config.database.query_timeout, None);
+    }
+
+    #[test]
+    fn db_query_timeout_default_applied() {
+        let args = parse(&[BIN]);
+        let config = Config::from(&args);
+        assert_eq!(
+            config.database.query_timeout,
+            Some(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
     fn db_connection_timeout_wired_to_config() {
         let args = parse(&[BIN, "--db-connection-timeout", "10"]);
         let config = Config::from(&args);

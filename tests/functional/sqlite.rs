@@ -29,6 +29,82 @@ fn handler(read_only: bool) -> SqliteHandler {
 }
 
 #[tokio::test]
+async fn test_write_query_insert_and_verify() {
+    let handler = handler(false);
+
+    let insert = QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
+    };
+    let response = handler.write_query(&insert).await.unwrap();
+    assert!(response.rows.is_array());
+
+    // Verify
+    let select = QueryRequest {
+        query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
+    };
+    let rows = handler.read_query(&select).await.unwrap();
+    let arr = rows.rows.as_array().expect("array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["name"], "WriteTest");
+
+    // Clean up
+    let delete = QueryRequest {
+        query: "DELETE FROM users WHERE email = 'write@test.com'".into(),
+    };
+    handler.write_query(&delete).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_write_query_update() {
+    let handler = handler(false);
+
+    let insert = QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
+    };
+    handler.write_query(&insert).await.unwrap();
+
+    let update = QueryRequest {
+        query: "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
+    };
+    handler.write_query(&update).await.unwrap();
+
+    let select = QueryRequest {
+        query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
+    };
+    let rows = handler.read_query(&select).await.unwrap();
+    let arr = rows.rows.as_array().expect("array");
+    assert_eq!(arr[0]["name"], "After");
+
+    // Clean up
+    let delete = QueryRequest {
+        query: "DELETE FROM users WHERE email = 'update@test.com'".into(),
+    };
+    handler.write_query(&delete).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_write_query_delete() {
+    let handler = handler(false);
+
+    let insert = QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
+    };
+    handler.write_query(&insert).await.unwrap();
+
+    let delete = QueryRequest {
+        query: "DELETE FROM users WHERE email = 'delete@test.com'".into(),
+    };
+    handler.write_query(&delete).await.unwrap();
+
+    let select = QueryRequest {
+        query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
+    };
+    let rows = handler.read_query(&select).await.unwrap();
+    let arr = rows.rows.as_array().expect("array");
+    assert!(arr.is_empty(), "Row should be deleted");
+}
+
+#[tokio::test]
 async fn test_lists_tables() {
     let handler = handler(false);
 
@@ -183,4 +259,334 @@ async fn test_explain_query_select() {
     let response = handler.explain_query(&request).await.unwrap();
     let plan = response.rows.as_array().expect("rows should be an array");
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
+}
+
+#[tokio::test]
+async fn test_explain_query_with_join() {
+    let handler = handler(false);
+    let request = ExplainQueryRequest {
+        query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id".into(),
+    };
+
+    let response = handler.explain_query(&request).await.unwrap();
+    let plan = response.rows.as_array().expect("rows should be an array");
+    assert!(!plan.is_empty(), "EXPLAIN QUERY PLAN should return plan for JOIN query");
+}
+
+#[tokio::test]
+async fn test_explain_query_invalid_sql() {
+    let handler = handler(false);
+    let request = ExplainQueryRequest {
+        query: "NOT VALID SQL AT ALL".into(),
+    };
+
+    let response = handler.explain_query(&request).await;
+    assert!(response.is_err(), "Expected error for invalid SQL");
+}
+
+#[tokio::test]
+async fn test_get_table_schema_nonexistent_table() {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
+        table_name: "nonexistent_table_xyz".into(),
+    };
+
+    let response = handler.get_table_schema(&request).await;
+    assert!(response.is_err(), "Expected error for nonexistent table");
+}
+
+#[tokio::test]
+async fn test_get_table_schema_invalid_table_name() {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
+        table_name: String::new(),
+    };
+
+    let response = handler.get_table_schema(&request).await;
+    assert!(response.is_err(), "Expected error for empty table name");
+}
+
+#[tokio::test]
+async fn test_drop_table_invalid_identifier() {
+    let handler = handler(false);
+    let drop_request = DropTableRequest {
+        table_name: String::new(),
+    };
+
+    let response = handler.drop_table(&drop_request).await;
+    assert!(response.is_err(), "Expected error for empty table name");
+}
+
+#[tokio::test]
+async fn test_read_query_empty_query() {
+    let handler = handler(false);
+    let request = QueryRequest { query: String::new() };
+
+    let response = handler.read_query(&request).await;
+    assert!(response.is_err(), "Expected error for empty query");
+}
+
+#[tokio::test]
+async fn test_read_query_whitespace_only_query() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "   \t\n  ".into(),
+    };
+
+    let response = handler.read_query(&request).await;
+    assert!(response.is_err(), "Expected error for whitespace-only query");
+}
+
+#[tokio::test]
+async fn test_read_query_multi_statement_blocked() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT 1; DROP TABLE users".into(),
+    };
+
+    let response = handler.read_query(&request).await;
+    assert!(response.is_err(), "Expected error for multi-statement query");
+}
+
+#[tokio::test]
+async fn test_read_query_into_outfile_blocked() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
+    };
+
+    let response = handler.read_query(&request).await;
+    assert!(response.is_err(), "Expected error for INTO OUTFILE");
+}
+
+#[tokio::test]
+async fn test_read_query_with_join() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert!(!rows.is_empty(), "JOIN query should return results");
+    assert!(rows[0].get("title").is_some(), "Should have title column");
+    assert!(rows[0].get("name").is_some(), "Should have name column");
+}
+
+#[tokio::test]
+async fn test_write_query_create_table() {
+    let handler = handler(false);
+
+    let create = QueryRequest {
+        query: "CREATE TABLE write_test_create (id INTEGER PRIMARY KEY, value TEXT)".into(),
+    };
+    handler.write_query(&create).await.unwrap();
+
+    // Verify it appears in list_tables
+    let tables = handler.list_tables().await.unwrap();
+    assert!(
+        tables.tables.iter().any(|t| t == "write_test_create"),
+        "Created table should appear in list"
+    );
+
+    // Clean up
+    let drop = DropTableRequest {
+        table_name: "write_test_create".into(),
+    };
+    handler.drop_table(&drop).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_get_table_schema_junction_table() {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
+        table_name: "post_tags".into(),
+    };
+
+    let schema = handler.get_table_schema(&request).await.unwrap();
+    assert_eq!(schema.table_name, "post_tags");
+
+    let columns = schema.columns.as_object().expect("columns object");
+    assert!(columns.contains_key("post_id"), "Missing 'post_id'");
+    assert!(columns.contains_key("tag_id"), "Missing 'tag_id'");
+
+    // Both columns should have foreign keys
+    let post_id = columns["post_id"].as_object().expect("post_id object");
+    assert!(
+        post_id.get("foreign_key").is_some_and(|fk| !fk.is_null()),
+        "post_id should have a foreign key"
+    );
+
+    let tag_id = columns["tag_id"].as_object().expect("tag_id object");
+    assert!(
+        tag_id.get("foreign_key").is_some_and(|fk| !fk.is_null()),
+        "tag_id should have a foreign key"
+    );
+}
+
+#[tokio::test]
+async fn test_read_query_empty_result_set() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert!(rows.is_empty(), "Expected empty result set");
+}
+
+#[tokio::test]
+async fn test_read_query_aggregate() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT COUNT(*) AS total FROM users".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["total"], 3);
+}
+
+#[tokio::test]
+async fn test_read_query_group_by() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert!(rows.len() >= 2, "Expected at least 2 groups");
+}
+
+#[tokio::test]
+async fn test_read_query_with_comments() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert_eq!(rows.len(), 3, "Comment-prefixed SELECT should work");
+}
+
+#[tokio::test]
+async fn test_read_query_subquery() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert!(!rows.is_empty(), "Subquery should return results");
+}
+
+#[tokio::test]
+async fn test_get_table_schema_no_foreign_keys() {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
+        table_name: "tags".into(),
+    };
+
+    let schema = handler.get_table_schema(&request).await.unwrap();
+    assert_eq!(schema.table_name, "tags");
+
+    let columns = schema.columns.as_object().expect("columns object");
+    assert!(columns.contains_key("id"), "Missing 'id'");
+    assert!(columns.contains_key("name"), "Missing 'name'");
+
+    // id column should have no foreign key
+    let id_col = columns["id"].as_object().expect("id object");
+    let fk = id_col.get("foreign_key");
+    assert!(
+        fk.is_none() || fk.is_some_and(Value::is_null),
+        "tags.id should not have a foreign key"
+    );
+}
+
+#[tokio::test]
+async fn test_write_query_invalid_sql() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "NOT VALID SQL AT ALL".into(),
+    };
+
+    let response = handler.write_query(&request).await;
+    assert!(response.is_err(), "Expected error for invalid SQL in write_query");
+}
+
+#[tokio::test]
+async fn test_get_table_schema_column_details() {
+    let handler = handler(false);
+    let request = GetTableSchemaRequest {
+        table_name: "users".into(),
+    };
+
+    let schema = handler.get_table_schema(&request).await.unwrap();
+    let columns = schema.columns.as_object().expect("columns object");
+
+    // Verify id column has key info (PRIMARY KEY)
+    let id_col = columns["id"].as_object().expect("id object");
+    let key = id_col.get("key").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(key, "PRI", "id should be PRI key");
+
+    // Verify email column type
+    let email_col = columns["email"].as_object().expect("email object");
+    let col_type = email_col.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        col_type.to_lowercase().contains("varchar") || col_type.to_lowercase().contains("text"),
+        "email type should contain 'varchar' or 'text', got: {col_type}"
+    );
+}
+
+#[tokio::test]
+async fn test_read_query_with_limit() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert_eq!(rows.len(), 2, "LIMIT 2 should return exactly 2 rows");
+}
+
+#[tokio::test]
+async fn test_read_query_with_line_comment() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert_eq!(rows.len(), 3, "Line-comment prefixed SELECT should work");
+}
+
+#[tokio::test]
+async fn test_read_query_null_values() {
+    let handler = handler(false);
+    let request = QueryRequest {
+        query: "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
+    };
+
+    let response = handler.read_query(&request).await.unwrap();
+    let rows = response.rows.as_array().expect("array");
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].get("body").is_some(), "body column should be present");
+}
+
+#[tokio::test]
+async fn test_drop_table_blocked_in_read_only() {
+    let handler = handler(true);
+    let drop_request = DropTableRequest {
+        table_name: "users".into(),
+    };
+
+    let response = handler.drop_table(&drop_request).await;
+    assert!(response.is_err(), "drop_table should be blocked in read-only mode");
 }
