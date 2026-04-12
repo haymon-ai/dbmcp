@@ -63,12 +63,6 @@ impl MysqlConnection {
         self.config.name.as_deref().filter(|n| !n.is_empty()).unwrap_or("")
     }
 
-    /// Returns `true` if `name` matches the default database (case-insensitive).
-    fn is_default_db(&self, name: &str) -> bool {
-        let default = self.default_db();
-        !default.is_empty() && default.eq_ignore_ascii_case(name)
-    }
-
     /// Evicts the cached pool for `name`, closing its connections.
     ///
     /// Idempotent — does nothing if the pool was not cached.
@@ -94,7 +88,8 @@ impl MysqlConnection {
             return Ok(pool);
         }
 
-        if !self.is_default_db(db_key) {
+        let default = self.default_db();
+        if default.is_empty() || !default.eq_ignore_ascii_case(db_key) {
             validate_identifier(db_key)?;
         }
 

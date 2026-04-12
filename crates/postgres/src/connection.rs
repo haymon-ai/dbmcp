@@ -67,11 +67,6 @@ impl PostgresConnection {
             .unwrap_or(&self.config.user)
     }
 
-    /// Returns `true` if `name` matches the default database (case-sensitive).
-    fn is_default_db(&self, name: &str) -> bool {
-        name == self.default_db()
-    }
-
     /// Evicts the cached pool for `name`, closing its connections.
     ///
     /// Idempotent — does nothing if the pool was not cached.
@@ -97,7 +92,7 @@ impl PostgresConnection {
             return Ok(pool);
         }
 
-        if !self.is_default_db(db_key) {
+        if db_key != self.default_db() {
             validate_identifier(db_key)?;
         }
 
