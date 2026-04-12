@@ -1,6 +1,7 @@
-import Link from 'next/link';
+import Link from "next/link";
+import { InstallCommand } from "./install";
 
-const gitHubUrl = 'https://github.com/haymon-ai/database';
+const gitHubUrl = "https://github.com/haymon-ai/database";
 
 export function Hero() {
   return (
@@ -14,9 +15,11 @@ export function Hero() {
         <span aria-hidden="true">&rarr;</span>
       </Link>
 
-      <h1 className="mt-8 text-4xl font-semibold tracking-tight text-black sm:text-5xl md:text-6xl" style={{ letterSpacing: '-0.025em', lineHeight: 1 }}>
-        Your databases,{' '}
-        <br className="hidden sm:block" />
+      <h1
+        className="mt-8 text-4xl font-semibold tracking-tight text-black sm:text-5xl md:text-6xl"
+        style={{ letterSpacing: "-0.025em", lineHeight: 1 }}
+      >
+        Your databases, <br className="hidden sm:block" />
         meet your AI
       </h1>
 
@@ -40,6 +43,10 @@ export function Hero() {
         >
           View on GitHub
         </a>
+      </div>
+
+      <div className="mt-10">
+        <InstallCommand />
       </div>
     </section>
   );

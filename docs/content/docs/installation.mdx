@@ -5,6 +5,48 @@ description: Install database-mcp via Docker, prebuilt binary, or from source
 
 Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
 
+## Quick Install (recommended)
+
+**macOS, Linux, WSL**:
+
+```bash
+curl -fsSL https://database.haymon.ai/install.sh | bash
+```
+
+Or with `wget`:
+
+```bash
+wget -qO- https://database.haymon.ai/install.sh | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://database.haymon.ai/install.ps1 | iex
+```
+
+**Windows** (CMD):
+
+```batch
+curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+This detects your platform, downloads the correct binary, and installs it. Re-run the same command to upgrade to the latest version.
+
+To install to a custom directory:
+
+```bash
+INSTALL_DIR=/opt/bin curl -fsSL https://database.haymon.ai/install.sh | bash
+```
+
+```powershell
+$env:INSTALL_DIR = "C:\tools\database-mcp"; irm https://database.haymon.ai/install.ps1 | iex
+```
+
+```batch
+set INSTALL_DIR=C:\tools\database-mcp && curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
 ## Prebuilt Binaries
 
 Download the latest release from GitHub.
@@ -164,6 +206,7 @@ database-mcp --help
 
 | Method | Ease of Install | Auto Updates | Version Flexibility | Prerequisites | Platform Coverage |
 |--------|----------------|--------------|--------------------|--------------|--------------------|
+| Quick Install | Single command | Re-run to upgrade | Latest release | curl/wget or PowerShell | macOS, Linux, WSL, Windows |
 | Docker | `docker pull` | Pull latest tag | Any release tag | Docker | Linux, macOS, Windows |
 | Prebuilt Binary | Simple download | None | Any release | None | Linux, macOS, Windows |
 | Cargo Install | One command | `cargo install` to update | Any published version | Rust toolchain | All platforms Rust supports |
