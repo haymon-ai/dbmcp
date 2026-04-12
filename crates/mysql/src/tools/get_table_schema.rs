@@ -5,13 +5,11 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
-use sqlx::Row;
-use sqlx_to_json::RowExt;
 
 use crate::MysqlHandler;
 
@@ -79,16 +77,15 @@ impl MysqlHandler {
 
         let mut columns: HashMap<String, Value> = HashMap::new();
         for row in &schema_rows {
-            let row_json = RowExt::to_json(row);
-            if let Some(col_name) = row_json.get("Field").and_then(|v| v.as_str()) {
+            if let Some(col_name) = row.get("Field").and_then(|v| v.as_str()) {
                 columns.insert(
                     col_name.to_string(),
                     json!({
-                        "type": row_json.get("Type").unwrap_or(&Value::Null),
-                        "nullable": row_json.get("Null").and_then(|v| v.as_str()).is_some_and(|s| s.to_uppercase() == "YES"),
-                        "key": row_json.get("Key").unwrap_or(&Value::Null),
-                        "default": row_json.get("Default").unwrap_or(&Value::Null),
-                        "extra": row_json.get("Extra").unwrap_or(&Value::Null),
+                        "type": row.get("Type").unwrap_or(&Value::Null),
+                        "nullable": row.get("Null").and_then(|v| v.as_str()).is_some_and(|s| s.to_uppercase() == "YES"),
+                        "key": row.get("Key").unwrap_or(&Value::Null),
+                        "default": row.get("Default").unwrap_or(&Value::Null),
+                        "extra": row.get("Extra").unwrap_or(&Value::Null),
                         "foreign_key": Value::Null,
                     }),
                 );
@@ -96,8 +93,8 @@ impl MysqlHandler {
         }
 
         // 2. Get FK relationships
-        let fk_sql = r"
-            SELECT
+        let fk_sql = format!(
+            "SELECT
                 kcu.COLUMN_NAME as column_name,
                 kcu.CONSTRAINT_NAME as constraint_name,
                 kcu.REFERENCED_TABLE_NAME as referenced_table,
@@ -108,36 +105,29 @@ impl MysqlHandler {
             INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
                 ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
                 AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
-            WHERE kcu.TABLE_SCHEMA = ?
-              AND kcu.TABLE_NAME = ?
+            WHERE kcu.TABLE_SCHEMA = {}
+              AND kcu.TABLE_NAME = {}
               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
-            ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
-        ";
+            ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+            self.connection.quote_string(database),
+            self.connection.quote_string(table),
+        );
 
-        let fk_rows = self
-            .connection
-            .fetch(sqlx::query(fk_sql).bind(database).bind(table), None)
-            .await?;
+        let fk_rows = self.connection.fetch(fk_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
-            let col_name: Option<String> = fk_row.try_get("column_name").ok();
-            if let Some(col_name) = col_name
-                && let Some(col_info) = columns.get_mut(&col_name)
+            if let Some(col_name) = fk_row.get("column_name").and_then(|v| v.as_str())
+                && let Some(col_info) = columns.get_mut(col_name)
                 && let Some(obj) = col_info.as_object_mut()
             {
-                let constraint_name: Option<String> = fk_row.try_get("constraint_name").ok();
-                let referenced_table: Option<String> = fk_row.try_get("referenced_table").ok();
-                let referenced_column: Option<String> = fk_row.try_get("referenced_column").ok();
-                let on_update: Option<String> = fk_row.try_get("on_update").ok();
-                let on_delete: Option<String> = fk_row.try_get("on_delete").ok();
                 obj.insert(
                     "foreign_key".to_string(),
                     json!({
-                        "constraint_name": constraint_name,
-                        "referenced_table": referenced_table,
-                        "referenced_column": referenced_column,
-                        "on_update": on_update,
-                        "on_delete": on_delete,
+                        "constraint_name": fk_row.get("constraint_name"),
+                        "referenced_table": fk_row.get("referenced_table"),
+                        "referenced_column": fk_row.get("referenced_column"),
+                        "on_update": fk_row.get("on_update"),
+                        "on_delete": fk_row.get("on_delete"),
                     }),
                 );
             }

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{DropDatabaseRequest, MessageResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};

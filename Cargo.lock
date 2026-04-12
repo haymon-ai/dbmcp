@@ -544,8 +544,8 @@ name = "database-mcp-sql"
 version = "0.6.1"
 dependencies = [
  "database-mcp-server",
+ "serde_json",
  "sqlparser",
- "sqlx",
  "tokio",
 ]
 

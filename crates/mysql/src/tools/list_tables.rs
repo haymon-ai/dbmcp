@@ -4,11 +4,10 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlx_to_json::RowExt;
 
 use crate::MysqlHandler;
 
@@ -67,11 +66,7 @@ impl MysqlHandler {
         Ok(ListTablesResponse {
             tables: rows
                 .iter()
-                .filter_map(|row| {
-                    RowExt::to_json(row)
-                        .get("name")
-                        .and_then(|v| v.as_str().map(String::from))
-                })
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
                 .collect(),
         })
     }

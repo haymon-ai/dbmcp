@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
-use database_mcp_sql::connection::{Connection, Executable, Query};
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::timeout::execute_with_timeout;
-use sqlx::Sqlite;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteQueryResult};
+use serde_json::Value;
+use sqlx::Executor;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx_to_json::RowExt;
 
 /// Owns the lazy `SQLite` pool and the logic that builds it.
 #[derive(Clone)]
@@ -52,43 +54,35 @@ impl SqliteConnection {
 }
 
 impl Connection for SqliteConnection {
-    type Database = Sqlite;
-
-    async fn execute<Q>(&self, query: Q, target: Option<&str>) -> Result<SqliteQueryResult, AppError>
-    where
-        Q: Executable<Sqlite>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_execute(&mut conn).await
+            let result = (&mut *conn).execute(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(result.rows_affected())
         })
         .await
     }
 
-    async fn fetch<Q>(&self, query: Q, target: Option<&str>) -> Result<Vec<Q::Output>, AppError>
-    where
-        Q: Query<Sqlite>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn fetch(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_fetch_all(&mut conn).await
+            let rows = (&mut *conn).fetch_all(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(rows.iter().map(RowExt::to_json).collect())
         })
         .await
     }
 
-    async fn fetch_optional<Q>(&self, query: Q, target: Option<&str>) -> Result<Option<Q::Output>, AppError>
-    where
-        Q: Query<Sqlite>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_fetch_optional(&mut conn).await
+            let row = (&mut *conn).fetch_optional(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(row.as_ref().map(RowExt::to_json))
         })
         .await
     }

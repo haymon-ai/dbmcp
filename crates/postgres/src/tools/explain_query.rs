@@ -4,12 +4,11 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
-use sqlx_to_json::RowExt;
 
 use crate::PostgresHandler;
 
@@ -75,11 +74,11 @@ impl PostgresHandler {
 
         let rows = self
             .connection
-            .fetch(sqlx::query(&explain_sql), Some(&request.database_name))
+            .fetch(&explain_sql, Some(&request.database_name))
             .await?;
 
         Ok(QueryResponse {
-            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+            rows: Value::Array(rows),
         })
     }
 }

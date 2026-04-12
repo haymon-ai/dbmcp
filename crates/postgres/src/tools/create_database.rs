@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -64,16 +64,13 @@ impl PostgresHandler {
 
         // PostgreSQL CREATE DATABASE can't use parameterized queries
         let create_sql = format!("CREATE DATABASE {}", self.connection.quote_identifier(name));
-        self.connection
-            .execute(sqlx::query(&create_sql), None)
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("already exists") {
-                    return AppError::Query(format!("Database '{name}' already exists."));
-                }
-                e
-            })?;
+        self.connection.execute(&create_sql, None).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("already exists") {
+                return AppError::Query(format!("Database '{name}' already exists."));
+            }
+            e
+        })?;
 
         Ok(MessageResponse {
             message: format!("Database '{name}' created successfully."),

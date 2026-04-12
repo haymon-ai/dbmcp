@@ -8,12 +8,14 @@ use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
-use database_mcp_sql::connection::{Connection, Executable, Query};
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::identifier::validate_identifier;
 use database_mcp_sql::timeout::execute_with_timeout;
 use moka::future::Cache;
-use sqlx::Postgres;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgQueryResult, PgSslMode};
+use serde_json::Value;
+use sqlx::Executor;
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
+use sqlx_to_json::RowExt;
 use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
@@ -133,43 +135,35 @@ impl PostgresConnection {
 }
 
 impl Connection for PostgresConnection {
-    type Database = Postgres;
-
-    async fn execute<Q>(&self, query: Q, target: Option<&str>) -> Result<PgQueryResult, AppError>
-    where
-        Q: Executable<Postgres>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_execute(&mut conn).await
+            let result = (&mut *conn).execute(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(result.rows_affected())
         })
         .await
     }
 
-    async fn fetch<Q>(&self, query: Q, target: Option<&str>) -> Result<Vec<Q::Output>, AppError>
-    where
-        Q: Query<Postgres>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn fetch(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_fetch_all(&mut conn).await
+            let rows = (&mut *conn).fetch_all(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(rows.iter().map(RowExt::to_json).collect())
         })
         .await
     }
 
-    async fn fetch_optional<Q>(&self, query: Q, target: Option<&str>) -> Result<Option<Q::Output>, AppError>
-    where
-        Q: Query<Postgres>,
-    {
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError> {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
-            query.run_fetch_optional(&mut conn).await
+            let row = (&mut *conn).fetch_optional(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(row.as_ref().map(RowExt::to_json))
         })
         .await
     }

@@ -5,11 +5,10 @@ use std::sync::Arc;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::ListDatabasesResponse;
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::connection::Connection;
 use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
-use sqlx_to_json::RowExt;
 
 use crate::MysqlHandler;
 
@@ -67,11 +66,7 @@ impl MysqlHandler {
         Ok(ListDatabasesResponse {
             databases: rows
                 .iter()
-                .filter_map(|row| {
-                    RowExt::to_json(row)
-                        .get("name")
-                        .and_then(|v| v.as_str().map(String::from))
-                })
+                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
                 .collect(),
         })
     }

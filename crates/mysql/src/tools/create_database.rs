@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -62,12 +62,11 @@ impl MysqlHandler {
         let name = &request.database_name;
         validate_identifier(name)?;
 
-        // Check existence — use Vec<u8> because MySQL 9 returns BINARY columns
-        let check_sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?";
-        let exists: Option<Vec<u8>> = self
-            .connection
-            .fetch_optional(sqlx::query_scalar(check_sql).bind(name), None)
-            .await?;
+        let check_sql = format!(
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = {}",
+            self.connection.quote_string(name),
+        );
+        let exists = self.connection.fetch_optional(check_sql.as_str(), None).await?;
 
         if exists.is_some() {
             return Ok(MessageResponse {

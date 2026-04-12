@@ -5,12 +5,11 @@ use std::collections::HashMap;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::TableSchemaResponse;
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::identifier::validate_identifier;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
-use sqlx::Row;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
@@ -74,11 +73,11 @@ impl SqliteHandler {
 
         let mut columns: HashMap<String, Value> = HashMap::new();
         for row in &rows {
-            let col_name: String = row.try_get("name").unwrap_or_default();
-            let col_type: String = row.try_get("type").unwrap_or_default();
-            let notnull: i32 = row.try_get("notnull").unwrap_or(0);
-            let default: Option<String> = row.try_get("dflt_value").ok();
-            let pk: i32 = row.try_get("pk").unwrap_or(0);
+            let col_name = row.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+            let col_type = row.get("type").and_then(Value::as_str).unwrap_or_default().to_owned();
+            let notnull = row.get("notnull").and_then(Value::as_i64).unwrap_or(0);
+            let default = row.get("dflt_value").and_then(Value::as_str).map(str::to_owned);
+            let pk = row.get("pk").and_then(Value::as_i64).unwrap_or(0);
             columns.insert(
                 col_name,
                 json!({
@@ -97,14 +96,30 @@ impl SqliteHandler {
         let fk_rows = self.connection.fetch(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
-            let from_col: String = fk_row.try_get("from").unwrap_or_default();
+            let from_col = fk_row
+                .get("from")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
             if let Some(col_info) = columns.get_mut(&from_col)
                 && let Some(obj) = col_info.as_object_mut()
             {
-                let ref_table: String = fk_row.try_get("table").unwrap_or_default();
-                let ref_col: String = fk_row.try_get("to").unwrap_or_default();
-                let on_update: String = fk_row.try_get("on_update").unwrap_or_default();
-                let on_delete: String = fk_row.try_get("on_delete").unwrap_or_default();
+                let ref_table = fk_row
+                    .get("table")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let ref_col = fk_row.get("to").and_then(Value::as_str).unwrap_or_default().to_owned();
+                let on_update = fk_row
+                    .get("on_update")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let on_delete = fk_row
+                    .get("on_delete")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
                 obj.insert(
                     "foreign_key".to_string(),
                     json!({

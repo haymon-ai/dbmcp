@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
-use database_mcp_sql::connection::{Connection, Executable, Query};
+use database_mcp_sql::connection::Connection;
 use database_mcp_sql::identifier::{quote_identifier, validate_identifier};
 use database_mcp_sql::timeout::execute_with_timeout;
+use serde_json::Value;
 use sqlx::Executor;
-use sqlx::MySql;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlQueryResult, MySqlSslMode};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlSslMode};
+use sqlx_to_json::RowExt;
 use tracing::info;
 
 /// Owns the lazy `MySQL` pool and the logic that builds it.
@@ -72,67 +73,59 @@ impl MysqlConnection {
 }
 
 impl Connection for MysqlConnection {
-    type Database = MySql;
-
-    async fn execute<Q>(&self, query: Q, target: Option<&str>) -> Result<MySqlQueryResult, AppError>
-    where
-        Q: Executable<MySql>,
-    {
-        if let Some(db) = target {
+    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError> {
+        if let Some(db) = database {
             validate_identifier(db)?;
         }
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        let target_owned = target.map(str::to_owned);
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        let target_owned = database.map(str::to_owned);
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
             if let Some(db) = target_owned.as_deref() {
                 let use_sql = format!("USE {}", quote_identifier(db, '`'));
                 (&mut *conn).execute(use_sql.as_str()).await?;
             }
-            query.run_execute(&mut conn).await
+            let result = (&mut *conn).execute(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(result.rows_affected())
         })
         .await
     }
 
-    async fn fetch<Q>(&self, query: Q, target: Option<&str>) -> Result<Vec<Q::Output>, AppError>
-    where
-        Q: Query<MySql>,
-    {
-        if let Some(db) = target {
+    async fn fetch(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError> {
+        if let Some(db) = database {
             validate_identifier(db)?;
         }
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        let target_owned = target.map(str::to_owned);
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        let target_owned = database.map(str::to_owned);
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
             if let Some(db) = target_owned.as_deref() {
                 let use_sql = format!("USE {}", quote_identifier(db, '`'));
                 (&mut *conn).execute(use_sql.as_str()).await?;
             }
-            query.run_fetch_all(&mut conn).await
+            let rows = (&mut *conn).fetch_all(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(rows.iter().map(RowExt::to_json).collect())
         })
         .await
     }
 
-    async fn fetch_optional<Q>(&self, query: Q, target: Option<&str>) -> Result<Option<Q::Output>, AppError>
-    where
-        Q: Query<MySql>,
-    {
-        if let Some(db) = target {
+    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError> {
+        if let Some(db) = database {
             validate_identifier(db)?;
         }
-        let pool = self.pool(target).await?;
-        let sql = query.sql().to_owned();
-        let target_owned = target.map(str::to_owned);
-        execute_with_timeout(self.config.query_timeout, &sql, async move {
+        let pool = self.pool(database).await?;
+        let sql = query.to_owned();
+        let target_owned = database.map(str::to_owned);
+        execute_with_timeout(self.config.query_timeout, query, async move {
             let mut conn = pool.acquire().await?;
             if let Some(db) = target_owned.as_deref() {
                 let use_sql = format!("USE {}", quote_identifier(db, '`'));
                 (&mut *conn).execute(use_sql.as_str()).await?;
             }
-            query.run_fetch_optional(&mut conn).await
+            let row = (&mut *conn).fetch_optional(sql.as_str()).await?;
+            Ok::<_, sqlx::Error>(row.as_ref().map(RowExt::to_json))
         })
         .await
     }

@@ -4,9 +4,10 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
+use serde_json::Value;
 
 use crate::PostgresHandler;
 
@@ -62,9 +63,12 @@ impl PostgresHandler {
             Some(request.database_name.as_str())
         };
         let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
-        let rows: Vec<(String,)> = self.connection.fetch(sqlx::query_as(sql), db).await?;
+        let rows = self.connection.fetch(sql, db).await?;
         Ok(ListTablesResponse {
-            tables: rows.into_iter().map(|r| r.0).collect(),
+            tables: rows
+                .iter()
+                .filter_map(|r| r.get("tablename").and_then(Value::as_str).map(str::to_owned))
+                .collect(),
         })
     }
 }

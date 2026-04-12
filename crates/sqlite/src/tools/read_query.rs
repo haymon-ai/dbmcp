@@ -4,12 +4,11 @@ use std::borrow::Cow;
 
 use database_mcp_server::AppError;
 use database_mcp_server::types::QueryResponse;
-use database_mcp_sql::connection::Connection as _;
+use database_mcp_sql::Connection as _;
 use database_mcp_sql::validation::validate_read_only_with_dialect;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
-use sqlx_to_json::RowExt;
 
 use crate::SqliteHandler;
 use crate::types::QueryRequest;
@@ -65,7 +64,7 @@ impl SqliteHandler {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
         let rows = self.connection.fetch(request.query.as_str(), None).await?;
         Ok(QueryResponse {
-            rows: Value::Array(rows.iter().map(RowExt::to_json).collect()),
+            rows: Value::Array(rows),
         })
     }
 }
