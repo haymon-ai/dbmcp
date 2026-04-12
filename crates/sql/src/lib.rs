@@ -10,4 +10,4 @@ pub mod identifier;
 pub mod timeout;
 pub mod validation;
 
-pub use connection::{Connection, PoolProvider};
+pub use connection::Connection;

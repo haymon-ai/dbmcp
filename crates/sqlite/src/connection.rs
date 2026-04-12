@@ -1,4 +1,4 @@
-//! `SQLite` connection: pool ownership, initialization, and [`PoolProvider`] impl.
+//! `SQLite` connection: pool ownership, initialization, and [`Connection`] impl.
 //!
 //! Owns the single lazy [`SqlitePool`] used by [`SqliteHandler`](crate::SqliteHandler).
 //! `SQLite` is a single-file, single-writer backend; the pool is fixed
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
-use database_mcp_sql::PoolProvider;
+use database_mcp_sql::Connection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 /// Owns the lazy `SQLite` pool and the logic that builds it.
@@ -33,12 +33,6 @@ impl SqliteConnection {
         }
     }
 
-    /// Wraps `name` in double quotes for safe use in `SQLite` SQL statements.
-    #[allow(clippy::unused_self)]
-    pub(crate) fn quote_identifier(&self, name: &str) -> String {
-        database_mcp_sql::identifier::quote_identifier(name, '"')
-    }
-
     /// Returns the single pool. Target is ignored (`SQLite` is single-file).
     ///
     /// Crate-private so every tool path goes through the unified
@@ -49,8 +43,9 @@ impl SqliteConnection {
     }
 }
 
-impl PoolProvider for SqliteConnection {
+impl Connection for SqliteConnection {
     type DB = sqlx::Sqlite;
+    const IDENTIFIER_QUOTE: char = '"';
 
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
         self.pool(target).await

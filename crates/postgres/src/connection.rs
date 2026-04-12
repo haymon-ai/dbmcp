@@ -1,4 +1,4 @@
-//! `PostgreSQL` connection: pool cache, pool initialization, and [`PoolProvider`] impl.
+//! `PostgreSQL` connection: pool cache, pool initialization, and [`Connection`] impl.
 //!
 //! Owns the lazy default pool and the moka cache of per-database pools.
 //! Hides every backend pool concern from [`PostgresHandler`](crate::PostgresHandler),
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
-use database_mcp_sql::PoolProvider;
+use database_mcp_sql::Connection;
 use database_mcp_sql::identifier::validate_identifier;
 use moka::future::Cache;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
@@ -77,12 +77,6 @@ impl PostgresConnection {
         &self.default_db
     }
 
-    /// Wraps `name` in double quotes for safe use in `PostgreSQL` SQL statements.
-    #[allow(clippy::unused_self)]
-    pub(crate) fn quote_identifier(&self, name: &str) -> String {
-        database_mcp_sql::identifier::quote_identifier(name, '"')
-    }
-
     /// Evicts the cached pool for `name`, closing its connections.
     ///
     /// Idempotent — does nothing if the pool was not cached.
@@ -130,8 +124,9 @@ impl PostgresConnection {
     }
 }
 
-impl PoolProvider for PostgresConnection {
+impl Connection for PostgresConnection {
     type DB = sqlx::Postgres;
+    const IDENTIFIER_QUOTE: char = '"';
 
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
         self.pool(target).await
