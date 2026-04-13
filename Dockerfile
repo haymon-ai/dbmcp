@@ -22,3 +22,4 @@ COPY --from=download /tmp/database-mcp /database-mcp
 USER nonroot
 
 ENTRYPOINT ["/database-mcp"]
+CMD ["stdio"]
