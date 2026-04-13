@@ -3,12 +3,14 @@
 //! Defines the top-level [`Error`] enum used for server startup and
 //! transport failures in the binary crate.
 
+use database_mcp_config::ConfigError;
+
 /// Application-level errors for server startup and transport.
 ///
 /// Only instantiated once at program exit, so variant size is irrelevant.
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::large_enum_variant)]
-pub enum Error {
+pub(crate) enum Error {
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]
     Transport(#[from] rmcp::service::ServerInitializeError),
@@ -17,7 +19,22 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    /// Missing or invalid configuration at runtime.
-    #[error("{0}")]
-    Config(String),
+    /// Configuration validation failed with one or more errors.
+    #[error("{}", format_config_errors(.0))]
+    Config(Vec<ConfigError>),
+}
+
+impl From<Vec<ConfigError>> for Error {
+    fn from(errors: Vec<ConfigError>) -> Self {
+        Self::Config(errors)
+    }
+}
+
+fn format_config_errors(errors: &[ConfigError]) -> String {
+    let mut s = String::from("configuration validation failed:");
+    for error in errors {
+        s.push_str("\n  - ");
+        s.push_str(&error.to_string());
+    }
+    s
 }

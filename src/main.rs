@@ -4,7 +4,6 @@ mod cli;
 mod commands;
 mod consts;
 mod error;
-mod server;
 
 use mimalloc::MiMalloc;
 use std::process::ExitCode;
