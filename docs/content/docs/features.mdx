@@ -78,9 +78,9 @@ Return the execution plan for a SQL query. Supports an optional `analyze` parame
 
 Database MCP supports two transport modes for communicating with MCP clients.
 
-### Stdio (default)
+### Stdio
 
-The server communicates over standard input/output. This is the default mode and works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess.
+The server communicates over standard input/output. This mode works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess and passes the `stdio` subcommand.
 
 **Best for**: Local development, single-user setups, desktop MCP clients.
 

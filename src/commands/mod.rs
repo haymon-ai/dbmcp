@@ -2,5 +2,6 @@
 //!
 //! Each submodule handles a specific MCP transport mode.
 
-pub mod http;
-pub mod stdio;
+pub(crate) mod common;
+pub(crate) mod http;
+pub(crate) mod stdio;

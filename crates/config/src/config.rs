@@ -27,6 +27,10 @@ pub enum ConfigError {
     /// SSL certificate file not found.
     #[error("{0} file not found: {1}")]
     SslCertNotFound(String, String),
+
+    /// HTTP bind host is empty.
+    #[error("HTTP_HOST must not be empty")]
+    EmptyHttpHost,
 }
 
 /// Supported database backends.
@@ -177,6 +181,35 @@ impl DatabaseConfig {
     pub const DEFAULT_MIN_CONNECTIONS: u32 = 1;
     /// Default query execution timeout in seconds.
     pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
+
+    /// Validates the database configuration and returns all errors found.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `Vec<ConfigError>` if any validation rules fail.
+    pub fn validate(&self) -> Result<(), Vec<ConfigError>> {
+        let mut errors = Vec::new();
+
+        if self.backend == DatabaseBackend::Sqlite && self.name.as_deref().unwrap_or_default().is_empty() {
+            errors.push(ConfigError::MissingSqliteDbName);
+        }
+
+        if self.ssl {
+            for (name, path) in [
+                ("DB_SSL_CA", &self.ssl_ca),
+                ("DB_SSL_CERT", &self.ssl_cert),
+                ("DB_SSL_KEY", &self.ssl_key),
+            ] {
+                if let Some(path) = path
+                    && !std::path::Path::new(path).exists()
+                {
+                    errors.push(ConfigError::SslCertNotFound(name.into(), path.clone()));
+                }
+            }
+        }
+
+        errors.is_empty().then_some(()).ok_or(errors)
+    }
 }
 
 impl Default for DatabaseConfig {
@@ -240,6 +273,21 @@ impl HttpConfig {
     pub fn default_allowed_hosts() -> Vec<String> {
         vec!["localhost".into(), "127.0.0.1".into()]
     }
+
+    /// Validates the HTTP configuration and returns all errors found.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `Vec<ConfigError>` if any validation rules fail.
+    pub fn validate(&self) -> Result<(), Vec<ConfigError>> {
+        let mut errors = Vec::new();
+
+        if self.host.trim().is_empty() {
+            errors.push(ConfigError::EmptyHttpHost);
+        }
+
+        errors.is_empty().then_some(()).ok_or(errors)
+    }
 }
 
 /// Runtime configuration for the MCP server.
@@ -256,39 +304,6 @@ pub struct Config {
 
     /// HTTP transport settings (present only when HTTP transport is active).
     pub http: Option<HttpConfig>,
-}
-
-impl Config {
-    /// Validates the configuration and returns all errors found.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `Vec<ConfigError>` if any validation rules fail.
-    pub fn validate(&self) -> Result<(), Vec<ConfigError>> {
-        let mut errors = Vec::new();
-
-        if self.database.backend == DatabaseBackend::Sqlite
-            && self.database.name.as_deref().unwrap_or_default().is_empty()
-        {
-            errors.push(ConfigError::MissingSqliteDbName);
-        }
-
-        if self.database.ssl {
-            for (name, path) in [
-                ("DB_SSL_CA", &self.database.ssl_ca),
-                ("DB_SSL_CERT", &self.database.ssl_cert),
-                ("DB_SSL_KEY", &self.database.ssl_key),
-            ] {
-                if let Some(path) = path
-                    && !std::path::Path::new(path).exists()
-                {
-                    errors.push(ConfigError::SslCertNotFound(name.into(), path.clone()));
-                }
-            }
-        }
-
-        if errors.is_empty() { Ok(()) } else { Err(errors) }
-    }
 }
 
 #[cfg(test)]
@@ -345,7 +360,7 @@ mod tests {
 
     #[test]
     fn valid_mysql_config_passes() {
-        assert!(mysql_config().validate().is_ok());
+        assert!(mysql_config().database.validate().is_ok());
     }
 
     #[test]
@@ -358,7 +373,7 @@ mod tests {
             },
             ..base_config(DatabaseBackend::Postgres)
         };
-        assert!(config.validate().is_ok());
+        assert!(config.database.validate().is_ok());
     }
 
     #[test]
@@ -370,7 +385,7 @@ mod tests {
             },
             ..base_config(DatabaseBackend::Sqlite)
         };
-        assert!(config.validate().is_ok());
+        assert!(config.database.validate().is_ok());
     }
 
     #[test]
@@ -409,13 +424,16 @@ mod tests {
     fn mysql_without_user_gets_default() {
         let config = base_config(DatabaseBackend::Mysql);
         assert_eq!(config.database.user, "root");
-        assert!(config.validate().is_ok());
+        assert!(config.database.validate().is_ok());
     }
 
     #[test]
     fn sqlite_requires_db_name() {
         let config = base_config(DatabaseBackend::Sqlite);
-        let errors = config.validate().unwrap_err();
+        let errors = config
+            .database
+            .validate()
+            .expect_err("sqlite without db name must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
     }
 
@@ -431,7 +449,10 @@ mod tests {
             },
             ..base_config(DatabaseBackend::Mysql)
         };
-        let errors = config.validate().unwrap_err();
+        let errors = config
+            .database
+            .validate()
+            .expect_err("missing ssl cert files must fail");
         assert!(
             errors.len() >= 3,
             "expected at least 3 errors, got {}: {errors:?}",
@@ -442,13 +463,47 @@ mod tests {
     #[test]
     fn mariadb_backend_is_valid() {
         let config = base_config(DatabaseBackend::Mariadb);
-        assert!(config.validate().is_ok());
+        assert!(config.database.validate().is_ok());
     }
 
     #[test]
     fn query_timeout_default_is_none() {
         let config = DatabaseConfig::default();
         assert!(config.query_timeout.is_none());
+    }
+
+    fn http_config() -> HttpConfig {
+        HttpConfig {
+            host: HttpConfig::DEFAULT_HOST.into(),
+            port: HttpConfig::DEFAULT_PORT,
+            allowed_origins: HttpConfig::default_allowed_origins(),
+            allowed_hosts: HttpConfig::default_allowed_hosts(),
+        }
+    }
+
+    #[test]
+    fn valid_http_config_passes() {
+        assert!(http_config().validate().is_ok());
+    }
+
+    #[test]
+    fn empty_http_host_rejected() {
+        let config = HttpConfig {
+            host: String::new(),
+            ..http_config()
+        };
+        let errors = config.validate().expect_err("empty host must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+    }
+
+    #[test]
+    fn whitespace_http_host_rejected() {
+        let config = HttpConfig {
+            host: "   ".into(),
+            ..http_config()
+        };
+        let errors = config.validate().expect_err("whitespace host must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
     }
 
     #[test]

@@ -72,7 +72,7 @@ Adding or updating dependencies requires discussion. If your change needs a new 
 **Unit tests**:
 
 ```bash
-cargo test --lib
+cargo test --workspace --lib --bins
 ```
 
 **Integration tests** run against real databases using Docker. The `tests/run.sh` script manages the full matrix:
@@ -103,7 +103,7 @@ CI automatically runs on every push and pull request:
 1. Commit message validation — conventional commit format ([cocogitto](https://github.com/cocogitto/cocogitto))
 2. `cargo fmt --check` — formatting
 3. `cargo clippy --workspace --tests -- -D warnings` — linting
-4. `cargo test --lib` — unit tests
+4. `cargo test --workspace --lib --bins` — unit tests
 5. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
 
 All checks must pass before a PR can be merged.

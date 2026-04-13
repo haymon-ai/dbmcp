@@ -7,7 +7,7 @@ A single-binary MCP (Model Context Protocol) server for MySQL, MariaDB, PostgreS
 ```bash
 cargo build                                    # debug build
 cargo build --release                          # release build
-cargo run -- --db-backend mysql --db-user root # stdio mode (default)
+cargo run -- stdio --db-backend mysql --db-user root # stdio transport
 cargo run -- http --db-backend mysql --db-user root --host 127.0.0.1 --port 9001
 
 cargo test                          # all tests
@@ -27,15 +27,15 @@ cargo fmt                     # apply formatting
 
 Cargo workspace: root binary (`database-mcp`) + 7 library crates under `crates/`. Workspace members use `"crates/*"` glob.
 
-- **`src/`** — Binary crate. `commands/root.rs` owns CLI parsing (clap with subcommands), tracing init, config construction, backend dispatch via `Handler` enum. `commands/http.rs` and `commands/stdio.rs` handle transport modes.
-- **`crates/config/`** (`database-mcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `Config::validate()` accumulates errors into `Result<(), Vec<ConfigError>>`.
+- **`src/`** — Binary crate. `cli.rs` owns CLI parsing (clap with subcommands), tracing init, and subcommand dispatch. `commands/common.rs` hosts the shared `DatabaseArguments` group, the `TryFrom<&DatabaseArguments> for DatabaseConfig` conversion, and the `create_server` factory. `commands/stdio.rs` and `commands/http.rs` own transport-specific execution; `HttpArguments` is private to `http.rs`.
+- **`crates/config/`** (`database-mcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`.
 - **`crates/backend/`** (`database-mcp-backend`) — Shared `AppError` type, SQL read-only validation (`validation` module), identifier quoting/validation (`identifier` module), and request/response types (`types` module).
 - **`crates/server/`** (`database-mcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
 - **`crates/mysql/`** (`database-mcp-mysql`) — MySQL/MariaDB backend: connection pooling, query operations, schema introspection, MCP handler via `rmcp::tool_router`.
 - **`crates/postgres/`** (`database-mcp-postgres`) — PostgreSQL backend: per-database connection pool cache (moka), query operations, schema introspection, MCP handler.
 - **`crates/sqlite/`** (`database-mcp-sqlite`) — SQLite backend: single-file connection, query operations, schema introspection, MCP handler.
 - **`crates/sqlx-to-json/`** (`sqlx-to-json`) — `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow`.
-- **Transport**: `stdio` (default, for Claude Desktop/Cursor) and `http` (Streamable HTTP with CORS via axum + tower-http).
+- **Transport**: `stdio` (for Claude Desktop/Cursor) and `http` (Streamable HTTP with CORS via axum + tower-http). A transport subcommand is required — `database-mcp` with no subcommand prints usage help and exits non-zero.
 
 ## Configuration
 
@@ -43,7 +43,7 @@ Cargo workspace: root binary (`database-mcp`) + 7 library crates under `crates/`
 
 - Env vars are set by the MCP client (via `env` or `envFile` in server config)
 - Run `cargo run -- --help` for the full list of flags and env var mappings
-- `MCP_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
+- `DB_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
 
 ## Code Style
 

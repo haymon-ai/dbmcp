@@ -9,7 +9,7 @@ pre_bump_hooks = [
     "cargo fmt --all --check",
     "taplo fmt --check",
     "cargo clippy --workspace --tests -- -D warnings",
-    "cargo test --workspace --lib",
+    "cargo test --workspace --lib --bins",
     "cargo set-version {{version}}",
     "cargo check --release",
     "git add :/Cargo.lock",

@@ -20,7 +20,8 @@
         {
           "type": "positional",
           "value": "stdio",
-          "description": "Start in stdio transport mode (default)"
+          "description": "Start in stdio transport mode",
+          "isRequired": true
         }
       ]
     },
@@ -170,7 +171,7 @@
     {
       "type": "named",
       "name": "--db-query-timeout",
-      "description": "Query execution timeout in seconds (0 = disabled)",
+      "description": "Query execution timeout in seconds",
       "default": "30"
     },
     {
@@ -258,7 +259,7 @@
     },
     {
       "name": "DB_QUERY_TIMEOUT",
-      "description": "Query execution timeout in seconds (0 = disabled)",
+      "description": "Query execution timeout in seconds",
       "format": "number",
       "default": "30"
     },
