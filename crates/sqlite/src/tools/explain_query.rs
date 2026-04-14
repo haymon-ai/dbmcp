@@ -17,6 +17,7 @@ pub(crate) struct ExplainQueryTool;
 
 impl ExplainQueryTool {
     const NAME: &'static str = "explain_query";
+    const TITLE: &'static str = "Explain Query";
     const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured output via EXPLAIN QUERY PLAN.
 
 <usecase>
@@ -49,6 +50,10 @@ impl ToolBase for ExplainQueryTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

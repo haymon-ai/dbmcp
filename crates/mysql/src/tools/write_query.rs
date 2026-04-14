@@ -16,6 +16,7 @@ pub(crate) struct WriteQueryTool;
 
 impl WriteQueryTool {
     const NAME: &'static str = "write_query";
+    const TITLE: &'static str = "Write Query";
     const DESCRIPTION: &'static str = r#"Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
 
 <usecase>
@@ -50,6 +51,10 @@ impl ToolBase for WriteQueryTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

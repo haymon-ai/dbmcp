@@ -16,6 +16,7 @@ pub(crate) struct CreateDatabaseTool;
 
 impl CreateDatabaseTool {
     const NAME: &'static str = "create_database";
+    const TITLE: &'static str = "Create Database";
     const DESCRIPTION: &'static str = r#"Create a new database on the connected server.
 
 <usecase>
@@ -46,6 +47,10 @@ impl ToolBase for CreateDatabaseTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

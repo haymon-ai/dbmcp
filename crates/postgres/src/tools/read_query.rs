@@ -17,6 +17,7 @@ pub(crate) struct ReadQueryTool;
 
 impl ReadQueryTool {
     const NAME: &'static str = "read_query";
+    const TITLE: &'static str = "Read Query";
     const DESCRIPTION: &'static str = r#"Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN. Accepts an optional `database_name` to query across databases without reconnecting.
 
 <usecase>
@@ -52,6 +53,10 @@ impl ToolBase for ReadQueryTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
