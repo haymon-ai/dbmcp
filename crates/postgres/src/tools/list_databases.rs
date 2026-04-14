@@ -6,7 +6,6 @@ use std::sync::Arc;
 use database_mcp_server::AppError;
 use database_mcp_server::types::ListDatabasesResponse;
 use database_mcp_sql::Connection as _;
-use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 use serde_json::Value;
@@ -51,7 +50,7 @@ impl ToolBase for ListDatabasesTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(schema_for_empty_input())
+        None
     }
 
     fn annotations() -> Option<ToolAnnotations> {
