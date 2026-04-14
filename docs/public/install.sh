@@ -5,7 +5,16 @@
 #    or: sh install.sh
 #
 # Environment variables:
-#   INSTALL_DIR - Override the install directory (e.g., INSTALL_DIR=/opt/bin)
+#   INSTALL_DIR   - Override the install directory (e.g., INSTALL_DIR=/opt/bin)
+#   FORCE_INSTALL - When set to a truthy value (1/true/yes/on/y, case-insensitive)
+#                   reinstall even if the installed version already matches the
+#                   latest published release. Without this, re-running the
+#                   script on an up-to-date install is a no-op (no download,
+#                   no file writes).
+#
+# The script probes https://github.com/haymon-ai/database/releases/latest
+# (a HEAD request that follows redirects) to learn the latest version. The
+# no-op path performs zero downloads and zero writes to the install directory.
 
 set -eu
 
@@ -54,6 +63,88 @@ main() {
         else
             error "either 'curl' or 'wget' is required to download files"
         fi
+    }
+
+    # Return 0 if $1 is a truthy env-var value (1/true/yes/on/y, case-insensitive).
+    is_truthy() {
+        case "$1" in
+            1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]|[Yy]) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    # Normalise a version string for comparison: trim whitespace, strip
+    # binary-name prefix, strip a leading `v`. Uses `-e ... -e ...` instead of
+    # `;` for BSD sed compatibility (macOS sed is fine with `;` but `-e` is
+    # universally portable).
+    normalize_version() {
+        _v=$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        _v=${_v#database-mcp }
+        _v=${_v#v}
+        printf '%s' "$_v"
+    }
+
+    # Portable "is version $1 strictly greater than version $2?" comparator.
+    # Uses pure POSIX shell: no `sort -V` (GNU-only, missing on macOS BSD).
+    # Both inputs must already be normalised (no `v` prefix, no whitespace).
+    # Pre-release / build suffixes are dropped (`0.7.0-dev` -> `0.7.0`) to
+    # match what `Test-InstalledNewerThanLatest` does in install.ps1.
+    version_gt() {
+        _va=${1%%-*}
+        _vb=${2%%-*}
+        # Split on `.` via IFS. Function-local IFS via a subshell would be
+        # cleaner but costs a fork per call; save/restore instead.
+        _ifs_save=$IFS
+        IFS=.
+        # shellcheck disable=SC2086  # intentional word splitting
+        set -- $_va
+        _a1=${1:-0}; _a2=${2:-0}; _a3=${3:-0}
+        # shellcheck disable=SC2086
+        set -- $_vb
+        _b1=${1:-0}; _b2=${2:-0}; _b3=${3:-0}
+        IFS=$_ifs_save
+        # Guard against non-numeric components (e.g. `rc1`) by rejecting the
+        # comparison and returning "not newer" so the caller falls through to
+        # the normal upgrade path without warning.
+        case "${_a1}${_a2}${_a3}${_b1}${_b2}${_b3}" in
+            *[!0-9]*) return 1 ;;
+            *) ;;
+        esac
+        [ "$_a1" -gt "$_b1" ] && return 0
+        [ "$_a1" -lt "$_b1" ] && return 1
+        [ "$_a2" -gt "$_b2" ] && return 0
+        [ "$_a2" -lt "$_b2" ] && return 1
+        [ "$_a3" -gt "$_b3" ] && return 0
+        return 1
+    }
+
+    # Resolve the latest release tag (e.g. `v0.6.2`) by following the
+    # `releases/latest` redirect. Prints the tag on stdout and returns 0 on
+    # success; returns 1 (with no output) if the lookup fails for any reason.
+    # A short connect timeout ensures slow/broken networks fail fast rather
+    # than hanging at curl's default 2-minute connect timeout — the no-op
+    # path is supposed to be quick or not at all.
+    resolve_latest_version() {
+        _latest_url="https://github.com/${REPO}/releases/latest"
+        _final=""
+        if command -v curl > /dev/null 2>&1; then
+            _final=$(curl -fsSLI --connect-timeout 10 --max-time 20 \
+                -o /dev/null -w '%{url_effective}' "$_latest_url" 2>/dev/null) \
+                || return 1
+        elif command -v wget > /dev/null 2>&1; then
+            _final=$(wget --server-response --max-redirect=5 --spider \
+                --timeout=20 --tries=1 "$_latest_url" 2>&1 \
+                | awk '/^[[:space:]]*Location:/ {loc=$2} END {print loc}') \
+                || return 1
+        else
+            return 1
+        fi
+        _tag=${_final##*/}
+        [ -n "$_tag" ] || return 1
+        case "$_tag" in
+            v[0-9]*|[0-9]*) printf '%s' "$_tag"; return 0 ;;
+            *) return 1 ;;
+        esac
     }
 
     # T005: Platform detection
@@ -108,6 +199,13 @@ main() {
             BIN_DIR="$INSTALL_DIR"
             if [ ! -d "$BIN_DIR" ]; then
                 mkdir -p "$BIN_DIR" 2>/dev/null || error "cannot create directory: $BIN_DIR"
+            fi
+            # If a binary already exists at the override location, treat as an
+            # upgrade so the no-op check applies to the binary that will
+            # actually be replaced (spec Edge Cases).
+            if [ -x "$BIN_DIR/$BINARY_NAME" ]; then
+                UPGRADE=true
+                OLD_VERSION=$("$BIN_DIR/$BINARY_NAME" --version 2>/dev/null || echo "unknown")
             fi
             return
         fi
@@ -201,6 +299,7 @@ main() {
     REPO="haymon-ai/database"
     BASE_URL="https://github.com/${REPO}/releases/latest/download"
     USE_SUDO=false
+    FORCE_REINSTALL=false
 
     info "Installing database-mcp..."
     echo ""
@@ -214,7 +313,38 @@ main() {
     resolve_install_dir
 
     if [ "$UPGRADE" = true ]; then
-        info "Upgrading database-mcp at ${BIN_DIR} (current: ${OLD_VERSION})"
+        info "Found existing database-mcp at ${BIN_DIR} (${OLD_VERSION})"
+
+        # No-op / force / newer-than-latest check. Only runs when an existing
+        # binary was detected. Skipped entirely if the version lookup fails,
+        # so a network issue never silently claims "already up to date".
+        _latest_version=$(resolve_latest_version 2>/dev/null || printf '')
+        if [ -n "$_latest_version" ] && [ "$OLD_VERSION" != "unknown" ]; then
+            _installed_norm=$(normalize_version "$OLD_VERSION")
+            _latest_norm=$(normalize_version "$_latest_version")
+
+            if [ "$_installed_norm" = "$_latest_norm" ]; then
+                if is_truthy "${FORCE_INSTALL:-}"; then
+                    FORCE_REINSTALL=true
+                    info "FORCE_INSTALL is set - reinstalling ${_latest_version}"
+                else
+                    success "Already on latest version (${_latest_version}). Nothing to do."
+                    return 0
+                fi
+            else
+                # Versions differ. If the installed side is strictly newer
+                # than the latest, warn loudly before proceeding with a
+                # downgrade (see FR-011a). On non-numeric versions (e.g.
+                # `rc1`) `version_gt` returns "not newer" and we silently
+                # fall through to the normal upgrade path.
+                if version_gt "$_installed_norm" "$_latest_norm"; then
+                    warn "installed ${OLD_VERSION} is newer than the latest release ${_latest_version}; proceeding will downgrade it."
+                fi
+                info "Upgrading to ${_latest_version}"
+            fi
+        else
+            info "Upgrading database-mcp at ${BIN_DIR} (current: ${OLD_VERSION})"
+        fi
     else
         info "Install directory: ${BIN_DIR}"
     fi
@@ -255,7 +385,10 @@ main() {
     fi
 
     echo ""
-    if [ "$UPGRADE" = true ]; then
+    if [ "$FORCE_REINSTALL" = true ]; then
+        success "Successfully reinstalled database-mcp!"
+        echo "  Version: ${_installed_version}"
+    elif [ "$UPGRADE" = true ]; then
         success "Successfully upgraded database-mcp!"
         echo "  ${OLD_VERSION} → ${_installed_version}"
     else
