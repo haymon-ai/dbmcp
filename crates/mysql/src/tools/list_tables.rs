@@ -16,6 +16,7 @@ pub(crate) struct ListTablesTool;
 
 impl ListTablesTool {
     const NAME: &'static str = "list_tables";
+    const TITLE: &'static str = "List Tables";
     const DESCRIPTION: &'static str = r#"List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.
 
 <usecase>
@@ -43,6 +44,10 @@ impl ToolBase for ListTablesTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

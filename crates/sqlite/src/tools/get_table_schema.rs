@@ -19,6 +19,7 @@ pub(crate) struct GetTableSchemaTool;
 
 impl GetTableSchemaTool {
     const NAME: &'static str = "get_table_schema";
+    const TITLE: &'static str = "Get Table Schema";
     const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `table_name` — call `list_tables` first.
 
 <usecase>
@@ -46,6 +47,10 @@ impl ToolBase for GetTableSchemaTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

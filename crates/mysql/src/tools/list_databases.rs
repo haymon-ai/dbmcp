@@ -16,6 +16,7 @@ pub(crate) struct ListDatabasesTool;
 
 impl ListDatabasesTool {
     const NAME: &'static str = "list_databases";
+    const TITLE: &'static str = "List Databases";
     const DESCRIPTION: &'static str = r#"List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.
 
 <usecase>
@@ -42,6 +43,10 @@ impl ToolBase for ListDatabasesTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

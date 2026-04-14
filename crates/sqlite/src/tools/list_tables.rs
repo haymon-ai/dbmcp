@@ -6,7 +6,6 @@ use std::sync::Arc;
 use database_mcp_server::AppError;
 use database_mcp_server::types::ListTablesResponse;
 use database_mcp_sql::Connection as _;
-use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 use serde_json::Value;
@@ -18,6 +17,7 @@ pub(crate) struct ListTablesTool;
 
 impl ListTablesTool {
     const NAME: &'static str = "list_tables";
+    const TITLE: &'static str = "List Tables";
     const DESCRIPTION: &'static str = r#"List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.
 
 <usecase>
@@ -47,12 +47,16 @@ impl ToolBase for ListTablesTool {
         Self::NAME.into()
     }
 
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
+    }
+
     fn description() -> Option<Cow<'static, str>> {
         Some(Self::DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(schema_for_empty_input())
+        None
     }
 
     fn annotations() -> Option<ToolAnnotations> {

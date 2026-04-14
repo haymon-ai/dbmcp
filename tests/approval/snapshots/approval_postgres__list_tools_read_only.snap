@@ -1,11 +1,11 @@
 ---
 source: tests/approval/postgres.rs
-assertion_line: 52
 expression: tools
 ---
 [
   {
     "name": "explain_query",
+    "title": "Explain Query",
     "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured JSON output. Accepts an optional `database_name` to explain queries against a different database.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use read_query or write_query\n- Checking table structure → use get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explain_query(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explain_query with analyze=true\n✗ \"Run this SELECT\" → use read_query\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN (FORMAT JSON) output without executing.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -55,6 +55,7 @@ expression: tools
   },
   {
     "name": "get_table_schema",
+    "title": "Get Table Schema",
     "description": "Get column definitions and foreign key relationships for a table. Requires `database_name` and `table_name` — call `list_databases` and `list_tables` first.\n\n<usecase>\nALWAYS call this before writing queries to understand:\n- Column names and data types\n- Which columns are nullable, primary keys, or have defaults\n- Foreign key relationships for writing JOINs\n</usecase>\n\n<examples>\n✓ \"What columns does the orders table have?\" → get_table_schema(database_name=\"mydb\", table_name=\"orders\")\n✓ Before writing a SELECT → get_table_schema first to confirm column names\n✓ \"How are users and orders related?\" → check foreign keys in both tables\n</examples>\n\n<what_it_returns>\nA JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -104,6 +105,7 @@ expression: tools
   },
   {
     "name": "list_databases",
+    "title": "List Databases",
     "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for list_tables, get_table_schema, or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call list_databases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>",
     "inputSchema": {
       "properties": {},
@@ -136,6 +138,7 @@ expression: tools
   },
   {
     "name": "list_tables",
+    "title": "List Tables",
     "description": "List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → list_tables(database_name=\"mydb\")\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -179,6 +182,7 @@ expression: tools
   },
   {
     "name": "read_query",
+    "title": "Read Query",
     "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN. Accepts an optional `database_name` to query across databases without reconnecting.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server configuration parameters (SHOW)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use write_query\n- Query performance analysis → use explain_query\n- Discovering tables or columns → use list_tables or get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW server_version\"\n✗ \"INSERT INTO users ...\" → use write_query\n✗ \"EXPLAIN SELECT ...\" → use explain_query for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -16,6 +16,7 @@ pub(crate) struct DropDatabaseTool;
 
 impl DropDatabaseTool {
     const NAME: &'static str = "drop_database";
+    const TITLE: &'static str = "Drop Database";
     const DESCRIPTION: &'static str = r#"Drop an existing database from the connected server.
 
 <usecase>
@@ -46,6 +47,10 @@ impl ToolBase for DropDatabaseTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {

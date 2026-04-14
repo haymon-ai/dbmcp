@@ -17,6 +17,7 @@ pub(crate) struct DropTableTool;
 
 impl DropTableTool {
     const NAME: &'static str = "drop_table";
+    const TITLE: &'static str = "Drop Table";
     const DESCRIPTION: &'static str = r#"Drop a table from the database.
 
 <usecase>
@@ -46,6 +47,10 @@ impl ToolBase for DropTableTool {
 
     fn name() -> Cow<'static, str> {
         Self::NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(Self::TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
