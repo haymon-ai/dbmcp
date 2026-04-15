@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.6.3](https://github.com/haymon-ai/database-mcp/compare/9f7aa3f88f43d033cf7f82545704dec88597a1a4..v0.6.3) - 2026-04-14
+#### Features
+- (**tools**) add display title to every MCP tool (#108) - ([c451823](https://github.com/haymon-ai/database-mcp/commit/c451823b9a2df550d346a7f650e4abffb8a5f2c3)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**install**) no-op when already on latest version (#106) (#109) - ([de58eaf](https://github.com/haymon-ai/database-mcp/commit/de58eafb218495b0848fb151a1c09371e21e4c32)) - [@athopen](https://github.com/athopen)
+- (**tools**) omit input_schema for list_databases (#107) - ([46e19ba](https://github.com/haymon-ai/database-mcp/commit/46e19bafe2e7572dc4676d2e5f9babd776478b29)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**commands**) scope db args to transport subcommands (#103) - ([9f7aa3f](https://github.com/haymon-ai/database-mcp/commit/9f7aa3f88f43d033cf7f82545704dec88597a1a4)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.6.2](https://github.com/haymon-ai/database-mcp/compare/80f716f9f927484b61acbd0e7c78b6818c243955..v0.6.2) - 2026-04-12
 #### Features
 - (**install**) add one-liner install scripts for macOS, Linux, and Windows (#100) - ([b9a11d0](https://github.com/haymon-ai/database-mcp/commit/b9a11d0f47c1101d76deef4f5bd9e8b78d75fb12)) - [@athopen](https://github.com/athopen)
