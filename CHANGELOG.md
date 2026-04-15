@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.6.4](https://github.com/haymon-ai/database-mcp/compare/24c25c2ed2f77c798fa415fcae311681f0427da7..v0.6.4) - 2026-04-15
+#### Bug Fixes
+- (**deps**) bump rustls-webpki to 0.103.12 (#112) - ([24c25c2](https://github.com/haymon-ai/database-mcp/commit/24c25c2ed2f77c798fa415fcae311681f0427da7)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.6.3](https://github.com/haymon-ai/database-mcp/compare/9f7aa3f88f43d033cf7f82545704dec88597a1a4..v0.6.3) - 2026-04-14
 #### Features
 - (**tools**) add display title to every MCP tool (#108) - ([c451823](https://github.com/haymon-ai/database-mcp/commit/c451823b9a2df550d346a7f650e4abffb8a5f2c3)) - [@athopen](https://github.com/athopen)
