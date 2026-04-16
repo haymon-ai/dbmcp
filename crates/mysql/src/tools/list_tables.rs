@@ -80,7 +80,7 @@ impl MysqlHandler {
     pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
         validate_identifier(&request.database_name)?;
         let sql = format!(
-            "SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
+            "SELECT CAST(TABLE_NAME AS CHAR) FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
             self.connection.quote_string(&request.database_name)
         );
         let tables: Vec<String> = self.connection.fetch_scalar(sql.as_str(), None).await?;

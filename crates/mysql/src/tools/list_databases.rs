@@ -81,7 +81,7 @@ impl MysqlHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
-        let sql = "SELECT CAST(SCHEMA_NAME AS CHAR) AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
+        let sql = "SELECT CAST(SCHEMA_NAME AS CHAR) FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
         let databases: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
         Ok(ListDatabasesResponse { databases })
     }

@@ -91,7 +91,7 @@ impl MysqlHandler {
             "SELECT CAST(SCHEMA_NAME AS CHAR) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = {}",
             self.connection.quote_string(name),
         );
-        let exists: Option<(String,)> = self.connection.fetch_optional(check_sql.as_str(), None).await?;
+        let exists: Option<String> = self.connection.fetch_optional(check_sql.as_str(), None).await?;
 
         if exists.is_some() {
             return Ok(MessageResponse {

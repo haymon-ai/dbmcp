@@ -86,7 +86,7 @@ impl SqliteHandler {
 
         // 1. Get basic schema
         let pragma_sql = format!("PRAGMA table_info({})", self.connection.quote_identifier(table));
-        let rows: Vec<Value> = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
+        let rows = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.clone()));
@@ -114,7 +114,7 @@ impl SqliteHandler {
 
         // 2. Get FK info via PRAGMA
         let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", self.connection.quote_identifier(table));
-        let fk_rows: Vec<Value> = self.connection.fetch_json(fk_pragma_sql.as_str(), None).await?;
+        let fk_rows = self.connection.fetch_json(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
             let from_col = fk_row

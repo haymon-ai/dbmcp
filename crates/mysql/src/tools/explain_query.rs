@@ -106,7 +106,7 @@ impl MysqlHandler {
             format!("EXPLAIN FORMAT=JSON {}", request.query)
         };
 
-        let rows: Vec<Value> = self
+        let rows = self
             .connection
             .fetch_json(explain_sql.as_str(), Some(request.database_name.as_str()))
             .await?;

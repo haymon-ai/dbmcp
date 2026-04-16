@@ -106,7 +106,7 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {}", request.query)
         };
 
-        let rows: Vec<Value> = self
+        let rows = self
             .connection
             .fetch_json(&explain_sql, Some(&request.database_name))
             .await?;
