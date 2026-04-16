@@ -91,7 +91,7 @@ impl SqliteHandler {
     /// read-only, or [`AppError::Query`] if the backend reports an error.
     pub async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::SQLiteDialect {})?;
-        let rows = self.connection.fetch(request.query.as_str(), None).await?;
+        let rows = self.connection.fetch_all(request.query.as_str(), None).await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })

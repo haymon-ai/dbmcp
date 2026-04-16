@@ -84,7 +84,7 @@ impl SqliteHandler {
     /// Returns [`AppError`] if the query fails.
     pub async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
-        let rows = self.connection.fetch(sql, None).await?;
+        let rows = self.connection.fetch_all(sql, None).await?;
         let tables = rows
             .iter()
             .filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned))

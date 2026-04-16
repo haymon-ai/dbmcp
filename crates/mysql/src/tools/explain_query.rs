@@ -108,7 +108,7 @@ impl MysqlHandler {
 
         let rows = self
             .connection
-            .fetch(explain_sql.as_str(), Some(request.database_name.as_str()))
+            .fetch_all(explain_sql.as_str(), Some(request.database_name.as_str()))
             .await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),

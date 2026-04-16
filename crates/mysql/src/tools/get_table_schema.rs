@@ -91,7 +91,7 @@ impl MysqlHandler {
             self.connection.quote_identifier(database),
             self.connection.quote_identifier(table)
         );
-        let schema_rows = self.connection.fetch(describe_sql.as_str(), None).await?;
+        let schema_rows = self.connection.fetch_all(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
             return Err(AppError::TableNotFound(format!("{database}.{table}")));
@@ -135,7 +135,7 @@ impl MysqlHandler {
             self.connection.quote_string(table),
         );
 
-        let fk_rows = self.connection.fetch(fk_sql.as_str(), None).await?;
+        let fk_rows = self.connection.fetch_all(fk_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
             if let Some(col_name) = fk_row.get("column_name").and_then(|v| v.as_str())

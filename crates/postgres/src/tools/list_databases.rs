@@ -87,7 +87,7 @@ impl PostgresHandler {
     /// Returns [`AppError`] if the query fails.
     pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
         let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        let rows = self.connection.fetch(sql, None).await?;
+        let rows = self.connection.fetch_all(sql, None).await?;
         Ok(ListDatabasesResponse {
             databases: rows
                 .iter()

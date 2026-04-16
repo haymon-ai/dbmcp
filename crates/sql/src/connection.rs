@@ -8,7 +8,7 @@
 use database_mcp_server::AppError;
 use serde_json::Value;
 use sqlx::Executor;
-use sqlx_to_json::QueryResult as _;
+use sqlx_to_json::{QueryResult as _, RowExt};
 
 use crate::identifier;
 use crate::timeout::execute_with_timeout;
@@ -28,7 +28,12 @@ use crate::timeout::execute_with_timeout;
 /// - [`AppError::Connection`] — the underlying driver failed.
 /// - [`AppError::QueryTimeout`] — the query exceeded the configured timeout.
 #[allow(async_fn_in_trait)]
-pub trait Connection: Send + Sync {
+pub trait Connection: Send + Sync
+where
+    for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
+    <Self::DB as sqlx::Database>::Row: RowExt,
+    <Self::DB as sqlx::Database>::QueryResult: sqlx_to_json::QueryResult,
+{
     /// The sqlx database driver type (e.g. `sqlx::MySql`).
     type DB: sqlx::Database;
 
@@ -50,17 +55,10 @@ pub trait Connection: Send + Sync {
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError>
-    where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::QueryResult: sqlx_to_json::QueryResult,
-    {
+    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError> {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let result = (&mut *conn).execute(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(result.rows_affected())
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.execute(query).await?.rows_affected())
         })
         .await
     }
@@ -70,17 +68,10 @@ pub trait Connection: Send + Sync {
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError>
-    where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::Row: sqlx_to_json::RowExt,
-    {
+    async fn fetch_all(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError> {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let rows = (&mut *conn).fetch_all(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(rows.iter().map(sqlx_to_json::RowExt::to_json).collect())
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.fetch_all(query).await?.iter().map(RowExt::to_json).collect())
         })
         .await
     }
@@ -90,17 +81,10 @@ pub trait Connection: Send + Sync {
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError>
-    where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::Row: sqlx_to_json::RowExt,
-    {
+    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError> {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let row = (&mut *conn).fetch_optional(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(row.as_ref().map(sqlx_to_json::RowExt::to_json))
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.fetch_optional(query).await?.as_ref().map(RowExt::to_json))
         })
         .await
     }

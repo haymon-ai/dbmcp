@@ -92,7 +92,7 @@ impl PostgresHandler {
     pub async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
         validate_read_only_with_dialect(&request.query, &sqlparser::dialect::PostgreSqlDialect {})?;
         let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let rows = self.connection.fetch(request.query.as_str(), db).await?;
+        let rows = self.connection.fetch_all(request.query.as_str(), db).await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })

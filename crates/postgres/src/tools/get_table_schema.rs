@@ -96,7 +96,7 @@ impl PostgresHandler {
              WHERE table_schema = 'public' AND table_name = '{table}' \
              ORDER BY ordinal_position"
         );
-        let rows = self.connection.fetch(&schema_sql, db).await?;
+        let rows = self.connection.fetch_all(&schema_sql, db).await?;
 
         if rows.is_empty() {
             return Err(AppError::TableNotFound(table.clone()));
@@ -156,7 +156,7 @@ impl PostgresHandler {
                 AND tc.table_name = '{table}' \
                 AND tc.table_schema = 'public'"
         );
-        let fk_rows = self.connection.fetch(&fk_sql, db).await?;
+        let fk_rows = self.connection.fetch_all(&fk_sql, db).await?;
 
         for fk_row in &fk_rows {
             let col_name = fk_row

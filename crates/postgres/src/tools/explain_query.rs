@@ -108,7 +108,7 @@ impl PostgresHandler {
 
         let rows = self
             .connection
-            .fetch(&explain_sql, Some(&request.database_name))
+            .fetch_all(&explain_sql, Some(&request.database_name))
             .await?;
 
         Ok(QueryResponse {

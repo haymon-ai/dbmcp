@@ -84,7 +84,7 @@ impl PostgresHandler {
             Some(request.database_name.as_str())
         };
         let sql = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
-        let rows = self.connection.fetch(sql, db).await?;
+        let rows = self.connection.fetch_all(sql, db).await?;
         Ok(ListTablesResponse {
             tables: rows
                 .iter()

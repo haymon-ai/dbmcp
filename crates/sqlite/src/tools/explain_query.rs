@@ -88,7 +88,7 @@ impl SqliteHandler {
     /// Returns [`AppError::Query`] if the backend reports an error.
     pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", request.query);
-        let rows = self.connection.fetch(explain_sql.as_str(), None).await?;
+        let rows = self.connection.fetch_all(explain_sql.as_str(), None).await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })
