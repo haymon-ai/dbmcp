@@ -71,7 +71,10 @@ where
         .await
     }
 
-    /// Runs a statement and returns at most one result row as JSON.
+    /// Runs a query and extracts column 0 from the first row, if any.
+    ///
+    /// Returns `None` for both "no row returned" and "row where column 0
+    /// is NULL" (decode errors are caught, not propagated).
     ///
     /// # Errors
     ///
@@ -82,11 +85,7 @@ where
     {
         let pool = self.pool(database).await?;
         execute_with_timeout(self.query_timeout(), query, async {
-            pool.fetch_optional(query)
-                .await?
-                .as_ref()
-                .map(|r| r.try_get(0usize))
-                .transpose()
+            Ok(pool.fetch_optional(query).await?.and_then(|r| r.try_get(0usize).ok()))
         })
         .await
     }

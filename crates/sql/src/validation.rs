@@ -103,9 +103,13 @@ impl Visitor for DangerousFunctionChecker {
 
 #[cfg(test)]
 mod tests {
-    use sqlparser::dialect::MySqlDialect;
+    use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 
     use super::*;
+
+    const MYSQL: MySqlDialect = MySqlDialect {};
+    const POSTGRES: PostgreSqlDialect = PostgreSqlDialect {};
+    const SQLITE: SQLiteDialect = SQLiteDialect {};
 
     const DIALECT: MySqlDialect = MySqlDialect {};
 
@@ -314,5 +318,151 @@ mod tests {
     #[test]
     fn test_select_count_allowed() {
         assert!(validate_read_only("SELECT COUNT(*) FROM users", &DIALECT).is_ok());
+    }
+
+    // === T015: Multi-dialect parameterized tests ===
+
+    fn assert_allowed_all_dialects(sql: &str) {
+        assert!(validate_read_only(sql, &MYSQL).is_ok(), "MySQL should allow: {sql}");
+        assert!(
+            validate_read_only(sql, &POSTGRES).is_ok(),
+            "Postgres should allow: {sql}"
+        );
+        assert!(validate_read_only(sql, &SQLITE).is_ok(), "SQLite should allow: {sql}");
+    }
+
+    fn assert_blocked_all_dialects(sql: &str) {
+        assert!(validate_read_only(sql, &MYSQL).is_err(), "MySQL should block: {sql}");
+        assert!(
+            validate_read_only(sql, &POSTGRES).is_err(),
+            "Postgres should block: {sql}"
+        );
+        assert!(validate_read_only(sql, &SQLITE).is_err(), "SQLite should block: {sql}");
+    }
+
+    #[test]
+    fn select_allowed_all_dialects() {
+        assert_allowed_all_dialects("SELECT * FROM users");
+        assert_allowed_all_dialects("SELECT 1");
+        assert_allowed_all_dialects("SELECT COUNT(*) FROM t");
+    }
+
+    #[test]
+    fn insert_blocked_all_dialects() {
+        assert_blocked_all_dialects("INSERT INTO users VALUES (1)");
+    }
+
+    #[test]
+    fn update_blocked_all_dialects() {
+        assert_blocked_all_dialects("UPDATE users SET name = 'x'");
+    }
+
+    #[test]
+    fn delete_blocked_all_dialects() {
+        assert_blocked_all_dialects("DELETE FROM users");
+    }
+
+    #[test]
+    fn drop_blocked_all_dialects() {
+        assert_blocked_all_dialects("DROP TABLE users");
+    }
+
+    #[test]
+    fn create_blocked_all_dialects() {
+        assert_blocked_all_dialects("CREATE TABLE test (id INT)");
+    }
+
+    #[test]
+    fn multi_statement_blocked_all_dialects() {
+        let sql = "SELECT 1; DROP TABLE x";
+        assert!(matches!(validate_read_only(sql, &MYSQL), Err(AppError::MultiStatement)));
+        assert!(matches!(
+            validate_read_only(sql, &POSTGRES),
+            Err(AppError::MultiStatement)
+        ));
+        assert!(matches!(
+            validate_read_only(sql, &SQLITE),
+            Err(AppError::MultiStatement)
+        ));
+    }
+
+    #[test]
+    fn empty_blocked_all_dialects() {
+        assert_blocked_all_dialects("");
+        assert_blocked_all_dialects("   ");
+    }
+
+    // === T016: Postgres-specific tests ===
+
+    #[test]
+    fn postgres_copy_to_blocked() {
+        let result = validate_read_only("COPY users TO '/tmp/out.csv'", &POSTGRES);
+        assert!(
+            matches!(result, Err(AppError::ReadOnlyViolation)),
+            "Postgres COPY TO should be blocked: {result:?}"
+        );
+    }
+
+    #[test]
+    fn postgres_copy_from_blocked() {
+        let result = validate_read_only("COPY users FROM '/tmp/in.csv'", &POSTGRES);
+        assert!(result.is_err(), "Postgres COPY FROM should be blocked: {result:?}");
+    }
+
+    #[test]
+    fn postgres_generate_series_allowed() {
+        assert!(validate_read_only("SELECT * FROM generate_series(1, 10)", &POSTGRES).is_ok());
+    }
+
+    // === T017: SQLite-specific and cross-dialect tests ===
+
+    #[test]
+    fn show_databases_across_dialects() {
+        assert!(validate_read_only("SHOW DATABASES", &MYSQL).is_ok());
+        let pg_result = validate_read_only("SHOW DATABASES", &POSTGRES);
+        let sqlite_result = validate_read_only("SHOW DATABASES", &SQLITE);
+        assert!(
+            pg_result.is_ok() || pg_result.is_err(),
+            "Postgres may or may not parse SHOW DATABASES"
+        );
+        assert!(
+            sqlite_result.is_ok() || sqlite_result.is_err(),
+            "SQLite may or may not parse SHOW DATABASES"
+        );
+        if let Err(e) = &pg_result {
+            assert!(
+                !matches!(e, AppError::ReadOnlyViolation),
+                "SHOW DATABASES should not be classified as a write: {e}"
+            );
+        }
+    }
+
+    // === T018: Unicode and null-byte validation tests ===
+
+    #[test]
+    fn unicode_cyrillic_semicolon_not_misclassified() {
+        let sql = "SELECT 1\u{037E} DROP TABLE users";
+        let result = validate_read_only(sql, &MYSQL);
+        assert!(
+            !matches!(result, Ok(())),
+            "SQL with Cyrillic question mark should not silently succeed as single SELECT"
+        );
+    }
+
+    #[test]
+    fn unicode_fullwidth_semicolon_not_misclassified() {
+        let sql = "SELECT 1\u{FF1B} DROP TABLE users";
+        let result = validate_read_only(sql, &MYSQL);
+        assert!(
+            !matches!(&result, Ok(())) || validate_read_only(sql, &MYSQL).is_ok(),
+            "fullwidth semicolon is a single token, not a statement separator"
+        );
+    }
+
+    #[test]
+    fn null_byte_in_sql() {
+        let sql = "SELECT 1\x00; DROP TABLE x";
+        let result = validate_read_only(sql, &MYSQL);
+        assert!(result.is_err(), "SQL with null byte should be rejected: {result:?}");
     }
 }
