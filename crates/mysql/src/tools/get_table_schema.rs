@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
+use sqlparser::dialect::MySqlDialect;
 
 use crate::MysqlHandler;
 
@@ -80,21 +81,24 @@ impl MysqlHandler {
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
     pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
-        let database = &request.database_name;
-        let table = &request.table_name;
-        validate_identifier(database)?;
-        validate_identifier(table)?;
+        let GetTableSchemaRequest {
+            database_name,
+            table_name,
+        } = request;
+
+        validate_ident(database_name)?;
+        validate_ident(table_name)?;
 
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",
-            self.connection.quote_identifier(database),
-            self.connection.quote_identifier(table)
+            quote_ident(database_name, &MySqlDialect {}),
+            quote_ident(table_name, &MySqlDialect {}),
         );
-        let schema_rows = self.connection.fetch(describe_sql.as_str(), None).await?;
+        let schema_rows = self.connection.fetch_json(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
-            return Err(AppError::TableNotFound(format!("{database}.{table}")));
+            return Err(AppError::TableNotFound(format!("{database_name}.{table_name}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -116,7 +120,8 @@ impl MysqlHandler {
 
         // 2. Get FK relationships
         let fk_sql = format!(
-            "SELECT
+            r"
+            SELECT
                 kcu.COLUMN_NAME as column_name,
                 kcu.CONSTRAINT_NAME as constraint_name,
                 kcu.REFERENCED_TABLE_NAME as referenced_table,
@@ -131,11 +136,11 @@ impl MysqlHandler {
               AND kcu.TABLE_NAME = {}
               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
-            self.connection.quote_string(database),
-            self.connection.quote_string(table),
+            quote_literal(database_name),
+            quote_literal(table_name),
         );
 
-        let fk_rows = self.connection.fetch(fk_sql.as_str(), None).await?;
+        let fk_rows = self.connection.fetch_json(fk_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
             if let Some(col_name) = fk_row.get("column_name").and_then(|v| v.as_str())
@@ -156,7 +161,7 @@ impl MysqlHandler {
         }
 
         Ok(TableSchemaResponse {
-            table_name: table.clone(),
+            table_name: table_name.clone(),
             columns: json!(columns),
         })
     }

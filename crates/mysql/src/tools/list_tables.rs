@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -78,17 +78,21 @@ impl MysqlHandler {
     ///
     /// Returns [`AppError`] if the identifier is invalid or the query fails.
     pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
-        validate_identifier(&request.database_name)?;
+        let ListTablesRequest { database_name } = request;
+
+        validate_ident(database_name)?;
+
         let sql = format!(
-            "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
-            self.connection.quote_string(&request.database_name)
+            r"
+            SELECT CAST(TABLE_NAME AS CHAR)
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = {}
+            ORDER BY TABLE_NAME",
+            quote_literal(database_name),
         );
-        let rows = self.connection.fetch(sql.as_str(), None).await?;
-        Ok(ListTablesResponse {
-            tables: rows
-                .iter()
-                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-                .collect(),
-        })
+
+        let tables: Vec<String> = self.connection.fetch_scalar(sql.as_str(), None).await?;
+
+        Ok(ListTablesResponse { tables })
     }
 }

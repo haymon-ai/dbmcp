@@ -5,7 +5,8 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::validation::validate_read_only_with_dialect;
+use database_mcp_sql::sanitize::validate_ident;
+use database_mcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
@@ -96,20 +97,28 @@ impl MysqlHandler {
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`AppError::Query`] if the backend reports an error.
     pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
-        if request.analyze && self.config.read_only {
-            validate_read_only_with_dialect(&request.query, &sqlparser::dialect::MySqlDialect {})?;
+        let ExplainQueryRequest {
+            database_name,
+            query,
+            analyze,
+        } = request;
+
+        if *analyze && self.config.read_only {
+            validate_read_only(query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
-        let explain_sql = if request.analyze {
-            format!("EXPLAIN ANALYZE {}", request.query)
+        let db = Some(database_name.trim()).filter(|s| !s.is_empty());
+        if let Some(name) = &db {
+            validate_ident(name)?;
+        }
+
+        let explain_sql = if *analyze {
+            format!("EXPLAIN ANALYZE {query}")
         } else {
-            format!("EXPLAIN FORMAT=JSON {}", request.query)
+            format!("EXPLAIN FORMAT=JSON {query}")
         };
 
-        let rows = self
-            .connection
-            .fetch(explain_sql.as_str(), Some(request.database_name.as_str()))
-            .await?;
+        let rows = self.connection.fetch_json(explain_sql.as_str(), db).await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })

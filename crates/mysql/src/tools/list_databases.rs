@@ -81,13 +81,11 @@ impl MysqlHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
-        let sql = "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
-        let rows = self.connection.fetch(sql, None).await?;
-        Ok(ListDatabasesResponse {
-            databases: rows
-                .iter()
-                .filter_map(|row| row.get("name").and_then(|v| v.as_str().map(String::from)))
-                .collect(),
-        })
+        let sql = r"
+            SELECT CAST(SCHEMA_NAME AS CHAR)
+            FROM information_schema.SCHEMATA
+            ORDER BY SCHEMA_NAME";
+        let databases: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
+        Ok(ListDatabasesResponse { databases })
     }
 }

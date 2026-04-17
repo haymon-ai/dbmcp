@@ -26,22 +26,19 @@ impl RowExt for PgRow {
                 Value::Null
             } else {
                 match type_name.as_str() {
-                    "BOOL" => self.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
+                    "BOOL" => self.try_get::<bool, _>(idx).map_or(Value::Null, Value::Bool),
 
                     "INT8" => self
                         .try_get::<i64, _>(idx)
-                        .map(|v| Value::Number(v.into()))
-                        .unwrap_or(Value::Null),
+                        .map_or(Value::Null, |v| Value::Number(v.into())),
 
                     "INT4" | "OID" => self
                         .try_get::<i32, _>(idx)
-                        .map(|v| Value::Number(i64::from(v).into()))
-                        .unwrap_or(Value::Null),
+                        .map_or(Value::Null, |v| Value::Number(i64::from(v).into())),
 
                     "INT2" => self
                         .try_get::<i16, _>(idx)
-                        .map(|v| Value::Number(i64::from(v).into()))
-                        .unwrap_or(Value::Null),
+                        .map_or(Value::Null, |v| Value::Number(i64::from(v).into())),
 
                     "FLOAT4" | "FLOAT8" | "NUMERIC" | "MONEY" => self
                         .try_get::<f64, _>(idx)
@@ -55,7 +52,7 @@ impl RowExt for PgRow {
 
                     "JSON" | "JSONB" => self.try_get::<Value, _>(idx).unwrap_or(Value::Null),
 
-                    _ => self.try_get::<String, _>(idx).map(Value::String).unwrap_or(Value::Null),
+                    _ => self.try_get::<String, _>(idx).map_or(Value::Null, Value::String),
                 }
             };
 

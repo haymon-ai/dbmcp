@@ -9,7 +9,7 @@ use std::time::Duration;
 use database_mcp_config::DatabaseConfig;
 use database_mcp_server::AppError;
 use database_mcp_sql::Connection;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::validate_ident;
 use moka::future::Cache;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
@@ -93,7 +93,7 @@ impl PostgresConnection {
         }
 
         if database != self.default_database_name() {
-            validate_identifier(database)?;
+            validate_ident(database)?;
         }
 
         let pool = self
@@ -107,7 +107,6 @@ impl PostgresConnection {
 
 impl Connection for PostgresConnection {
     type DB = sqlx::Postgres;
-    const IDENTIFIER_QUOTE: char = '"';
 
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
         self.pool(target).await

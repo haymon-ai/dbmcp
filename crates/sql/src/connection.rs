@@ -1,24 +1,21 @@
 //! Connection abstraction shared across database backends.
 //!
 //! Defines [`Connection`] — the single trait every backend implements.
-//! Backends provide pool resolution, identifier quoting config, and
-//! timeout config; default method implementations handle query execution
-//! and SQL quoting.
+//! Backends provide pool resolution and timeout config; default method
+//! implementations handle query execution.
 
 use database_mcp_server::AppError;
 use serde_json::Value;
-use sqlx::Executor;
-use sqlx_to_json::QueryResult as _;
+use sqlx::{Decode, Executor, Row, Type};
+use sqlx_to_json::{QueryResult as _, RowExt};
 
-use crate::identifier;
 use crate::timeout::execute_with_timeout;
 
-/// Unified query and quoting surface every backend tool handler uses.
+/// Unified query surface every backend tool handler uses.
 ///
-/// Backends supply four required items — [`DB`](Connection::DB),
-/// [`IDENTIFIER_QUOTE`](Connection::IDENTIFIER_QUOTE),
+/// Backends supply three required items — [`DB`](Connection::DB),
 /// [`pool`](Connection::pool), and [`query_timeout`](Connection::query_timeout)
-/// — and receive default implementations for query execution and SQL quoting.
+/// — and receive default implementations for query execution.
 ///
 /// # Errors
 ///
@@ -28,12 +25,15 @@ use crate::timeout::execute_with_timeout;
 /// - [`AppError::Connection`] — the underlying driver failed.
 /// - [`AppError::QueryTimeout`] — the query exceeded the configured timeout.
 #[allow(async_fn_in_trait)]
-pub trait Connection: Send + Sync {
+pub trait Connection: Send + Sync
+where
+    for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
+    usize: sqlx::ColumnIndex<<Self::DB as sqlx::Database>::Row>,
+    <Self::DB as sqlx::Database>::Row: RowExt,
+    <Self::DB as sqlx::Database>::QueryResult: sqlx_to_json::QueryResult,
+{
     /// The sqlx database driver type (e.g. `sqlx::MySql`).
     type DB: sqlx::Database;
-
-    /// Character used to quote identifiers (`` ` `` for `MySQL`, `"` for `PostgreSQL`/`SQLite`).
-    const IDENTIFIER_QUOTE: char;
 
     /// Resolves the connection pool for the given target database.
     ///
@@ -50,17 +50,10 @@ pub trait Connection: Send + Sync {
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError>
-    where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::QueryResult: sqlx_to_json::QueryResult,
-    {
+    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, AppError> {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let result = (&mut *conn).execute(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(result.rows_affected())
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.execute(query).await?.rows_affected())
         })
         .await
     }
@@ -70,48 +63,47 @@ pub trait Connection: Send + Sync {
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError>
-    where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::Row: sqlx_to_json::RowExt,
-    {
+    async fn fetch_json(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, AppError> {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let rows = (&mut *conn).fetch_all(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(rows.iter().map(sqlx_to_json::RowExt::to_json).collect())
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.fetch_all(query).await?.iter().map(RowExt::to_json).collect())
         })
         .await
     }
 
-    /// Runs a statement and returns at most one result row as JSON.
+    /// Runs a query and extracts column 0 from the first row, if any.
+    ///
+    /// Returns `None` for both "no row returned" and "row where column 0
+    /// is NULL" (decode errors are caught, not propagated).
     ///
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_optional(&self, query: &str, database: Option<&str>) -> Result<Option<Value>, AppError>
+    async fn fetch_optional<T>(&self, query: &str, database: Option<&str>) -> Result<Option<T>, AppError>
     where
-        for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
-        <Self::DB as sqlx::Database>::Row: sqlx_to_json::RowExt,
+        T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
         let pool = self.pool(database).await?;
-        let sql = query.to_owned();
-        execute_with_timeout(self.query_timeout(), query, async move {
-            let mut conn = pool.acquire().await?;
-            let row = (&mut *conn).fetch_optional(sql.as_str()).await?;
-            Ok::<_, sqlx::Error>(row.as_ref().map(sqlx_to_json::RowExt::to_json))
+        execute_with_timeout(self.query_timeout(), query, async {
+            Ok(pool.fetch_optional(query).await?.and_then(|r| r.try_get(0usize).ok()))
         })
         .await
     }
 
-    /// Wraps `name` in the backend's identifier quote character.
-    fn quote_identifier(&self, name: &str) -> String {
-        identifier::quote_identifier(name, Self::IDENTIFIER_QUOTE)
-    }
-
-    /// Wraps `value` in single quotes for use as a SQL string literal.
-    fn quote_string(&self, value: &str) -> String {
-        identifier::quote_string(value)
+    /// Runs a query and extracts the first column of every row.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation.
+    async fn fetch_scalar<T>(&self, query: &str, database: Option<&str>) -> Result<Vec<T>, AppError>
+    where
+        T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
+    {
+        let pool = self.pool(database).await?;
+        execute_with_timeout(self.query_timeout(), query, async {
+            let rows = pool.fetch_all(query).await?;
+            rows.iter().map(|r| r.try_get(0usize)).collect()
+        })
+        .await
     }
 }

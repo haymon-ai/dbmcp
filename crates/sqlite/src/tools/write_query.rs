@@ -85,7 +85,9 @@ impl SqliteHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
-        let rows = self.connection.fetch(request.query.as_str(), None).await?;
+        let QueryRequest { query } = request;
+
+        let rows = self.connection.fetch_json(query.as_str(), None).await?;
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })

@@ -502,10 +502,7 @@ async fn test_get_table_schema_no_foreign_keys() {
     // id column should have no foreign key
     let id_col = columns["id"].as_object().expect("id object");
     let fk = id_col.get("foreign_key");
-    assert!(
-        fk.is_none() || fk.is_some_and(Value::is_null),
-        "tags.id should not have a foreign key"
-    );
+    assert!(fk.is_none_or(Value::is_null), "tags.id should not have a foreign key");
 }
 
 #[tokio::test]
@@ -589,4 +586,43 @@ async fn test_drop_table_blocked_in_read_only() {
 
     let response = handler.drop_table(&drop_request).await;
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
+}
+
+// === US2: Connection trait edge cases ===
+
+#[tokio::test]
+async fn test_list_tables_returns_empty_for_no_match() {
+    let handler = handler(true);
+    let request = QueryRequest {
+        query: "SELECT name FROM sqlite_master WHERE type='table' AND name='nonexistent_xyz'".into(),
+    };
+    let result = handler.read_query(&request).await.unwrap();
+    let rows = result.rows.as_array().expect("array");
+    assert!(rows.is_empty(), "query for nonexistent table should return empty array");
+}
+
+// === US4: Special-character table name round-trip ===
+
+#[tokio::test]
+async fn test_create_drop_table_with_spaces() {
+    let handler = handler(false);
+
+    let create = QueryRequest {
+        query: "CREATE TABLE \"table with spaces\" (id INTEGER PRIMARY KEY, name TEXT)".into(),
+    };
+    handler.write_query(&create).await.unwrap();
+
+    let schema = GetTableSchemaRequest {
+        table_name: "table with spaces".into(),
+    };
+    let result = handler.get_table_schema(&schema).await;
+    assert!(
+        result.is_ok(),
+        "get_table_schema with spaced name should succeed: {result:?}"
+    );
+
+    let drop = DropTableRequest {
+        table_name: "table with spaces".into(),
+    };
+    handler.drop_table(&drop).await.unwrap();
 }

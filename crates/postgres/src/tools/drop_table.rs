@@ -5,9 +5,10 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::MessageResponse;
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
+use sqlparser::dialect::PostgreSqlDialect;
 
 use crate::PostgresHandler;
 use crate::types::DropTableRequest;
@@ -94,20 +95,25 @@ impl PostgresHandler {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
-        let database = &request.database_name;
-        let table = &request.table_name;
-        validate_identifier(database)?;
-        validate_identifier(table)?;
 
-        let mut drop_sql = format!("DROP TABLE {}", self.connection.quote_identifier(table));
-        if request.cascade {
+        let DropTableRequest {
+            database_name,
+            table_name,
+            cascade,
+        } = request;
+
+        validate_ident(database_name)?;
+        validate_ident(table_name)?;
+
+        let mut drop_sql = format!("DROP TABLE {}", quote_ident(table_name, &PostgreSqlDialect {}));
+        if *cascade {
             drop_sql.push_str(" CASCADE");
         }
 
-        self.connection.execute(drop_sql.as_str(), Some(database)).await?;
+        self.connection.execute(drop_sql.as_str(), Some(database_name)).await?;
 
         Ok(MessageResponse {
-            message: format!("Table '{table}' dropped successfully."),
+            message: format!("Table '{table_name}' dropped successfully."),
         })
     }
 }

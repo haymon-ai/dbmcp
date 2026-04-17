@@ -45,7 +45,6 @@ impl SqliteConnection {
 
 impl Connection for SqliteConnection {
     type DB = sqlx::Sqlite;
-    const IDENTIFIER_QUOTE: char = '"';
 
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
         self.pool(target).await

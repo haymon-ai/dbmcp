@@ -1183,3 +1183,66 @@ async fn test_drop_table_blocked_in_read_only() {
     let response = handler.drop_table(&drop_request).await;
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
 }
+
+// === US2: Connection trait edge cases ===
+
+#[tokio::test]
+async fn test_read_query_control_char_database_name_rejected() {
+    let handler = handler(true);
+    let request = QueryRequest {
+        query: "SELECT 1".into(),
+        database_name: "test\x01db".into(),
+    };
+    let result = handler.read_query(&request).await;
+    assert!(result.is_err(), "control char in database name should be rejected");
+}
+
+#[tokio::test]
+async fn test_list_tables_control_char_database_rejected() {
+    let handler = handler(true);
+    let request = ListTablesRequest {
+        database_name: "test\x00db".into(),
+    };
+    let result = handler.list_tables(&request).await;
+    assert!(result.is_err(), "control char in database name should be rejected");
+}
+
+// === US4: Special-character identifier round-trip ===
+
+#[tokio::test]
+async fn test_create_drop_database_with_double_quote() {
+    let handler = handler(false);
+    let db_name = "test_quote_db\"edge".to_string();
+
+    let create = CreateDatabaseRequest {
+        database_name: db_name.clone(),
+    };
+    let result = handler.create_database(&create).await;
+    assert!(
+        result.is_ok(),
+        "create database with double-quote should succeed: {result:?}"
+    );
+
+    let drop = DropDatabaseRequest { database_name: db_name };
+    let result = handler.drop_database(&drop).await;
+    assert!(
+        result.is_ok(),
+        "drop database with double-quote should succeed: {result:?}"
+    );
+}
+
+// === US5: Timeout propagation ===
+
+#[tokio::test]
+async fn test_timeout_on_list_tables() {
+    let mut config = base_db_config(true);
+    config.query_timeout = Some(1);
+    let handler = MysqlHandler::new(&config);
+
+    let request = QueryRequest {
+        query: "SELECT SLEEP(60)".into(),
+        database_name: "app".into(),
+    };
+    let result = handler.read_query(&request).await;
+    assert!(result.is_err(), "slow query should time out");
+}

@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{QueryRequest, QueryResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
@@ -85,8 +86,16 @@ impl MysqlHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
-        let db = Some(request.database_name.trim()).filter(|s| !s.is_empty());
-        let rows = self.connection.fetch(request.query.as_str(), db).await?;
+        let QueryRequest { query, database_name } = request;
+
+        let db = Some(database_name.trim()).filter(|s| !s.is_empty());
+
+        if let Some(name) = &db {
+            validate_ident(name)?;
+        }
+
+        let rows = self.connection.fetch_json(query.as_str(), db).await?;
+
         Ok(QueryResponse {
             rows: Value::Array(rows),
         })

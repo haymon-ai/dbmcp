@@ -8,7 +8,6 @@ use database_mcp_server::types::ListDatabasesResponse;
 use database_mcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
-use serde_json::Value;
 
 use crate::PostgresHandler;
 
@@ -86,13 +85,12 @@ impl PostgresHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
-        let sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        let rows = self.connection.fetch(sql, None).await?;
-        Ok(ListDatabasesResponse {
-            databases: rows
-                .iter()
-                .filter_map(|r| r.get("datname").and_then(Value::as_str).map(str::to_owned))
-                .collect(),
-        })
+        let sql = r"
+            SELECT datname
+            FROM pg_database
+            WHERE datistemplate = false
+            ORDER BY datname";
+        let databases: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
+        Ok(ListDatabasesResponse { databases })
     }
 }

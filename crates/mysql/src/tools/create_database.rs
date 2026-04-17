@@ -5,9 +5,10 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
+use sqlparser::dialect::MySqlDialect;
 
 use crate::MysqlHandler;
 
@@ -84,29 +85,36 @@ impl MysqlHandler {
         if self.config.read_only {
             return Err(AppError::ReadOnlyViolation);
         }
-        let name = &request.database_name;
-        validate_identifier(name)?;
+
+        let CreateDatabaseRequest { database_name } = request;
+
+        validate_ident(database_name)?;
 
         let check_sql = format!(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = {}",
-            self.connection.quote_string(name),
+            r"
+            SELECT CAST(SCHEMA_NAME AS CHAR)
+            FROM information_schema.SCHEMATA
+            WHERE SCHEMA_NAME = {}",
+            quote_literal(database_name),
         );
-        let exists = self.connection.fetch_optional(check_sql.as_str(), None).await?;
+
+        let exists: Option<String> = self.connection.fetch_optional(check_sql.as_str(), None).await?;
 
         if exists.is_some() {
             return Ok(MessageResponse {
-                message: format!("Database '{name}' already exists."),
+                message: format!("Database '{database_name}' already exists."),
             });
         }
 
         let create_sql = format!(
             "CREATE DATABASE IF NOT EXISTS {}",
-            self.connection.quote_identifier(name)
+            quote_ident(database_name, &MySqlDialect {})
         );
+
         self.connection.execute(create_sql.as_str(), None).await?;
 
         Ok(MessageResponse {
-            message: format!("Database '{name}' created successfully."),
+            message: format!("Database '{database_name}' created successfully."),
         })
     }
 }

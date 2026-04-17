@@ -8,7 +8,6 @@ use database_mcp_server::types::ListTablesResponse;
 use database_mcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
-use serde_json::Value;
 
 use crate::SqliteHandler;
 
@@ -83,12 +82,12 @@ impl SqliteHandler {
     ///
     /// Returns [`AppError`] if the query fails.
     pub async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
-        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
-        let rows = self.connection.fetch(sql, None).await?;
-        let tables = rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned))
-            .collect::<Vec<_>>();
+        let sql = r"
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            ORDER BY name";
+        let tables: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
         Ok(ListTablesResponse { tables })
     }
 }

@@ -21,12 +21,11 @@ impl RowExt for SqliteRow {
                 Value::Null
             } else {
                 match type_name {
-                    "BOOLEAN" | "BOOL" => self.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
+                    "BOOLEAN" | "BOOL" => self.try_get::<bool, _>(idx).map_or(Value::Null, Value::Bool),
 
                     "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => self
                         .try_get::<i64, _>(idx)
-                        .map(|v| Value::Number(v.into()))
-                        .unwrap_or(Value::Null),
+                        .map_or(Value::Null, |v| Value::Number(v.into())),
 
                     "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => self
                         .try_get::<f64, _>(idx)
@@ -39,7 +38,7 @@ impl RowExt for SqliteRow {
                         .map_or(Value::Null, |bytes| Value::String(BASE64.encode(&bytes))),
 
                     "TEXT" | "VARCHAR" | "CHAR" | "CLOB" | "DATE" | "DATETIME" | "TIMESTAMP" | "TIME" => {
-                        self.try_get::<String, _>(idx).map(Value::String).unwrap_or(Value::Null)
+                        self.try_get::<String, _>(idx).map_or(Value::Null, Value::String)
                     }
 
                     // SQLite reports "NULL" type for expressions like COUNT(*), SUM().
@@ -63,7 +62,7 @@ fn dynamic_probe(row: &SqliteRow, idx: usize) -> Value {
     if let Ok(f) = row.try_get::<f64, _>(idx) {
         return serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number);
     }
-    row.try_get::<String, _>(idx).map(Value::String).unwrap_or(Value::Null)
+    row.try_get::<String, _>(idx).map_or(Value::Null, Value::String)
 }
 
 // Unit tests for row conversion are not possible without a database connection

@@ -25,13 +25,12 @@ impl RowExt for MySqlRow {
                 Value::Null
             } else {
                 match type_name {
-                    "BOOLEAN" => self.try_get::<bool, _>(idx).map(Value::Bool).unwrap_or(Value::Null),
+                    "BOOLEAN" => self.try_get::<bool, _>(idx).map_or(Value::Null, Value::Bool),
 
                     "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED"
                     | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => self
                         .try_get::<i64, _>(idx)
-                        .map(|v| Value::Number(v.into()))
-                        .unwrap_or(Value::Null),
+                        .map_or(Value::Null, |v| Value::Number(v.into())),
 
                     "BIGINT UNSIGNED" => self.try_get::<u64, _>(idx).map_or(Value::Null, |v| {
                         i64::try_from(v)

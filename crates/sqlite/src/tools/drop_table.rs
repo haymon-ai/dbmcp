@@ -5,9 +5,10 @@ use std::borrow::Cow;
 use database_mcp_server::AppError;
 use database_mcp_server::types::MessageResponse;
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
+use sqlparser::dialect::SQLiteDialect;
 
 use crate::SqliteHandler;
 use crate::types::DropTableRequest;
@@ -87,14 +88,15 @@ impl SqliteHandler {
             return Err(AppError::ReadOnlyViolation);
         }
 
-        let table = &request.table_name;
-        validate_identifier(table)?;
+        let DropTableRequest { table_name } = request;
 
-        let drop_sql = format!("DROP TABLE {}", self.connection.quote_identifier(table));
+        validate_ident(table_name)?;
+
+        let drop_sql = format!("DROP TABLE {}", quote_ident(table_name, &SQLiteDialect {}));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
         Ok(MessageResponse {
-            message: format!("Table '{table}' dropped successfully."),
+            message: format!("Table '{table_name}' dropped successfully."),
         })
     }
 }

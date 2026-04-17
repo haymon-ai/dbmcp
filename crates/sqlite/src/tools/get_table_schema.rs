@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use database_mcp_server::AppError;
 use database_mcp_server::types::TableSchemaResponse;
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::identifier::validate_identifier;
+use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
+use sqlparser::dialect::SQLiteDialect;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
@@ -81,15 +82,16 @@ impl SqliteHandler {
     ///
     /// Returns [`AppError`] if validation fails or the query errors.
     pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
-        let table = &request.table_name;
-        validate_identifier(table)?;
+        let GetTableSchemaRequest { table_name } = request;
+
+        validate_ident(table_name)?;
 
         // 1. Get basic schema
-        let pragma_sql = format!("PRAGMA table_info({})", self.connection.quote_identifier(table));
-        let rows = self.connection.fetch(pragma_sql.as_str(), None).await?;
+        let pragma_sql = format!("PRAGMA table_info({})", quote_ident(table_name, &SQLiteDialect {}));
+        let rows = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
-            return Err(AppError::TableNotFound(table.clone()));
+            return Err(AppError::TableNotFound(table_name.clone()));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -113,8 +115,11 @@ impl SqliteHandler {
         }
 
         // 2. Get FK info via PRAGMA
-        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", self.connection.quote_identifier(table));
-        let fk_rows = self.connection.fetch(fk_pragma_sql.as_str(), None).await?;
+        let fk_pragma_sql = format!(
+            "PRAGMA foreign_key_list({})",
+            quote_ident(table_name, &SQLiteDialect {})
+        );
+        let fk_rows = self.connection.fetch_json(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
             let from_col = fk_row
@@ -155,7 +160,7 @@ impl SqliteHandler {
         }
 
         Ok(TableSchemaResponse {
-            table_name: table.clone(),
+            table_name: table_name.clone(),
             columns: json!(columns),
         })
     }
