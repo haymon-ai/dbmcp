@@ -12,8 +12,8 @@ rmcp = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true }
-thiserror = { workspace = true }
 sqlx_to_json = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [lints]
