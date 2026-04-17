@@ -19,11 +19,3 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/audit@v1
-        with:
-          # Ignored advisories — keep in sync with the list below.
-          #   RUSTSEC-2023-0071: rsa Marvin timing sidechannel. Transitive via
-          #     sqlx-mysql; no fixed release upstream.
-          #   RUSTSEC-2026-0097: rand unsound only with a custom `log` logger
-          #     that calls `rand::rng()` during reseed. Not applicable here;
-          #     rand 0.8.5 is a transitive dep and we don't ship such a logger.
-          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0097
