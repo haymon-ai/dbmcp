@@ -7,9 +7,10 @@
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
 use database_mcp_sql::Connection;
+use database_mcp_sql::SqlError;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use tracing::info;
 
 /// Owns the lazy `SQLite` pool and the logic that builds it.
 #[derive(Clone)]
@@ -27,6 +28,8 @@ impl std::fmt::Debug for SqliteConnection {
 impl SqliteConnection {
     /// Builds the connection and its lazy pool.
     pub(crate) fn new(config: &DatabaseConfig) -> Self {
+        info!("SQLite lazy connection pool created");
+
         Self {
             config: config.clone(),
             pool: create_lazy_pool(config),
@@ -38,7 +41,7 @@ impl SqliteConnection {
     /// Crate-private so every tool path goes through the unified
     /// [`Connection`] methods and cannot bypass timeout / error capture.
     #[allow(clippy::unused_async)]
-    pub(crate) async fn pool(&self, _target: Option<&str>) -> Result<SqlitePool, AppError> {
+    pub(crate) async fn pool(&self, _target: Option<&str>) -> Result<SqlitePool, SqlError> {
         Ok(self.pool.clone())
     }
 }
@@ -46,7 +49,7 @@ impl SqliteConnection {
 impl Connection for SqliteConnection {
     type DB = sqlx::Sqlite;
 
-    async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
+    async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
         self.pool(target).await
     }
 

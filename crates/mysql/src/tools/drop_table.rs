@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::MessageResponse;
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -85,12 +85,12 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
-    /// [`AppError::InvalidIdentifier`] for invalid names,
-    /// or [`AppError::Query`] if the backend reports an error.
-    pub async fn drop_table(&self, request: &DropTableRequest) -> Result<MessageResponse, AppError> {
+    /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
+    /// [`SqlError::InvalidIdentifier`] for invalid names,
+    /// or [`SqlError::Query`] if the backend reports an error.
+    pub async fn drop_table(&self, request: &DropTableRequest) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
-            return Err(AppError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation);
         }
 
         let DropTableRequest {

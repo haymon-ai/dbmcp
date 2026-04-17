@@ -1,6 +1,6 @@
 //! SQL quoting and validation for identifiers and literals.
 
-use database_mcp_server::AppError;
+use crate::SqlError;
 use sqlparser::dialect::Dialect;
 
 /// Wraps `value` in the dialect's identifier quote character.
@@ -48,11 +48,11 @@ pub fn quote_literal(value: &str) -> String {
 ///
 /// # Errors
 ///
-/// Returns [`AppError::InvalidIdentifier`] if the name is empty,
+/// Returns [`SqlError::InvalidIdentifier`] if the name is empty,
 /// whitespace-only, or contains control characters.
-pub fn validate_ident(name: &str) -> Result<(), AppError> {
+pub fn validate_ident(name: &str) -> Result<(), SqlError> {
     if name.trim().is_empty() || name.chars().any(char::is_control) {
-        return Err(AppError::InvalidIdentifier(name.to_string()));
+        return Err(SqlError::InvalidIdentifier(name.to_string()));
     }
     Ok(())
 }

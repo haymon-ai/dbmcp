@@ -3,9 +3,9 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -79,8 +79,8 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
+    /// Returns [`SqlError`] if validation fails or the query errors.
+    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
         let GetTableSchemaRequest {
             database_name,
             table_name,
@@ -98,7 +98,7 @@ impl MysqlHandler {
         let schema_rows = self.connection.fetch_json(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
-            return Err(AppError::TableNotFound(format!("{database_name}.{table_name}")));
+            return Err(SqlError::TableNotFound(format!("{database_name}.{table_name}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();

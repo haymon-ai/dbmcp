@@ -3,7 +3,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::TableSchemaResponse;
 use database_mcp_sql::Connection as _;
 use database_mcp_sql::sanitize::{quote_ident, validate_ident};
@@ -11,6 +10,8 @@ use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
 use sqlparser::dialect::SQLiteDialect;
+
+use database_mcp_sql::SqlError;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
@@ -80,8 +81,8 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
+    /// Returns [`SqlError`] if validation fails or the query errors.
+    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
         let GetTableSchemaRequest { table_name } = request;
 
         validate_ident(table_name)?;
@@ -91,7 +92,7 @@ impl SqliteHandler {
         let rows = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
-            return Err(AppError::TableNotFound(table_name.clone()));
+            return Err(SqlError::TableNotFound(table_name.clone()));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();

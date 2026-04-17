@@ -3,9 +3,9 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::ListDatabasesResponse;
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 
@@ -83,8 +83,8 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if the query fails.
-    pub async fn list_databases(&self) -> Result<ListDatabasesResponse, AppError> {
+    /// Returns [`SqlError`] if the query fails.
+    pub async fn list_databases(&self) -> Result<ListDatabasesResponse, SqlError> {
         let sql = r"
             SELECT datname
             FROM pg_database

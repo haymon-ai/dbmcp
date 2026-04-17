@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -76,8 +76,8 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, AppError> {
+    /// Returns [`SqlError`] if the identifier is invalid or the query fails.
+    pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, SqlError> {
         let ListTablesRequest { database_name } = request;
 
         validate_ident(database_name)?;

@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{DropDatabaseRequest, MessageResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -83,13 +83,13 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::ReadOnlyViolation`] in read-only mode,
-    /// [`AppError::InvalidIdentifier`] for invalid names,
-    /// or [`AppError::Query`] if the target is the active database
+    /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
+    /// [`SqlError::InvalidIdentifier`] for invalid names,
+    /// or [`SqlError::Query`] if the target is the active database
     /// or the backend reports an error.
-    pub async fn drop_database(&self, request: &DropDatabaseRequest) -> Result<MessageResponse, AppError> {
+    pub async fn drop_database(&self, request: &DropDatabaseRequest) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
-            return Err(AppError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation);
         }
 
         let DropDatabaseRequest { database_name } = request;
@@ -98,7 +98,7 @@ impl PostgresHandler {
 
         // Guard: prevent dropping the currently connected database.
         if self.connection.default_database_name() == database_name.as_str() {
-            return Err(AppError::Query(format!(
+            return Err(SqlError::Query(format!(
                 "Cannot drop the currently connected database '{database_name}'."
             )));
         }

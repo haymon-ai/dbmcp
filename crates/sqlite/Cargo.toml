@@ -16,7 +16,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite"] }
-sqlx_to_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

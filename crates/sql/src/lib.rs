@@ -6,8 +6,10 @@
 //! the [`connection`] trait shared by every backend.
 
 pub mod connection;
+pub mod error;
 pub mod sanitize;
 pub mod timeout;
 pub mod validation;
 
 pub use connection::Connection;
+pub use error::SqlError;

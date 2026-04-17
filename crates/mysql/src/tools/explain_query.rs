@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use database_mcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
@@ -93,10 +93,10 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::ReadOnlyViolation`] if `analyze` is true,
+    /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
-    /// Returns [`AppError::Query`] if the backend reports an error.
-    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
+    /// Returns [`SqlError::Query`] if the backend reports an error.
+    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, SqlError> {
         let ExplainQueryRequest {
             database_name,
             query,

@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -79,10 +79,10 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if read-only or the query fails.
-    pub async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, AppError> {
+    /// Returns [`SqlError`] if read-only or the query fails.
+    pub async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
-            return Err(AppError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation);
         }
 
         let CreateDatabaseRequest { database_name } = request;
@@ -93,7 +93,7 @@ impl PostgresHandler {
         self.connection.execute(&create_sql, None).await.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("already exists") {
-                return AppError::Query(format!("Database '{database_name}' already exists."));
+                return SqlError::Query(format!("Database '{database_name}' already exists."));
             }
             e
         })?;
