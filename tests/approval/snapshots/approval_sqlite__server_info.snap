@@ -4,7 +4,7 @@ assertion_line: 26
 expression: info
 ---
 {
-  "protocolVersion": "2025-06-18",
+  "protocolVersion": "2025-11-25",
   "capabilities": {
     "tools": {}
   },
