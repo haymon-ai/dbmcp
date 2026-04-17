@@ -3,9 +3,9 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{GetTableSchemaRequest, TableSchemaResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -78,9 +78,9 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if validation fails or the query errors.
+    /// Returns [`SqlError`] if validation fails or the query errors.
     #[allow(clippy::too_many_lines)]
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, AppError> {
+    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
         let GetTableSchemaRequest {
             database_name,
             table_name,
@@ -105,7 +105,7 @@ impl PostgresHandler {
         let rows = self.connection.fetch_json(&schema_sql, db).await?;
 
         if rows.is_empty() {
-            return Err(AppError::TableNotFound(table_name.clone()));
+            return Err(SqlError::TableNotFound(table_name.clone()));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();

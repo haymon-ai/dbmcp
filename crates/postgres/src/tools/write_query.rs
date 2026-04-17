@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{QueryRequest, QueryResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -84,8 +84,8 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if the query fails.
-    pub async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+    /// Returns [`SqlError`] if the query fails.
+    pub async fn write_query(&self, request: &QueryRequest) -> Result<QueryResponse, SqlError> {
         let QueryRequest { query, database_name } = request;
 
         let db = Some(database_name.trim()).filter(|s| !s.is_empty());

@@ -7,8 +7,8 @@
 use std::time::Duration;
 
 use database_mcp_config::DatabaseConfig;
-use database_mcp_server::AppError;
 use database_mcp_sql::Connection;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use moka::future::Cache;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
@@ -81,8 +81,8 @@ impl PostgresConnection {
     ///
     /// # Errors
     ///
-    /// - [`AppError::InvalidIdentifier`] — `target` failed identifier validation.
-    pub(crate) async fn pool(&self, target: Option<&str>) -> Result<PgPool, AppError> {
+    /// - [`SqlError::InvalidIdentifier`] — `target` failed identifier validation.
+    pub(crate) async fn pool(&self, target: Option<&str>) -> Result<PgPool, SqlError> {
         let database = match target {
             Some(name) if !name.is_empty() => name,
             _ => self.default_database_name(),
@@ -108,7 +108,7 @@ impl PostgresConnection {
 impl Connection for PostgresConnection {
     type DB = sqlx::Postgres;
 
-    async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, AppError> {
+    async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
         self.pool(target).await
     }
 

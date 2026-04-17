@@ -1,6 +1,6 @@
 //! AST-based SQL validation for read-only mode enforcement.
 
-use database_mcp_server::AppError;
+use crate::SqlError;
 use sqlparser::ast::{Expr, Function, Statement, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
@@ -15,28 +15,28 @@ use sqlparser::parser::Parser;
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the query is not allowed in read-only mode.
-pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), AppError> {
+/// Returns [`SqlError`] if the query is not allowed in read-only mode.
+pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
-        return Err(AppError::ReadOnlyViolation);
+        return Err(SqlError::ReadOnlyViolation);
     }
 
     // Pre-check for INTO OUTFILE/DUMPFILE — sqlparser may not parse MySQL-specific syntax
     let upper = trimmed.to_uppercase();
     if upper.contains("INTO OUTFILE") || upper.contains("INTO DUMPFILE") {
-        return Err(AppError::IntoOutfileBlocked);
+        return Err(SqlError::IntoOutfileBlocked);
     }
 
     let statements =
-        Parser::parse_sql(dialect, trimmed).map_err(|e| AppError::Query(format!("SQL parse error: {e}")))?;
+        Parser::parse_sql(dialect, trimmed).map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
 
     // Must be exactly one statement
     if statements.is_empty() {
-        return Err(AppError::ReadOnlyViolation);
+        return Err(SqlError::ReadOnlyViolation);
     }
     if statements.len() > 1 {
-        return Err(AppError::MultiStatement);
+        return Err(SqlError::MultiStatement);
     }
 
     let stmt = &statements[0];
@@ -65,7 +65,7 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), AppEr
             // SHOW, DESCRIBE, EXPLAIN, USE are all read-only
         }
         _ => {
-            return Err(AppError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation);
         }
     }
 
@@ -73,7 +73,7 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), AppEr
 }
 
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
-fn check_dangerous_functions(stmt: &Statement) -> Result<(), AppError> {
+fn check_dangerous_functions(stmt: &Statement) -> Result<(), SqlError> {
     let mut checker = DangerousFunctionChecker { found: None };
     let _ = stmt.visit(&mut checker);
     if let Some(err) = checker.found {
@@ -83,7 +83,7 @@ fn check_dangerous_functions(stmt: &Statement) -> Result<(), AppError> {
 }
 
 struct DangerousFunctionChecker {
-    found: Option<AppError>,
+    found: Option<SqlError>,
 }
 
 impl Visitor for DangerousFunctionChecker {
@@ -93,7 +93,7 @@ impl Visitor for DangerousFunctionChecker {
         if let Expr::Function(Function { name, .. }) = expr {
             let func_name = name.to_string().to_uppercase();
             if func_name == "LOAD_FILE" {
-                self.found = Some(AppError::LoadFileBlocked);
+                self.found = Some(SqlError::LoadFileBlocked);
                 return std::ops::ControlFlow::Break(());
             }
         }
@@ -145,7 +145,7 @@ mod tests {
     fn test_insert_blocked() {
         assert!(matches!(
             validate_read_only("INSERT INTO users VALUES (1)", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -153,7 +153,7 @@ mod tests {
     fn test_update_blocked() {
         assert!(matches!(
             validate_read_only("UPDATE users SET name='x'", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -161,7 +161,7 @@ mod tests {
     fn test_delete_blocked() {
         assert!(matches!(
             validate_read_only("DELETE FROM users", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -169,7 +169,7 @@ mod tests {
     fn test_drop_blocked() {
         assert!(matches!(
             validate_read_only("DROP TABLE users", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -177,7 +177,7 @@ mod tests {
     fn test_create_blocked() {
         assert!(matches!(
             validate_read_only("CREATE TABLE test (id INT)", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -191,7 +191,7 @@ mod tests {
         // If the parser treats -- as a comment and only sees SELECT 1, it's allowed.
         let result = validate_read_only("SELECT 1 -- \nDELETE FROM users", &DIALECT);
         // The parser should treat -- as comment, so only SELECT 1 remains → allowed
-        assert!(result.is_ok() || matches!(result, Err(AppError::MultiStatement)));
+        assert!(result.is_ok() || matches!(result, Err(SqlError::MultiStatement)));
     }
 
     #[test]
@@ -199,7 +199,7 @@ mod tests {
         // "/* SELECT */ DELETE FROM users" — parser strips comment, sees DELETE
         assert!(matches!(
             validate_read_only("/* SELECT */ DELETE FROM users", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -209,7 +209,7 @@ mod tests {
     fn test_load_file_blocked() {
         assert!(matches!(
             validate_read_only("SELECT LOAD_FILE('/etc/passwd')", &DIALECT),
-            Err(AppError::LoadFileBlocked)
+            Err(SqlError::LoadFileBlocked)
         ));
     }
 
@@ -217,7 +217,7 @@ mod tests {
     fn test_load_file_case_insensitive() {
         assert!(matches!(
             validate_read_only("SELECT load_file('/etc/passwd')", &DIALECT),
-            Err(AppError::LoadFileBlocked)
+            Err(SqlError::LoadFileBlocked)
         ));
     }
 
@@ -226,7 +226,7 @@ mod tests {
         // sqlparser normalizes function calls, so spaces before ( are handled
         assert!(matches!(
             validate_read_only("SELECT LOAD_FILE ('/etc/passwd')", &DIALECT),
-            Err(AppError::LoadFileBlocked)
+            Err(SqlError::LoadFileBlocked)
         ));
     }
 
@@ -236,7 +236,7 @@ mod tests {
     fn test_into_outfile_blocked() {
         assert!(matches!(
             validate_read_only("SELECT * FROM users INTO OUTFILE '/tmp/out'", &DIALECT),
-            Err(AppError::IntoOutfileBlocked)
+            Err(SqlError::IntoOutfileBlocked)
         ));
     }
 
@@ -244,7 +244,7 @@ mod tests {
     fn test_into_dumpfile_blocked() {
         assert!(matches!(
             validate_read_only("SELECT * FROM users INTO DUMPFILE '/tmp/out'", &DIALECT),
-            Err(AppError::IntoOutfileBlocked)
+            Err(SqlError::IntoOutfileBlocked)
         ));
     }
 
@@ -262,7 +262,7 @@ mod tests {
     fn test_empty_query_blocked() {
         assert!(matches!(
             validate_read_only("", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -279,7 +279,7 @@ mod tests {
     fn test_multi_statement_blocked() {
         assert!(matches!(
             validate_read_only("SELECT 1; SELECT 2", &DIALECT),
-            Err(AppError::MultiStatement)
+            Err(SqlError::MultiStatement)
         ));
     }
 
@@ -287,7 +287,7 @@ mod tests {
     fn test_multi_statement_injection_blocked() {
         assert!(matches!(
             validate_read_only("SELECT 1; DROP TABLE users", &DIALECT),
-            Err(AppError::MultiStatement)
+            Err(SqlError::MultiStatement)
         ));
     }
 
@@ -295,7 +295,7 @@ mod tests {
     fn test_set_statement_blocked() {
         assert!(matches!(
             validate_read_only("SET @var = 1", &DIALECT),
-            Err(AppError::ReadOnlyViolation)
+            Err(SqlError::ReadOnlyViolation)
         ));
     }
 
@@ -375,14 +375,14 @@ mod tests {
     #[test]
     fn multi_statement_blocked_all_dialects() {
         let sql = "SELECT 1; DROP TABLE x";
-        assert!(matches!(validate_read_only(sql, &MYSQL), Err(AppError::MultiStatement)));
+        assert!(matches!(validate_read_only(sql, &MYSQL), Err(SqlError::MultiStatement)));
         assert!(matches!(
             validate_read_only(sql, &POSTGRES),
-            Err(AppError::MultiStatement)
+            Err(SqlError::MultiStatement)
         ));
         assert!(matches!(
             validate_read_only(sql, &SQLITE),
-            Err(AppError::MultiStatement)
+            Err(SqlError::MultiStatement)
         ));
     }
 
@@ -398,7 +398,7 @@ mod tests {
     fn postgres_copy_to_blocked() {
         let result = validate_read_only("COPY users TO '/tmp/out.csv'", &POSTGRES);
         assert!(
-            matches!(result, Err(AppError::ReadOnlyViolation)),
+            matches!(result, Err(SqlError::ReadOnlyViolation)),
             "Postgres COPY TO should be blocked: {result:?}"
         );
     }
@@ -431,7 +431,7 @@ mod tests {
         );
         if let Err(e) = &pg_result {
             assert!(
-                !matches!(e, AppError::ReadOnlyViolation),
+                !matches!(e, SqlError::ReadOnlyViolation),
                 "SHOW DATABASES should not be classified as a write: {e}"
             );
         }

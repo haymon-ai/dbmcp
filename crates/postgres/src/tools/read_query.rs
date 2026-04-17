@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::{QueryRequest, QueryResponse};
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use database_mcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
@@ -88,9 +88,9 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::ReadOnlyViolation`] if the query is not
-    /// read-only, or [`AppError::Query`] if the backend reports an error.
-    pub async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, AppError> {
+    /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
+    /// read-only, or [`SqlError::Query`] if the backend reports an error.
+    pub async fn read_query(&self, request: &QueryRequest) -> Result<QueryResponse, SqlError> {
         let QueryRequest { query, database_name } = request;
 
         validate_read_only(query, &sqlparser::dialect::PostgreSqlDialect {})?;

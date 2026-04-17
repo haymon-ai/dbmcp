@@ -2,9 +2,10 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::QueryResponse;
+
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::Value;
@@ -85,8 +86,8 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::Query`] if the backend reports an error.
-    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, AppError> {
+    /// Returns [`SqlError::Query`] if the backend reports an error.
+    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, SqlError> {
         let ExplainQueryRequest { query } = request;
 
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");

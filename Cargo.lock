@@ -507,7 +507,6 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
- "sqlx_to_json",
  "tokio",
  "tracing",
 ]
@@ -525,7 +524,6 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
- "sqlx_to_json",
  "tokio",
  "tracing",
 ]
@@ -537,18 +535,18 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]
 name = "database-mcp-sql"
 version = "0.6.4"
 dependencies = [
- "database-mcp-server",
+ "rmcp",
  "serde_json",
  "sqlparser",
  "sqlx",
  "sqlx_to_json",
+ "thiserror",
  "tokio",
 ]
 
@@ -564,7 +562,6 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
- "sqlx_to_json",
  "tokio",
  "tracing",
 ]

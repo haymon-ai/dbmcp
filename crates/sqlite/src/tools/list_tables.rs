@@ -3,9 +3,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use database_mcp_server::AppError;
 use database_mcp_server::types::ListTablesResponse;
+
 use database_mcp_sql::Connection as _;
+use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 
@@ -80,8 +81,8 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`AppError`] if the query fails.
-    pub async fn list_tables(&self) -> Result<ListTablesResponse, AppError> {
+    /// Returns [`SqlError`] if the query fails.
+    pub async fn list_tables(&self) -> Result<ListTablesResponse, SqlError> {
         let sql = r"
             SELECT name
             FROM sqlite_master
