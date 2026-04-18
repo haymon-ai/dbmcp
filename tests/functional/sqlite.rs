@@ -11,7 +11,9 @@
 
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteHandler;
-use database_mcp_sqlite::types::{DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, QueryRequest};
+use database_mcp_sqlite::types::{
+    DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+};
 use serde_json::Value;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -108,7 +110,7 @@ async fn test_write_query_delete() {
 async fn test_lists_tables() {
     let handler = handler(false);
 
-    let response = handler.list_tables().await.unwrap();
+    let response = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
     let tables = response.tables;
 
     for expected in ["users", "posts", "tags", "post_tags"] {
@@ -230,7 +232,7 @@ async fn test_drop_table_success() {
     assert!(response.message.contains("dropped successfully"));
 
     // Verify it's gone
-    let response = handler.list_tables().await.unwrap();
+    let response = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
     let tables = response.tables;
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
@@ -383,7 +385,7 @@ async fn test_write_query_create_table() {
     handler.write_query(&create).await.unwrap();
 
     // Verify it appears in list_tables
-    let tables = handler.list_tables().await.unwrap();
+    let tables = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
     assert!(
         tables.tables.iter().any(|t| t == "write_test_create"),
         "Created table should appear in list"
@@ -625,4 +627,173 @@ async fn test_create_drop_table_with_spaces() {
         table_name: "table with spaces".into(),
     };
     handler.drop_table(&drop).await.unwrap();
+}
+
+// === Pagination (feature 029) ===
+
+async fn seed_n_tables(handler: &SqliteHandler, prefix: &str, n: usize) {
+    for i in 1..=n {
+        let create = QueryRequest {
+            query: format!("CREATE TABLE {prefix}_{i:04} (id INTEGER)"),
+        };
+        handler.write_query(&create).await.expect("seed create");
+    }
+}
+
+async fn drop_seeded_tables(handler: &SqliteHandler, prefix: &str, n: usize) {
+    for i in 1..=n {
+        let drop = DropTableRequest {
+            table_name: format!("{prefix}_{i:04}"),
+        };
+        let _ = handler.drop_table(&drop).await;
+    }
+}
+
+/// Collect all tables matching `prefix` by following `nextCursor` to exhaustion.
+async fn collect_all_paged(handler: &SqliteHandler, prefix: &str) -> Vec<String> {
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let request = ListTablesRequest { cursor };
+        let response = handler.list_tables(&request).await.expect("list page");
+        all.extend(response.tables.into_iter().filter(|t| t.starts_with(prefix)));
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    all
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_small_table_count_returns_single_page() {
+    let handler = handler(false);
+    let prefix = "pg_small";
+    drop_seeded_tables(&handler, prefix, 37).await;
+    seed_n_tables(&handler, prefix, 37).await;
+
+    let response = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
+
+    let mine: Vec<_> = response.tables.iter().filter(|t| t.starts_with(prefix)).collect();
+    // Whole result plus seeded tables must fit in one page (seed is 5 tables + 37 = 42 ≤ 100).
+    assert!(mine.len() >= 37, "expected 37 seeded tables, saw {}", mine.len());
+    assert!(
+        response.next_cursor.is_none(),
+        "response under PAGE_SIZE must not emit nextCursor"
+    );
+
+    drop_seeded_tables(&handler, prefix, 37).await;
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_exactly_at_boundary_no_next_cursor() {
+    let handler = handler(false);
+    let prefix = "pg_exact";
+    drop_seeded_tables(&handler, prefix, 200).await;
+
+    // First clear seeded tables' influence: count the seeded fixture tables that start with prefix (should be zero).
+    // Seed exactly enough to push total to 100 (PAGE_SIZE) — 100 minus whatever baseline exists.
+    let baseline = handler
+        .list_tables(&ListTablesRequest::default())
+        .await
+        .unwrap()
+        .tables
+        .len();
+    let needed = 100 - baseline;
+    if needed == 0 {
+        return;
+    }
+    seed_n_tables(&handler, prefix, needed).await;
+
+    let response = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
+    assert_eq!(response.tables.len(), 100, "expected exactly-100-table page");
+    assert!(
+        response.next_cursor.is_none(),
+        "exactly-at-boundary must NOT emit nextCursor: {:?}",
+        response.next_cursor
+    );
+
+    drop_seeded_tables(&handler, prefix, needed).await;
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_traverses_over_250_tables() {
+    let handler = handler(false);
+    let prefix = "pg_many";
+    drop_seeded_tables(&handler, prefix, 250).await;
+    seed_n_tables(&handler, prefix, 250).await;
+
+    let collected = collect_all_paged(&handler, prefix).await;
+
+    assert_eq!(
+        collected.len(),
+        250,
+        "expected 250 seeded tables, got {}",
+        collected.len()
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(collected, sorted, "pages must preserve global name ordering");
+    let unique: std::collections::HashSet<_> = collected.iter().collect();
+    assert_eq!(unique.len(), 250, "no duplicates across pages");
+
+    drop_seeded_tables(&handler, prefix, 250).await;
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_empty_database_returns_no_next_cursor() {
+    let handler = handler(true);
+    let response = handler.list_tables(&ListTablesRequest::default()).await.unwrap();
+    // Not strictly empty (seeded fixture exists), but tested database has fewer than PAGE_SIZE tables.
+    assert!(response.tables.len() < 100, "seeded fixture must stay under PAGE_SIZE");
+    assert!(
+        response.next_cursor.is_none(),
+        "small table set must not emit nextCursor"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
+    use database_mcp_server::pagination::Cursor;
+
+    let handler = handler(true);
+    let request = ListTablesRequest {
+        cursor: Some(Cursor { offset: 10_000 }),
+    };
+    let response = handler.list_tables(&request).await.unwrap();
+
+    assert!(
+        response.tables.is_empty(),
+        "off-the-end cursor must return empty tables, got {:?}",
+        response.tables
+    );
+    assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
+    // Malformed cursors are rejected at serde deserialization time (before any
+    // handler runs), which rmcp automatically maps to JSON-RPC `-32602`. Verify
+    // the rejection here at the serde layer.
+    use serde_json::json;
+
+    let bad_cursors = [
+        "!!!not-base64",
+        "bm90LWpzb24",
+        "eyJ4IjoxfQ",
+        "eyJvIjowLCJ2Ijo5fQ",
+        "eyJvIjotMSwidiI6MX0",
+    ];
+
+    for bad in bad_cursors {
+        let err = serde_json::from_value::<ListTablesRequest>(json!({ "cursor": bad }))
+            .expect_err(&format!("cursor {bad:?} should be rejected at deserialize time"));
+        assert!(
+            err.to_string().to_lowercase().contains("cursor")
+                || err.to_string().to_lowercase().contains("base64")
+                || err.to_string().to_lowercase().contains("malformed")
+                || err.to_string().to_lowercase().contains("version"),
+            "cursor {bad:?} error is not descriptive: {err}"
+        );
+    }
 }

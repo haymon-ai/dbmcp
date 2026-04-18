@@ -4,6 +4,7 @@
 //! has no database selection. These types omit the `database_name`
 //! field present in the shared server types.
 
+use database_mcp_server::pagination::Cursor;
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
@@ -20,6 +21,16 @@ pub struct GetTableSchemaRequest {
 pub struct DropTableRequest {
     /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
     pub table_name: String,
+}
+
+/// Request for the `list_tables` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListTablesRequest {
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
 }
 
 /// Request for the `read_query` and `write_query` tools.

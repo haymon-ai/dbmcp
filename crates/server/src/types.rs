@@ -7,6 +7,8 @@ use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::pagination::Cursor;
+
 /// Response for tools with no structured return data.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct MessageResponse {
@@ -40,13 +42,21 @@ pub struct DropDatabaseRequest {
 pub struct ListTablesRequest {
     /// The database name to list tables from. Required. Use `list_databases` first to see available databases.
     pub database_name: String,
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
 }
 
 /// Response for the `list_tables` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListTablesResponse {
-    /// Sorted list of table names.
+    /// Sorted list of table names for this page.
     pub tables: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `get_table_schema` tool.

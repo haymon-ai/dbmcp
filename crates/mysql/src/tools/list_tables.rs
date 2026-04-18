@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
+use database_mcp_server::pagination::{Cursor, PAGE_SIZE};
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::{quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -34,7 +34,15 @@ Use when:
 
 <what_it_returns>
 A sorted JSON array of table name strings.
-</what_it_returns>"#;
+</what_it_returns>
+
+<pagination>
+This tool returns up to 100 tables per call. If more tables exist, the response includes a `nextCursor` string — call `list_tables` again with that string as the `cursor` argument to fetch the next page. Iterate until `nextCursor` is absent.
+
+Cursors are opaque: do not parse, modify, or persist them across sessions. Passing a malformed or stale cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.
+
+Note: tables created or dropped between paginated calls may cause the same table to appear twice or to be skipped. Re-enumerate from a fresh call for a consistent snapshot.
+</pagination>"#;
 }
 
 impl ToolBase for ListTablesTool {
@@ -67,32 +75,61 @@ impl ToolBase for ListTablesTool {
 
 impl AsyncTool<MysqlHandler> for ListTablesTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.list_tables(&params).await?)
+        handler.list_tables(&params).await
     }
 }
 
 impl MysqlHandler {
-    /// Lists all tables in a database.
+    /// Lists one page of tables in a database.
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, SqlError> {
-        let ListTablesRequest { database_name } = request;
+    /// Returns [`ErrorData`] with code `-32602` if `request.cursor` is
+    /// malformed, or an internal-error [`ErrorData`] if `database_name`
+    /// is invalid or the underlying query fails.
+    pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, ErrorData> {
+        let ListTablesRequest { database_name, cursor } = request;
 
         validate_ident(database_name)?;
 
+        let offset = cursor.map_or(0, |c| c.offset);
+        let fetch_limit = PAGE_SIZE + 1;
         let sql = format!(
             r"
             SELECT CAST(TABLE_NAME AS CHAR)
             FROM information_schema.TABLES
             WHERE TABLE_SCHEMA = {}
-            ORDER BY TABLE_NAME",
+            ORDER BY TABLE_NAME
+            LIMIT {fetch_limit} OFFSET {offset}",
             quote_literal(database_name),
         );
 
-        let tables: Vec<String> = self.connection.fetch_scalar(sql.as_str(), None).await?;
+        let mut tables: Vec<String> = self.connection.fetch_scalar(sql.as_str(), None).await?;
+        let next_cursor = if tables.len() > PAGE_SIZE {
+            tables.truncate(PAGE_SIZE);
+            Some(Cursor {
+                offset: offset + PAGE_SIZE as u64,
+            })
+        } else {
+            None
+        };
 
-        Ok(ListTablesResponse { tables })
+        Ok(ListTablesResponse { tables, next_cursor })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ListTablesTool;
+
+    #[test]
+    fn description_documents_pagination() {
+        let desc = ListTablesTool::DESCRIPTION;
+        assert!(desc.contains("nextCursor"), "description must mention `nextCursor`");
+        assert!(desc.contains("cursor"), "description must document cursor semantics");
+        assert!(
+            desc.contains("-32602"),
+            "description must mention the invalid-cursor error code"
+        );
     }
 }

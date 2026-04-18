@@ -182,7 +182,7 @@ Lists all accessible databases. Returns a JSON array of database names. Not avai
 
 ### list_tables
 
-Lists all tables in a database. Parameters: `database_name`.
+Lists tables in a database, paginated. Parameters: `database_name`, `cursor` (optional opaque token from a prior response's `nextCursor`). Returns up to 100 tables per call; when more remain, the response includes a `nextCursor` string — pass it back on the next call to fetch the next page. Iterate until `nextCursor` is absent.
 
 ### get_table_schema
 

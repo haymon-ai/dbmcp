@@ -1,5 +1,6 @@
 ---
 source: tests/approval/mysql.rs
+assertion_line: 51
 expression: tools
 ---
 [
@@ -139,11 +140,19 @@ expression: tools
   {
     "name": "list_tables",
     "title": "List Tables",
-    "description": "List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → list_tables(database_name=\"mydb\")\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>",
+    "description": "List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → list_tables(database_name=\"mydb\")\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nThis tool returns up to 100 tables per call. If more tables exist, the response includes a `nextCursor` string — call `list_tables` again with that string as the `cursor` argument to fetch the next page. Iterate until `nextCursor` is absent.\n\nCursors are opaque: do not parse, modify, or persist them across sessions. Passing a malformed or stale cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.\n\nNote: tables created or dropped between paginated calls may cause the same table to appear twice or to be skipped. Re-enumerate from a fresh call for a consistent snapshot.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `list_tables` tool.",
       "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "database_name": {
           "description": "The database name to list tables from. Required. Use `list_databases` first to see available databases.",
           "type": "string"
@@ -159,8 +168,15 @@ expression: tools
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `list_tables` tool.",
       "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tables": {
-          "description": "Sorted list of table names.",
+          "description": "Sorted list of table names for this page.",
           "items": {
             "type": "string"
           },

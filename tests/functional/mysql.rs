@@ -142,6 +142,7 @@ async fn test_lists_tables() {
     let handler = handler(false);
     let request = ListTablesRequest {
         database_name: "app".into(),
+        ..Default::default()
     };
 
     let response = handler.list_tables(&request).await.unwrap();
@@ -311,6 +312,7 @@ async fn test_lists_tables_cross_database() {
     let handler = handler(false);
     let request = ListTablesRequest {
         database_name: "analytics".into(),
+        ..Default::default()
     };
 
     let response = handler.list_tables(&request).await.unwrap();
@@ -394,6 +396,7 @@ async fn test_uses_default_pool_for_matching_database() {
     let handler = handler(false);
     let request = ListTablesRequest {
         database_name: "app".into(),
+        ..Default::default()
     };
 
     let response = handler.list_tables(&request).await.unwrap();
@@ -472,6 +475,7 @@ async fn test_drop_table_success() {
     // Verify it's gone
     let tables_request = ListTablesRequest {
         database_name: "app".into(),
+        ..Default::default()
     };
     let response = handler.list_tables(&tables_request).await.unwrap();
     let tables = response.tables;
@@ -603,6 +607,7 @@ async fn test_list_tables_nonexistent_database_returns_empty() {
     let handler = handler(false);
     let request = ListTablesRequest {
         database_name: "nonexistent_db_xyz".into(),
+        ..Default::default()
     };
 
     // MySQL queries information_schema.TABLES — a nonexistent schema returns
@@ -620,6 +625,7 @@ async fn test_list_tables_invalid_database_name() {
     let handler = handler(false);
     let request = ListTablesRequest {
         database_name: String::new(),
+        ..Default::default()
     };
 
     let response = handler.list_tables(&request).await;
@@ -1202,6 +1208,7 @@ async fn test_list_tables_control_char_database_rejected() {
     let handler = handler(true);
     let request = ListTablesRequest {
         database_name: "test\x00db".into(),
+        ..Default::default()
     };
     let result = handler.list_tables(&request).await;
     assert!(result.is_err(), "control char in database name should be rejected");
@@ -1245,4 +1252,111 @@ async fn test_timeout_on_list_tables() {
     };
     let result = handler.read_query(&request).await;
     assert!(result.is_err(), "slow query should time out");
+}
+
+// === Pagination (feature 029) ===
+
+const PG_DB: &str = "app";
+
+async fn seed_n_tables(handler: &MysqlHandler, prefix: &str, n: usize) {
+    for i in 1..=n {
+        let create = QueryRequest {
+            query: format!("CREATE TABLE {prefix}_{i:04} (id INT)"),
+            database_name: PG_DB.into(),
+        };
+        handler.write_query(&create).await.expect("seed create");
+    }
+}
+
+async fn drop_seeded_tables(handler: &MysqlHandler, prefix: &str, n: usize) {
+    for i in 1..=n {
+        let drop = DropTableRequest {
+            table_name: format!("{prefix}_{i:04}"),
+            database_name: PG_DB.into(),
+        };
+        let _ = handler.drop_table(&drop).await;
+    }
+}
+
+async fn collect_all_paged(handler: &MysqlHandler, prefix: &str) -> Vec<String> {
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let request = ListTablesRequest {
+            database_name: PG_DB.into(),
+            cursor,
+        };
+        let response = handler.list_tables(&request).await.expect("list page");
+        all.extend(response.tables.into_iter().filter(|t| t.starts_with(prefix)));
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    all
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_traverses_over_250_tables() {
+    let handler = handler(false);
+    let prefix = "pg_many";
+    drop_seeded_tables(&handler, prefix, 250).await;
+    seed_n_tables(&handler, prefix, 250).await;
+
+    let collected = collect_all_paged(&handler, prefix).await;
+
+    assert_eq!(
+        collected.len(),
+        250,
+        "expected 250 seeded tables, got {}",
+        collected.len()
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(collected, sorted, "pages must preserve global name ordering");
+    let unique: std::collections::HashSet<_> = collected.iter().collect();
+    assert_eq!(unique.len(), 250, "no duplicates across pages");
+
+    drop_seeded_tables(&handler, prefix, 250).await;
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
+    let handler = handler(true);
+    let response = handler
+        .list_tables(&ListTablesRequest {
+            database_name: PG_DB.into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        response.tables.len() <= 100,
+        "seeded fixture must stay within PAGE_SIZE for this assertion"
+    );
+    if response.tables.len() < 100 {
+        assert!(
+            response.next_cursor.is_none(),
+            "under PAGE_SIZE must not emit nextCursor"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
+    use database_mcp_server::pagination::Cursor;
+
+    let handler = handler(true);
+    let request = ListTablesRequest {
+        database_name: PG_DB.into(),
+        cursor: Some(Cursor { offset: 10_000 }),
+    };
+    let response = handler.list_tables(&request).await.unwrap();
+
+    assert!(
+        response.tables.is_empty(),
+        "off-the-end cursor must return empty tables, got {:?}",
+        response.tables
+    );
+    assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }

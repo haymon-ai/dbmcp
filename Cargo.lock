@@ -532,6 +532,7 @@ dependencies = [
 name = "database-mcp-server"
 version = "0.6.4"
 dependencies = [
+ "base64",
  "rmcp",
  "serde",
  "serde_json",

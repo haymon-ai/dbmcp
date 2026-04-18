@@ -1,5 +1,6 @@
 ---
 source: tests/approval/sqlite.rs
+assertion_line: 46
 expression: tools
 ---
 [
@@ -91,7 +92,7 @@ expression: tools
   {
     "name": "list_tables",
     "title": "List Tables",
-    "description": "List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what tables exist in the database\n- You need a table name for get_table_schema or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What tables are in this database?\"\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>",
+    "description": "List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what tables exist in the database\n- You need a table name for get_table_schema or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What tables are in this database?\"\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nThis tool returns up to 100 tables per call. If more tables exist, the response includes a `nextCursor` string — call `list_tables` again with that string as the `cursor` argument to fetch the next page. Iterate until `nextCursor` is absent.\n\nCursors are opaque: do not parse, modify, or persist them across sessions. Passing a malformed or stale cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.\n\nNote: tables created or dropped between paginated calls may cause the same table to appear twice or to be skipped. Re-enumerate from a fresh call for a consistent snapshot.\n</pagination>",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -100,8 +101,15 @@ expression: tools
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `list_tables` tool.",
       "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tables": {
-          "description": "Sorted list of table names.",
+          "description": "Sorted list of table names for this page.",
           "items": {
             "type": "string"
           },
