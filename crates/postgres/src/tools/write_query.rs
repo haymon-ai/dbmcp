@@ -8,7 +8,6 @@ use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use serde_json::Value;
 
 use crate::PostgresHandler;
 
@@ -93,8 +92,6 @@ impl PostgresHandler {
             validate_ident(name)?;
         }
         let rows = self.connection.fetch_json(query.as_str(), db).await?;
-        Ok(QueryResponse {
-            rows: Value::Array(rows),
-        })
+        Ok(QueryResponse { rows })
     }
 }

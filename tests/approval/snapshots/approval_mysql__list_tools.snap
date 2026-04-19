@@ -1,5 +1,6 @@
 ---
 source: tests/approval/mysql.rs
+assertion_line: 42
 expression: tools
 ---
 [
@@ -162,10 +163,12 @@ expression: tools
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "description": "Response for the `write_query` and `explain_query` tools.",
       "properties": {
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name."
+          "description": "Result rows, each a JSON object keyed by a column name.",
+          "items": true,
+          "type": "array"
         }
       },
       "required": [
@@ -345,11 +348,19 @@ expression: tools
   {
     "name": "read_query",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use write_query\n- Query performance analysis → use explain_query\n- Discovering tables or columns → use list_tables or get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use write_query\n✗ \"EXPLAIN SELECT ...\" → use explain_query for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use write_query\n- Query performance analysis → use explain_query\n- Discovering tables or columns → use list_tables or get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use write_query\n✗ \"EXPLAIN SELECT ...\" → use explain_query for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\nThis tool paginates `SELECT` result rows. If more rows remain, the response includes a `nextCursor` string — call `read_query` again with the same `query` and `database_name` and pass that string as the `cursor` argument. Iterate until `nextCursor` is absent.\n\nFor stable traversal, include a deterministic `ORDER BY` in your SQL; without one, rows may interleave or repeat across pages.\n\nCursors are opaque: do not parse, modify, or persist them across sessions. A malformed cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.\n\n`SHOW`, `DESC`/`DESCRIBE`, `USE`, and `EXPLAIN` statements are returned in a single page; any `cursor` argument is ignored for them.\n\nHold `query` and `database_name` constant across paged calls in a single traversal. Changing either while passing a cursor is undefined — no error is raised, but results may be meaningless.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `read_query` and `write_query` tools.",
+      "description": "Request for the `read_query` tool.",
       "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.\nIgnored for non-`SELECT` statement kinds admitted by the backend\ndialect (such as `SHOW` or `EXPLAIN`); those always return a single\npage.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "database_name": {
           "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
           "type": "string"
@@ -363,21 +374,30 @@ expression: tools
         "query",
         "database_name"
       ],
-      "title": "QueryRequest",
+      "title": "ReadQueryRequest",
       "type": "object"
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "description": "Response for the `read_query` tool.",
       "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name."
+          "description": "Result rows, each a JSON object keyed by a column name.",
+          "items": true,
+          "type": "array"
         }
       },
       "required": [
         "rows"
       ],
-      "title": "QueryResponse",
+      "title": "ReadQueryResponse",
       "type": "object"
     },
     "annotations": {
@@ -393,7 +413,7 @@ expression: tools
     "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT, SHOW) → use read_query\n- Query performance analysis → use explain_query\n- Creating/dropping entire databases → use create_database or drop_database\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use read_query\n</examples>\n\n<what_it_returns>\nA JSON array of affected/returning row objects, each keyed by column name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `read_query` and `write_query` tools.",
+      "description": "Request for the `write_query` tool.",
       "properties": {
         "database_name": {
           "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
@@ -413,10 +433,12 @@ expression: tools
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `read_query`, `write_query`, and `explain_query` tools.",
+      "description": "Response for the `write_query` and `explain_query` tools.",
       "properties": {
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name."
+          "description": "Result rows, each a JSON object keyed by a column name.",
+          "items": true,
+          "type": "array"
         }
       },
       "required": [

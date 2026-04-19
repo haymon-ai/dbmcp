@@ -90,7 +90,7 @@ pub struct TableSchemaResponse {
     pub columns: Value,
 }
 
-/// Request for the `read_query` and `write_query` tools.
+/// Request for the `write_query` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
     /// The SQL query to execute.
@@ -99,11 +99,40 @@ pub struct QueryRequest {
     pub database_name: String,
 }
 
-/// Response for the `read_query`, `write_query`, and `explain_query` tools.
+/// Request for the `read_query` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ReadQueryRequest {
+    /// The SQL query to execute.
+    pub query: String,
+    /// The database to run the query against. Required. Use `list_databases` first to see available databases.
+    pub database_name: String,
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    /// Ignored for non-`SELECT` statement kinds admitted by the backend
+    /// dialect (such as `SHOW` or `EXPLAIN`); those always return a single
+    /// page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `write_query` and `explain_query` tools.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
-    pub rows: Value,
+    pub rows: Vec<Value>,
+}
+
+/// Response for the `read_query` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReadQueryResponse {
+    /// Result rows, each a JSON object keyed by a column name.
+    pub rows: Vec<Value>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final
+    /// page, when the result fits in one page, or when the statement is a
+    /// non-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `explain_query` tool.

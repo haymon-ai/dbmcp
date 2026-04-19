@@ -13,3 +13,4 @@ pub mod validation;
 
 pub use connection::Connection;
 pub use error::SqlError;
+pub use validation::StatementKind;

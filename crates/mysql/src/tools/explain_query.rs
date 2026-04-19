@@ -9,7 +9,6 @@ use database_mcp_sql::sanitize::validate_ident;
 use database_mcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use serde_json::Value;
 
 use crate::MysqlHandler;
 
@@ -104,7 +103,7 @@ impl MysqlHandler {
         } = request;
 
         if *analyze && self.config.read_only {
-            validate_read_only(query, &sqlparser::dialect::MySqlDialect {})?;
+            let _ = validate_read_only(query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
         let db = Some(database_name.trim()).filter(|s| !s.is_empty());
@@ -119,8 +118,6 @@ impl MysqlHandler {
         };
 
         let rows = self.connection.fetch_json(explain_sql.as_str(), db).await?;
-        Ok(QueryResponse {
-            rows: Value::Array(rows),
-        })
+        Ok(QueryResponse { rows })
     }
 }

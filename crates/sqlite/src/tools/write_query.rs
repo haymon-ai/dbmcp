@@ -8,7 +8,6 @@ use database_mcp_sql::Connection as _;
 use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use serde_json::Value;
 
 use crate::SqliteHandler;
 use crate::types::QueryRequest;
@@ -89,8 +88,6 @@ impl SqliteHandler {
         let QueryRequest { query } = request;
 
         let rows = self.connection.fetch_json(query.as_str(), None).await?;
-        Ok(QueryResponse {
-            rows: Value::Array(rows),
-        })
+        Ok(QueryResponse { rows })
     }
 }

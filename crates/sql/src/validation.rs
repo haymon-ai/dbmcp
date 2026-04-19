@@ -5,7 +5,18 @@ use sqlparser::ast::{Expr, Function, Statement, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
 
-/// Validates that a SQL query is read-only.
+/// Classifies a validated read-only statement for pagination dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatementKind {
+    /// `SELECT`, `WITH ... SELECT`, or compound queries (`UNION`/`INTERSECT`/`EXCEPT`).
+    /// Composable inside a subquery wrap with an appended `LIMIT` / `OFFSET`.
+    Select,
+    /// `SHOW`, `DESC` / `DESCRIBE`, `USE`, or `EXPLAIN` — read-only but not
+    /// composable as a subquery source. Returned in a single response.
+    NonSelect,
+}
+
+/// Validates that a SQL query is read-only and classifies it for pagination.
 ///
 /// Parses the query using the given dialect and checks:
 /// 1. Exactly one statement (multi-statement injection blocked)
@@ -13,10 +24,14 @@ use sqlparser::parser::Parser;
 /// 3. No dangerous functions (`LOAD_FILE`)
 /// 4. No INTO OUTFILE/DUMPFILE clauses
 ///
+/// Returns the classified [`StatementKind`] on success so callers that
+/// paginate can dispatch `Select` to a subquery-wrapped fetch and route
+/// `NonSelect` through a single-page pass-through.
+///
 /// # Errors
 ///
 /// Returns [`SqlError`] if the query is not allowed in read-only mode.
-pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
+pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<StatementKind, SqlError> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Err(SqlError::ReadOnlyViolation);
@@ -41,11 +56,12 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), SqlEr
 
     let stmt = &statements[0];
 
-    // Check statement type is read-only
+    // Check statement type is read-only and classify it.
     match stmt {
         Statement::Query(_) => {
             // SELECT — but check for dangerous functions
             check_dangerous_functions(stmt)?;
+            Ok(StatementKind::Select)
         }
         Statement::ShowTables { .. }
         | Statement::ShowColumns { .. }
@@ -61,15 +77,9 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<(), SqlEr
         | Statement::ShowObjects(_)
         | Statement::ExplainTable { .. }
         | Statement::Explain { .. }
-        | Statement::Use(_) => {
-            // SHOW, DESCRIBE, EXPLAIN, USE are all read-only
-        }
-        _ => {
-            return Err(SqlError::ReadOnlyViolation);
-        }
+        | Statement::Use(_) => Ok(StatementKind::NonSelect),
+        _ => Err(SqlError::ReadOnlyViolation),
     }
-
-    Ok(())
 }
 
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
@@ -112,6 +122,40 @@ mod tests {
     const SQLITE: SQLiteDialect = SQLiteDialect {};
 
     const DIALECT: MySqlDialect = MySqlDialect {};
+
+    // === Statement classification ===
+
+    #[test]
+    fn classifies_select_vs_non_select() {
+        // Select-like: plain SELECT, CTE, compound queries all map to StatementKind::Select.
+        assert_eq!(validate_read_only("SELECT 1", &DIALECT).unwrap(), StatementKind::Select,);
+        assert_eq!(
+            validate_read_only("WITH x AS (SELECT 1) SELECT * FROM x", &DIALECT).unwrap(),
+            StatementKind::Select,
+        );
+        assert_eq!(
+            validate_read_only("SELECT 1 UNION SELECT 2", &DIALECT).unwrap(),
+            StatementKind::Select,
+        );
+
+        // Catalog/metadata statements map to StatementKind::NonSelect.
+        assert_eq!(
+            validate_read_only("SHOW DATABASES", &DIALECT).unwrap(),
+            StatementKind::NonSelect,
+        );
+        assert_eq!(
+            validate_read_only("DESCRIBE users", &DIALECT).unwrap(),
+            StatementKind::NonSelect,
+        );
+        assert_eq!(
+            validate_read_only("USE app", &DIALECT).unwrap(),
+            StatementKind::NonSelect,
+        );
+        assert_eq!(
+            validate_read_only("EXPLAIN SELECT 1", &DIALECT).unwrap(),
+            StatementKind::NonSelect,
+        );
+    }
 
     // === Allowed queries ===
 
@@ -444,7 +488,7 @@ mod tests {
         let sql = "SELECT 1\u{037E} DROP TABLE users";
         let result = validate_read_only(sql, &MYSQL);
         assert!(
-            !matches!(result, Ok(())),
+            result.is_err(),
             "SQL with Cyrillic question mark should not silently succeed as single SELECT"
         );
     }
@@ -454,7 +498,7 @@ mod tests {
         let sql = "SELECT 1\u{FF1B} DROP TABLE users";
         let result = validate_read_only(sql, &MYSQL);
         assert!(
-            !matches!(&result, Ok(())) || validate_read_only(sql, &MYSQL).is_ok(),
+            result.is_err() || validate_read_only(sql, &MYSQL).is_ok(),
             "fullwidth semicolon is a single token, not a statement separator"
         );
     }

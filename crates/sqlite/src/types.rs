@@ -33,11 +33,24 @@ pub struct ListTablesRequest {
     pub cursor: Option<Cursor>,
 }
 
-/// Request for the `read_query` and `write_query` tools.
+/// Request for the `write_query` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
+}
+
+/// Request for the `read_query` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ReadQueryRequest {
+    /// The SQL query to execute.
+    pub query: String,
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    /// Ignored for `EXPLAIN` statements.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
 }
 
 /// Request for the `explain_query` tool.

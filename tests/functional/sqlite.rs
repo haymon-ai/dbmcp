@@ -12,7 +12,7 @@
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteHandler;
 use database_mcp_sqlite::types::{
-    DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest,
+    DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -45,15 +45,15 @@ async fn test_write_query_insert_and_verify() {
     let insert = QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
     };
-    let response = handler.write_query(&insert).await.unwrap();
-    assert!(response.rows.is_array());
+    handler.write_query(&insert).await.unwrap();
 
     // Verify
-    let select = QueryRequest {
+    let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
+        cursor: None,
     };
     let rows = handler.read_query(&select).await.unwrap();
-    let arr = rows.rows.as_array().expect("array");
+    let arr = &rows.rows;
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["name"], "WriteTest");
 
@@ -78,11 +78,12 @@ async fn test_write_query_update() {
     };
     handler.write_query(&update).await.unwrap();
 
-    let select = QueryRequest {
+    let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
+        cursor: None,
     };
     let rows = handler.read_query(&select).await.unwrap();
-    let arr = rows.rows.as_array().expect("array");
+    let arr = &rows.rows;
     assert_eq!(arr[0]["name"], "After");
 
     // Clean up
@@ -106,11 +107,12 @@ async fn test_write_query_delete() {
     };
     handler.write_query(&delete).await.unwrap();
 
-    let select = QueryRequest {
+    let select = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
+        cursor: None,
     };
     let rows = handler.read_query(&select).await.unwrap();
-    let arr = rows.rows.as_array().expect("array");
+    let arr = &rows.rows;
     assert!(arr.is_empty(), "Row should be deleted");
 }
 
@@ -170,21 +172,21 @@ async fn test_gets_table_schema_with_relations() {
 #[tokio::test]
 async fn test_executes_sql() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows: Vec<Value> = response.rows.as_array().expect("rows should be an array").clone();
-
-    assert_eq!(rows.len(), 3, "Expected 3 users, got {}", rows.len());
+    assert_eq!(response.rows.len(), 3, "Expected 3 users, got {}", response.rows.len());
 }
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -199,8 +201,9 @@ async fn test_query_timeout_fast_query_succeeds() {
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&config);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -214,8 +217,9 @@ async fn test_query_timeout_disabled_with_none() {
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&config);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -267,7 +271,7 @@ async fn test_explain_query_select() {
     };
 
     let response = handler.explain_query(&request).await.unwrap();
-    let plan = response.rows.as_array().expect("rows should be an array");
+    let plan = &response.rows;
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
 
@@ -279,7 +283,7 @@ async fn test_explain_query_with_join() {
     };
 
     let response = handler.explain_query(&request).await.unwrap();
-    let plan = response.rows.as_array().expect("rows should be an array");
+    let plan = &response.rows;
     assert!(!plan.is_empty(), "EXPLAIN QUERY PLAN should return plan for JOIN query");
 }
 
@@ -330,7 +334,10 @@ async fn test_drop_table_invalid_identifier() {
 #[tokio::test]
 async fn test_read_query_empty_query() {
     let handler = handler(false);
-    let request = QueryRequest { query: String::new() };
+    let request = ReadQueryRequest {
+        query: String::new(),
+        cursor: None,
+    };
 
     let response = handler.read_query(&request).await;
     assert!(response.is_err(), "Expected error for empty query");
@@ -339,8 +346,9 @@ async fn test_read_query_empty_query() {
 #[tokio::test]
 async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "   \t\n  ".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -350,8 +358,9 @@ async fn test_read_query_whitespace_only_query() {
 #[tokio::test]
 async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT 1; DROP TABLE users".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -361,8 +370,9 @@ async fn test_read_query_multi_statement_blocked() {
 #[tokio::test]
 async fn test_read_query_into_outfile_blocked() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await;
@@ -372,12 +382,13 @@ async fn test_read_query_into_outfile_blocked() {
 #[tokio::test]
 async fn test_read_query_with_join() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert!(!rows.is_empty(), "JOIN query should return results");
     assert!(rows[0].get("title").is_some(), "Should have title column");
     assert!(rows[0].get("name").is_some(), "Should have name column");
@@ -437,24 +448,26 @@ async fn test_get_table_schema_junction_table() {
 #[tokio::test]
 async fn test_read_query_empty_result_set() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert!(rows.is_empty(), "Expected empty result set");
 }
 
 #[tokio::test]
 async fn test_read_query_aggregate() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT COUNT(*) AS total FROM users".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["total"], 3);
 }
@@ -462,36 +475,39 @@ async fn test_read_query_aggregate() {
 #[tokio::test]
 async fn test_read_query_group_by() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert!(rows.len() >= 2, "Expected at least 2 groups");
 }
 
 #[tokio::test]
 async fn test_read_query_with_comments() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Comment-prefixed SELECT should work");
 }
 
 #[tokio::test]
 async fn test_read_query_subquery() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert!(!rows.is_empty(), "Subquery should return results");
 }
 
@@ -553,36 +569,39 @@ async fn test_get_table_schema_column_details() {
 #[tokio::test]
 async fn test_read_query_with_limit() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert_eq!(rows.len(), 2, "LIMIT 2 should return exactly 2 rows");
 }
 
 #[tokio::test]
 async fn test_read_query_with_line_comment() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Line-comment prefixed SELECT should work");
 }
 
 #[tokio::test]
 async fn test_read_query_null_values() {
     let handler = handler(false);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
+        cursor: None,
     };
 
     let response = handler.read_query(&request).await.unwrap();
-    let rows = response.rows.as_array().expect("array");
+    let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     assert!(rows[0].get("body").is_some(), "body column should be present");
 }
@@ -603,11 +622,12 @@ async fn test_drop_table_blocked_in_read_only() {
 #[tokio::test]
 async fn test_list_tables_returns_empty_for_no_match() {
     let handler = handler(true);
-    let request = QueryRequest {
+    let request = ReadQueryRequest {
         query: "SELECT name FROM sqlite_master WHERE type='table' AND name='nonexistent_xyz'".into(),
+        cursor: None,
     };
     let result = handler.read_query(&request).await.unwrap();
-    let rows = result.rows.as_array().expect("array");
+    let rows = &result.rows;
     assert!(rows.is_empty(), "query for nonexistent table should return empty array");
 }
 
@@ -780,4 +800,221 @@ async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
             "cursor {bad:?} error is not descriptive: {err}"
         );
     }
+}
+
+// === read_query pagination (spec 034) ===
+
+async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> Vec<Value> {
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let request = ReadQueryRequest {
+            query: query.into(),
+            cursor,
+        };
+        let response = handler.read_query(&request).await.expect("read_query page");
+        all.extend(response.rows);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    all
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_traverses_pages() {
+    let handler_paged = handler_with_page_size(2);
+    let handler_full = handler(true);
+    let query = "SELECT id FROM users ORDER BY id";
+
+    let collected = collect_all_paged_read_query(&handler_paged, query).await;
+
+    let single = handler_full
+        .read_query(&ReadQueryRequest {
+            query: query.into(),
+            cursor: None,
+        })
+        .await
+        .expect("single page");
+    assert_eq!(
+        collected, single.rows,
+        "paged traversal must yield identical rows (and ordering) to a single full page"
+    );
+    let ids: Vec<i64> = collected
+        .iter()
+        .map(|row| row["id"].as_i64().expect("id is integer"))
+        .collect();
+    assert_eq!(ids, vec![1, 2, 3], "seeded users should be ids 1..=3");
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_small_result_no_next_cursor() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users WHERE id = 1".into(),
+            cursor: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        response.next_cursor.is_none(),
+        "single-row result must not emit nextCursor"
+    );
+    assert_eq!(response.rows.len(), 1);
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_empty_result_no_next_cursor() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users WHERE id = -1".into(),
+            cursor: None,
+        })
+        .await
+        .unwrap();
+    assert!(&response.rows.is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_preserves_inner_limit() {
+    // Caller's inner LIMIT/OFFSET stays inside the subquery wrap.
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
+            cursor: None,
+        })
+        .await
+        .unwrap();
+    let rows = &response.rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["id"].as_i64(),
+        Some(2),
+        "inner OFFSET 1 LIMIT 1 must return id=2"
+    );
+    assert!(response.next_cursor.is_none(), "inner 1-row result fits on one page");
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
+    use database_mcp_server::pagination::Cursor;
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users ORDER BY id".into(),
+            cursor: Some(Cursor { offset: 10_000 }),
+        })
+        .await
+        .unwrap();
+    assert!(&response.rows.is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_survives_trailing_line_comment() {
+    // A trailing `-- comment` in the caller's SQL must not swallow the
+    // subquery-wrap's closing paren + LIMIT/OFFSET. Regression guard for
+    // the newline-before-`)` fix in Pager::wrap_select.
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users ORDER BY id -- fetch users".into(),
+            cursor: None,
+        })
+        .await
+        .expect("trailing comment must not break the subquery wrap");
+    let rows = &response.rows;
+    assert_eq!(
+        rows.len(),
+        2,
+        "page 1 should cap at page_size=2 even with trailing comment"
+    );
+    assert!(response.next_cursor.is_some());
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_strips_trailing_semicolon() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(&ReadQueryRequest {
+            query: "SELECT id FROM users WHERE id = 1;".into(),
+            cursor: None,
+        })
+        .await
+        .unwrap();
+    let rows = &response.rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"].as_i64(), Some(1));
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
+    use serde_json::json;
+
+    let bad_cursors = ["!!!not-base64", "bm90LWpzb24", "eyJ4IjoxfQ", "eyJvZmZzZXQiOi0xfQ"];
+
+    for bad in bad_cursors {
+        let err = serde_json::from_value::<ReadQueryRequest>(json!({
+            "query": "SELECT 1",
+            "cursor": bad,
+        }))
+        .expect_err(&format!("cursor {bad:?} should be rejected at deserialize time"));
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("cursor") || msg.contains("base64") || msg.contains("malformed"),
+            "cursor {bad:?} error is not descriptive: {err}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_read_query_cursor_does_not_bypass_read_only() {
+    use database_mcp_server::pagination::Cursor;
+    let handler = handler_with_page_size(2);
+    let result = handler
+        .read_query(&ReadQueryRequest {
+            query: "DELETE FROM users WHERE id = 1".into(),
+            cursor: Some(Cursor { offset: 0 }),
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "DELETE must fail read-only check even with a valid cursor"
+    );
+}
+
+#[tokio::test]
+async fn test_read_query_non_select_single_page_with_cursor_ignored() {
+    // EXPLAIN is classified as NonSelect; cursor must be ignored (no error,
+    // no nextCursor, response identical to the no-cursor call).
+    use database_mcp_server::pagination::Cursor;
+    let handler = handler_with_page_size(2);
+
+    let without_cursor = handler
+        .read_query(&ReadQueryRequest {
+            query: "EXPLAIN SELECT 1".into(),
+            cursor: None,
+        })
+        .await
+        .expect("EXPLAIN without cursor should succeed");
+
+    let with_cursor = handler
+        .read_query(&ReadQueryRequest {
+            query: "EXPLAIN SELECT 1".into(),
+            cursor: Some(Cursor { offset: 100 }),
+        })
+        .await
+        .expect("EXPLAIN with cursor should succeed — cursor must be ignored");
+
+    assert!(without_cursor.next_cursor.is_none());
+    assert!(with_cursor.next_cursor.is_none());
+    assert_eq!(
+        without_cursor.rows, with_cursor.rows,
+        "cursor must be silently ignored for non-SELECT statements"
+    );
 }
