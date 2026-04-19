@@ -1,6 +1,5 @@
 ---
 source: tests/approval/mysql.rs
-assertion_line: 42
 expression: tools
 ---
 [
@@ -235,9 +234,21 @@ expression: tools
   {
     "name": "list_databases",
     "title": "List Databases",
-    "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for list_tables, get_table_schema, or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call list_databases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>",
+    "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for list_tables, get_table_schema, or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call list_databases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>\n\n<pagination>\nThis tool paginates its response. If more databases exist than fit in one page, the response includes a `nextCursor` string — call `list_databases` again with that string as the `cursor` argument to fetch the next page. Iterate until `nextCursor` is absent.\n\nCursors are opaque: do not parse, modify, or persist them across sessions. Passing a malformed or stale cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.\n\nNote: databases created or dropped between paginated calls may cause the same database to appear twice or to be skipped. Re-enumerate from a fresh call for a consistent snapshot.\n</pagination>",
     "inputSchema": {
-      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `list_databases` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ListDatabasesRequest",
       "type": "object"
     },
     "outputSchema": {
@@ -245,11 +256,18 @@ expression: tools
       "description": "Response for the `list_databases` tool.",
       "properties": {
         "databases": {
-          "description": "Sorted list of database names.",
+          "description": "Sorted list of database names for this page.",
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

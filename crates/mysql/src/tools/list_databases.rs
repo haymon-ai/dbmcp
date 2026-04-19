@@ -1,13 +1,12 @@
 //! MCP tool: `list_databases`.
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
-use database_mcp_server::types::ListDatabasesResponse;
+use database_mcp_server::pagination::Pager;
+use database_mcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::MysqlHandler;
 
@@ -33,11 +32,19 @@ ALWAYS call this tool FIRST when:
 
 <what_it_returns>
 A sorted JSON array of database name strings.
-</what_it_returns>"#;
+</what_it_returns>
+
+<pagination>
+This tool paginates its response. If more databases exist than fit in one page, the response includes a `nextCursor` string — call `list_databases` again with that string as the `cursor` argument to fetch the next page. Iterate until `nextCursor` is absent.
+
+Cursors are opaque: do not parse, modify, or persist them across sessions. Passing a malformed or stale cursor returns a JSON-RPC error (code -32602); recover by retrying without a cursor to restart from the first page.
+
+Note: databases created or dropped between paginated calls may cause the same database to appear twice or to be skipped. Re-enumerate from a fresh call for a consistent snapshot.
+</pagination>"#;
 }
 
 impl ToolBase for ListDatabasesTool {
-    type Parameter = ();
+    type Parameter = ListDatabasesRequest;
     type Output = ListDatabasesResponse;
     type Error = ErrorData;
 
@@ -53,10 +60,6 @@ impl ToolBase for ListDatabasesTool {
         Some(Self::DESCRIPTION.into())
     }
 
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        None
-    }
-
     fn annotations() -> Option<ToolAnnotations> {
         Some(
             ToolAnnotations::new()
@@ -69,23 +72,58 @@ impl ToolBase for ListDatabasesTool {
 }
 
 impl AsyncTool<MysqlHandler> for ListDatabasesTool {
-    async fn invoke(handler: &MysqlHandler, _params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.list_databases().await?)
+    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler.list_databases(&params).await
     }
 }
 
 impl MysqlHandler {
-    /// Lists all accessible databases.
+    /// Lists one page of accessible databases.
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the query fails.
-    pub async fn list_databases(&self) -> Result<ListDatabasesResponse, SqlError> {
-        let sql = r"
+    /// Returns [`ErrorData`] with code `-32602` if `request.cursor` is
+    /// malformed, or an internal-error [`ErrorData`] if the underlying
+    /// query fails.
+    pub async fn list_databases(&self, request: &ListDatabasesRequest) -> Result<ListDatabasesResponse, ErrorData> {
+        let pager = Pager::new(request.cursor, self.config.page_size);
+        let query = format!(
+            r"
             SELECT CAST(SCHEMA_NAME AS CHAR)
             FROM information_schema.SCHEMATA
-            ORDER BY SCHEMA_NAME";
-        let databases: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
-        Ok(ListDatabasesResponse { databases })
+            ORDER BY SCHEMA_NAME
+            LIMIT {} OFFSET {}",
+            pager.limit(),
+            pager.offset(),
+        );
+
+        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
+        let (databases, next_cursor) = pager.finalize(rows);
+
+        Ok(ListDatabasesResponse { databases, next_cursor })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ListDatabasesTool;
+
+    #[test]
+    fn description_documents_pagination() {
+        let desc = ListDatabasesTool::DESCRIPTION;
+        assert!(desc.contains("nextCursor"), "description must mention `nextCursor`");
+        assert!(desc.contains("cursor"), "description must document cursor semantics");
+        assert!(
+            desc.contains("-32602"),
+            "description must mention the invalid-cursor error code"
+        );
+    }
+
+    #[test]
+    fn description_does_not_state_specific_page_size() {
+        assert!(
+            !ListDatabasesTool::DESCRIPTION.contains("100"),
+            "description must not hard-state `100` databases — page size is operator-configurable"
+        );
     }
 }

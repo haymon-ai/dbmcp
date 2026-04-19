@@ -16,11 +16,24 @@ pub struct MessageResponse {
     pub message: String,
 }
 
+/// Request for the `list_databases` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListDatabasesRequest {
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
 /// Response for the `list_databases` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListDatabasesResponse {
-    /// Sorted list of database names.
+    /// Sorted list of database names for this page.
     pub databases: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `create_database` tool.

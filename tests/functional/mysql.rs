@@ -12,8 +12,8 @@ use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_mysql::MysqlHandler;
 use database_mcp_mysql::types::DropTableRequest;
 use database_mcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest,
-    QueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesRequest,
+    ListTablesRequest, QueryRequest,
 };
 use serde_json::Value;
 
@@ -139,7 +139,7 @@ async fn test_write_query_delete() {
 async fn test_lists_databases() {
     let handler = handler(false);
 
-    let response = handler.list_databases().await.unwrap();
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
     let dbs = response.databases;
 
     assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
@@ -241,7 +241,7 @@ async fn test_creates_database() {
     let response = handler.create_database(&request).await.unwrap();
     assert!(response.message.contains("created successfully"));
 
-    let response = handler.list_databases().await.unwrap();
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
     let dbs = response.databases;
 
     assert!(dbs.iter().any(|db| db == "app_new"), "New db not in list");
@@ -252,7 +252,7 @@ async fn test_drops_database() {
     let handler = handler(false);
 
     // Verify seeded database exists
-    let response = handler.list_databases().await.unwrap();
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
     let dbs = response.databases;
     assert!(dbs.iter().any(|db| db == "canary"), "canary should exist before drop");
 
@@ -264,7 +264,7 @@ async fn test_drops_database() {
     assert!(response.message.contains("dropped successfully"));
 
     // Verify it's gone
-    let response = handler.list_databases().await.unwrap();
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
     let dbs = response.databases;
     assert!(
         !dbs.iter().any(|db| db == "canary"),
@@ -374,7 +374,7 @@ async fn test_gets_table_schema_cross_database() {
 async fn test_lists_databases_includes_cross_db() {
     let handler = handler(false);
 
-    let response = handler.list_databases().await.unwrap();
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
     let dbs = response.databases;
 
     assert!(
@@ -1404,4 +1404,112 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
         .expect("first page");
     assert_eq!(first.tables.len(), 1, "page_size=1 must return one table per page");
     assert!(first.next_cursor.is_some(), "page 1 must emit nextCursor");
+}
+
+async fn collect_all_paged_databases(handler: &MysqlHandler) -> Vec<String> {
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let request = ListDatabasesRequest { cursor };
+        let response = handler.list_databases(&request).await.expect("list page");
+        all.extend(response.databases);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    all
+}
+
+#[tokio::test]
+async fn test_list_databases_pagination_traverses_pages() {
+    let handler_paged = handler_with_page_size(1);
+    let handler_full = handler(true);
+
+    let collected = collect_all_paged_databases(&handler_paged).await;
+
+    let single_page = handler_full
+        .list_databases(&ListDatabasesRequest::default())
+        .await
+        .expect("single page");
+
+    assert_eq!(
+        collected, single_page.databases,
+        "paged traversal must yield identical results (and ordering) to a single full page"
+    );
+    let unique: std::collections::HashSet<&String> = collected.iter().collect();
+    assert_eq!(unique.len(), collected.len(), "no duplicates across pages");
+}
+
+#[tokio::test]
+async fn test_list_databases_pagination_small_set_no_next_cursor() {
+    let handler = handler(true);
+    let response = handler.list_databases(&ListDatabasesRequest::default()).await.unwrap();
+    assert!(
+        response.next_cursor.is_none(),
+        "seeded fixture below default page_size must not emit nextCursor"
+    );
+}
+
+#[tokio::test]
+async fn test_list_databases_pagination_boundary_page_size_equals_total() {
+    let handler_full = handler(true);
+    let total = handler_full
+        .list_databases(&ListDatabasesRequest::default())
+        .await
+        .expect("discover total")
+        .databases
+        .len();
+    let page_size = u16::try_from(total).expect("seed total fits in u16");
+
+    let handler_boundary = handler_with_page_size(page_size);
+    let response = handler_boundary
+        .list_databases(&ListDatabasesRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        response.databases.len(),
+        total,
+        "page_size equal to total must return everything on one page"
+    );
+    assert!(
+        response.next_cursor.is_none(),
+        "page_size equal to total must NOT emit nextCursor"
+    );
+}
+
+#[tokio::test]
+async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() {
+    use database_mcp_server::pagination::Cursor;
+
+    let handler = handler(true);
+    let request = ListDatabasesRequest {
+        cursor: Some(Cursor { offset: 10_000 }),
+    };
+    let response = handler.list_databases(&request).await.unwrap();
+
+    assert!(
+        response.databases.is_empty(),
+        "off-the-end cursor must return empty databases, got {:?}",
+        response.databases
+    );
+    assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
+}
+
+#[tokio::test]
+async fn test_list_databases_respects_configured_page_size() {
+    let handler = handler_with_page_size(1);
+    let first = handler
+        .list_databases(&ListDatabasesRequest::default())
+        .await
+        .expect("first page");
+    assert_eq!(
+        first.databases.len(),
+        1,
+        "page_size=1 must return one database per page"
+    );
+    assert!(
+        first.next_cursor.is_some(),
+        "page 1 must emit nextCursor when total > page_size"
+    );
 }
