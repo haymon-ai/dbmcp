@@ -1,4 +1,4 @@
-//! MCP tool: `explain_query`.
+//! MCP tool: `explainQuery`.
 
 use std::borrow::Cow;
 
@@ -12,13 +12,13 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ExplainQueryRequest;
 
-/// Marker type for the `explain_query` MCP tool.
+/// Marker type for the `explainQuery` MCP tool.
 pub(crate) struct ExplainQueryTool;
 
 impl ExplainQueryTool {
-    const NAME: &'static str = "explain_query";
+    const NAME: &'static str = "explainQuery";
     const TITLE: &'static str = "Explain Query";
-    const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured output via EXPLAIN QUERY PLAN.
+    const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.
 
 <usecase>
 Use when:
@@ -28,14 +28,14 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Running actual queries → use read_query or write_query
-- Checking table structure → use get_table_schema
+- Running actual queries → use readQuery or writeQuery
+- Checking table structure → use getTableSchema
 </when_not_to_use>
 
 <examples>
-✓ "Why is my SELECT on orders slow?" → explain_query(query="SELECT ...")
-✓ "How will SQLite execute this join?" → explain_query
-✗ "Run this SELECT" → use read_query
+✓ "Why is my SELECT on orders slow?" → explainQuery(query="SELECT ...")
+✓ "How will SQLite execute this join?" → explainQuery
+✗ "Run this SELECT" → use readQuery
 </examples>
 
 <what_it_returns>

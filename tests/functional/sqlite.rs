@@ -134,13 +134,11 @@ async fn test_lists_tables() {
 #[tokio::test]
 async fn test_gets_table_schema() {
     let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        table_name: "users".into(),
-    };
+    let request = GetTableSchemaRequest { table: "users".into() };
 
     let schema = handler.get_table_schema(request).await.unwrap();
 
-    assert_eq!(schema.table_name, "users");
+    assert_eq!(schema.table, "users");
     let columns = schema.columns.as_object().expect("columns object");
     for col in ["id", "name", "email", "created_at"] {
         assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
@@ -150,9 +148,7 @@ async fn test_gets_table_schema() {
 #[tokio::test]
 async fn test_gets_table_schema_with_relations() {
     let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        table_name: "posts".into(),
-    };
+    let request = GetTableSchemaRequest { table: "posts".into() };
 
     let schema = handler.get_table_schema(request).await.unwrap();
 
@@ -160,12 +156,12 @@ async fn test_gets_table_schema_with_relations() {
     assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
     let user_id = columns["user_id"].as_object().expect("user_id object");
     assert!(
-        user_id.contains_key("foreign_key"),
-        "Missing 'foreign_key' in user_id column"
+        user_id.contains_key("foreignKey"),
+        "Missing 'foreignKey' in user_id column"
     );
     assert!(
-        !user_id["foreign_key"].is_null(),
-        "foreign_key should not be null for user_id"
+        !user_id["foreignKey"].is_null(),
+        "foreignKey should not be null for user_id"
     );
 }
 
@@ -238,7 +234,7 @@ async fn test_drop_table_success() {
 
     // Drop it
     let drop_request = DropTableRequest {
-        table_name: "drop_test_simple".into(),
+        table: "drop_test_simple".into(),
     };
     let response = handler.drop_table(drop_request).await.unwrap();
     assert!(response.message.contains("dropped successfully"));
@@ -256,7 +252,7 @@ async fn test_drop_table_success() {
 async fn test_drop_table_nonexistent() {
     let handler = handler(false);
     let drop_request = DropTableRequest {
-        table_name: "nonexistent_table_xyz".into(),
+        table: "nonexistent_table_xyz".into(),
     };
 
     let response = handler.drop_table(drop_request).await;
@@ -302,7 +298,7 @@ async fn test_explain_query_invalid_sql() {
 async fn test_get_table_schema_nonexistent_table() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        table_name: "nonexistent_table_xyz".into(),
+        table: "nonexistent_table_xyz".into(),
     };
 
     let response = handler.get_table_schema(request).await;
@@ -312,9 +308,7 @@ async fn test_get_table_schema_nonexistent_table() {
 #[tokio::test]
 async fn test_get_table_schema_invalid_table_name() {
     let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        table_name: String::new(),
-    };
+    let request = GetTableSchemaRequest { table: String::new() };
 
     let response = handler.get_table_schema(request).await;
     assert!(response.is_err(), "Expected error for empty table name");
@@ -323,9 +317,7 @@ async fn test_get_table_schema_invalid_table_name() {
 #[tokio::test]
 async fn test_drop_table_invalid_identifier() {
     let handler = handler(false);
-    let drop_request = DropTableRequest {
-        table_name: String::new(),
-    };
+    let drop_request = DropTableRequest { table: String::new() };
 
     let response = handler.drop_table(drop_request).await;
     assert!(response.is_err(), "Expected error for empty table name");
@@ -412,7 +404,7 @@ async fn test_write_query_create_table() {
 
     // Clean up
     let drop = DropTableRequest {
-        table_name: "write_test_create".into(),
+        table: "write_test_create".into(),
     };
     handler.drop_table(drop).await.unwrap();
 }
@@ -421,11 +413,11 @@ async fn test_write_query_create_table() {
 async fn test_get_table_schema_junction_table() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        table_name: "post_tags".into(),
+        table: "post_tags".into(),
     };
 
     let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table_name, "post_tags");
+    assert_eq!(schema.table, "post_tags");
 
     let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("post_id"), "Missing 'post_id'");
@@ -434,13 +426,13 @@ async fn test_get_table_schema_junction_table() {
     // Both columns should have foreign keys
     let post_id = columns["post_id"].as_object().expect("post_id object");
     assert!(
-        post_id.get("foreign_key").is_some_and(|fk| !fk.is_null()),
+        post_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
         "post_id should have a foreign key"
     );
 
     let tag_id = columns["tag_id"].as_object().expect("tag_id object");
     assert!(
-        tag_id.get("foreign_key").is_some_and(|fk| !fk.is_null()),
+        tag_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
         "tag_id should have a foreign key"
     );
 }
@@ -514,12 +506,10 @@ async fn test_read_query_subquery() {
 #[tokio::test]
 async fn test_get_table_schema_no_foreign_keys() {
     let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        table_name: "tags".into(),
-    };
+    let request = GetTableSchemaRequest { table: "tags".into() };
 
     let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table_name, "tags");
+    assert_eq!(schema.table, "tags");
 
     let columns = schema.columns.as_object().expect("columns object");
     assert!(columns.contains_key("id"), "Missing 'id'");
@@ -527,7 +517,7 @@ async fn test_get_table_schema_no_foreign_keys() {
 
     // id column should have no foreign key
     let id_col = columns["id"].as_object().expect("id object");
-    let fk = id_col.get("foreign_key");
+    let fk = id_col.get("foreignKey");
     assert!(fk.is_none_or(Value::is_null), "tags.id should not have a foreign key");
 }
 
@@ -545,9 +535,7 @@ async fn test_write_query_invalid_sql() {
 #[tokio::test]
 async fn test_get_table_schema_column_details() {
     let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        table_name: "users".into(),
-    };
+    let request = GetTableSchemaRequest { table: "users".into() };
 
     let schema = handler.get_table_schema(request).await.unwrap();
     let columns = schema.columns.as_object().expect("columns object");
@@ -609,9 +597,7 @@ async fn test_read_query_null_values() {
 #[tokio::test]
 async fn test_drop_table_blocked_in_read_only() {
     let handler = handler(true);
-    let drop_request = DropTableRequest {
-        table_name: "users".into(),
-    };
+    let drop_request = DropTableRequest { table: "users".into() };
 
     let response = handler.drop_table(drop_request).await;
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
@@ -643,7 +629,7 @@ async fn test_create_drop_table_with_spaces() {
     handler.write_query(create).await.unwrap();
 
     let schema = GetTableSchemaRequest {
-        table_name: "table with spaces".into(),
+        table: "table with spaces".into(),
     };
     let result = handler.get_table_schema(schema).await;
     assert!(
@@ -652,7 +638,7 @@ async fn test_create_drop_table_with_spaces() {
     );
 
     let drop = DropTableRequest {
-        table_name: "table with spaces".into(),
+        table: "table with spaces".into(),
     };
     handler.drop_table(drop).await.unwrap();
 }

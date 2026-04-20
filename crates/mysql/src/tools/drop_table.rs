@@ -1,4 +1,4 @@
-//! MCP tool: `drop_table`.
+//! MCP tool: `dropTable`.
 
 use std::borrow::Cow;
 
@@ -13,11 +13,11 @@ use sqlparser::dialect::MySqlDialect;
 use crate::MysqlHandler;
 use crate::types::DropTableRequest;
 
-/// Marker type for the `drop_table` MCP tool.
+/// Marker type for the `dropTable` MCP tool.
 pub(crate) struct DropTableTool;
 
 impl DropTableTool {
-    const NAME: &'static str = "drop_table";
+    const NAME: &'static str = "dropTable";
     const TITLE: &'static str = "Drop Table";
     const DESCRIPTION: &'static str = r#"Drop a table from a database.
 
@@ -28,9 +28,9 @@ Use when:
 </usecase>
 
 <examples>
-✓ "Drop the temp_logs table from mydb" → drop_table(database_name="mydb", table_name="temp_logs")
-✗ "Delete rows from a table" → use write_query with DELETE
-✗ "Drop a database" → use drop_database instead
+✓ "Drop the temp_logs table from mydb" → dropTable(database="mydb", table="temp_logs")
+✗ "Delete rows from a table" → use writeQuery with DELETE
+✗ "Drop a database" → use dropDatabase instead
 </examples>
 
 <safety>
@@ -90,23 +90,20 @@ impl MysqlHandler {
     /// or [`SqlError::Query`] if the backend reports an error.
     pub async fn drop_table(
         &self,
-        DropTableRequest {
-            database_name,
-            table_name,
-        }: DropTableRequest,
+        DropTableRequest { database, table }: DropTableRequest,
     ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database_name)?;
-        validate_ident(&table_name)?;
+        validate_ident(&database)?;
+        validate_ident(&table)?;
 
-        let drop_sql = format!("DROP TABLE {}", quote_ident(&table_name, &MySqlDialect {}));
-        self.connection.execute(drop_sql.as_str(), Some(&database_name)).await?;
+        let drop_sql = format!("DROP TABLE {}", quote_ident(&table, &MySqlDialect {}));
+        self.connection.execute(drop_sql.as_str(), Some(&database)).await?;
 
         Ok(MessageResponse {
-            message: format!("Table '{table_name}' dropped successfully."),
+            message: format!("Table '{table}' dropped successfully."),
         })
     }
 }

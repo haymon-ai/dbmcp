@@ -1,4 +1,4 @@
-//! MCP tool: `drop_table`.
+//! MCP tool: `dropTable`.
 
 use std::borrow::Cow;
 
@@ -13,11 +13,11 @@ use sqlparser::dialect::PostgreSqlDialect;
 use crate::PostgresHandler;
 use crate::types::DropTableRequest;
 
-/// Marker type for the `drop_table` MCP tool.
+/// Marker type for the `dropTable` MCP tool.
 pub(crate) struct DropTableTool;
 
 impl DropTableTool {
-    const NAME: &'static str = "drop_table";
+    const NAME: &'static str = "dropTable";
     const TITLE: &'static str = "Drop Table";
     const DESCRIPTION: &'static str = r#"Drop a table from a database. Checks for foreign key dependencies via the database engine.
 
@@ -28,10 +28,10 @@ Use when:
 </usecase>
 
 <examples>
-✓ "Drop the temp_logs table" → drop_table(database_name="mydb", table_name="temp_logs")
-✓ "Force drop with dependencies" → drop_table(..., cascade=true)
-✗ "Delete rows from a table" → use write_query with DELETE
-✗ "Drop a database" → use drop_database instead
+✓ "Drop the temp_logs table" → dropTable(database="mydb", table="temp_logs")
+✓ "Force drop with dependencies" → dropTable(..., cascade=true)
+✗ "Delete rows from a table" → use writeQuery with DELETE
+✗ "Drop a database" → use dropDatabase instead
 </examples>
 
 <safety>
@@ -94,8 +94,8 @@ impl PostgresHandler {
     pub async fn drop_table(
         &self,
         DropTableRequest {
-            database_name,
-            table_name,
+            database,
+            table,
             cascade,
         }: DropTableRequest,
     ) -> Result<MessageResponse, SqlError> {
@@ -103,18 +103,18 @@ impl PostgresHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database_name)?;
-        validate_ident(&table_name)?;
+        validate_ident(&database)?;
+        validate_ident(&table)?;
 
-        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table_name, &PostgreSqlDialect {}));
+        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table, &PostgreSqlDialect {}));
         if cascade {
             drop_sql.push_str(" CASCADE");
         }
 
-        self.connection.execute(drop_sql.as_str(), Some(&database_name)).await?;
+        self.connection.execute(drop_sql.as_str(), Some(&database)).await?;
 
         Ok(MessageResponse {
-            message: format!("Table '{table_name}' dropped successfully."),
+            message: format!("Table '{table}' dropped successfully."),
         })
     }
 }

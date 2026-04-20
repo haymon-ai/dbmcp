@@ -1,4 +1,4 @@
-//! MCP tool: `get_table_schema`.
+//! MCP tool: `getTableSchema`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -14,13 +14,13 @@ use sqlparser::dialect::MySqlDialect;
 
 use crate::MysqlHandler;
 
-/// Marker type for the `get_table_schema` MCP tool.
+/// Marker type for the `getTableSchema` MCP tool.
 pub(crate) struct GetTableSchemaTool;
 
 impl GetTableSchemaTool {
-    const NAME: &'static str = "get_table_schema";
+    const NAME: &'static str = "getTableSchema";
     const TITLE: &'static str = "Get Table Schema";
-    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database_name` and `table_name` — call `list_databases` and `list_tables` first.
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database` and `table` — call `listDatabases` and `listTables` first.
 
 <usecase>
 ALWAYS call this before writing queries to understand:
@@ -30,13 +30,13 @@ ALWAYS call this before writing queries to understand:
 </usecase>
 
 <examples>
-✓ "What columns does the orders table have?" → get_table_schema(database_name="mydb", table_name="orders")
-✓ Before writing a SELECT → get_table_schema first to confirm column names
+✓ "What columns does the orders table have?" → getTableSchema(database="mydb", table="orders")
+✓ Before writing a SELECT → getTableSchema first to confirm column names
 ✓ "How are users and orders related?" → check foreign keys in both tables
 </examples>
 
 <what_it_returns>
-A JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.
+A JSON object with table and columns keyed by column name, each containing type, nullable, key, default, and foreignKey info.
 </what_it_returns>"#;
 }
 
@@ -82,24 +82,21 @@ impl MysqlHandler {
     /// Returns [`SqlError`] if validation fails or the query errors.
     pub async fn get_table_schema(
         &self,
-        GetTableSchemaRequest {
-            database_name,
-            table_name,
-        }: GetTableSchemaRequest,
+        GetTableSchemaRequest { database, table }: GetTableSchemaRequest,
     ) -> Result<TableSchemaResponse, SqlError> {
-        validate_ident(&database_name)?;
-        validate_ident(&table_name)?;
+        validate_ident(&database)?;
+        validate_ident(&table)?;
 
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",
-            quote_ident(&database_name, &MySqlDialect {}),
-            quote_ident(&table_name, &MySqlDialect {}),
+            quote_ident(&database, &MySqlDialect {}),
+            quote_ident(&table, &MySqlDialect {}),
         );
         let schema_rows = self.connection.fetch_json(describe_sql.as_str(), None).await?;
 
         if schema_rows.is_empty() {
-            return Err(SqlError::TableNotFound(format!("{database_name}.{table_name}")));
+            return Err(SqlError::TableNotFound(format!("{database}.{table}")));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -113,7 +110,7 @@ impl MysqlHandler {
                         "key": row.get("Key").unwrap_or(&Value::Null),
                         "default": row.get("Default").unwrap_or(&Value::Null),
                         "extra": row.get("Extra").unwrap_or(&Value::Null),
-                        "foreign_key": Value::Null,
+                        "foreignKey": Value::Null,
                     }),
                 );
             }
@@ -137,8 +134,8 @@ impl MysqlHandler {
               AND kcu.TABLE_NAME = {}
               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
-            quote_literal(&database_name),
-            quote_literal(&table_name),
+            quote_literal(&database),
+            quote_literal(&table),
         );
 
         let fk_rows = self.connection.fetch_json(fk_sql.as_str(), None).await?;
@@ -149,20 +146,20 @@ impl MysqlHandler {
                 && let Some(obj) = col_info.as_object_mut()
             {
                 obj.insert(
-                    "foreign_key".to_string(),
+                    "foreignKey".to_string(),
                     json!({
-                        "constraint_name": fk_row.get("constraint_name"),
-                        "referenced_table": fk_row.get("referenced_table"),
-                        "referenced_column": fk_row.get("referenced_column"),
-                        "on_update": fk_row.get("on_update"),
-                        "on_delete": fk_row.get("on_delete"),
+                        "constraintName": fk_row.get("constraint_name"),
+                        "referencedTable": fk_row.get("referenced_table"),
+                        "referencedColumn": fk_row.get("referenced_column"),
+                        "onUpdate": fk_row.get("on_update"),
+                        "onDelete": fk_row.get("on_delete"),
                     }),
                 );
             }
         }
 
         Ok(TableSchemaResponse {
-            table_name,
+            table,
             columns: json!(columns),
         })
     }

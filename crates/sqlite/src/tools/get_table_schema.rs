@@ -1,4 +1,4 @@
-//! MCP tool: `get_table_schema`.
+//! MCP tool: `getTableSchema`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -16,13 +16,13 @@ use database_mcp_sql::SqlError;
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;
 
-/// Marker type for the `get_table_schema` MCP tool.
+/// Marker type for the `getTableSchema` MCP tool.
 pub(crate) struct GetTableSchemaTool;
 
 impl GetTableSchemaTool {
-    const NAME: &'static str = "get_table_schema";
+    const NAME: &'static str = "getTableSchema";
     const TITLE: &'static str = "Get Table Schema";
-    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `table_name` — call `list_tables` first.
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `table` — call `listTables` first.
 
 <usecase>
 ALWAYS call this before writing queries to understand:
@@ -32,13 +32,13 @@ ALWAYS call this before writing queries to understand:
 </usecase>
 
 <examples>
-✓ "What columns does the orders table have?" → get_table_schema(table_name="orders")
-✓ Before writing a SELECT → get_table_schema first to confirm column names
+✓ "What columns does the orders table have?" → getTableSchema(table="orders")
+✓ Before writing a SELECT → getTableSchema first to confirm column names
 ✓ "How are users and orders related?" → check foreign keys in both tables
 </examples>
 
 <what_it_returns>
-A JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.
+A JSON object with table and columns keyed by column name, each containing type, nullable, key, default, and foreignKey info.
 </what_it_returns>"#;
 }
 
@@ -84,16 +84,16 @@ impl SqliteHandler {
     /// Returns [`SqlError`] if validation fails or the query errors.
     pub async fn get_table_schema(
         &self,
-        GetTableSchemaRequest { table_name }: GetTableSchemaRequest,
+        GetTableSchemaRequest { table }: GetTableSchemaRequest,
     ) -> Result<TableSchemaResponse, SqlError> {
-        validate_ident(&table_name)?;
+        validate_ident(&table)?;
 
         // 1. Get basic schema
-        let pragma_sql = format!("PRAGMA table_info({})", quote_ident(&table_name, &SQLiteDialect {}));
+        let pragma_sql = format!("PRAGMA table_info({})", quote_ident(&table, &SQLiteDialect {}));
         let rows = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
-            return Err(SqlError::TableNotFound(table_name));
+            return Err(SqlError::TableNotFound(table));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -111,16 +111,13 @@ impl SqliteHandler {
                     "key": if pk > 0 { "PRI" } else { "" },
                     "default": default,
                     "extra": Value::Null,
-                    "foreign_key": Value::Null,
+                    "foreignKey": Value::Null,
                 }),
             );
         }
 
         // 2. Get FK info via PRAGMA
-        let fk_pragma_sql = format!(
-            "PRAGMA foreign_key_list({})",
-            quote_ident(&table_name, &SQLiteDialect {})
-        );
+        let fk_pragma_sql = format!("PRAGMA foreign_key_list({})", quote_ident(&table, &SQLiteDialect {}));
         let fk_rows = self.connection.fetch_json(fk_pragma_sql.as_str(), None).await?;
 
         for fk_row in &fk_rows {
@@ -149,20 +146,20 @@ impl SqliteHandler {
                     .unwrap_or_default()
                     .to_owned();
                 obj.insert(
-                    "foreign_key".to_string(),
+                    "foreignKey".to_string(),
                     json!({
-                        "constraint_name": Value::Null,
-                        "referenced_table": ref_table,
-                        "referenced_column": ref_col,
-                        "on_update": on_update,
-                        "on_delete": on_delete,
+                        "constraintName": Value::Null,
+                        "referencedTable": ref_table,
+                        "referencedColumn": ref_col,
+                        "onUpdate": on_update,
+                        "onDelete": on_delete,
                     }),
                 );
             }
         }
 
         Ok(TableSchemaResponse {
-            table_name,
+            table,
             columns: json!(columns),
         })
     }

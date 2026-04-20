@@ -1,23 +1,24 @@
 ---
 source: tests/approval/mysql.rs
+assertion_line: 42
 expression: tools
 ---
 [
   {
-    "name": "create_database",
+    "name": "createDatabase",
     "title": "Create Database",
-    "description": "Create a new database on the connected server.\n\n<usecase>\nUse when:\n- Setting up a new database for a project or application\n- The user asks to create a database\n</usecase>\n\n<examples>\n✓ \"Create a database called analytics\" → create_database(database_name=\"analytics\")\n✗ \"Create a table\" → use write_query with CREATE TABLE\n</examples>\n\n<important>\nDatabase names must contain only alphanumeric characters and underscores.\nIf the database already exists, returns a message indicating so without error.\n</important>\n\n<what_it_returns>\nA confirmation message with the created database name.\n</what_it_returns>",
+    "description": "Create a new database on the connected server.\n\n<usecase>\nUse when:\n- Setting up a new database for a project or application\n- The user asks to create a database\n</usecase>\n\n<examples>\n✓ \"Create a database called analytics\" → createDatabase(database=\"analytics\")\n✗ \"Create a table\" → use writeQuery with CREATE TABLE\n</examples>\n\n<important>\nDatabase names must contain only alphanumeric characters and underscores.\nIf the database already exists, returns a message indicating so without error.\n</important>\n\n<what_it_returns>\nA confirmation message with the created database name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `create_database` tool.",
+      "description": "Request for the `createDatabase` tool.",
       "properties": {
-        "database_name": {
+        "database": {
           "description": "Name of the database to create. Must contain only alphanumeric characters and underscores.",
           "type": "string"
         }
       },
       "required": [
-        "database_name"
+        "database"
       ],
       "title": "CreateDatabaseRequest",
       "type": "object"
@@ -45,20 +46,20 @@ expression: tools
     }
   },
   {
-    "name": "drop_database",
+    "name": "dropDatabase",
     "title": "Drop Database",
-    "description": "Drop an existing database from the connected server.\n\n<usecase>\nUse when:\n- Removing a database that is no longer needed\n- Cleaning up test or temporary databases\n</usecase>\n\n<examples>\n✓ \"Drop the test_db database\" → drop_database(database_name=\"test_db\")\n✗ \"Drop a table\" → use drop_table instead\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the database and ALL its data. This action cannot be undone.\nCannot drop the database you are currently connected to.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped database name.\n</what_it_returns>",
+    "description": "Drop an existing database from the connected server.\n\n<usecase>\nUse when:\n- Removing a database that is no longer needed\n- Cleaning up test or temporary databases\n</usecase>\n\n<examples>\n✓ \"Drop the test_db database\" → dropDatabase(database=\"test_db\")\n✗ \"Drop a table\" → use dropTable instead\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the database and ALL its data. This action cannot be undone.\nCannot drop the database you are currently connected to.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped database name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `drop_database` tool.",
+      "description": "Request for the `dropDatabase` tool.",
       "properties": {
-        "database_name": {
+        "database": {
           "description": "Name of the database to drop. Must contain only alphanumeric characters and underscores.",
           "type": "string"
         }
       },
       "required": [
-        "database_name"
+        "database"
       ],
       "title": "DropDatabaseRequest",
       "type": "object"
@@ -86,25 +87,25 @@ expression: tools
     }
   },
   {
-    "name": "drop_table",
+    "name": "dropTable",
     "title": "Drop Table",
-    "description": "Drop a table from a database.\n\n<usecase>\nUse when:\n- Removing a table that is no longer needed\n- Cleaning up test or temporary tables\n</usecase>\n\n<examples>\n✓ \"Drop the temp_logs table from mydb\" → drop_table(database_name=\"mydb\", table_name=\"temp_logs\")\n✗ \"Delete rows from a table\" → use write_query with DELETE\n✗ \"Drop a database\" → use drop_database instead\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the table and ALL its data. This action cannot be undone.\nIf the table has foreign key dependencies, the drop will fail — resolve dependencies first.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped table name.\n</what_it_returns>",
+    "description": "Drop a table from a database.\n\n<usecase>\nUse when:\n- Removing a table that is no longer needed\n- Cleaning up test or temporary tables\n</usecase>\n\n<examples>\n✓ \"Drop the temp_logs table from mydb\" → dropTable(database=\"mydb\", table=\"temp_logs\")\n✗ \"Delete rows from a table\" → use writeQuery with DELETE\n✗ \"Drop a database\" → use dropDatabase instead\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the table and ALL its data. This action cannot be undone.\nIf the table has foreign key dependencies, the drop will fail — resolve dependencies first.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped table name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `drop_table` tool.",
+      "description": "Request for the `dropTable` tool.",
       "properties": {
-        "database_name": {
-          "description": "The database containing the table. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database containing the table. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         },
-        "table_name": {
+        "table": {
           "description": "Name of the table to drop. Must contain only alphanumeric characters and underscores.",
           "type": "string"
         }
       },
       "required": [
-        "database_name",
-        "table_name"
+        "database",
+        "table"
       ],
       "title": "DropTableRequest",
       "type": "object"
@@ -132,20 +133,20 @@ expression: tools
     }
   },
   {
-    "name": "explain_query",
+    "name": "explainQuery",
     "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through read_query — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use read_query or write_query\n- Checking table structure → use get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explain_query(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explain_query with analyze=true\n✗ \"Run this SELECT\" → use read_query\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery or writeQuery\n- Checking table structure → use getTableSchema\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `explain_query` tool.",
+      "description": "Request for the `explainQuery` tool.",
       "properties": {
         "analyze": {
           "default": false,
           "description": "If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.",
           "type": "boolean"
         },
-        "database_name": {
-          "description": "The database to explain against. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database to explain against. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         },
         "query": {
@@ -154,7 +155,7 @@ expression: tools
         }
       },
       "required": [
-        "database_name",
+        "database",
         "query"
       ],
       "title": "ExplainQueryRequest",
@@ -162,7 +163,7 @@ expression: tools
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `write_query` and `explain_query` tools.",
+      "description": "Response for the `writeQuery` and `explainQuery` tools.",
       "properties": {
         "rows": {
           "description": "Result rows, each a JSON object keyed by a column name.",
@@ -184,43 +185,43 @@ expression: tools
     }
   },
   {
-    "name": "get_table_schema",
+    "name": "getTableSchema",
     "title": "Get Table Schema",
-    "description": "Get column definitions and foreign key relationships for a table. Requires `database_name` and `table_name` — call `list_databases` and `list_tables` first.\n\n<usecase>\nALWAYS call this before writing queries to understand:\n- Column names and data types\n- Which columns are nullable, primary keys, or have defaults\n- Foreign key relationships for writing JOINs\n</usecase>\n\n<examples>\n✓ \"What columns does the orders table have?\" → get_table_schema(database_name=\"mydb\", table_name=\"orders\")\n✓ Before writing a SELECT → get_table_schema first to confirm column names\n✓ \"How are users and orders related?\" → check foreign keys in both tables\n</examples>\n\n<what_it_returns>\nA JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.\n</what_it_returns>",
+    "description": "Get column definitions and foreign key relationships for a table. Requires `database` and `table` — call `listDatabases` and `listTables` first.\n\n<usecase>\nALWAYS call this before writing queries to understand:\n- Column names and data types\n- Which columns are nullable, primary keys, or have defaults\n- Foreign key relationships for writing JOINs\n</usecase>\n\n<examples>\n✓ \"What columns does the orders table have?\" → getTableSchema(database=\"mydb\", table=\"orders\")\n✓ Before writing a SELECT → getTableSchema first to confirm column names\n✓ \"How are users and orders related?\" → check foreign keys in both tables\n</examples>\n\n<what_it_returns>\nA JSON object with table and columns keyed by column name, each containing type, nullable, key, default, and foreignKey info.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `get_table_schema` tool.",
+      "description": "Request for the `getTableSchema` tool.",
       "properties": {
-        "database_name": {
-          "description": "The database name containing the table. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database name containing the table. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         },
-        "table_name": {
-          "description": "The table name to inspect. Use `list_tables` first to see available tables in the database.",
+        "table": {
+          "description": "The table name to inspect. Use `listTables` first to see available tables in the database.",
           "type": "string"
         }
       },
       "required": [
-        "database_name",
-        "table_name"
+        "database",
+        "table"
       ],
       "title": "GetTableSchemaRequest",
       "type": "object"
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `get_table_schema` tool.",
+      "description": "Response for the `getTableSchema` tool.",
       "properties": {
         "columns": {
           "description": "Column definitions keyed by column name."
         },
-        "table_name": {
+        "table": {
           "description": "Name of the inspected table.",
           "type": "string"
         }
       },
       "required": [
-        "table_name",
+        "table",
         "columns"
       ],
       "title": "TableSchemaResponse",
@@ -234,12 +235,12 @@ expression: tools
     }
   },
   {
-    "name": "list_databases",
+    "name": "listDatabases",
     "title": "List Databases",
-    "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for list_tables, get_table_schema, or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call list_databases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for listTables, getTableSchema, or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call listDatabases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `list_databases` tool.",
+      "description": "Request for the `listDatabases` tool.",
       "properties": {
         "cursor": {
           "default": null,
@@ -255,7 +256,7 @@ expression: tools
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `list_databases` tool.",
+      "description": "Response for the `listDatabases` tool.",
       "properties": {
         "databases": {
           "description": "Sorted list of database names for this page.",
@@ -286,12 +287,12 @@ expression: tools
     }
   },
   {
-    "name": "list_tables",
+    "name": "listTables",
     "title": "List Tables",
-    "description": "List all tables in a specific database. Requires `database_name` — call `list_databases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → list_tables(database_name=\"mydb\")\n✓ \"Does a users table exist?\" → list_tables to check\n✗ \"Show me the columns of users\" → use get_table_schema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List all tables in a specific database. Requires `database` — call `listDatabases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → listTables(database=\"mydb\")\n✓ \"Does a users table exist?\" → listTables to check\n✗ \"Show me the columns of users\" → use getTableSchema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `list_tables` tool.",
+      "description": "Request for the `listTables` tool.",
       "properties": {
         "cursor": {
           "default": null,
@@ -301,20 +302,20 @@ expression: tools
             "null"
           ]
         },
-        "database_name": {
-          "description": "The database name to list tables from. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database name to list tables from. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         }
       },
       "required": [
-        "database_name"
+        "database"
       ],
       "title": "ListTablesRequest",
       "type": "object"
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `list_tables` tool.",
+      "description": "Response for the `listTables` tool.",
       "properties": {
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
@@ -345,12 +346,12 @@ expression: tools
     }
   },
   {
-    "name": "read_query",
+    "name": "readQuery",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use write_query\n- Query performance analysis → use explain_query\n- Discovering tables or columns → use list_tables or get_table_schema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use write_query\n✗ \"EXPLAIN SELECT ...\" → use explain_query for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables or getTableSchema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `read_query` tool.",
+      "description": "Request for the `readQuery` tool.",
       "properties": {
         "cursor": {
           "default": null,
@@ -360,8 +361,8 @@ expression: tools
             "null"
           ]
         },
-        "database_name": {
-          "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database to run the query against. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         },
         "query": {
@@ -371,14 +372,14 @@ expression: tools
       },
       "required": [
         "query",
-        "database_name"
+        "database"
       ],
       "title": "ReadQueryRequest",
       "type": "object"
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `read_query` tool.",
+      "description": "Response for the `readQuery` tool.",
       "properties": {
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
@@ -407,15 +408,15 @@ expression: tools
     }
   },
   {
-    "name": "write_query",
+    "name": "writeQuery",
     "title": "Write Query",
-    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT, SHOW) → use read_query\n- Query performance analysis → use explain_query\n- Creating/dropping entire databases → use create_database or drop_database\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use read_query\n</examples>\n\n<what_it_returns>\nA JSON array of affected/returning row objects, each keyed by column name.\n</what_it_returns>",
+    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT, SHOW) → use readQuery\n- Query performance analysis → use explainQuery\n- Creating/dropping entire databases → use createDatabase or dropDatabase\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of affected/returning row objects, each keyed by column name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `write_query` tool.",
+      "description": "Request for the `writeQuery` tool.",
       "properties": {
-        "database_name": {
-          "description": "The database to run the query against. Required. Use `list_databases` first to see available databases.",
+        "database": {
+          "description": "The database to run the query against. Required. Use `listDatabases` first to see available databases.",
           "type": "string"
         },
         "query": {
@@ -425,14 +426,14 @@ expression: tools
       },
       "required": [
         "query",
-        "database_name"
+        "database"
       ],
       "title": "QueryRequest",
       "type": "object"
     },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `write_query` and `explain_query` tools.",
+      "description": "Response for the `writeQuery` and `explainQuery` tools.",
       "properties": {
         "rows": {
           "description": "Result rows, each a JSON object keyed by a column name.",

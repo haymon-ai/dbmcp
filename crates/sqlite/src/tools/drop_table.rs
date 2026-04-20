@@ -1,4 +1,4 @@
-//! MCP tool: `drop_table`.
+//! MCP tool: `dropTable`.
 
 use std::borrow::Cow;
 
@@ -14,11 +14,11 @@ use sqlparser::dialect::SQLiteDialect;
 use crate::SqliteHandler;
 use crate::types::DropTableRequest;
 
-/// Marker type for the `drop_table` MCP tool.
+/// Marker type for the `dropTable` MCP tool.
 pub(crate) struct DropTableTool;
 
 impl DropTableTool {
-    const NAME: &'static str = "drop_table";
+    const NAME: &'static str = "dropTable";
     const TITLE: &'static str = "Drop Table";
     const DESCRIPTION: &'static str = r#"Drop a table from the database.
 
@@ -29,8 +29,8 @@ Use when:
 </usecase>
 
 <examples>
-✓ "Drop the temp_logs table" → drop_table(table_name="temp_logs")
-✗ "Delete rows from a table" → use write_query with DELETE
+✓ "Drop the temp_logs table" → dropTable(table="temp_logs")
+✗ "Delete rows from a table" → use writeQuery with DELETE
 </examples>
 
 <safety>
@@ -84,21 +84,18 @@ impl SqliteHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
-    pub async fn drop_table(
-        &self,
-        DropTableRequest { table_name }: DropTableRequest,
-    ) -> Result<MessageResponse, SqlError> {
+    pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&table_name)?;
+        validate_ident(&table)?;
 
-        let drop_sql = format!("DROP TABLE {}", quote_ident(&table_name, &SQLiteDialect {}));
+        let drop_sql = format!("DROP TABLE {}", quote_ident(&table, &SQLiteDialect {}));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
         Ok(MessageResponse {
-            message: format!("Table '{table_name}' dropped successfully."),
+            message: format!("Table '{table}' dropped successfully."),
         })
     }
 }

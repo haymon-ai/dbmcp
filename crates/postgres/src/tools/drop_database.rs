@@ -1,4 +1,4 @@
-//! MCP tool: `drop_database`.
+//! MCP tool: `dropDatabase`.
 
 use std::borrow::Cow;
 
@@ -12,11 +12,11 @@ use sqlparser::dialect::PostgreSqlDialect;
 
 use crate::PostgresHandler;
 
-/// Marker type for the `drop_database` MCP tool.
+/// Marker type for the `dropDatabase` MCP tool.
 pub(crate) struct DropDatabaseTool;
 
 impl DropDatabaseTool {
-    const NAME: &'static str = "drop_database";
+    const NAME: &'static str = "dropDatabase";
     const TITLE: &'static str = "Drop Database";
     const DESCRIPTION: &'static str = r#"Drop an existing database from the connected server.
 
@@ -27,8 +27,8 @@ Use when:
 </usecase>
 
 <examples>
-✓ "Drop the test_db database" → drop_database(database_name="test_db")
-✗ "Drop a table" → use drop_table instead
+✓ "Drop the test_db database" → dropDatabase(database="test_db")
+✗ "Drop a table" → use dropTable instead
 </examples>
 
 <safety>
@@ -89,28 +89,28 @@ impl PostgresHandler {
     /// or the backend reports an error.
     pub async fn drop_database(
         &self,
-        DropDatabaseRequest { database_name }: DropDatabaseRequest,
+        DropDatabaseRequest { database }: DropDatabaseRequest,
     ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database_name)?;
+        validate_ident(&database)?;
 
         // Guard: prevent dropping the currently connected database.
-        if self.connection.default_database_name() == database_name.as_str() {
+        if self.connection.default_database_name() == database.as_str() {
             return Err(SqlError::Query(format!(
-                "Cannot drop the currently connected database '{database_name}'."
+                "Cannot drop the currently connected database '{database}'."
             )));
         }
 
-        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database_name, &PostgreSqlDialect {}));
+        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database, &PostgreSqlDialect {}));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
-        self.connection.invalidate(&database_name).await;
+        self.connection.invalidate(&database).await;
 
         Ok(MessageResponse {
-            message: format!("Database '{database_name}' dropped successfully."),
+            message: format!("Database '{database}' dropped successfully."),
         })
     }
 }

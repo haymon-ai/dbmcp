@@ -1,4 +1,4 @@
-//! MCP tool: `read_query`.
+//! MCP tool: `readQuery`.
 
 use std::borrow::Cow;
 
@@ -15,11 +15,11 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::MysqlHandler;
 
-/// Marker type for the `read_query` MCP tool.
+/// Marker type for the `readQuery` MCP tool.
 pub(crate) struct ReadQueryTool;
 
 impl ReadQueryTool {
-    const NAME: &'static str = "read_query";
+    const NAME: &'static str = "readQuery";
     const TITLE: &'static str = "Read Query";
     const DESCRIPTION: &'static str = r#"Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.
 
@@ -33,17 +33,17 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Data changes (INSERT, UPDATE, DELETE) → use write_query
-- Query performance analysis → use explain_query
-- Discovering tables or columns → use list_tables or get_table_schema
+- Data changes (INSERT, UPDATE, DELETE) → use writeQuery
+- Query performance analysis → use explainQuery
+- Discovering tables or columns → use listTables or getTableSchema
 </when_not_to_use>
 
 <examples>
 ✓ "SELECT * FROM users WHERE status = 'active'"
 ✓ "SELECT COUNT(*) FROM orders GROUP BY region"
 ✓ "SHOW TABLES" or "DESCRIBE users"
-✗ "INSERT INTO users ..." → use write_query
-✗ "EXPLAIN SELECT ..." → use explain_query for structured analysis
+✗ "INSERT INTO users ..." → use writeQuery
+✗ "EXPLAIN SELECT ..." → use explainQuery for structured analysis
 </examples>
 
 <what_it_returns>
@@ -107,13 +107,13 @@ impl MysqlHandler {
         &self,
         ReadQueryRequest {
             query,
-            database_name,
+            database,
             cursor,
         }: ReadQueryRequest,
     ) -> Result<ReadQueryResponse, SqlError> {
         let kind = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
 
-        let db = Some(database_name.trim()).filter(|s| !s.is_empty());
+        let db = Some(database.trim()).filter(|s| !s.is_empty());
         if let Some(name) = db {
             validate_ident(name)?;
         }

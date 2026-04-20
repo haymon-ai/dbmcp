@@ -1,4 +1,4 @@
-//! MCP tool: `list_databases`.
+//! MCP tool: `listDatabases`.
 
 use std::borrow::Cow;
 
@@ -10,24 +10,24 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
 
-/// Marker type for the `list_databases` MCP tool.
+/// Marker type for the `listDatabases` MCP tool.
 pub(crate) struct ListDatabasesTool;
 
 impl ListDatabasesTool {
-    const NAME: &'static str = "list_databases";
+    const NAME: &'static str = "listDatabases";
     const TITLE: &'static str = "List Databases";
     const DESCRIPTION: &'static str = r#"List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.
 
 <usecase>
 ALWAYS call this tool FIRST when:
 - You need to explore what databases exist on the server
-- You need a database name for list_tables, get_table_schema, or query tools
+- You need a database name for listTables, getTableSchema, or query tools
 - The user asks what data is available
 </usecase>
 
 <examples>
 ✓ "What databases are on this server?"
-✓ "Show me what's available" → call list_databases first
+✓ "Show me what's available" → call listDatabases first
 </examples>
 
 <what_it_returns>

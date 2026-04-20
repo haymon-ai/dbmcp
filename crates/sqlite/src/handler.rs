@@ -25,16 +25,16 @@ const DESCRIPTION: &str = "Database MCP Server for SQLite";
 /// Backend-specific instructions for `SQLite`.
 const INSTRUCTIONS: &str = r"## Workflow
 
-1. Call `list_tables` to discover tables in the connected database.
-2. Call `get_table_schema` with a `table_name` to inspect columns, types, and foreign keys before writing queries.
-3. Use `read_query` for read-only SQL (SELECT).
-4. Use `write_query` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-5. Use `explain_query` to analyze query execution plans and diagnose slow queries.
-6. Use `drop_table` to remove a table from the database.
+1. Call `listTables` to discover tables in the connected database.
+2. Call `getTableSchema` with a `table` to inspect columns, types, and foreign keys before writing queries.
+3. Use `readQuery` for read-only SQL (SELECT).
+4. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+5. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+6. Use `dropTable` to remove a table from the database.
 
 ## Constraints
 
-- The `write_query` and `drop_table` tools are hidden when read-only mode is active.
+- The `writeQuery` and `dropTable` tools are hidden when read-only mode is active.
 - Multi-statement queries are not supported. Send one statement per request.";
 
 /// `SQLite` file-based database handler.
@@ -147,12 +147,12 @@ mod tests {
     async fn router_exposes_all_six_tools_in_read_write_mode() {
         let router = handler(false).tool_router;
         for name in [
-            "list_tables",
-            "get_table_schema",
-            "drop_table",
-            "read_query",
-            "write_query",
-            "explain_query",
+            "listTables",
+            "getTableSchema",
+            "dropTable",
+            "readQuery",
+            "writeQuery",
+            "explainQuery",
         ] {
             assert!(router.has_route(name), "missing tool: {name}");
         }
@@ -161,18 +161,18 @@ mod tests {
     #[tokio::test]
     async fn router_hides_write_tools_in_read_only_mode() {
         let router = handler(true).tool_router;
-        assert!(router.has_route("list_tables"));
-        assert!(router.has_route("get_table_schema"));
-        assert!(router.has_route("read_query"));
-        assert!(router.has_route("explain_query"));
-        assert!(!router.has_route("write_query"));
-        assert!(!router.has_route("drop_table"));
+        assert!(router.has_route("listTables"));
+        assert!(router.has_route("getTableSchema"));
+        assert!(router.has_route("readQuery"));
+        assert!(router.has_route("explainQuery"));
+        assert!(!router.has_route("writeQuery"));
+        assert!(!router.has_route("dropTable"));
     }
 
     #[tokio::test]
     async fn list_tables_annotations() {
         let router = handler(false).tool_router;
-        let tool = router.get("list_tables").expect("list_tables registered");
+        let tool = router.get("listTables").expect("listTables registered");
 
         let annotations = tool.annotations.as_ref().expect("annotations present");
         assert_eq!(annotations.read_only_hint, Some(true));

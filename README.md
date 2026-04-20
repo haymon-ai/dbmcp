@@ -14,7 +14,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **9 MCP tools** — `list_databases`, `list_tables`, `get_table_schema`, `read_query`, `write_query`, `create_database`, `drop_database`, `drop_table`, `explain_query`
+- **9 MCP tools** — `listDatabases`, `listTables`, `getTableSchema`, `readQuery`, `writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`, `explainQuery`
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -177,45 +177,45 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 
 ## MCP Tools
 
-### list_databases
+### listDatabases
 
 Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details. Not available for SQLite.
 
-### list_tables
+### listTables
 
-Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database_name`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
-### get_table_schema
+### getTableSchema
 
-Returns column definitions (type, nullable, key, default, extra) and foreign key relationships (constraint name, referenced table/column, on update/delete rules) for a table. Parameters: `database_name`, `table_name`.
+Returns column definitions (type, nullable, key, default, extra) and foreign key relationships (constraint name, referenced table/column, on update/delete rules) for a table. Parameters: `database`, `table`.
 
-### read_query
+### readQuery
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database_name`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
-### write_query
+### writeQuery
 
-Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only available when read-only mode is disabled. Parameters: `sql_query`, `database_name`.
+Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only available when read-only mode is disabled. Parameters: `query`, `database`.
 
-### create_database
+### createDatabase
 
-Creates a database if it doesn't exist. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database_name`.
+Creates a database if it doesn't exist. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database`.
 
-### drop_database
+### dropDatabase
 
-Drops an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database_name`.
+Drops an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database`.
 
-### drop_table
+### dropTable
 
-Drops a table from a database. If the table has foreign key dependents, the database error is surfaced to the user. On PostgreSQL, a `cascade` parameter is available to force the drop with `CASCADE`. Only available when read-only mode is disabled. Parameters: `database_name`, `table_name`, `cascade` (PostgreSQL only).
+Drops a table from a database. If the table has foreign key dependents, the database error is surfaced to the user. On PostgreSQL, a `cascade` parameter is available to force the drop with `CASCADE`. Only available when read-only mode is disabled. Parameters: `database`, `table`, `cascade` (PostgreSQL only).
 
-### explain_query
+### explainQuery
 
-Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB). In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements since it actually executes the query. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database_name`, `analyze` (PostgreSQL/MySQL only).
+Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB). In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements since it actually executes the query. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database`, `analyze` (PostgreSQL/MySQL only).
 
 ## Security
 
-- **Read-only mode** (default) — write tools hidden from AI assistant; `read_query` enforces AST-based SQL validation
+- **Read-only mode** (default) — write tools hidden from AI assistant; `readQuery` enforces AST-based SQL validation
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings

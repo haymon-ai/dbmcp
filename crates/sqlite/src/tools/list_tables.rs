@@ -1,4 +1,4 @@
-//! MCP tool: `list_tables`.
+//! MCP tool: `listTables`.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -13,25 +13,25 @@ use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ListTablesRequest;
 
-/// Marker type for the `list_tables` MCP tool.
+/// Marker type for the `listTables` MCP tool.
 pub(crate) struct ListTablesTool;
 
 impl ListTablesTool {
-    const NAME: &'static str = "list_tables";
+    const NAME: &'static str = "listTables";
     const TITLE: &'static str = "List Tables";
     const DESCRIPTION: &'static str = r#"List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.
 
 <usecase>
 ALWAYS call this tool FIRST when:
 - You need to explore what tables exist in the database
-- You need a table name for get_table_schema or query tools
+- You need a table name for getTableSchema or query tools
 - The user asks what data is available
 </usecase>
 
 <examples>
 ✓ "What tables are in this database?"
-✓ "Does a users table exist?" → list_tables to check
-✗ "Show me the columns of users" → use get_table_schema instead
+✓ "Does a users table exist?" → listTables to check
+✗ "Show me the columns of users" → use getTableSchema instead
 </examples>
 
 <what_it_returns>

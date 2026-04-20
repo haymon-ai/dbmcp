@@ -1,4 +1,4 @@
-//! MCP tool: `get_table_schema`.
+//! MCP tool: `getTableSchema`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 
 use crate::PostgresHandler;
 
-/// Marker type for the `get_table_schema` MCP tool.
+/// Marker type for the `getTableSchema` MCP tool.
 pub(crate) struct GetTableSchemaTool;
 
 impl GetTableSchemaTool {
-    const NAME: &'static str = "get_table_schema";
+    const NAME: &'static str = "getTableSchema";
     const TITLE: &'static str = "Get Table Schema";
-    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database_name` and `table_name` — call `list_databases` and `list_tables` first.
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database` and `table` — call `listDatabases` and `listTables` first.
 
 <usecase>
 ALWAYS call this before writing queries to understand:
@@ -29,13 +29,13 @@ ALWAYS call this before writing queries to understand:
 </usecase>
 
 <examples>
-✓ "What columns does the orders table have?" → get_table_schema(database_name="mydb", table_name="orders")
-✓ Before writing a SELECT → get_table_schema first to confirm column names
+✓ "What columns does the orders table have?" → getTableSchema(database="mydb", table="orders")
+✓ Before writing a SELECT → getTableSchema first to confirm column names
 ✓ "How are users and orders related?" → check foreign keys in both tables
 </examples>
 
 <what_it_returns>
-A JSON object with table_name and columns keyed by column name, each containing type, nullable, key, default, and foreign_key info.
+A JSON object with table and columns keyed by column name, each containing type, nullable, key, default, and foreignKey info.
 </what_it_returns>"#;
 }
 
@@ -82,13 +82,10 @@ impl PostgresHandler {
     #[allow(clippy::too_many_lines)]
     pub async fn get_table_schema(
         &self,
-        GetTableSchemaRequest {
-            database_name,
-            table_name,
-        }: GetTableSchemaRequest,
+        GetTableSchemaRequest { database, table }: GetTableSchemaRequest,
     ) -> Result<TableSchemaResponse, SqlError> {
-        validate_ident(&table_name)?;
-        let db = Some(database_name.trim()).filter(|s| !s.is_empty());
+        validate_ident(&table)?;
+        let db = Some(database.trim()).filter(|s| !s.is_empty());
         if let Some(name) = &db {
             validate_ident(name)?;
         }
@@ -101,12 +98,12 @@ impl PostgresHandler {
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = {}
             ORDER BY ordinal_position",
-            quote_literal(&table_name),
+            quote_literal(&table),
         );
         let rows = self.connection.fetch_json(&schema_sql, db).await?;
 
         if rows.is_empty() {
-            return Err(SqlError::TableNotFound(table_name));
+            return Err(SqlError::TableNotFound(table));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -135,7 +132,7 @@ impl PostgresHandler {
                     "key": Value::Null,
                     "default": default,
                     "extra": Value::Null,
-                    "foreign_key": Value::Null,
+                    "foreignKey": Value::Null,
                 }),
             );
         }
@@ -163,7 +160,7 @@ impl PostgresHandler {
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_name = {}
                 AND tc.table_schema = 'public'",
-            quote_literal(&table_name),
+            quote_literal(&table),
         );
         let fk_rows = self.connection.fetch_json(&fk_sql, db).await?;
 
@@ -177,20 +174,20 @@ impl PostgresHandler {
                 && let Some(obj) = col_info.as_object_mut()
             {
                 obj.insert(
-                    "foreign_key".to_string(),
+                    "foreignKey".to_string(),
                     json!({
-                        "constraint_name": fk_row.get("constraint_name").and_then(Value::as_str),
-                        "referenced_table": fk_row.get("referenced_table").and_then(Value::as_str),
-                        "referenced_column": fk_row.get("referenced_column").and_then(Value::as_str),
-                        "on_update": fk_row.get("on_update").and_then(Value::as_str),
-                        "on_delete": fk_row.get("on_delete").and_then(Value::as_str),
+                        "constraintName": fk_row.get("constraint_name").and_then(Value::as_str),
+                        "referencedTable": fk_row.get("referenced_table").and_then(Value::as_str),
+                        "referencedColumn": fk_row.get("referenced_column").and_then(Value::as_str),
+                        "onUpdate": fk_row.get("on_update").and_then(Value::as_str),
+                        "onDelete": fk_row.get("on_delete").and_then(Value::as_str),
                     }),
                 );
             }
         }
 
         Ok(TableSchemaResponse {
-            table_name,
+            table,
             columns: json!(columns),
         })
     }

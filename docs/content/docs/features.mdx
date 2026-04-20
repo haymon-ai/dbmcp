@@ -26,61 +26,61 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 
 | Tool | MySQL / MariaDB | PostgreSQL | SQLite | Blocked when read-only |
 |------|-----------------|------------|--------|------------------------|
-| `list_databases` | Yes | Yes | No | No |
-| `list_tables` | Yes | Yes | Yes | No |
-| `get_table_schema` | Yes | Yes | Yes | No |
-| `read_query` | Yes | Yes | Yes | No |
-| `write_query` | Yes | Yes | Yes | Yes |
-| `create_database` | Yes | Yes | No | Yes |
-| `drop_database` | Yes | Yes | No | Yes |
-| `drop_table` | Yes | Yes | Yes | Yes |
-| `explain_query` | Yes | Yes | Yes | No |
+| `listDatabases` | Yes | Yes | No | No |
+| `listTables` | Yes | Yes | Yes | No |
+| `getTableSchema` | Yes | Yes | Yes | No |
+| `readQuery` | Yes | Yes | Yes | No |
+| `writeQuery` | Yes | Yes | Yes | Yes |
+| `createDatabase` | Yes | Yes | No | Yes |
+| `dropDatabase` | Yes | Yes | No | Yes |
+| `dropTable` | Yes | Yes | Yes | Yes |
+| `explainQuery` | Yes | Yes | Yes | No |
 
-SQLite is file-based with a single database, so `list_databases`, `create_database`, and `drop_database` are not applicable.
+SQLite is file-based with a single database, so `listDatabases`, `createDatabase`, and `dropDatabase` are not applicable.
 
 ### Cursor Pagination
 
-Three tools — `list_databases`, `list_tables`, and `read_query` (for `SELECT` results) — return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
+Three tools — `listDatabases`, `listTables`, and `readQuery` (for `SELECT` results) — return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
 
 To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
 
 Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a JSON-RPC error (code `-32602`); the server does not silently restart from the beginning.
 
-Only `SELECT` statements in `read_query` paginate. `SHOW`, `DESCRIBE` / `DESC`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
+Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
-### `list_databases`
+### `listDatabases`
 
 Discover accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. Not available for SQLite.
 
-### `list_tables`
+### `listTables`
 
-List tables in a specific database, one page at a time. Requires a database name (use `list_databases` first on MySQL/MariaDB/PostgreSQL). Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol.
+List tables in a specific database, one page at a time. Requires a database name (use `listDatabases` first on MySQL/MariaDB/PostgreSQL). Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol.
 
-### `get_table_schema`
+### `getTableSchema`
 
 Inspect column definitions for a table — column names, types, nullability, keys, default values, and foreign key relationships (constraint name, referenced table/column, cascade rules). Helps assistants understand both table structure and how tables connect to each other.
 
-### `read_query`
+### `readQuery`
 
 Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation. `SELECT` results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
-### `write_query`
+### `writeQuery`
 
 Execute a write SQL query (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`) against a specific database. This tool is only available when read-only mode is disabled. No SQL type validation is performed — the tool boundary is the access control.
 
-### `create_database`
+### `createDatabase`
 
 Create a new database. Only available when read-only mode is disabled. Not supported for SQLite.
 
-### `drop_database`
+### `dropDatabase`
 
 Drop an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not supported for SQLite.
 
-### `drop_table`
+### `dropTable`
 
 Drop a table from a database. If the table has foreign key dependents, the database error is surfaced directly — no silent failures. On PostgreSQL, a `cascade` parameter is available to force the drop using `CASCADE`, which also removes dependent foreign key constraints. Only available when read-only mode is disabled.
 
-### `explain_query`
+### `explainQuery`
 
 Return the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics on PostgreSQL and MySQL/MariaDB. In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements (SELECT, SHOW) since it actually executes the query. SQLite always uses EXPLAIN QUERY PLAN and does not support ANALYZE. Always available regardless of read-only mode.
 

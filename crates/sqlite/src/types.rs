@@ -1,7 +1,7 @@
 //! SQLite-specific MCP tool request types.
 //!
 //! Unlike `MySQL` and `PostgreSQL`, `SQLite` operates on a single file and
-//! has no database selection. These types omit the `database_name`
+//! has no database selection. These types omit the `database`
 //! field present in the shared server types.
 
 use database_mcp_server::pagination::Cursor;
@@ -9,22 +9,25 @@ use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 
-/// Request for the `get_table_schema` tool.
+/// Request for the `getTableSchema` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GetTableSchemaRequest {
-    /// The table name to inspect. Use `list_tables` first to see available tables.
-    pub table_name: String,
+    /// The table name to inspect. Use `listTables` first to see available tables.
+    pub table: String,
 }
 
-/// Request for the `drop_table` tool.
+/// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct DropTableRequest {
     /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
-    pub table_name: String,
+    pub table: String,
 }
 
-/// Request for the `list_tables` tool.
+/// Request for the `listTables` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ListTablesRequest {
     /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
@@ -33,15 +36,17 @@ pub struct ListTablesRequest {
     pub cursor: Option<Cursor>,
 }
 
-/// Request for the `write_query` tool.
+/// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
 }
 
-/// Request for the `read_query` tool.
+/// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
@@ -53,8 +58,9 @@ pub struct ReadQueryRequest {
     pub cursor: Option<Cursor>,
 }
 
-/// Request for the `explain_query` tool.
+/// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,

@@ -1,4 +1,4 @@
-//! MCP tool: `write_query`.
+//! MCP tool: `writeQuery`.
 
 use std::borrow::Cow;
 
@@ -11,11 +11,11 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
 
-/// Marker type for the `write_query` MCP tool.
+/// Marker type for the `writeQuery` MCP tool.
 pub(crate) struct WriteQueryTool;
 
 impl WriteQueryTool {
-    const NAME: &'static str = "write_query";
+    const NAME: &'static str = "writeQuery";
     const TITLE: &'static str = "Write Query";
     const DESCRIPTION: &'static str = r#"Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
 
@@ -27,16 +27,16 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Read-only queries (SELECT, SHOW) → use read_query
-- Query performance analysis → use explain_query
-- Creating/dropping entire databases → use create_database or drop_database
+- Read-only queries (SELECT, SHOW) → use readQuery
+- Query performance analysis → use explainQuery
+- Creating/dropping entire databases → use createDatabase or dropDatabase
 </when_not_to_use>
 
 <examples>
 ✓ "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')"
 ✓ "UPDATE orders SET status = 'shipped' WHERE id = 42"
 ✓ "CREATE TABLE logs (id SERIAL PRIMARY KEY, message TEXT)"
-✗ "SELECT * FROM users" → use read_query
+✗ "SELECT * FROM users" → use readQuery
 </examples>
 
 <what_it_returns>
@@ -84,11 +84,8 @@ impl PostgresHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if the query fails.
-    pub async fn write_query(
-        &self,
-        QueryRequest { query, database_name }: QueryRequest,
-    ) -> Result<QueryResponse, SqlError> {
-        let db = Some(database_name.trim()).filter(|s| !s.is_empty());
+    pub async fn write_query(&self, QueryRequest { query, database }: QueryRequest) -> Result<QueryResponse, SqlError> {
+        let db = Some(database.trim()).filter(|s| !s.is_empty());
         if let Some(name) = &db {
             validate_ident(name)?;
         }

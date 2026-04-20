@@ -1,4 +1,4 @@
-//! MCP tool: `create_database`.
+//! MCP tool: `createDatabase`.
 
 use std::borrow::Cow;
 
@@ -12,11 +12,11 @@ use sqlparser::dialect::PostgreSqlDialect;
 
 use crate::PostgresHandler;
 
-/// Marker type for the `create_database` MCP tool.
+/// Marker type for the `createDatabase` MCP tool.
 pub(crate) struct CreateDatabaseTool;
 
 impl CreateDatabaseTool {
-    const NAME: &'static str = "create_database";
+    const NAME: &'static str = "createDatabase";
     const TITLE: &'static str = "Create Database";
     const DESCRIPTION: &'static str = r#"Create a new database on the connected server.
 
@@ -27,8 +27,8 @@ Use when:
 </usecase>
 
 <examples>
-✓ "Create a database called analytics" → create_database(database_name="analytics")
-✗ "Create a table" → use write_query with CREATE TABLE
+✓ "Create a database called analytics" → createDatabase(database="analytics")
+✗ "Create a table" → use writeQuery with CREATE TABLE
 </examples>
 
 <important>
@@ -82,25 +82,25 @@ impl PostgresHandler {
     /// Returns [`SqlError`] if read-only or the query fails.
     pub async fn create_database(
         &self,
-        CreateDatabaseRequest { database_name }: CreateDatabaseRequest,
+        CreateDatabaseRequest { database }: CreateDatabaseRequest,
     ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database_name)?;
+        validate_ident(&database)?;
 
-        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database_name, &PostgreSqlDialect {}));
+        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database, &PostgreSqlDialect {}));
         self.connection.execute(&create_sql, None).await.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("already exists") {
-                return SqlError::Query(format!("Database '{database_name}' already exists."));
+                return SqlError::Query(format!("Database '{database}' already exists."));
             }
             e
         })?;
 
         Ok(MessageResponse {
-            message: format!("Database '{database_name}' created successfully."),
+            message: format!("Database '{database}' created successfully."),
         })
     }
 }
