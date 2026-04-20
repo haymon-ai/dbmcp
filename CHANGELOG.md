@@ -2,6 +2,19 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.7.0](https://github.com/haymon-ai/database-mcp/compare/3026a0304d1cdc444dfe6100f28138b9043d48e5..v0.7.0) - 2026-04-20
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**tools**) cursor pagination for list_* and read_query (#118) - ([30cb5cc](https://github.com/haymon-ai/database-mcp/commit/30cb5cc5ef383df13f2503f0b05a21659fe34854)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**deps**) update all dependencies to latest compatible versions (#115) (#115) - ([2463d1d](https://github.com/haymon-ai/database-mcp/commit/2463d1d99fed863bb57c056f25e4e71a231edb69)) - [@athopen](https://github.com/athopen)
+- (**temporal**) decode date/time columns instead of returning null (#119) - ([17a3057](https://github.com/haymon-ai/database-mcp/commit/17a30575ee645995b2ab3e25c5fa46dc227f5313)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**api**) camelCase tool names and compact property keys (#120) - ([f56e3cd](https://github.com/haymon-ai/database-mcp/commit/f56e3cd59f8d8417333be3801a615611477fe831)) - [@athopen](https://github.com/athopen)
+- (**errors**) replace monolithic AppError with per-crate SqlError (#116) - ([7fcb496](https://github.com/haymon-ai/database-mcp/commit/7fcb49668d6545135c25052046cd0b95d03e4dec)) - [@athopen](https://github.com/athopen)
+- (**sql**) simplify Connection trait and harden sanitize module (#113) - ([3026a03](https://github.com/haymon-ai/database-mcp/commit/3026a0304d1cdc444dfe6100f28138b9043d48e5)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.6.4](https://github.com/haymon-ai/database-mcp/compare/24c25c2ed2f77c798fa415fcae311681f0427da7..v0.6.4) - 2026-04-15
 #### Bug Fixes
 - (**deps**) bump rustls-webpki to 0.103.12 (#112) - ([24c25c2](https://github.com/haymon-ai/database-mcp/commit/24c25c2ed2f77c798fa415fcae311681f0427da7)) - [@athopen](https://github.com/athopen)

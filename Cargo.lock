@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "axum",
  "clap",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-config"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "clap",
  "thiserror",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-mysql"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "database-mcp-config",
  "database-mcp-server",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-postgres"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "database-mcp-config",
  "database-mcp-server",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-server"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "base64",
  "rmcp",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-sql"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "database-mcp-sqlite"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "database-mcp-config",
  "database-mcp-server",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx_to_json"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "base64",
  "serde_json",
