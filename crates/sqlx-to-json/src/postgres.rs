@@ -57,18 +57,19 @@ impl RowExt for PgRow {
 
                     "DATE" => self
                         .try_get::<NaiveDate, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.format("%Y-%m-%d").to_string())),
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
 
                     "TIME" => self
                         .try_get::<NaiveTime, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.format("%H:%M:%S%.f").to_string())),
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
 
-                    "TIMESTAMP" => self.try_get::<NaiveDateTime, _>(idx).map_or(Value::Null, |v| {
-                        Value::String(v.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
-                    }),
+                    "TIMESTAMP" => self
+                        .try_get::<NaiveDateTime, _>(idx)
+                        .map_or(Value::Null, |v| Value::String(format!("{}T{}", v.date(), v.time()))),
 
                     "TIMESTAMPTZ" => self.try_get::<DateTime<Utc>, _>(idx).map_or(Value::Null, |v| {
-                        Value::String(v.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string())
+                        let n = v.naive_utc();
+                        Value::String(format!("{}T{}Z", n.date(), n.time()))
                     }),
 
                     _ => self.try_get::<String, _>(idx).map_or(Value::Null, Value::String),

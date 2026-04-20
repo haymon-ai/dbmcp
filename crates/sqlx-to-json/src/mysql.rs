@@ -58,21 +58,22 @@ impl RowExt for MySqlRow {
 
                     "DATE" => self
                         .try_get::<NaiveDate, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.format("%Y-%m-%d").to_string())),
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
 
                     "TIME" => self
                         .try_get::<NaiveTime, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.format("%H:%M:%S%.f").to_string())),
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
 
-                    "DATETIME" => self.try_get::<NaiveDateTime, _>(idx).map_or(Value::Null, |v| {
-                        Value::String(v.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
-                    }),
+                    "DATETIME" => self
+                        .try_get::<NaiveDateTime, _>(idx)
+                        .map_or(Value::Null, |v| Value::String(format!("{}T{}", v.date(), v.time()))),
 
                     // sqlx-mysql's NaiveDateTime decoder only accepts ColumnType::Datetime,
                     // not Timestamp. DateTime<Utc> accepts both; we then strip the zone
                     // via naive_utc() so the wire shape matches the naive ISO 8601 form.
                     "TIMESTAMP" => self.try_get::<DateTime<Utc>, _>(idx).map_or(Value::Null, |v| {
-                        Value::String(v.naive_utc().format("%Y-%m-%dT%H:%M:%S%.f").to_string())
+                        let n = v.naive_utc();
+                        Value::String(format!("{}T{}", n.date(), n.time()))
                     }),
 
                     // All other types (VARCHAR, TEXT, ENUM, etc.) → String
