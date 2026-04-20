@@ -70,7 +70,7 @@ impl ToolBase for GetTableSchemaTool {
 
 impl AsyncTool<MysqlHandler> for GetTableSchemaTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.get_table_schema(&params).await?)
+        Ok(handler.get_table_schema(params).await?)
     }
 }
 
@@ -80,20 +80,21 @@ impl MysqlHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
-        let GetTableSchemaRequest {
+    pub async fn get_table_schema(
+        &self,
+        GetTableSchemaRequest {
             database_name,
             table_name,
-        } = request;
-
-        validate_ident(database_name)?;
-        validate_ident(table_name)?;
+        }: GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, SqlError> {
+        validate_ident(&database_name)?;
+        validate_ident(&table_name)?;
 
         // 1. Get basic schema
         let describe_sql = format!(
             "DESCRIBE {}.{}",
-            quote_ident(database_name, &MySqlDialect {}),
-            quote_ident(table_name, &MySqlDialect {}),
+            quote_ident(&database_name, &MySqlDialect {}),
+            quote_ident(&table_name, &MySqlDialect {}),
         );
         let schema_rows = self.connection.fetch_json(describe_sql.as_str(), None).await?;
 
@@ -136,8 +137,8 @@ impl MysqlHandler {
               AND kcu.TABLE_NAME = {}
               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
-            quote_literal(database_name),
-            quote_literal(table_name),
+            quote_literal(&database_name),
+            quote_literal(&table_name),
         );
 
         let fk_rows = self.connection.fetch_json(fk_sql.as_str(), None).await?;
@@ -161,7 +162,7 @@ impl MysqlHandler {
         }
 
         Ok(TableSchemaResponse {
-            table_name: table_name.clone(),
+            table_name,
             columns: json!(columns),
         })
     }

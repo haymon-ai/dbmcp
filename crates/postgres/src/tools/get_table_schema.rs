@@ -69,7 +69,7 @@ impl ToolBase for GetTableSchemaTool {
 
 impl AsyncTool<PostgresHandler> for GetTableSchemaTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.get_table_schema(&params).await?)
+        Ok(handler.get_table_schema(params).await?)
     }
 }
 
@@ -80,13 +80,14 @@ impl PostgresHandler {
     ///
     /// Returns [`SqlError`] if validation fails or the query errors.
     #[allow(clippy::too_many_lines)]
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
-        let GetTableSchemaRequest {
+    pub async fn get_table_schema(
+        &self,
+        GetTableSchemaRequest {
             database_name,
             table_name,
-        } = request;
-
-        validate_ident(table_name)?;
+        }: GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, SqlError> {
+        validate_ident(&table_name)?;
         let db = Some(database_name.trim()).filter(|s| !s.is_empty());
         if let Some(name) = &db {
             validate_ident(name)?;
@@ -100,12 +101,12 @@ impl PostgresHandler {
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = {}
             ORDER BY ordinal_position",
-            quote_literal(table_name),
+            quote_literal(&table_name),
         );
         let rows = self.connection.fetch_json(&schema_sql, db).await?;
 
         if rows.is_empty() {
-            return Err(SqlError::TableNotFound(table_name.clone()));
+            return Err(SqlError::TableNotFound(table_name));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -162,7 +163,7 @@ impl PostgresHandler {
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_name = {}
                 AND tc.table_schema = 'public'",
-            quote_literal(table_name),
+            quote_literal(&table_name),
         );
         let fk_rows = self.connection.fetch_json(&fk_sql, db).await?;
 
@@ -189,7 +190,7 @@ impl PostgresHandler {
         }
 
         Ok(TableSchemaResponse {
-            table_name: table_name.clone(),
+            table_name,
             columns: json!(columns),
         })
     }

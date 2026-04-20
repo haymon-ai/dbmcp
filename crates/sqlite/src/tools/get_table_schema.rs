@@ -72,7 +72,7 @@ impl ToolBase for GetTableSchemaTool {
 
 impl AsyncTool<SqliteHandler> for GetTableSchemaTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.get_table_schema(&params).await?)
+        Ok(handler.get_table_schema(params).await?)
     }
 }
 
@@ -82,17 +82,18 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if validation fails or the query errors.
-    pub async fn get_table_schema(&self, request: &GetTableSchemaRequest) -> Result<TableSchemaResponse, SqlError> {
-        let GetTableSchemaRequest { table_name } = request;
-
-        validate_ident(table_name)?;
+    pub async fn get_table_schema(
+        &self,
+        GetTableSchemaRequest { table_name }: GetTableSchemaRequest,
+    ) -> Result<TableSchemaResponse, SqlError> {
+        validate_ident(&table_name)?;
 
         // 1. Get basic schema
-        let pragma_sql = format!("PRAGMA table_info({})", quote_ident(table_name, &SQLiteDialect {}));
+        let pragma_sql = format!("PRAGMA table_info({})", quote_ident(&table_name, &SQLiteDialect {}));
         let rows = self.connection.fetch_json(pragma_sql.as_str(), None).await?;
 
         if rows.is_empty() {
-            return Err(SqlError::TableNotFound(table_name.clone()));
+            return Err(SqlError::TableNotFound(table_name));
         }
 
         let mut columns: HashMap<String, Value> = HashMap::new();
@@ -118,7 +119,7 @@ impl SqliteHandler {
         // 2. Get FK info via PRAGMA
         let fk_pragma_sql = format!(
             "PRAGMA foreign_key_list({})",
-            quote_ident(table_name, &SQLiteDialect {})
+            quote_ident(&table_name, &SQLiteDialect {})
         );
         let fk_rows = self.connection.fetch_json(fk_pragma_sql.as_str(), None).await?;
 
@@ -161,7 +162,7 @@ impl SqliteHandler {
         }
 
         Ok(TableSchemaResponse {
-            table_name: table_name.clone(),
+            table_name,
             columns: json!(columns),
         })
     }

@@ -111,3 +111,40 @@ pub(crate) async fn run() -> Result<(), Error> {
         Command::Http(cmd) => cmd.execute().await,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::Arguments;
+
+    fn subcommand_help(name: &str) -> String {
+        let mut cmd = Arguments::command();
+        cmd.find_subcommand_mut(name)
+            .expect("subcommand")
+            .render_long_help()
+            .to_string()
+    }
+
+    fn assert_documents_page_size_flag(help: &str) {
+        assert!(
+            help.contains("--db-page-size"),
+            "help missing --db-page-size flag:\n{help}"
+        );
+        assert!(
+            help.contains("DB_PAGE_SIZE"),
+            "help missing DB_PAGE_SIZE env binding:\n{help}"
+        );
+        assert!(help.contains("[default: 100]"), "help missing [default: 100]:\n{help}");
+    }
+
+    #[test]
+    fn stdio_help_documents_db_page_size_flag() {
+        assert_documents_page_size_flag(&subcommand_help("stdio"));
+    }
+
+    #[test]
+    fn http_help_documents_db_page_size_flag() {
+        assert_documents_page_size_flag(&subcommand_help("http"));
+    }
+}

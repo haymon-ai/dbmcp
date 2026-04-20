@@ -108,6 +108,15 @@ pub(crate) struct DatabaseArguments {
         value_parser = clap::value_parser!(u64)
     )]
     pub(crate) query_timeout: u64,
+
+    /// Maximum items returned in a single paginated tool response
+    #[arg(
+        long = "db-page-size",
+        env = "DB_PAGE_SIZE",
+        default_value_t = DatabaseConfig::DEFAULT_PAGE_SIZE,
+        value_parser = clap::value_parser!(u16).range(1..=i64::from(DatabaseConfig::MAX_PAGE_SIZE)),
+    )]
+    pub(crate) page_size: u16,
 }
 
 impl TryFrom<&DatabaseArguments> for DatabaseConfig {
@@ -132,6 +141,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
             max_pool_size: db.max_pool_size,
             connection_timeout: db.connection_timeout,
             query_timeout: Some(db.query_timeout),
+            page_size: db.page_size,
         };
         config.validate()?;
         Ok(config)
@@ -156,5 +166,67 @@ pub(crate) fn create_server(db_config: &DatabaseConfig) -> Server {
         DatabaseBackend::Sqlite => SqliteHandler::new(db_config).into(),
         DatabaseBackend::Postgres => PostgresHandler::new(db_config).into(),
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(db_config).into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::DatabaseArguments;
+
+    #[derive(Parser)]
+    #[command(no_binary_name = true)]
+    struct TestCli {
+        #[command(flatten)]
+        db: DatabaseArguments,
+    }
+
+    fn try_parse_with_page_size(value: &str) -> Result<u16, clap::Error> {
+        // SAFETY: no other test in this file writes DB_PAGE_SIZE concurrently;
+        // removing it here prevents a stale host value from leaking into clap.
+        unsafe {
+            std::env::remove_var("DB_PAGE_SIZE");
+        }
+        TestCli::try_parse_from(["--db-page-size", value]).map(|cli| cli.db.page_size)
+    }
+
+    #[test]
+    fn clap_rejects_page_size_zero() {
+        assert!(try_parse_with_page_size("0").is_err());
+    }
+
+    #[test]
+    fn clap_rejects_page_size_above_max() {
+        assert!(try_parse_with_page_size("501").is_err());
+    }
+
+    #[test]
+    fn clap_rejects_negative_page_size() {
+        assert!(try_parse_with_page_size("-1").is_err());
+    }
+
+    #[test]
+    fn clap_rejects_non_integer_page_size() {
+        assert!(try_parse_with_page_size("abc").is_err());
+    }
+
+    #[test]
+    fn clap_accepts_page_size_at_min() {
+        assert_eq!(try_parse_with_page_size("1").unwrap(), 1);
+    }
+
+    #[test]
+    fn clap_accepts_page_size_at_max() {
+        assert_eq!(try_parse_with_page_size("500").unwrap(), 500);
+    }
+
+    #[test]
+    fn clap_default_page_size_is_100() {
+        unsafe {
+            std::env::remove_var("DB_PAGE_SIZE");
+        }
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
+        assert_eq!(cli.db.page_size, 100);
     }
 }

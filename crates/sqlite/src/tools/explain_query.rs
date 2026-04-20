@@ -8,7 +8,6 @@ use database_mcp_sql::Connection as _;
 use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use serde_json::Value;
 
 use crate::SqliteHandler;
 use crate::types::ExplainQueryRequest;
@@ -74,7 +73,7 @@ impl ToolBase for ExplainQueryTool {
 
 impl AsyncTool<SqliteHandler> for ExplainQueryTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.explain_query(&params).await?)
+        Ok(handler.explain_query(params).await?)
     }
 }
 
@@ -87,15 +86,14 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError::Query`] if the backend reports an error.
-    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, SqlError> {
-        let ExplainQueryRequest { query } = request;
-
+    pub async fn explain_query(
+        &self,
+        ExplainQueryRequest { query }: ExplainQueryRequest,
+    ) -> Result<QueryResponse, SqlError> {
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
 
         let rows = self.connection.fetch_json(explain_sql.as_str(), None).await?;
 
-        Ok(QueryResponse {
-            rows: Value::Array(rows),
-        })
+        Ok(QueryResponse { rows })
     }
 }

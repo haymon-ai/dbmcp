@@ -70,7 +70,7 @@ impl ToolBase for CreateDatabaseTool {
 
 impl AsyncTool<PostgresHandler> for CreateDatabaseTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.create_database(&params).await?)
+        Ok(handler.create_database(params).await?)
     }
 }
 
@@ -80,16 +80,17 @@ impl PostgresHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if read-only or the query fails.
-    pub async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, SqlError> {
+    pub async fn create_database(
+        &self,
+        CreateDatabaseRequest { database_name }: CreateDatabaseRequest,
+    ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let CreateDatabaseRequest { database_name } = request;
+        validate_ident(&database_name)?;
 
-        validate_ident(database_name)?;
-
-        let create_sql = format!("CREATE DATABASE {}", quote_ident(database_name, &PostgreSqlDialect {}));
+        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database_name, &PostgreSqlDialect {}));
         self.connection.execute(&create_sql, None).await.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("already exists") {

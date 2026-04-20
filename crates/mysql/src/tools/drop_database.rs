@@ -71,7 +71,7 @@ impl ToolBase for DropDatabaseTool {
 
 impl AsyncTool<MysqlHandler> for DropDatabaseTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.drop_database(&params).await?)
+        Ok(handler.drop_database(params).await?)
     }
 }
 
@@ -86,32 +86,33 @@ impl MysqlHandler {
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the target is the active database
     /// or the backend reports an error.
-    pub async fn drop_database(&self, request: &DropDatabaseRequest) -> Result<MessageResponse, SqlError> {
+    pub async fn drop_database(
+        &self,
+        DropDatabaseRequest { database_name }: DropDatabaseRequest,
+    ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let DropDatabaseRequest { database_name } = request;
-
-        validate_ident(database_name)?;
+        validate_ident(&database_name)?;
 
         // Guard: prevent dropping the currently connected database.
         if self
             .connection
             .default_database_name()
-            .eq_ignore_ascii_case(database_name)
+            .eq_ignore_ascii_case(&database_name)
         {
             return Err(SqlError::Query(format!(
                 "Cannot drop the currently connected database '{database_name}'."
             )));
         }
 
-        let drop_sql = format!("DROP DATABASE {}", quote_ident(database_name, &MySqlDialect {}));
+        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database_name, &MySqlDialect {}));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
         // Evict the pool for the dropped database so stale connections
         // are not reused.
-        self.connection.invalidate(database_name).await;
+        self.connection.invalidate(&database_name).await;
 
         Ok(MessageResponse {
             message: format!("Database '{database_name}' dropped successfully."),

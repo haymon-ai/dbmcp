@@ -75,7 +75,7 @@ impl ToolBase for DropTableTool {
 
 impl AsyncTool<PostgresHandler> for DropTableTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.drop_table(&params).await?)
+        Ok(handler.drop_table(params).await?)
     }
 }
 
@@ -91,26 +91,27 @@ impl PostgresHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
-    pub async fn drop_table(&self, request: &DropTableRequest) -> Result<MessageResponse, SqlError> {
+    pub async fn drop_table(
+        &self,
+        DropTableRequest {
+            database_name,
+            table_name,
+            cascade,
+        }: DropTableRequest,
+    ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let DropTableRequest {
-            database_name,
-            table_name,
-            cascade,
-        } = request;
+        validate_ident(&database_name)?;
+        validate_ident(&table_name)?;
 
-        validate_ident(database_name)?;
-        validate_ident(table_name)?;
-
-        let mut drop_sql = format!("DROP TABLE {}", quote_ident(table_name, &PostgreSqlDialect {}));
-        if *cascade {
+        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table_name, &PostgreSqlDialect {}));
+        if cascade {
             drop_sql.push_str(" CASCADE");
         }
 
-        self.connection.execute(drop_sql.as_str(), Some(database_name)).await?;
+        self.connection.execute(drop_sql.as_str(), Some(&database_name)).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table_name}' dropped successfully."),

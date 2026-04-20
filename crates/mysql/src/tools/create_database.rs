@@ -71,7 +71,7 @@ impl ToolBase for CreateDatabaseTool {
 
 impl AsyncTool<MysqlHandler> for CreateDatabaseTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.create_database(&params).await?)
+        Ok(handler.create_database(params).await?)
     }
 }
 
@@ -81,21 +81,22 @@ impl MysqlHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if read-only or the query fails.
-    pub async fn create_database(&self, request: &CreateDatabaseRequest) -> Result<MessageResponse, SqlError> {
+    pub async fn create_database(
+        &self,
+        CreateDatabaseRequest { database_name }: CreateDatabaseRequest,
+    ) -> Result<MessageResponse, SqlError> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let CreateDatabaseRequest { database_name } = request;
-
-        validate_ident(database_name)?;
+        validate_ident(&database_name)?;
 
         let check_sql = format!(
             r"
             SELECT CAST(SCHEMA_NAME AS CHAR)
             FROM information_schema.SCHEMATA
             WHERE SCHEMA_NAME = {}",
-            quote_literal(database_name),
+            quote_literal(&database_name),
         );
 
         let exists: Option<String> = self.connection.fetch_optional(check_sql.as_str(), None).await?;
@@ -108,7 +109,7 @@ impl MysqlHandler {
 
         let create_sql = format!(
             "CREATE DATABASE IF NOT EXISTS {}",
-            quote_ident(database_name, &MySqlDialect {})
+            quote_ident(&database_name, &MySqlDialect {})
         );
 
         self.connection.execute(create_sql.as_str(), None).await?;

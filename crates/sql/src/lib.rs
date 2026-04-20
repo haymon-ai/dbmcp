@@ -2,14 +2,18 @@
 //!
 //! Provides [`sanitize`] helpers for quoting and validating SQL
 //! identifiers and literals, [`validation`] for read-only query
-//! enforcement, [`timeout`] for query-level timeout wrapping, and
-//! the [`connection`] trait shared by every backend.
+//! enforcement, [`pagination`] for rewriting `SELECT` statements
+//! with a server-controlled `LIMIT` / `OFFSET`, [`timeout`] for
+//! query-level timeout wrapping, and the [`connection`] trait
+//! shared by every backend.
 
 pub mod connection;
 pub mod error;
+pub mod pagination;
 pub mod sanitize;
 pub mod timeout;
 pub mod validation;
 
 pub use connection::Connection;
 pub use error::SqlError;
+pub use validation::StatementKind;

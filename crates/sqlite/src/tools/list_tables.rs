@@ -3,14 +3,15 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use database_mcp_server::pagination::Pager;
 use database_mcp_server::types::ListTablesResponse;
 
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 
 use crate::SqliteHandler;
+use crate::types::ListTablesRequest;
 
 /// Marker type for the `list_tables` MCP tool.
 pub(crate) struct ListTablesTool;
@@ -35,11 +36,15 @@ ALWAYS call this tool FIRST when:
 
 <what_it_returns>
 A sorted JSON array of table name strings.
-</what_it_returns>"#;
+</what_it_returns>
+
+<pagination>
+Paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.
+</pagination>"#;
 }
 
 impl ToolBase for ListTablesTool {
-    type Parameter = ();
+    type Parameter = ListTablesRequest;
     type Output = ListTablesResponse;
     type Error = ErrorData;
 
@@ -71,24 +76,37 @@ impl ToolBase for ListTablesTool {
 }
 
 impl AsyncTool<SqliteHandler> for ListTablesTool {
-    async fn invoke(handler: &SqliteHandler, _params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.list_tables().await?)
+    async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler.list_tables(params).await
     }
 }
 
 impl SqliteHandler {
-    /// Lists all tables in the connected database.
+    /// Lists one page of tables in the connected database.
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the query fails.
-    pub async fn list_tables(&self) -> Result<ListTablesResponse, SqlError> {
-        let sql = r"
+    /// Returns [`ErrorData`] with code `-32602` if `cursor` is malformed,
+    /// or an internal-error [`ErrorData`] if the underlying query fails.
+    pub async fn list_tables(
+        &self,
+        ListTablesRequest { cursor }: ListTablesRequest,
+    ) -> Result<ListTablesResponse, ErrorData> {
+        let pager = Pager::new(cursor, self.config.page_size);
+        let query = format!(
+            r"
             SELECT name
             FROM sqlite_master
             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name";
-        let tables: Vec<String> = self.connection.fetch_scalar(sql, None).await?;
-        Ok(ListTablesResponse { tables })
+            ORDER BY name
+            LIMIT {} OFFSET {}",
+            pager.limit(),
+            pager.offset(),
+        );
+
+        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
+        let (tables, next_cursor) = pager.finalize(rows);
+
+        Ok(ListTablesResponse { tables, next_cursor })
     }
 }

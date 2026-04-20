@@ -9,7 +9,6 @@ use database_mcp_sql::sanitize::validate_ident;
 use database_mcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use serde_json::Value;
 
 use crate::MysqlHandler;
 
@@ -81,7 +80,7 @@ impl ToolBase for ExplainQueryTool {
 
 impl AsyncTool<MysqlHandler> for ExplainQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.explain_query(&params).await?)
+        Ok(handler.explain_query(params).await?)
     }
 }
 
@@ -96,15 +95,16 @@ impl MysqlHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error.
-    pub async fn explain_query(&self, request: &ExplainQueryRequest) -> Result<QueryResponse, SqlError> {
-        let ExplainQueryRequest {
+    pub async fn explain_query(
+        &self,
+        ExplainQueryRequest {
             database_name,
             query,
             analyze,
-        } = request;
-
-        if *analyze && self.config.read_only {
-            validate_read_only(query, &sqlparser::dialect::MySqlDialect {})?;
+        }: ExplainQueryRequest,
+    ) -> Result<QueryResponse, SqlError> {
+        if analyze && self.config.read_only {
+            let _ = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
         let db = Some(database_name.trim()).filter(|s| !s.is_empty());
@@ -112,15 +112,13 @@ impl MysqlHandler {
             validate_ident(name)?;
         }
 
-        let explain_sql = if *analyze {
+        let explain_sql = if analyze {
             format!("EXPLAIN ANALYZE {query}")
         } else {
             format!("EXPLAIN FORMAT=JSON {query}")
         };
 
         let rows = self.connection.fetch_json(explain_sql.as_str(), db).await?;
-        Ok(QueryResponse {
-            rows: Value::Array(rows),
-        })
+        Ok(QueryResponse { rows })
     }
 }

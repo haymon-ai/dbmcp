@@ -158,6 +158,7 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 | `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Max connection pool size (min: 1) |
 | `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | *(unset)* | Connection timeout in seconds (min: 1) |
 | `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
+| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
 
 ### Logging Options
 
@@ -178,11 +179,11 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 
 ### list_databases
 
-Lists all accessible databases. Returns a JSON array of database names. Not available for SQLite.
+Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details. Not available for SQLite.
 
 ### list_tables
 
-Lists all tables in a database. Parameters: `database_name`.
+Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database_name`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### get_table_schema
 
@@ -190,7 +191,7 @@ Returns column definitions (type, nullable, key, default, extra) and foreign key
 
 ### read_query
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `sql_query`, `database_name`.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database_name`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### write_query
 

@@ -38,13 +38,23 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 
 SQLite is file-based with a single database, so `list_databases`, `create_database`, and `drop_database` are not applicable.
 
+### Cursor Pagination
+
+Three tools — `list_databases`, `list_tables`, and `read_query` (for `SELECT` results) — return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
+
+To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
+
+Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a JSON-RPC error (code `-32602`); the server does not silently restart from the beginning.
+
+Only `SELECT` statements in `read_query` paginate. `SHOW`, `DESCRIBE` / `DESC`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
+
 ### `list_databases`
 
-Discover all accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available. Not available for SQLite.
+Discover accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. Not available for SQLite.
 
 ### `list_tables`
 
-List all tables in a specific database. Requires a database name (use `list_databases` first on MySQL/MariaDB/PostgreSQL).
+List tables in a specific database, one page at a time. Requires a database name (use `list_databases` first on MySQL/MariaDB/PostgreSQL). Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol.
 
 ### `get_table_schema`
 
@@ -52,7 +62,7 @@ Inspect column definitions for a table — column names, types, nullability, key
 
 ### `read_query`
 
-Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation.
+Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation. `SELECT` results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
 ### `write_query`
 

@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
+use database_mcp_server::pagination::Pager;
 use database_mcp_server::types::{ListTablesRequest, ListTablesResponse};
 use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
 use database_mcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -34,7 +34,11 @@ Use when:
 
 <what_it_returns>
 A sorted JSON array of table name strings.
-</what_it_returns>"#;
+</what_it_returns>
+
+<pagination>
+Paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.
+</pagination>"#;
 }
 
 impl ToolBase for ListTablesTool {
@@ -67,29 +71,42 @@ impl ToolBase for ListTablesTool {
 
 impl AsyncTool<PostgresHandler> for ListTablesTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.list_tables(&params).await?)
+        handler.list_tables(params).await
     }
 }
 
 impl PostgresHandler {
-    /// Lists all tables in a database.
+    /// Lists one page of tables in a database.
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the identifier is invalid or the query fails.
-    pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResponse, SqlError> {
-        let ListTablesRequest { database_name } = request;
-
+    /// Returns [`ErrorData`] with code `-32602` if `cursor` is malformed,
+    /// or an internal-error [`ErrorData`] if `database_name` is invalid
+    /// or the underlying query fails.
+    pub async fn list_tables(
+        &self,
+        ListTablesRequest { database_name, cursor }: ListTablesRequest,
+    ) -> Result<ListTablesResponse, ErrorData> {
         let db = Some(database_name.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = &db {
+        if let Some(name) = db {
             validate_ident(name)?;
         }
-        let sql = r"
+
+        let pager = Pager::new(cursor, self.config.page_size);
+        let query = format!(
+            r"
             SELECT tablename
             FROM pg_tables
             WHERE schemaname = 'public'
-            ORDER BY tablename";
-        let tables: Vec<String> = self.connection.fetch_scalar(sql, db).await?;
-        Ok(ListTablesResponse { tables })
+            ORDER BY tablename
+            LIMIT {} OFFSET {}",
+            pager.limit(),
+            pager.offset(),
+        );
+
+        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), db).await?;
+        let (tables, next_cursor) = pager.finalize(rows);
+
+        Ok(ListTablesResponse { tables, next_cursor })
     }
 }

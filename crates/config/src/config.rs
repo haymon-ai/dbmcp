@@ -31,6 +31,15 @@ pub enum ConfigError {
     /// HTTP bind host is empty.
     #[error("HTTP_HOST must not be empty")]
     EmptyHttpHost,
+
+    /// `page_size` is outside the accepted range `1..=MAX_PAGE_SIZE`.
+    #[error("DB_PAGE_SIZE must be between 1 and {max}, got {value}")]
+    PageSizeOutOfRange {
+        /// The offending value.
+        value: u16,
+        /// The inclusive upper bound (`DatabaseConfig::MAX_PAGE_SIZE`).
+        max: u16,
+    },
 }
 
 /// Supported database backends.
@@ -135,6 +144,12 @@ pub struct DatabaseConfig {
     /// `None` means "use default" (30 s when constructed via CLI).
     /// `Some(0)` disables the timeout entirely.
     pub query_timeout: Option<u64>,
+
+    /// Maximum items returned in a single paginated tool response.
+    ///
+    /// Applies uniformly to every paginated tool (currently `list_tables`).
+    /// Range `1..=500`, enforced by CLI parsing and [`Self::validate`].
+    pub page_size: u16,
 }
 
 impl std::fmt::Debug for DatabaseConfig {
@@ -156,6 +171,7 @@ impl std::fmt::Debug for DatabaseConfig {
             .field("max_pool_size", &self.max_pool_size)
             .field("connection_timeout", &self.connection_timeout)
             .field("query_timeout", &self.query_timeout)
+            .field("page_size", &self.page_size)
             .finish()
     }
 }
@@ -181,6 +197,10 @@ impl DatabaseConfig {
     pub const DEFAULT_MIN_CONNECTIONS: u32 = 1;
     /// Default query execution timeout in seconds.
     pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
+    /// Default page size for paginated tool responses.
+    pub const DEFAULT_PAGE_SIZE: u16 = 100;
+    /// Maximum accepted value for `page_size`.
+    pub const MAX_PAGE_SIZE: u16 = 500;
 
     /// Validates the database configuration and returns all errors found.
     ///
@@ -208,6 +228,13 @@ impl DatabaseConfig {
             }
         }
 
+        if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
+            errors.push(ConfigError::PageSizeOutOfRange {
+                value: self.page_size,
+                max: Self::MAX_PAGE_SIZE,
+            });
+        }
+
         errors.is_empty().then_some(()).ok_or(errors)
     }
 }
@@ -231,6 +258,7 @@ impl Default for DatabaseConfig {
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
             query_timeout: None,
+            page_size: Self::DEFAULT_PAGE_SIZE,
         }
     }
 }
@@ -470,6 +498,98 @@ mod tests {
     fn query_timeout_default_is_none() {
         let config = DatabaseConfig::default();
         assert!(config.query_timeout.is_none());
+    }
+
+    #[test]
+    fn page_size_default_is_100() {
+        let config = DatabaseConfig::default();
+        assert_eq!(config.page_size, 100);
+    }
+
+    #[test]
+    fn page_size_zero_rejected() {
+        let config = DatabaseConfig {
+            page_size: 0,
+            ..mysql_config().database
+        };
+        let errors = config.validate().expect_err("page_size=0 must be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 0, max: 500 })),
+            "expected PageSizeOutOfRange {{ value: 0, max: 500 }}, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn page_size_above_max_rejected() {
+        let config = DatabaseConfig {
+            page_size: 501,
+            ..mysql_config().database
+        };
+        let errors = config.validate().expect_err("page_size above max must be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 501, max: 500 })),
+            "expected PageSizeOutOfRange {{ value: 501, max: 500 }}, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn page_size_at_min_accepted() {
+        let config = DatabaseConfig {
+            page_size: 1,
+            ..mysql_config().database
+        };
+        assert!(config.validate().is_ok(), "page_size=1 must be accepted");
+    }
+
+    #[test]
+    fn page_size_at_max_accepted() {
+        let config = DatabaseConfig {
+            page_size: DatabaseConfig::MAX_PAGE_SIZE,
+            ..mysql_config().database
+        };
+        assert!(config.validate().is_ok(), "page_size=MAX_PAGE_SIZE must be accepted");
+    }
+
+    #[test]
+    fn page_size_errors_accumulate_with_others() {
+        let config = Config {
+            database: DatabaseConfig {
+                page_size: 0,
+                ..db_config(DatabaseBackend::Sqlite)
+            },
+            ..base_config(DatabaseBackend::Sqlite)
+        };
+        let errors = config
+            .database
+            .validate()
+            .expect_err("multiple errors should be accumulated");
+        assert!(
+            errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)),
+            "expected MissingSqliteDbName in {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 0, .. })),
+            "expected PageSizeOutOfRange in {errors:?}"
+        );
+    }
+
+    #[test]
+    fn debug_includes_page_size() {
+        let config = DatabaseConfig {
+            page_size: 250,
+            ..mysql_config().database
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            debug.contains("page_size: 250"),
+            "expected page_size in debug output: {debug}"
+        );
     }
 
     fn http_config() -> HttpConfig {

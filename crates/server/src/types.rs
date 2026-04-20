@@ -7,6 +7,8 @@ use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::pagination::Cursor;
+
 /// Response for tools with no structured return data.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct MessageResponse {
@@ -14,11 +16,22 @@ pub struct MessageResponse {
     pub message: String,
 }
 
+/// Request for the `list_databases` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListDatabasesRequest {
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
 /// Response for the `list_databases` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListDatabasesResponse {
-    /// Sorted list of database names.
+    /// Sorted list of database names for this page.
     pub databases: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `create_database` tool.
@@ -40,13 +53,19 @@ pub struct DropDatabaseRequest {
 pub struct ListTablesRequest {
     /// The database name to list tables from. Required. Use `list_databases` first to see available databases.
     pub database_name: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
 }
 
 /// Response for the `list_tables` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListTablesResponse {
-    /// Sorted list of table names.
+    /// Sorted list of table names for this page.
     pub tables: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `get_table_schema` tool.
@@ -67,7 +86,7 @@ pub struct TableSchemaResponse {
     pub columns: Value,
 }
 
-/// Request for the `read_query` and `write_query` tools.
+/// Request for the `write_query` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct QueryRequest {
     /// The SQL query to execute.
@@ -76,11 +95,35 @@ pub struct QueryRequest {
     pub database_name: String,
 }
 
-/// Response for the `read_query`, `write_query`, and `explain_query` tools.
+/// Request for the `read_query` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ReadQueryRequest {
+    /// The SQL query to execute.
+    pub query: String,
+    /// The database to run the query against. Required. Use `list_databases` first to see available databases.
+    pub database_name: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `write_query` and `explain_query` tools.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
-    pub rows: Value,
+    pub rows: Vec<Value>,
+}
+
+/// Response for the `read_query` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReadQueryResponse {
+    /// Result rows, each a JSON object keyed by a column name.
+    pub rows: Vec<Value>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final
+    /// page, when the result fits in one page, or when the statement is a
+    /// non-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `explain_query` tool.
