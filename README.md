@@ -158,7 +158,7 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 | `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Max connection pool size (min: 1) |
 | `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | *(unset)* | Connection timeout in seconds (min: 1) |
 | `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
-| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–10000) |
+| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
 
 ### Logging Options
 

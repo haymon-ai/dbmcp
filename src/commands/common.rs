@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn clap_rejects_page_size_above_max() {
-        assert!(try_parse_with_page_size("10001").is_err());
+        assert!(try_parse_with_page_size("501").is_err());
     }
 
     #[test]
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn clap_accepts_page_size_at_max() {
-        assert_eq!(try_parse_with_page_size("10000").unwrap(), 10_000);
+        assert_eq!(try_parse_with_page_size("500").unwrap(), 500);
     }
 
     #[test]

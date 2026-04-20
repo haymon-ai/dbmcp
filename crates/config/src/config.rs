@@ -148,7 +148,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=10_000`, enforced by CLI parsing and [`Self::validate`].
+    /// Range `1..=500`, enforced by CLI parsing and [`Self::validate`].
     pub page_size: u16,
 }
 
@@ -200,7 +200,7 @@ impl DatabaseConfig {
     /// Default page size for paginated tool responses.
     pub const DEFAULT_PAGE_SIZE: u16 = 100;
     /// Maximum accepted value for `page_size`.
-    pub const MAX_PAGE_SIZE: u16 = 10_000;
+    pub const MAX_PAGE_SIZE: u16 = 500;
 
     /// Validates the database configuration and returns all errors found.
     ///
@@ -516,27 +516,23 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 0, max: 10_000 })),
-            "expected PageSizeOutOfRange {{ value: 0, max: 10_000 }}, got {errors:?}"
+                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 0, max: 500 })),
+            "expected PageSizeOutOfRange {{ value: 0, max: 500 }}, got {errors:?}"
         );
     }
 
     #[test]
     fn page_size_above_max_rejected() {
         let config = DatabaseConfig {
-            page_size: 10_001,
+            page_size: 501,
             ..mysql_config().database
         };
         let errors = config.validate().expect_err("page_size above max must be rejected");
         assert!(
-            errors.iter().any(|e| matches!(
-                e,
-                ConfigError::PageSizeOutOfRange {
-                    value: 10_001,
-                    max: 10_000
-                }
-            )),
-            "expected PageSizeOutOfRange {{ value: 10_001, max: 10_000 }}, got {errors:?}"
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::PageSizeOutOfRange { value: 501, max: 500 })),
+            "expected PageSizeOutOfRange {{ value: 501, max: 500 }}, got {errors:?}"
         );
     }
 
