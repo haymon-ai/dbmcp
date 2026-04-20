@@ -158,6 +158,7 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 | `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Max connection pool size (min: 1) |
 | `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | *(unset)* | Connection timeout in seconds (min: 1) |
 | `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
+| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–10000) |
 
 ### Logging Options
 
@@ -178,7 +179,7 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 
 ### list_databases
 
-Lists all accessible databases. Returns a JSON array of database names. Not available for SQLite.
+Lists accessible databases, paginated. Parameters: `cursor` (optional opaque token from a prior response's `nextCursor`). Returns up to 100 databases per call; when more remain, the response includes a `nextCursor` string — pass it back on the next call to fetch the next page. Iterate until `nextCursor` is absent. Not available for SQLite.
 
 ### list_tables
 
@@ -190,7 +191,7 @@ Returns column definitions (type, nullable, key, default, extra) and foreign key
 
 ### read_query
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `sql_query`, `database_name`.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database_name`, `cursor` (optional opaque token from a prior response's `nextCursor`). `SELECT` results paginate — up to 100 rows per call, with a `nextCursor` when more remain; iterate until `nextCursor` is absent. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` always return a single page and ignore `cursor`.
 
 ### write_query
 
