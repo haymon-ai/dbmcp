@@ -63,6 +63,18 @@ INSERT INTO `app`.`post_tags` (`post_id`, `tag_id`) VALUES
     (3, 3),
     (3, 1);
 
+CREATE TABLE `app`.`temporal` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `date` DATE NOT NULL,
+    `time` TIME NOT NULL,
+    `datetime` DATETIME NOT NULL,
+    `timestamp` TIMESTAMP NOT NULL
+) ENGINE=InnoDB;
+
+-- Sample data: 1 temporal row
+INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
+    (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00');
+
 -- analytics database
 
 DROP DATABASE IF EXISTS `analytics`;

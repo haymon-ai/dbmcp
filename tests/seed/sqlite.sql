@@ -58,3 +58,14 @@ INSERT INTO post_tags (post_id, tag_id) VALUES
     (2, 1),
     (3, 3),
     (3, 1);
+
+CREATE TABLE IF NOT EXISTS temporal (
+    id INTEGER PRIMARY KEY,
+    date DATE NOT NULL,
+    time TIME NOT NULL,
+    timestamp TIMESTAMP NOT NULL
+);
+
+-- Sample data: 1 temporal row
+INSERT INTO temporal (id, date, time, timestamp) VALUES
+    (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00');

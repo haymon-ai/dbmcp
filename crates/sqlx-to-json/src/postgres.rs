@@ -3,12 +3,15 @@
 //! Type names are normalized to uppercase because sqlx may return either case
 //! depending on the query context. Integer types use size-specific Rust types
 //! (`i16`, `i32`, `i64`) because sqlx enforces strict type matching for
-//! `PostgreSQL`.
+//! `PostgreSQL`. Temporal types (`DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`)
+//! are decoded via sqlx's `chrono` integration and serialized as RFC 3339
+//! strings; `TIMESTAMPTZ` is normalized to UTC and emitted with a `Z` suffix.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Map, Value};
 use sqlx::postgres::PgRow;
+use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::RowExt;
@@ -51,6 +54,23 @@ impl RowExt for PgRow {
                         .map_or(Value::Null, |bytes| Value::String(BASE64.encode(&bytes))),
 
                     "JSON" | "JSONB" => self.try_get::<Value, _>(idx).unwrap_or(Value::Null),
+
+                    "DATE" => self
+                        .try_get::<NaiveDate, _>(idx)
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
+
+                    "TIME" => self
+                        .try_get::<NaiveTime, _>(idx)
+                        .map_or(Value::Null, |v| Value::String(v.to_string())),
+
+                    "TIMESTAMP" => self
+                        .try_get::<NaiveDateTime, _>(idx)
+                        .map_or(Value::Null, |v| Value::String(format!("{}T{}", v.date(), v.time()))),
+
+                    "TIMESTAMPTZ" => self.try_get::<DateTime<Utc>, _>(idx).map_or(Value::Null, |v| {
+                        let n = v.naive_utc();
+                        Value::String(format!("{}T{}Z", n.date(), n.time()))
+                    }),
 
                     _ => self.try_get::<String, _>(idx).map_or(Value::Null, Value::String),
                 }

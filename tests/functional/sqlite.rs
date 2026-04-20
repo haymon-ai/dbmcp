@@ -1018,3 +1018,28 @@ async fn test_read_query_non_select_single_page_with_cursor_ignored() {
         "cursor must be silently ignored for non-SELECT statements"
     );
 }
+
+#[tokio::test]
+async fn test_read_query_temporal_columns_preserved() {
+    // Feature 038: SQLite stores temporal values as TEXT verbatim. This test
+    // is a regression guard ensuring the existing TEXT decode path keeps
+    // returning the exact stored text (no formatting applied by the server).
+    let handler = handler(false);
+
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT date, time, timestamp FROM temporal WHERE id = 1".into(),
+            cursor: None,
+        })
+        .await
+        .expect("temporal SELECT should succeed");
+
+    let arr = &response.rows;
+    assert_eq!(arr.len(), 1, "temporal seeds exactly one row");
+    assert_eq!(arr[0]["date"], "2026-04-20");
+    assert_eq!(arr[0]["time"], "14:30:00");
+    // Note the space (not T) between date and time — SQLite stores the
+    // literal text we inserted; this is the existing behavior we are
+    // explicitly asserting does not regress.
+    assert_eq!(arr[0]["timestamp"], "2026-04-20 14:30:00");
+}

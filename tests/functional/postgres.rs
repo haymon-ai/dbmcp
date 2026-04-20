@@ -1613,3 +1613,32 @@ async fn test_read_query_non_select_explain_single_page() {
     assert!(response.next_cursor.is_none(), "EXPLAIN must not paginate");
     assert!(!&response.rows.is_empty(), "EXPLAIN must return plan rows");
 }
+
+#[tokio::test]
+async fn test_read_query_returns_non_null_temporal_columns() {
+    // Feature 038: PG temporal columns must round-trip as RFC 3339 strings,
+    // with TIMESTAMPTZ normalized to UTC and emitted with a trailing Z.
+    let handler = handler(false);
+
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: r#"SELECT "date", "time", "timestamp", "timestamptz" FROM temporal WHERE id = 1"#.into(),
+            database_name: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("temporal SELECT should succeed");
+
+    let arr = &response.rows;
+    assert_eq!(arr.len(), 1, "temporal seeds exactly one row");
+    assert_eq!(arr[0]["date"], "2026-04-20", "DATE → YYYY-MM-DD");
+    assert_eq!(arr[0]["time"], "14:30:00", "TIME → HH:MM:SS");
+    assert_eq!(
+        arr[0]["timestamp"], "2026-04-20T14:30:00",
+        "TIMESTAMP (naive) → no Z, no offset (FR-004)"
+    );
+    assert_eq!(
+        arr[0]["timestamptz"], "2026-04-20T12:30:00Z",
+        "TIMESTAMPTZ → UTC-normalized from +02:00, with Z suffix (FR-004 / Q2)"
+    );
+}

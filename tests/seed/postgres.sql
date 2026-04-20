@@ -66,6 +66,18 @@ INSERT INTO post_tags (post_id, tag_id) VALUES
     (3, 3),
     (3, 1);
 
+CREATE TABLE temporal (
+    id SERIAL PRIMARY KEY,
+    "date" DATE NOT NULL,
+    "time" TIME NOT NULL,
+    "timestamp" TIMESTAMP NOT NULL,
+    "timestamptz" TIMESTAMPTZ NOT NULL
+);
+
+-- Sample data: 1 temporal row
+INSERT INTO temporal (id, "date", "time", "timestamp", "timestamptz") VALUES
+    (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00+02:00');
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

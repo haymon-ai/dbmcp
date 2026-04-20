@@ -1710,12 +1710,13 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns all 4 seeded tables even with page_size=2.
+    // SHOW TABLES in `app` returns all 5 seeded tables (users, posts, tags,
+    // post_tags, temporal_demo) even with page_size=2.
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        4,
-        "SHOW TABLES must not be paginated: expected all 4 seeded tables, got {}",
+        5,
+        "SHOW TABLES must not be paginated: expected all 5 seeded tables, got {}",
         rows.len()
     );
 }
@@ -1743,4 +1744,28 @@ async fn test_read_query_non_select_describe_users_single_page() {
         "DESCRIBE users must return all columns, got {}",
         rows.len()
     );
+}
+
+#[tokio::test]
+async fn test_read_query_returns_non_null_temporal_columns() {
+    // Feature 038: MySQL temporal columns must round-trip as ISO 8601 strings.
+    // MySQL has no TIMESTAMPTZ analog, so the zoned bucket is exercised on
+    // PostgreSQL only; here all four columns are naive (no offset, no Z).
+    let handler = handler(false);
+
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT `date`, `time`, `datetime`, `timestamp` FROM temporal WHERE id = 1".into(),
+            database_name: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("temporal SELECT should succeed");
+
+    let arr = &response.rows;
+    assert_eq!(arr.len(), 1, "temporal seeds exactly one row");
+    assert_eq!(arr[0]["date"], "2026-04-20", "DATE → YYYY-MM-DD");
+    assert_eq!(arr[0]["time"], "14:30:00", "TIME → HH:MM:SS");
+    assert_eq!(arr[0]["datetime"], "2026-04-20T14:30:00", "DATETIME → naive ISO 8601");
+    assert_eq!(arr[0]["timestamp"], "2026-04-20T14:30:00", "TIMESTAMP → naive ISO 8601");
 }
