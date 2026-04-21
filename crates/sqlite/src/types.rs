@@ -36,6 +36,28 @@ pub struct ListTablesRequest {
     pub cursor: Option<Cursor>,
 }
 
+/// Request for the `listViews` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListViewsRequest {
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Request for the `listTriggers` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTriggersRequest {
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
+    /// On subsequent calls, pass the `nextCursor` returned by the previous
+    /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

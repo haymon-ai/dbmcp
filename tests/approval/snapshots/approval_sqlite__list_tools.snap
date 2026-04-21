@@ -173,6 +173,86 @@ expression: tools
     }
   },
   {
+    "name": "listTriggers",
+    "title": "List Triggers",
+    "description": "List all triggers in the connected SQLite database.\n\n<usecase>\nUse when:\n- Investigating side-effects on INSERT/UPDATE/DELETE for a table\n- Auditing trigger coverage across a database\n- The user asks what triggers fire in the database\n</usecase>\n\n<examples>\n✓ \"What triggers are in this database?\"\n✓ \"Does a user-audit trigger exist?\" → listTriggers to check\n✗ \"Show me a trigger's body\" → use readQuery against sqlite_schema\n</examples>\n\n<what_it_returns>\nA sorted JSON array of trigger name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listTriggers` tool.",
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggers": {
+          "description": "Sorted list of trigger names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "triggers"
+      ],
+      "title": "ListTriggersResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "listViews",
+    "title": "List Views",
+    "description": "List all views in the connected SQLite database.\n\n<usecase>\nUse when:\n- Exploring what views exist in the database alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are available\n</usecase>\n\n<examples>\n✓ \"What views are in this database?\"\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use getTableSchema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listViews` tool.",
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "views": {
+          "description": "Sorted list of view names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "views"
+      ],
+      "title": "ListViewsResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "readQuery",
     "title": "Read Query",
     "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables or getTableSchema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>",

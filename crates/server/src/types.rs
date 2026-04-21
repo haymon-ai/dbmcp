@@ -75,6 +75,116 @@ pub struct ListTablesResponse {
     pub next_cursor: Option<Cursor>,
 }
 
+/// Request for the `listViews` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListViewsRequest {
+    /// The database name to list views from. Required. Use `listDatabases` first to see available databases.
+    pub database: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `listViews` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListViewsResponse {
+    /// Sorted list of view names for this page.
+    pub views: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// Request for the `listTriggers` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTriggersRequest {
+    /// The database name to list triggers from. Required. Use `listDatabases` first to see available databases.
+    pub database: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `listTriggers` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTriggersResponse {
+    /// Sorted list of trigger names for this page.
+    pub triggers: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// Request for the `listFunctions` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListFunctionsRequest {
+    /// The database name to list functions from. Required. Use `listDatabases` first to see available databases.
+    pub database: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `listFunctions` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListFunctionsResponse {
+    /// Sorted list of function names for this page.
+    pub functions: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// Request for the `listProcedures` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProceduresRequest {
+    /// The database name to list procedures from. Required. Use `listDatabases` first to see available databases.
+    pub database: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `listProcedures` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProceduresResponse {
+    /// Sorted list of procedure names for this page.
+    pub procedures: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// Request for the `listMaterializedViews` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListMaterializedViewsRequest {
+    /// The database name to list materialized views from. Required. Use `listDatabases` first to see available databases.
+    pub database: String,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+}
+
+/// Response for the `listMaterializedViews` tool.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListMaterializedViewsResponse {
+    /// Sorted list of materialized-view names for this page.
+    pub materialized_views: Vec<String>,
+    /// Opaque cursor pointing to the next page. Absent when this is the final page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
 /// Request for the `getTableSchema` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

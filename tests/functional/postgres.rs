@@ -12,7 +12,8 @@ use database_mcp_postgres::PostgresHandler;
 use database_mcp_postgres::types::DropTableRequest;
 use database_mcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesRequest,
-    ListTablesRequest, QueryRequest, ReadQueryRequest,
+    ListFunctionsRequest, ListMaterializedViewsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
+    ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -1121,8 +1122,6 @@ async fn test_drop_table_blocked_in_read_only() {
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
 }
 
-// === US2: Connection trait edge cases ===
-
 #[tokio::test]
 async fn test_read_query_control_char_database_name_rejected() {
     let handler = handler(true);
@@ -1146,8 +1145,6 @@ async fn test_list_tables_control_char_database_rejected() {
     assert!(result.is_err(), "control char in database name should be rejected");
 }
 
-// === US4: Special-character identifier round-trip ===
-
 #[tokio::test]
 async fn test_create_drop_database_with_backtick() {
     let handler = handler(false);
@@ -1166,8 +1163,6 @@ async fn test_create_drop_database_with_backtick() {
     let result = handler.drop_database(drop).await;
     assert!(result.is_ok(), "drop database with backtick should succeed: {result:?}");
 }
-
-// === Pagination ===
 
 const PG_DB: &str = "app";
 
@@ -1419,8 +1414,6 @@ async fn test_list_databases_respects_configured_page_size() {
     );
 }
 
-// === read_query pagination (spec 034) ===
-
 async fn collect_all_paged_read_query(handler: &PostgresHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
     let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
@@ -1634,5 +1627,357 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     assert_eq!(
         arr[0]["timestamptz"], "2026-04-20T12:30:00Z",
         "TIMESTAMPTZ → UTC-normalized from +02:00, with Z suffix (FR-004 / Q2)"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_returns_seeded_views() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_views");
+
+    assert!(
+        response.views.contains(&"active_users".to_string()),
+        "expected seeded active_users view, got {:?}",
+        response.views
+    );
+    assert!(
+        response.views.contains(&"published_posts".to_string()),
+        "expected seeded published_posts view, got {:?}",
+        response.views
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_excludes_base_tables() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_views");
+
+    for table in ["users", "posts", "tags", "post_tags", "temporal"] {
+        assert!(
+            !response.views.contains(&table.to_string()),
+            "base table `{table}` must not appear in listViews, got {:?}",
+            response.views
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_views_empty_for_view_less_database() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: "analytics".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_views");
+
+    assert!(
+        response.views.is_empty(),
+        "analytics has no views, got {:?}",
+        response.views
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_pagination_traverses_pages() {
+    let handler_paged = handler_with_page_size(1);
+    let handler_full = handler(true);
+
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let request = ListViewsRequest {
+            database: "app".into(),
+            cursor,
+        };
+        let response = handler_paged.list_views(request).await.expect("paged list_views");
+        all.extend(response.views);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    let single = handler_full
+        .list_views(ListViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("single-page list_views");
+
+    assert_eq!(all, single.views, "paginated traversal should equal single page");
+}
+
+#[tokio::test]
+async fn test_list_views_works_in_read_only_mode() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_views in read-only mode");
+
+    assert!(!response.views.is_empty(), "read-only mode must still allow listViews");
+}
+
+#[tokio::test]
+async fn test_list_triggers_returns_seeded_triggers() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_triggers");
+
+    assert!(
+        response.triggers.contains(&"users_before_insert".to_string()),
+        "expected seeded users_before_insert trigger, got {:?}",
+        response.triggers
+    );
+    assert!(
+        response.triggers.contains(&"posts_before_update".to_string()),
+        "expected seeded posts_before_update trigger, got {:?}",
+        response.triggers
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_excludes_internal_triggers() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_triggers");
+
+    // RI_ConstraintTrigger_* are the internal triggers backing FK constraints.
+    for trg in &response.triggers {
+        assert!(
+            !trg.starts_with("RI_ConstraintTrigger"),
+            "internal FK trigger {trg} leaked into listTriggers output: {:?}",
+            response.triggers
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_empty_for_trigger_less_database() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: "analytics".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_triggers");
+
+    assert!(
+        response.triggers.is_empty(),
+        "analytics has no user triggers, got {:?}",
+        response.triggers
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_works_in_read_only_mode() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_triggers in read-only mode");
+
+    assert!(
+        !response.triggers.is_empty(),
+        "read-only mode must still allow listTriggers"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_returns_seeded_functions() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_functions");
+
+    assert!(
+        response.functions.contains(&"calc_total".to_string()),
+        "expected seeded calc_total function, got {:?}",
+        response.functions
+    );
+    assert!(
+        response.functions.contains(&"double_it".to_string()),
+        "expected seeded double_it function, got {:?}",
+        response.functions
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_excludes_procedures() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_functions");
+
+    for proc_name in ["archive_user", "touch_post"] {
+        assert!(
+            !response.functions.contains(&proc_name.to_string()),
+            "procedure `{proc_name}` leaked into listFunctions output: {:?}",
+            response.functions
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_returns_seeded_procedures() {
+    let handler = handler(true);
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_procedures");
+
+    assert!(
+        response.procedures.contains(&"archive_user".to_string()),
+        "expected seeded archive_user procedure, got {:?}",
+        response.procedures
+    );
+    assert!(
+        response.procedures.contains(&"touch_post".to_string()),
+        "expected seeded touch_post procedure, got {:?}",
+        response.procedures
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_excludes_functions() {
+    let handler = handler(true);
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_procedures");
+
+    for func_name in ["calc_total", "double_it"] {
+        assert!(
+            !response.procedures.contains(&func_name.to_string()),
+            "function `{func_name}` leaked into listProcedures output: {:?}",
+            response.procedures
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_returns_seeded_matviews() {
+    let handler = handler(true);
+    let response = handler
+        .list_materialized_views(ListMaterializedViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_materialized_views");
+
+    assert!(
+        response.materialized_views.contains(&"mv_recent_orders".to_string()),
+        "expected seeded mv_recent_orders matview, got {:?}",
+        response.materialized_views
+    );
+    assert!(
+        response.materialized_views.contains(&"mv_user_cohort".to_string()),
+        "expected seeded mv_user_cohort matview, got {:?}",
+        response.materialized_views
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_excludes_materialized_views() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_views");
+
+    for matview in ["mv_recent_orders", "mv_user_cohort"] {
+        assert!(
+            !response.views.contains(&matview.to_string()),
+            "materialized view `{matview}` leaked into listViews output: {:?}",
+            response.views
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_excludes_regular_views() {
+    let handler = handler(true);
+    let response = handler
+        .list_materialized_views(ListMaterializedViewsRequest {
+            database: "app".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_materialized_views");
+
+    for view in ["active_users", "published_posts"] {
+        assert!(
+            !response.materialized_views.contains(&view.to_string()),
+            "regular view `{view}` leaked into listMaterializedViews output: {:?}",
+            response.materialized_views
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_empty_for_empty_database() {
+    let handler = handler(true);
+    let response = handler
+        .list_materialized_views(ListMaterializedViewsRequest {
+            database: "analytics".into(),
+            cursor: None,
+        })
+        .await
+        .expect("list_materialized_views");
+
+    assert!(
+        response.materialized_views.is_empty(),
+        "analytics has no matviews, got {:?}",
+        response.materialized_views
     );
 }

@@ -78,6 +78,64 @@ CREATE TABLE temporal (
 INSERT INTO temporal (id, "date", "time", "timestamp", "timestamptz") VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00+02:00');
 
+-- Views (regular views only; materialized views are seeded below in US4)
+
+CREATE VIEW active_users AS
+    SELECT id, name, email FROM users;
+
+CREATE VIEW published_posts AS
+    SELECT id, user_id, title FROM posts WHERE published = TRUE;
+
+-- Triggers
+
+CREATE OR REPLACE FUNCTION users_before_insert_fn() RETURNS trigger AS $$
+BEGIN
+    NEW.name := trim(NEW.name);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_before_insert
+    BEFORE INSERT ON users
+    FOR EACH ROW EXECUTE FUNCTION users_before_insert_fn();
+
+CREATE OR REPLACE FUNCTION posts_before_update_fn() RETURNS trigger AS $$
+BEGIN
+    NEW.title := trim(NEW.title);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER posts_before_update
+    BEFORE UPDATE ON posts
+    FOR EACH ROW EXECUTE FUNCTION posts_before_update_fn();
+
+-- Stored functions (prokind='f') — distinct from trigger functions above, though
+-- listFunctions enumerates all user-defined functions in `public` including the
+-- trigger functions (which is fine — they are, in fact, user-defined functions).
+
+CREATE OR REPLACE FUNCTION calc_total(n INT) RETURNS INT AS $$ SELECT n * 2 $$ LANGUAGE SQL;
+
+CREATE OR REPLACE FUNCTION double_it(n INT) RETURNS INT AS $$ SELECT n + n $$ LANGUAGE SQL;
+
+-- Stored procedures (prokind='p')
+
+CREATE OR REPLACE PROCEDURE archive_user(uid INT) AS $$
+    UPDATE users SET name = name || ' (archived)' WHERE id = uid;
+$$ LANGUAGE SQL;
+
+CREATE OR REPLACE PROCEDURE touch_post(pid INT) AS $$
+    UPDATE posts SET title = title WHERE id = pid;
+$$ LANGUAGE SQL;
+
+-- Materialized views
+
+CREATE MATERIALIZED VIEW mv_recent_orders AS
+    SELECT id, title, published FROM posts WHERE published;
+
+CREATE MATERIALIZED VIEW mv_user_cohort AS
+    SELECT id, name FROM users;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

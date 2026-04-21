@@ -159,6 +159,183 @@ expression: tools
     }
   },
   {
+    "name": "listFunctions",
+    "title": "List Functions",
+    "description": "List all user-defined functions in the `public` schema of a database. Aggregates, window functions, and procedures are excluded.\n\n<usecase>\nUse when:\n- Exploring a database's stored logic\n- Verifying a function exists before calling it\n- The user asks what functions are defined\n</usecase>\n\n<examples>\n✓ \"What functions are in the mydb database?\" → listFunctions(database=\"mydb\")\n✓ \"Does a calc_total function exist?\" → listFunctions to check\n✗ \"List stored procedures\" → use listProcedures instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of function name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listFunctions` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "The database name to list functions from. Required. Use `listDatabases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "ListFunctionsRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listFunctions` tool.",
+      "properties": {
+        "functions": {
+          "description": "Sorted list of function names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "functions"
+      ],
+      "title": "ListFunctionsResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "listMaterializedViews",
+    "title": "List Materialized Views",
+    "description": "List all materialized views in the `public` schema of a PostgreSQL database. Unlike regular views, materialized views store their results physically and must be refreshed explicitly.\n\n<usecase>\nUse when:\n- Exploring a database for stored aggregates that may be stale\n- Auditing which materialized views require refresh scheduling\n- The user asks what materialized views exist\n</usecase>\n\n<examples>\n✓ \"What materialized views are in mydb?\" → listMaterializedViews(database=\"mydb\")\n✓ \"Does an mv_recent_orders materialized view exist?\" → listMaterializedViews to check\n✗ \"List regular views\" → use listViews instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of materialized-view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listMaterializedViews` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "The database name to list materialized views from. Required. Use `listDatabases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "ListMaterializedViewsRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listMaterializedViews` tool.",
+      "properties": {
+        "materializedViews": {
+          "description": "Sorted list of materialized-view names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "materializedViews"
+      ],
+      "title": "ListMaterializedViewsResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "listProcedures",
+    "title": "List Procedures",
+    "description": "List all user-defined procedures in the `public` schema of a database (PostgreSQL 11+).\n\n<usecase>\nUse when:\n- Exploring a database's stored logic\n- Verifying a procedure exists before calling it\n- The user asks what procedures are defined\n</usecase>\n\n<examples>\n✓ \"What procedures are in the mydb database?\" → listProcedures(database=\"mydb\")\n✓ \"Does an archive_user procedure exist?\" → listProcedures to check\n✗ \"List functions\" → use listFunctions instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of procedure name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listProcedures` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "The database name to list procedures from. Required. Use `listDatabases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "ListProceduresRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listProcedures` tool.",
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "procedures": {
+          "description": "Sorted list of procedure names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "procedures"
+      ],
+      "title": "ListProceduresResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "listTables",
     "title": "List Tables",
     "description": "List all tables in a specific database. Requires `database` — call `listDatabases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables\n- Verifying a table exists before querying or inspecting it\n- The user asks what tables are in a database\n</usecase>\n\n<examples>\n✓ \"What tables are in the mydb database?\" → listTables(database=\"mydb\")\n✓ \"Does a users table exist?\" → listTables to check\n✗ \"Show me the columns of users\" → use getTableSchema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
@@ -208,6 +385,124 @@ expression: tools
         "tables"
       ],
       "title": "ListTablesResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "listTriggers",
+    "title": "List Triggers",
+    "description": "List all user-defined triggers on tables in the `public` schema of a database. Internal constraint and foreign-key triggers are excluded.\n\n<usecase>\nUse when:\n- Investigating side-effects on INSERT/UPDATE/DELETE for a table\n- Auditing trigger coverage across a database\n- The user asks what triggers fire in a database\n</usecase>\n\n<examples>\n✓ \"What triggers are in the mydb database?\" → listTriggers(database=\"mydb\")\n✓ \"Does an order-audit trigger exist?\" → listTriggers to check\n✗ \"Show me a trigger's body\" → use readQuery against pg_trigger or information_schema.triggers\n</examples>\n\n<what_it_returns>\nA sorted JSON array of trigger name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listTriggers` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "The database name to list triggers from. Required. Use `listDatabases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "ListTriggersRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listTriggers` tool.",
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggers": {
+          "description": "Sorted list of trigger names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "triggers"
+      ],
+      "title": "ListTriggersResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "listViews",
+    "title": "List Views",
+    "description": "List all views in a specific database. Requires `database` — call `listDatabases` first to discover available databases.\n\n<usecase>\nUse when:\n- Exploring a database to find defined views alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are in a database\n</usecase>\n\n<examples>\n✓ \"What views are in the mydb database?\" → listViews(database=\"mydb\")\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use getTableSchema instead\n✗ \"List materialized views\" → use listMaterializedViews\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings in the `public` schema.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listViews` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "The database name to list views from. Required. Use `listDatabases` first to see available databases.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database"
+      ],
+      "title": "ListViewsRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listViews` tool.",
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "views": {
+          "description": "Sorted list of view names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "views"
+      ],
+      "title": "ListViewsResponse",
       "type": "object"
     },
     "annotations": {

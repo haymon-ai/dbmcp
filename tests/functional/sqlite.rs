@@ -12,7 +12,8 @@
 use database_mcp_config::{DatabaseBackend, DatabaseConfig};
 use database_mcp_sqlite::SqliteHandler;
 use database_mcp_sqlite::types::{
-    DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, QueryRequest, ReadQueryRequest,
+    DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, ListTriggersRequest,
+    ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -603,8 +604,6 @@ async fn test_drop_table_blocked_in_read_only() {
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
 }
 
-// === US2: Connection trait edge cases ===
-
 #[tokio::test]
 async fn test_list_tables_returns_empty_for_no_match() {
     let handler = handler(true);
@@ -616,8 +615,6 @@ async fn test_list_tables_returns_empty_for_no_match() {
     let rows = &result.rows;
     assert!(rows.is_empty(), "query for nonexistent table should return empty array");
 }
-
-// === US4: Special-character table name round-trip ===
 
 #[tokio::test]
 async fn test_create_drop_table_with_spaces() {
@@ -642,8 +639,6 @@ async fn test_create_drop_table_with_spaces() {
     };
     handler.drop_table(drop).await.unwrap();
 }
-
-// === Pagination ===
 
 async fn collect_all_paged(handler: &SqliteHandler) -> Vec<String> {
     let mut all = Vec::new();
@@ -787,8 +782,6 @@ async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
         );
     }
 }
-
-// === read_query pagination (spec 034) ===
 
 async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
@@ -1028,4 +1021,113 @@ async fn test_read_query_temporal_columns_preserved() {
     // literal text we inserted; this is the existing behavior we are
     // explicitly asserting does not regress.
     assert_eq!(arr[0]["timestamp"], "2026-04-20 14:30:00");
+}
+
+#[tokio::test]
+async fn test_list_views_returns_seeded_views() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest { cursor: None })
+        .await
+        .expect("list_views");
+
+    assert!(
+        response.views.contains(&"active_users".to_string()),
+        "expected seeded active_users view, got {:?}",
+        response.views
+    );
+    assert!(
+        response.views.contains(&"published_posts".to_string()),
+        "expected seeded published_posts view, got {:?}",
+        response.views
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_excludes_base_tables() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest { cursor: None })
+        .await
+        .expect("list_views");
+
+    for table in ["users", "posts", "tags", "post_tags", "temporal"] {
+        assert!(
+            !response.views.contains(&table.to_string()),
+            "base table `{table}` must not appear in listViews, got {:?}",
+            response.views
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_views_pagination_traverses_pages() {
+    let handler_paged = handler_with_page_size(1);
+    let handler_full = handler(true);
+
+    let mut all = Vec::new();
+    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    loop {
+        let response = handler_paged
+            .list_views(ListViewsRequest { cursor })
+            .await
+            .expect("paged list_views");
+        all.extend(response.views);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    let single = handler_full
+        .list_views(ListViewsRequest { cursor: None })
+        .await
+        .expect("single-page list_views");
+
+    assert_eq!(all, single.views, "paginated traversal should equal single page");
+}
+
+#[tokio::test]
+async fn test_list_views_works_in_read_only_mode() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest { cursor: None })
+        .await
+        .expect("list_views in read-only mode");
+
+    assert!(!response.views.is_empty(), "read-only mode must still allow listViews");
+}
+
+#[tokio::test]
+async fn test_list_triggers_returns_seeded_triggers() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest { cursor: None })
+        .await
+        .expect("list_triggers");
+
+    assert!(
+        response.triggers.contains(&"users_before_insert".to_string()),
+        "expected seeded users_before_insert trigger, got {:?}",
+        response.triggers
+    );
+    assert!(
+        response.triggers.contains(&"posts_before_update".to_string()),
+        "expected seeded posts_before_update trigger, got {:?}",
+        response.triggers
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_works_in_read_only_mode() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest { cursor: None })
+        .await
+        .expect("list_triggers in read-only mode");
+
+    assert!(
+        !response.triggers.is_empty(),
+        "read-only mode must still allow listTriggers"
+    );
 }

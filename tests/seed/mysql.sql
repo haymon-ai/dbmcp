@@ -75,6 +75,34 @@ CREATE TABLE `app`.`temporal` (
 INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00');
 
+-- Views
+
+CREATE VIEW `app`.`active_users` AS
+    SELECT `id`, `name`, `email` FROM `app`.`users`;
+
+CREATE VIEW `app`.`published_posts` AS
+    SELECT `id`, `user_id`, `title` FROM `app`.`posts` WHERE `published` = 1;
+
+-- Triggers
+
+CREATE TRIGGER `app`.`users_before_insert` BEFORE INSERT ON `app`.`users`
+    FOR EACH ROW SET NEW.`name` = TRIM(NEW.`name`);
+
+CREATE TRIGGER `app`.`posts_before_update` BEFORE UPDATE ON `app`.`posts`
+    FOR EACH ROW SET NEW.`title` = TRIM(NEW.`title`);
+
+-- Stored functions & procedures (single-statement bodies so no DELIMITER needed)
+
+CREATE FUNCTION `app`.`calc_total`(n INT) RETURNS INT DETERMINISTIC RETURN n * 2;
+
+CREATE FUNCTION `app`.`double_it`(n INT) RETURNS INT DETERMINISTIC RETURN n + n;
+
+CREATE PROCEDURE `app`.`archive_user`(IN uid INT)
+    UPDATE `app`.`users` SET `name` = CONCAT(`name`, ' (archived)') WHERE `id` = uid;
+
+CREATE PROCEDURE `app`.`touch_post`(IN pid INT)
+    UPDATE `app`.`posts` SET `title` = `title` WHERE `id` = pid;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS `analytics`;

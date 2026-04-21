@@ -16,7 +16,8 @@ use rmcp::{ErrorData, ServerHandler};
 
 use crate::connection::SqliteConnection;
 use crate::tools::{
-    DropTableTool, ExplainQueryTool, GetTableSchemaTool, ListTablesTool, ReadQueryTool, WriteQueryTool,
+    DropTableTool, ExplainQueryTool, GetTableSchemaTool, ListTablesTool, ListTriggersTool, ListViewsTool,
+    ReadQueryTool, WriteQueryTool,
 };
 
 /// Backend-specific description for `SQLite`.
@@ -26,11 +27,13 @@ const DESCRIPTION: &str = "Database MCP Server for SQLite";
 const INSTRUCTIONS: &str = r"## Workflow
 
 1. Call `listTables` to discover tables in the connected database.
-2. Call `getTableSchema` with a `table` to inspect columns, types, and foreign keys before writing queries.
-3. Use `readQuery` for read-only SQL (SELECT).
-4. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-5. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-6. Use `dropTable` to remove a table from the database.
+2. Call `listViews` to discover views in the connected database.
+3. Call `listTriggers` to discover triggers in the connected database.
+4. Call `getTableSchema` with a `table` to inspect columns, types, and foreign keys before writing queries.
+5. Use `readQuery` for read-only SQL (SELECT).
+6. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+7. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+8. Use `dropTable` to remove a table from the database.
 
 ## Constraints
 
@@ -83,6 +86,8 @@ impl From<SqliteHandler> for Server {
 fn build_tool_router(read_only: bool) -> ToolRouter<SqliteHandler> {
     let mut router = ToolRouter::new()
         .with_async_tool::<ListTablesTool>()
+        .with_async_tool::<ListViewsTool>()
+        .with_async_tool::<ListTriggersTool>()
         .with_async_tool::<GetTableSchemaTool>()
         .with_async_tool::<ReadQueryTool>()
         .with_async_tool::<ExplainQueryTool>();
@@ -144,10 +149,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_exposes_all_six_tools_in_read_write_mode() {
+    async fn router_exposes_all_eight_tools_in_read_write_mode() {
         let router = handler(false).tool_router;
         for name in [
             "listTables",
+            "listViews",
+            "listTriggers",
             "getTableSchema",
             "dropTable",
             "readQuery",
@@ -159,9 +166,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn router_does_not_advertise_backend_specific_tools() {
+        let router = handler(false).tool_router;
+        for absent in [
+            "listDatabases",
+            "listFunctions",
+            "listProcedures",
+            "listMaterializedViews",
+            "createDatabase",
+            "dropDatabase",
+        ] {
+            assert!(!router.has_route(absent), "SQLite must not advertise {absent}");
+        }
+    }
+
+    #[tokio::test]
     async fn router_hides_write_tools_in_read_only_mode() {
         let router = handler(true).tool_router;
         assert!(router.has_route("listTables"));
+        assert!(router.has_route("listViews"));
+        assert!(router.has_route("listTriggers"));
         assert!(router.has_route("getTableSchema"));
         assert!(router.has_route("readQuery"));
         assert!(router.has_route("explainQuery"));

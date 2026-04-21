@@ -69,3 +69,25 @@ CREATE TABLE IF NOT EXISTS temporal (
 -- Sample data: 1 temporal row
 INSERT INTO temporal (id, date, time, timestamp) VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00');
+
+-- Views
+
+CREATE VIEW IF NOT EXISTS active_users AS
+    SELECT id, name, email FROM users;
+
+CREATE VIEW IF NOT EXISTS published_posts AS
+    SELECT id, user_id, title FROM posts WHERE published = 1;
+
+-- Triggers
+
+CREATE TRIGGER IF NOT EXISTS users_before_insert
+    BEFORE INSERT ON users
+    BEGIN
+        SELECT CASE WHEN NEW.name IS NULL THEN RAISE(ABORT, 'name required') END;
+    END;
+
+CREATE TRIGGER IF NOT EXISTS posts_before_update
+    BEFORE UPDATE ON posts
+    BEGIN
+        SELECT CASE WHEN NEW.title IS NULL THEN RAISE(ABORT, 'title required') END;
+    END;

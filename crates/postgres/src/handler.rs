@@ -18,7 +18,8 @@ use crate::connection::PostgresConnection;
 
 use crate::tools::{
     CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, GetTableSchemaTool, ListDatabasesTool,
-    ListTablesTool, ReadQueryTool, WriteQueryTool,
+    ListFunctionsTool, ListMaterializedViewsTool, ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool,
+    ReadQueryTool, WriteQueryTool,
 };
 
 /// Backend-specific description for `PostgreSQL`.
@@ -29,13 +30,18 @@ const INSTRUCTIONS: &str = r"## Workflow
 
 1. Call `listDatabases` to discover available databases.
 2. Call `listTables` with a `database` to see its tables.
-3. Call `getTableSchema` with `database` and `table` to inspect columns, types, and foreign keys before writing queries.
-4. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).
-5. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-6. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-7. Use `createDatabase` to create a new database.
-8. Use `dropDatabase` to drop an existing database.
-9. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).
+3. Call `listViews` with a `database` to see its views in the `public` schema.
+4. Call `listTriggers` with a `database` to see its user-defined triggers in the `public` schema.
+5. Call `listFunctions` with a `database` to see its user-defined functions in the `public` schema.
+6. Call `listProcedures` with a `database` to see its user-defined procedures in the `public` schema.
+7. Call `listMaterializedViews` with a `database` to see its materialized views in the `public` schema.
+8. Call `getTableSchema` with `database` and `table` to inspect columns, types, and foreign keys before writing queries.
+9. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).
+10. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+11. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+12. Use `createDatabase` to create a new database.
+13. Use `dropDatabase` to drop an existing database.
+14. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).
 
 Tools accept an optional `database` parameter to query across databases without reconnecting.
 
@@ -93,6 +99,11 @@ fn build_tool_router(read_only: bool) -> ToolRouter<PostgresHandler> {
     let mut router = ToolRouter::new()
         .with_async_tool::<ListDatabasesTool>()
         .with_async_tool::<ListTablesTool>()
+        .with_async_tool::<ListViewsTool>()
+        .with_async_tool::<ListTriggersTool>()
+        .with_async_tool::<ListFunctionsTool>()
+        .with_async_tool::<ListProceduresTool>()
+        .with_async_tool::<ListMaterializedViewsTool>()
         .with_async_tool::<GetTableSchemaTool>()
         .with_async_tool::<ReadQueryTool>()
         .with_async_tool::<ExplainQueryTool>();
@@ -172,11 +183,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_exposes_all_nine_tools_in_read_write_mode() {
+    async fn router_exposes_all_fourteen_tools_in_read_write_mode() {
         let router = handler(false).tool_router;
         for name in [
             "listDatabases",
             "listTables",
+            "listViews",
+            "listTriggers",
+            "listFunctions",
+            "listProcedures",
+            "listMaterializedViews",
             "getTableSchema",
             "readQuery",
             "explainQuery",
@@ -194,6 +210,11 @@ mod tests {
         let router = handler(true).tool_router;
         assert!(router.has_route("listDatabases"));
         assert!(router.has_route("listTables"));
+        assert!(router.has_route("listViews"));
+        assert!(router.has_route("listTriggers"));
+        assert!(router.has_route("listFunctions"));
+        assert!(router.has_route("listProcedures"));
+        assert!(router.has_route("listMaterializedViews"));
         assert!(router.has_route("getTableSchema"));
         assert!(router.has_route("readQuery"));
         assert!(router.has_route("explainQuery"));
