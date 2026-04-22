@@ -4,9 +4,9 @@
 
 mod common;
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresHandler;
-use database_mcp_server::Server;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_postgres::PostgresHandler;
+use dbmcp_server::Server;
 
 /// Creates a `PostgreSQL`-backed [`Server`] from `DB_HOST` and `DB_PORT` environment variables.
 fn server(read_only: bool) -> Server {

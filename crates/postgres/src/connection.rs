@@ -6,10 +6,10 @@
 
 use std::time::Duration;
 
-use database_mcp_config::DatabaseConfig;
-use database_mcp_sql::Connection;
-use database_mcp_sql::SqlError;
-use database_mcp_sql::sanitize::validate_ident;
+use dbmcp_config::DatabaseConfig;
+use dbmcp_sql::Connection;
+use dbmcp_sql::SqlError;
+use dbmcp_sql::sanitize::validate_ident;
 use moka::future::Cache;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
@@ -168,7 +168,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
+    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

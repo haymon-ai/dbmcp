@@ -1,4 +1,4 @@
-//! Configuration types for the database-mcp project.
+//! Configuration types for the dbmcp project.
 //!
 //! Provides [`Config`], [`DatabaseConfig`], [`HttpConfig`],
 //! [`DatabaseBackend`], and [`ConfigError`] shared across all workspace crates.

@@ -1,6 +1,6 @@
 [package]
-name = "database-mcp-server"
-description = "Server for database-mcp"
+name = "dbmcp-server"
+description = "Server for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true

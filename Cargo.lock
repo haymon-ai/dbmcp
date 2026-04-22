@@ -464,16 +464,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp"
-version = "0.7.0"
+name = "dbmcp"
+version = "0.8.0"
 dependencies = [
  "axum",
  "clap",
- "database-mcp-config",
- "database-mcp-mysql",
- "database-mcp-postgres",
- "database-mcp-server",
- "database-mcp-sqlite",
+ "dbmcp-config",
+ "dbmcp-mysql",
+ "dbmcp-postgres",
+ "dbmcp-server",
+ "dbmcp-sqlite",
  "insta",
  "mimalloc",
  "rmcp",
@@ -487,20 +487,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp-config"
-version = "0.7.0"
+name = "dbmcp-config"
+version = "0.8.0"
 dependencies = [
  "clap",
  "thiserror",
 ]
 
 [[package]]
-name = "database-mcp-mysql"
-version = "0.7.0"
+name = "dbmcp-mysql"
+version = "0.8.0"
 dependencies = [
- "database-mcp-config",
- "database-mcp-server",
- "database-mcp-sql",
+ "dbmcp-config",
+ "dbmcp-server",
+ "dbmcp-sql",
  "moka",
  "rmcp",
  "serde",
@@ -512,12 +512,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp-postgres"
-version = "0.7.0"
+name = "dbmcp-postgres"
+version = "0.8.0"
 dependencies = [
- "database-mcp-config",
- "database-mcp-server",
- "database-mcp-sql",
+ "dbmcp-config",
+ "dbmcp-server",
+ "dbmcp-sql",
  "moka",
  "rmcp",
  "serde",
@@ -529,8 +529,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp-server"
-version = "0.7.0"
+name = "dbmcp-server"
+version = "0.8.0"
 dependencies = [
  "base64",
  "rmcp",
@@ -539,8 +539,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp-sql"
-version = "0.7.0"
+name = "dbmcp-sql"
+version = "0.8.0"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -552,12 +552,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "database-mcp-sqlite"
-version = "0.7.0"
+name = "dbmcp-sqlite"
+version = "0.8.0"
 dependencies = [
- "database-mcp-config",
- "database-mcp-server",
- "database-mcp-sql",
+ "dbmcp-config",
+ "dbmcp-server",
+ "dbmcp-sql",
  "rmcp",
  "serde",
  "serde_json",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx_to_json"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "serde_json",

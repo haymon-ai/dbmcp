@@ -3,7 +3,7 @@
 //! Defines the top-level [`Error`] enum used for server startup and
 //! transport failures in the binary crate.
 
-use database_mcp_config::ConfigError;
+use dbmcp_config::ConfigError;
 
 /// Application-level errors for server startup and transport.
 ///

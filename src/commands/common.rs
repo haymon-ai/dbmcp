@@ -7,13 +7,13 @@
 //! configured [`DatabaseBackend`] onto the matching concrete adapter.
 
 use clap::Args;
-use database_mcp_config::{ConfigError, DatabaseBackend, DatabaseConfig};
-use database_mcp_mysql::MysqlHandler;
-use database_mcp_postgres::PostgresHandler;
-use database_mcp_sqlite::SqliteHandler;
+use dbmcp_config::{ConfigError, DatabaseBackend, DatabaseConfig};
+use dbmcp_mysql::MysqlHandler;
+use dbmcp_postgres::PostgresHandler;
+use dbmcp_sqlite::SqliteHandler;
 use tracing::info;
 
-pub(crate) use database_mcp_server::Server;
+pub(crate) use dbmcp_server::Server;
 
 /// Shared database connection flags embedded in transport subcommands.
 #[derive(Debug, Args)]

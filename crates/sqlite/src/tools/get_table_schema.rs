@@ -3,15 +3,15 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use database_mcp_server::types::TableSchemaResponse;
-use database_mcp_sql::Connection as _;
-use database_mcp_sql::sanitize::{quote_ident, validate_ident};
+use dbmcp_server::types::TableSchemaResponse;
+use dbmcp_sql::Connection as _;
+use dbmcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use serde_json::{Value, json};
 use sqlparser::dialect::SQLiteDialect;
 
-use database_mcp_sql::SqlError;
+use dbmcp_sql::SqlError;
 
 use crate::SqliteHandler;
 use crate::types::GetTableSchemaRequest;

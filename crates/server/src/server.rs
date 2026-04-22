@@ -13,7 +13,7 @@ use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
 
 /// Hardcoded product name matching the root binary crate.
-const NAME: &str = "database-mcp";
+const NAME: &str = "dbmcp";
 
 /// The current version, derived from the workspace `Cargo.toml` at compile time.
 const VERSION: &str = env!("CARGO_PKG_VERSION");

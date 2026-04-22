@@ -9,11 +9,11 @@ expression: info
     "tools": {}
   },
   "serverInfo": {
-    "name": "database-mcp",
+    "name": "dbmcp",
     "title": "Database MCP Server",
     "version": "[version]",
     "description": "Database MCP Server for PostgreSQL",
-    "websiteUrl": "https://database.haymon.ai"
+    "websiteUrl": "https://dbmcp.haymon.ai"
   },
   "instructions": "## Workflow\n\n1. Call `listDatabases` to discover available databases.\n2. Call `listTables` to see tables.\n3. Call `listViews` to see views in the `public` schema.\n4. Call `listTriggers` to see user-defined triggers in the `public` schema.\n5. Call `listFunctions` to see user-defined functions in the `public` schema.\n6. Call `listProcedures` to see user-defined procedures in the `public` schema.\n7. Call `listMaterializedViews` to see materialized views in the `public` schema.\n8. Call `getTableSchema` to inspect columns, types, and foreign keys before writing queries.\n9. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).\n10. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n11. Use `explainQuery` to analyze query execution plans and diagnose slow queries.\n12. Use `createDatabase` to create a new database.\n13. Use `dropDatabase` to drop an existing database.\n14. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).\n\nPer-database tools default to the active database; pass `database` to target another.\n\n## Constraints\n\n- The `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` tools are hidden when read-only mode is active.\n- Multi-statement queries are not supported. Send one statement per request."
 }

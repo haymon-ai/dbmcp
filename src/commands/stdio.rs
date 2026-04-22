@@ -4,7 +4,7 @@
 //! Cursor, and other MCP clients that communicate via stdio.
 
 use clap::Parser;
-use database_mcp_config::DatabaseConfig;
+use dbmcp_config::DatabaseConfig;
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
@@ -46,7 +46,7 @@ impl StdioCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::{ConfigError, DatabaseBackend};
+    use dbmcp_config::{ConfigError, DatabaseBackend};
 
     #[track_caller]
     fn parse(args: &[&str]) -> StdioCommand {

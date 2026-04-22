@@ -4,9 +4,9 @@
 
 mod common;
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_mysql::MysqlHandler;
-use database_mcp_server::Server;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_mysql::MysqlHandler;
+use dbmcp_server::Server;
 
 /// Creates a `MySQL`-backed [`Server`] from `DB_HOST` and `DB_PORT` environment variables.
 fn server(read_only: bool) -> Server {

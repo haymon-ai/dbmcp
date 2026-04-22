@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::pagination::Pager;
-use database_mcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
-use database_mcp_sql::Connection as _;
+use dbmcp_server::pagination::Pager;
+use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
+use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 

@@ -5,7 +5,7 @@
 //! the underlying connection pools.
 
 use clap::{Args, Parser};
-use database_mcp_config::{ConfigError, DatabaseConfig, HttpConfig};
+use dbmcp_config::{ConfigError, DatabaseConfig, HttpConfig};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };

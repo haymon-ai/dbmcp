@@ -4,7 +4,7 @@
 //! has no database selection. These types omit the `database`
 //! field present in the shared server types.
 
-use database_mcp_server::pagination::Cursor;
+use dbmcp_server::pagination::Cursor;
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;

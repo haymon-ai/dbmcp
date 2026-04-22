@@ -3,10 +3,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use database_mcp_server::pagination::Pager;
-use database_mcp_server::types::ListTablesResponse;
+use dbmcp_server::pagination::Pager;
+use dbmcp_server::types::ListTablesResponse;
 
-use database_mcp_sql::Connection as _;
+use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 

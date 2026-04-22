@@ -1,6 +1,6 @@
 [package]
-name = "database-mcp-sql"
-description = "SQL validation and identifier utilities for database-mcp"
+name = "dbmcp-sql"
+description = "SQL validation and identifier utilities for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true

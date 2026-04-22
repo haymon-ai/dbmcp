@@ -2,10 +2,10 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::types::{CreateDatabaseRequest, MessageResponse};
-use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
-use database_mcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
+use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
+use dbmcp_sql::Connection as _;
+use dbmcp_sql::SqlError;
+use dbmcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 use sqlparser::dialect::MySqlDialect;
