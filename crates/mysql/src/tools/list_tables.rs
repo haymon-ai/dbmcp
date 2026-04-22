@@ -17,7 +17,7 @@ pub(crate) struct ListTablesTool;
 impl ListTablesTool {
     const NAME: &'static str = "listTables";
     const TITLE: &'static str = "List Tables";
-    const DESCRIPTION: &'static str = r#"List all tables in a specific database. Requires `database` — call `listDatabases` first to discover available databases.
+    const DESCRIPTION: &'static str = r#"List all tables in a database.
 
 <usecase>
 Use when:
@@ -87,6 +87,12 @@ impl MysqlHandler {
         &self,
         ListTablesRequest { database, cursor }: ListTablesRequest,
     ) -> Result<ListTablesResponse, ErrorData> {
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
 
         let pager = Pager::new(cursor, self.config.page_size);

@@ -19,7 +19,7 @@ pub(crate) struct GetTableSchemaTool;
 impl GetTableSchemaTool {
     const NAME: &'static str = "getTableSchema";
     const TITLE: &'static str = "Get Table Schema";
-    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database` and `table` — call `listDatabases` and `listTables` first.
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table.
 
 <usecase>
 ALWAYS call this before writing queries to understand:
@@ -85,10 +85,12 @@ impl PostgresHandler {
         GetTableSchemaRequest { database, table }: GetTableSchemaRequest,
     ) -> Result<TableSchemaResponse, SqlError> {
         validate_ident(&table)?;
-        let db = Some(database.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = &db {
-            validate_ident(name)?;
-        }
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
 
         // 1. Get basic schema
         let schema_sql = format!(
@@ -100,7 +102,7 @@ impl PostgresHandler {
             ORDER BY ordinal_position",
             quote_literal(&table),
         );
-        let rows = self.connection.fetch_json(&schema_sql, db).await?;
+        let rows = self.connection.fetch_json(&schema_sql, database).await?;
 
         if rows.is_empty() {
             return Err(SqlError::TableNotFound(table));
@@ -162,7 +164,7 @@ impl PostgresHandler {
                 AND tc.table_schema = 'public'",
             quote_literal(&table),
         );
-        let fk_rows = self.connection.fetch_json(&fk_sql, db).await?;
+        let fk_rows = self.connection.fetch_json(&fk_sql, database).await?;
 
         for fk_row in &fk_rows {
             let col_name = fk_row

@@ -96,11 +96,17 @@ impl MysqlHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database)?;
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
+
         validate_ident(&table)?;
 
         let drop_sql = format!("DROP TABLE {}", quote_ident(&table, &MySqlDialect {}));
-        self.connection.execute(drop_sql.as_str(), Some(&database)).await?;
+        self.connection.execute(drop_sql.as_str(), database).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),

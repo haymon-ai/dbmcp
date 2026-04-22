@@ -85,11 +85,13 @@ impl PostgresHandler {
     ///
     /// Returns [`SqlError`] if the query fails.
     pub async fn write_query(&self, QueryRequest { query, database }: QueryRequest) -> Result<QueryResponse, SqlError> {
-        let db = Some(database.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = &db {
-            validate_ident(name)?;
-        }
-        let rows = self.connection.fetch_json(query.as_str(), db).await?;
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
+        let rows = self.connection.fetch_json(query.as_str(), database).await?;
         Ok(QueryResponse { rows })
     }
 }

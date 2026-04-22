@@ -113,21 +113,23 @@ impl MysqlHandler {
     ) -> Result<ReadQueryResponse, SqlError> {
         let kind = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
 
-        let db = Some(database.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = db {
-            validate_ident(name)?;
-        }
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
 
         match kind {
             StatementKind::Select => {
                 let pager = Pager::new(cursor, self.config.page_size);
                 let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
-                let rows = self.connection.fetch_json(wrapped.as_str(), db).await?;
+                let rows = self.connection.fetch_json(wrapped.as_str(), database).await?;
                 let (rows, next_cursor) = pager.finalize(rows);
                 Ok(ReadQueryResponse { rows, next_cursor })
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.fetch_json(query.as_str(), db).await?;
+                let rows = self.connection.fetch_json(query.as_str(), database).await?;
                 Ok(ReadQueryResponse {
                     rows,
                     next_cursor: None,

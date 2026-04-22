@@ -17,7 +17,7 @@ pub(crate) struct ListTriggersTool;
 impl ListTriggersTool {
     const NAME: &'static str = "listTriggers";
     const TITLE: &'static str = "List Triggers";
-    const DESCRIPTION: &'static str = r#"List all triggers in a specific database. Requires `database` — call `listDatabases` first to discover available databases.
+    const DESCRIPTION: &'static str = r#"List all triggers in a database.
 
 <usecase>
 Use when:
@@ -87,6 +87,12 @@ impl MysqlHandler {
         &self,
         ListTriggersRequest { database, cursor }: ListTriggersRequest,
     ) -> Result<ListTriggersResponse, ErrorData> {
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
 
         let pager = Pager::new(cursor, self.config.page_size);

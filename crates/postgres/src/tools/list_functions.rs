@@ -87,10 +87,12 @@ impl PostgresHandler {
         &self,
         ListFunctionsRequest { database, cursor }: ListFunctionsRequest,
     ) -> Result<ListFunctionsResponse, ErrorData> {
-        let db = Some(database.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = db {
-            validate_ident(name)?;
-        }
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
 
         let pager = Pager::new(cursor, self.config.page_size);
         let query = format!(
@@ -105,7 +107,7 @@ impl PostgresHandler {
             pager.offset(),
         );
 
-        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), db).await?;
+        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), database).await?;
         let (functions, next_cursor) = pager.finalize(rows);
 
         Ok(ListFunctionsResponse { functions, next_cursor })

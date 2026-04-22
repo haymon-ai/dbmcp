@@ -18,7 +18,7 @@ pub(crate) struct ExplainQueryTool;
 impl ExplainQueryTool {
     const NAME: &'static str = "explainQuery";
     const TITLE: &'static str = "Explain Query";
-    const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured JSON output. Accepts an optional `database` to explain queries against a different database.
+    const DESCRIPTION: &'static str = r#"Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured JSON output.
 
 <usecase>
 Use when:
@@ -107,10 +107,12 @@ impl PostgresHandler {
             let _ = validate_read_only(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
 
-        let db = Some(database.trim()).filter(|s| !s.is_empty());
-        if let Some(name) = &db {
-            validate_ident(name)?;
-        }
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
 
         let explain_sql = if analyze {
             format!("EXPLAIN (ANALYZE, FORMAT JSON) {query}")
@@ -118,7 +120,7 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        let rows = self.connection.fetch_json(&explain_sql, db).await?;
+        let rows = self.connection.fetch_json(&explain_sql, database).await?;
 
         Ok(QueryResponse { rows })
     }

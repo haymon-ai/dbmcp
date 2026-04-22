@@ -20,7 +20,7 @@ pub(crate) struct GetTableSchemaTool;
 impl GetTableSchemaTool {
     const NAME: &'static str = "getTableSchema";
     const TITLE: &'static str = "Get Table Schema";
-    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table. Requires `database` and `table` — call `listDatabases` and `listTables` first.
+    const DESCRIPTION: &'static str = r#"Get column definitions and foreign key relationships for a table.
 
 <usecase>
 ALWAYS call this before writing queries to understand:
@@ -84,6 +84,12 @@ impl MysqlHandler {
         &self,
         GetTableSchemaRequest { database, table }: GetTableSchemaRequest,
     ) -> Result<TableSchemaResponse, SqlError> {
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
         validate_ident(&table)?;
 

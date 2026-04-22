@@ -52,14 +52,14 @@ async fn test_write_query_insert_and_verify() {
 
     let insert = QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(insert).await.unwrap();
 
     // Verify the row was inserted
     let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
     let rows = handler.read_query(select).await.unwrap();
@@ -70,7 +70,7 @@ async fn test_write_query_insert_and_verify() {
     // Clean up
     let delete = QueryRequest {
         query: "DELETE FROM users WHERE email = 'write@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(delete).await.unwrap();
 }
@@ -81,19 +81,19 @@ async fn test_write_query_update() {
 
     let insert = QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(insert).await.unwrap();
 
     let update = QueryRequest {
         query: "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(update).await.unwrap();
 
     let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
     let rows = handler.read_query(select).await.unwrap();
@@ -103,7 +103,7 @@ async fn test_write_query_update() {
     // Clean up
     let delete = QueryRequest {
         query: "DELETE FROM users WHERE email = 'update@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(delete).await.unwrap();
 }
@@ -114,19 +114,19 @@ async fn test_write_query_delete() {
 
     let insert = QueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(insert).await.unwrap();
 
     let delete = QueryRequest {
         query: "DELETE FROM users WHERE email = 'delete@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(delete).await.unwrap();
 
     let select = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
     let rows = handler.read_query(select).await.unwrap();
@@ -148,7 +148,7 @@ async fn test_lists_databases() {
 async fn test_lists_tables() {
     let handler = handler(false);
     let request = ListTablesRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         ..Default::default()
     };
 
@@ -167,7 +167,7 @@ async fn test_lists_tables() {
 async fn test_gets_table_schema() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "users".into(),
     };
 
@@ -184,7 +184,7 @@ async fn test_gets_table_schema() {
 async fn test_gets_table_schema_with_relations() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "posts".into(),
     };
 
@@ -208,7 +208,7 @@ async fn test_executes_sql() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -221,7 +221,7 @@ async fn test_blocks_writes_in_read_only_mode() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -316,7 +316,7 @@ async fn test_drop_database_invalid_identifier() {
 async fn test_lists_tables_cross_database() {
     let handler = handler(false);
     let request = ListTablesRequest {
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         ..Default::default()
     };
 
@@ -338,7 +338,7 @@ async fn test_executes_sql_cross_database() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM events ORDER BY id".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         cursor: None,
     };
 
@@ -350,7 +350,7 @@ async fn test_executes_sql_cross_database() {
 async fn test_gets_table_schema_cross_database() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         table: "events".into(),
     };
 
@@ -384,7 +384,7 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "INSERT INTO events (name) VALUES ('hack')".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         cursor: None,
     };
 
@@ -400,7 +400,7 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
 async fn test_returns_error_for_nonexistent_database() {
     let handler = handler(false);
     let request = ListTablesRequest {
-        database: "nonexistent_db_xyz".into(),
+        database: Some("nonexistent_db_xyz".into()),
         ..Default::default()
     };
 
@@ -413,7 +413,7 @@ async fn test_returns_error_for_nonexistent_database() {
 async fn test_uses_default_pool_for_matching_database() {
     let handler = handler(false);
     let request = ListTablesRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         ..Default::default()
     };
 
@@ -435,7 +435,7 @@ async fn test_query_timeout_cancels_slow_query() {
     let handler = PostgresHandler::new(&config);
     let request = ReadQueryRequest {
         query: "SELECT pg_sleep(30)".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -465,7 +465,7 @@ async fn test_query_timeout_disabled_with_none() {
     let handler = PostgresHandler::new(&config);
     let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -480,13 +480,13 @@ async fn test_drop_table_success() {
     // Create a temporary table
     let create = QueryRequest {
         query: "CREATE TABLE drop_test_simple (id SERIAL PRIMARY KEY)".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(create).await.unwrap();
 
     // Drop it
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "drop_test_simple".into(),
         cascade: false,
     };
@@ -495,7 +495,7 @@ async fn test_drop_table_success() {
 
     // Verify it's gone
     let tables_request = ListTablesRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         ..Default::default()
     };
     let response = handler.list_tables(tables_request).await.unwrap();
@@ -513,20 +513,20 @@ async fn test_drop_table_fk_error() {
     // Create parent and child tables with FK
     let create_parent = QueryRequest {
         query: "CREATE TABLE drop_test_parent (id SERIAL PRIMARY KEY)".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(create_parent).await.unwrap();
 
     let create_child = QueryRequest {
         query: "CREATE TABLE drop_test_child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES drop_test_parent(id))"
             .into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(create_child).await.unwrap();
 
     // Attempt to drop parent without cascade — should fail
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "drop_test_parent".into(),
         cascade: false,
     };
@@ -536,13 +536,13 @@ async fn test_drop_table_fk_error() {
     // Clean up
     let cleanup_child = QueryRequest {
         query: "DROP TABLE drop_test_child".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(cleanup_child).await.unwrap();
 
     let cleanup_parent = QueryRequest {
         query: "DROP TABLE drop_test_parent".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(cleanup_parent).await.unwrap();
 }
@@ -554,19 +554,19 @@ async fn test_drop_table_cascade() {
     // Create parent and child tables with FK
     let create_parent = QueryRequest {
         query: "CREATE TABLE drop_test_cascade_parent (id SERIAL PRIMARY KEY)".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(create_parent).await.unwrap();
 
     let create_child = QueryRequest {
         query: "CREATE TABLE drop_test_cascade_child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES drop_test_cascade_parent(id))".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(create_child).await.unwrap();
 
     // Drop parent with cascade — should succeed
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "drop_test_cascade_parent".into(),
         cascade: true,
     };
@@ -576,7 +576,7 @@ async fn test_drop_table_cascade() {
     // Clean up child table (still exists, just lost FK constraint)
     let cleanup = QueryRequest {
         query: "DROP TABLE IF EXISTS drop_test_cascade_child".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
     handler.write_query(cleanup).await.unwrap();
 }
@@ -585,7 +585,7 @@ async fn test_drop_table_cascade() {
 async fn test_drop_table_nonexistent() {
     let handler = handler(false);
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "nonexistent_table_xyz".into(),
         cascade: false,
     };
@@ -598,7 +598,7 @@ async fn test_drop_table_nonexistent() {
 async fn test_drop_table_invalid_identifier() {
     let handler = handler(false);
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: String::new(),
         cascade: false,
     };
@@ -611,7 +611,7 @@ async fn test_drop_table_invalid_identifier() {
 async fn test_explain_query_select() {
     let handler = handler(false);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "SELECT * FROM users".into(),
         analyze: false,
     };
@@ -625,7 +625,7 @@ async fn test_explain_query_select() {
 async fn test_explain_query_analyze() {
     let handler = handler(false);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "SELECT * FROM users".into(),
         analyze: true,
     };
@@ -639,7 +639,7 @@ async fn test_explain_query_analyze() {
 async fn test_explain_query_analyze_write_blocked_read_only() {
     let handler = handler(true);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
         analyze: true,
     };
@@ -655,7 +655,7 @@ async fn test_explain_query_analyze_write_blocked_read_only() {
 async fn test_explain_query_plain_write_allowed() {
     let handler = handler(true);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
         analyze: false,
     };
@@ -672,7 +672,7 @@ async fn test_explain_query_plain_write_allowed() {
 async fn test_explain_query_invalid_query() {
     let handler = handler(false);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "NOT VALID SQL AT ALL".into(),
         analyze: false,
     };
@@ -685,7 +685,7 @@ async fn test_explain_query_invalid_query() {
 async fn test_get_table_schema_nonexistent_table() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "nonexistent_table_xyz".into(),
     };
 
@@ -697,7 +697,7 @@ async fn test_get_table_schema_nonexistent_table() {
 async fn test_get_table_schema_invalid_table_name() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: String::new(),
     };
 
@@ -734,19 +734,40 @@ async fn test_create_database_invalid_identifier() {
 }
 
 #[tokio::test]
-async fn test_list_tables_invalid_database_name() {
+async fn test_list_tables_empty_database_falls_back_to_default() {
     let handler = handler(false);
     let request = ListTablesRequest {
-        database: String::new(),
+        database: Some(String::new()),
         ..Default::default()
     };
 
-    // Empty database is treated as None (uses default pool)
-    let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let response = handler
+        .list_tables(request)
+        .await
+        .expect("empty db should default to --db-name");
     assert!(
-        tables.iter().any(|t| t == "users"),
-        "Empty db name should fall back to default: {tables:?}"
+        response.tables.iter().any(|t| t == "users"),
+        "expected default-database tables, got {:?}",
+        response.tables
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_omitted_database_falls_back_to_default() {
+    let handler = handler(false);
+    let request = ListTablesRequest {
+        database: None,
+        ..Default::default()
+    };
+
+    let response = handler
+        .list_tables(request)
+        .await
+        .expect("omitted db should default to --db-name");
+    assert!(
+        response.tables.iter().any(|t| t == "users"),
+        "expected default-database tables, got {:?}",
+        response.tables
     );
 }
 
@@ -755,7 +776,7 @@ async fn test_read_query_empty_query() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: String::new(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -768,7 +789,7 @@ async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "   \t\n  ".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -781,7 +802,7 @@ async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT 1; DROP TABLE users".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -794,7 +815,7 @@ async fn test_read_query_into_outfile_blocked() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -809,13 +830,13 @@ async fn test_drop_table_cross_database() {
     // Create a table in the analytics database
     let create = QueryRequest {
         query: "CREATE TABLE drop_cross_test (id SERIAL PRIMARY KEY)".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
     };
     handler.write_query(create).await.unwrap();
 
     // Drop it from the analytics database
     let drop_request = DropTableRequest {
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         table: "drop_cross_test".into(),
         cascade: false,
     };
@@ -829,13 +850,13 @@ async fn test_write_query_cross_database() {
 
     let insert = QueryRequest {
         query: "INSERT INTO events (name, payload) VALUES ('cross_test', '{\"test\":true}')".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
     };
     handler.write_query(insert).await.unwrap();
 
     let select = ReadQueryRequest {
         query: "SELECT name FROM events WHERE name = 'cross_test'".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         cursor: None,
     };
     let rows = handler.read_query(select).await.unwrap();
@@ -845,7 +866,7 @@ async fn test_write_query_cross_database() {
     // Clean up
     let delete = QueryRequest {
         query: "DELETE FROM events WHERE name = 'cross_test'".into(),
-        database: "analytics".into(),
+        database: Some("analytics".into()),
     };
     handler.write_query(delete).await.unwrap();
 }
@@ -854,7 +875,7 @@ async fn test_write_query_cross_database() {
 async fn test_get_table_schema_junction_table() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "post_tags".into(),
     };
 
@@ -884,7 +905,7 @@ async fn test_read_query_empty_result_set() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -898,7 +919,7 @@ async fn test_read_query_aggregate() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT COUNT(*) AS total FROM users".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -913,7 +934,7 @@ async fn test_read_query_group_by() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -926,7 +947,7 @@ async fn test_read_query_group_by() {
 async fn test_explain_query_cross_database() {
     let handler = handler(false);
     let request = ExplainQueryRequest {
-        database: "analytics".into(),
+        database: Some("analytics".into()),
         query: "SELECT * FROM events".into(),
         analyze: false,
     };
@@ -941,7 +962,7 @@ async fn test_read_query_with_comments() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -955,7 +976,7 @@ async fn test_read_query_subquery() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = true)".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -969,7 +990,7 @@ async fn test_read_query_with_join() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -984,7 +1005,7 @@ async fn test_read_query_with_join() {
 async fn test_explain_query_analyze_select_allowed_in_read_only() {
     let handler = handler(true);
     let request = ExplainQueryRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         query: "SELECT * FROM users".into(),
         analyze: true,
     };
@@ -1002,7 +1023,7 @@ async fn test_write_query_invalid_sql() {
     let handler = handler(false);
     let request = QueryRequest {
         query: "NOT VALID SQL AT ALL".into(),
-        database: "app".into(),
+        database: Some("app".into()),
     };
 
     let response = handler.write_query(request).await;
@@ -1013,7 +1034,7 @@ async fn test_write_query_invalid_sql() {
 async fn test_get_table_schema_column_details() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "users".into(),
     };
 
@@ -1038,7 +1059,7 @@ async fn test_read_query_with_limit() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -1048,16 +1069,25 @@ async fn test_read_query_with_limit() {
 }
 
 #[tokio::test]
-async fn test_drop_table_invalid_database_name() {
+async fn test_drop_table_empty_database_falls_back_to_default() {
     let handler = handler(false);
+
+    let create = QueryRequest {
+        query: "CREATE TABLE drop_default_pg (id SERIAL PRIMARY KEY)".into(),
+        database: Some("app".into()),
+    };
+    handler.write_query(create).await.expect("seed table");
+
     let drop_request = DropTableRequest {
-        database: String::new(),
-        table: "users".into(),
+        database: Some(String::new()),
+        table: "drop_default_pg".into(),
         cascade: false,
     };
-
-    let response = handler.drop_table(drop_request).await;
-    assert!(response.is_err(), "Expected error for empty database name");
+    let response = handler
+        .drop_table(drop_request)
+        .await
+        .expect("empty db should default to --db-name");
+    assert!(response.message.contains("dropped successfully"));
 }
 
 #[tokio::test]
@@ -1065,7 +1095,7 @@ async fn test_read_query_with_line_comment() {
     let handler = handler(false);
     let request = ReadQueryRequest {
         query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
-        database: "app".into(),
+        database: Some("app".into()),
         cursor: None,
     };
 
@@ -1078,7 +1108,7 @@ async fn test_read_query_with_line_comment() {
 async fn test_get_table_schema_no_foreign_keys() {
     let handler = handler(false);
     let request = GetTableSchemaRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "tags".into(),
     };
 
@@ -1113,7 +1143,7 @@ async fn test_drop_database_blocked_in_read_only() {
 async fn test_drop_table_blocked_in_read_only() {
     let handler = handler(true);
     let drop_request = DropTableRequest {
-        database: "app".into(),
+        database: Some("app".into()),
         table: "users".into(),
         cascade: false,
     };
@@ -1127,7 +1157,7 @@ async fn test_read_query_control_char_database_name_rejected() {
     let handler = handler(true);
     let request = ReadQueryRequest {
         query: "SELECT 1".into(),
-        database: "test\x01db".into(),
+        database: Some("test\x01db".into()),
         cursor: None,
     };
     let result = handler.read_query(request).await;
@@ -1138,7 +1168,7 @@ async fn test_read_query_control_char_database_name_rejected() {
 async fn test_list_tables_control_char_database_rejected() {
     let handler = handler(true);
     let request = ListTablesRequest {
-        database: "test\x00db".into(),
+        database: Some("test\x00db".into()),
         ..Default::default()
     };
     let result = handler.list_tables(request).await;
@@ -1171,7 +1201,7 @@ async fn collect_all_paged(handler: &PostgresHandler) -> Vec<String> {
     let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
     loop {
         let request = ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             cursor,
         };
         let response = handler.list_tables(request).await.expect("list page");
@@ -1193,7 +1223,7 @@ async fn test_list_tables_pagination_traverses_pages() {
 
     let single_page = handler_full
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1212,7 +1242,7 @@ async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
     let handler = handler(true);
     let response = handler
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1228,7 +1258,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
     let handler_full = handler(true);
     let total = handler_full
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1240,7 +1270,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
     let handler_boundary = handler_with_page_size(page_size);
     let response = handler_boundary
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1262,7 +1292,7 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
 
     let handler = handler(true);
     let request = ListTablesRequest {
-        database: PG_DB.into(),
+        database: Some(PG_DB.into()),
         cursor: Some(Cursor { offset: 10_000 }),
     };
     let response = handler.list_tables(request).await.unwrap();
@@ -1280,7 +1310,7 @@ async fn test_list_tables_respects_configured_page_size() {
     let handler = handler_with_page_size(2);
     let first = handler
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1297,7 +1327,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
     let handler = handler_with_page_size(1);
     let first = handler
         .list_tables(ListTablesRequest {
-            database: PG_DB.into(),
+            database: Some(PG_DB.into()),
             ..Default::default()
         })
         .await
@@ -1420,7 +1450,7 @@ async fn collect_all_paged_read_query(handler: &PostgresHandler, query: &str) ->
     loop {
         let request = ReadQueryRequest {
             query: query.into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor,
         };
         let response = handler.read_query(request).await.expect("read_query page");
@@ -1444,7 +1474,7 @@ async fn test_read_query_pagination_traverses_pages() {
     let single = handler_full
         .read_query(ReadQueryRequest {
             query: query.into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1466,7 +1496,7 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE id = 1".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1484,7 +1514,7 @@ async fn test_read_query_pagination_empty_result_no_next_cursor() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE id = -1".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1499,7 +1529,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1521,7 +1551,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users ORDER BY id".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: Some(Cursor { offset: 10_000 }),
         })
         .await
@@ -1560,7 +1590,7 @@ async fn test_read_query_non_select_show_server_version_single_page() {
     let without_cursor = handler
         .read_query(ReadQueryRequest {
             query: "SHOW server_version".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1569,7 +1599,7 @@ async fn test_read_query_non_select_show_server_version_single_page() {
     let with_cursor = handler
         .read_query(ReadQueryRequest {
             query: "SHOW server_version".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: Some(Cursor { offset: 100 }),
         })
         .await
@@ -1591,7 +1621,7 @@ async fn test_read_query_non_select_explain_single_page() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: "EXPLAIN SELECT 1".into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1610,7 +1640,7 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     let response = handler
         .read_query(ReadQueryRequest {
             query: r#"SELECT "date", "time", "timestamp", "timestamptz" FROM temporal WHERE id = 1"#.into(),
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1635,7 +1665,7 @@ async fn test_list_views_returns_seeded_views() {
     let handler = handler(true);
     let response = handler
         .list_views(ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1658,7 +1688,7 @@ async fn test_list_views_excludes_base_tables() {
     let handler = handler(true);
     let response = handler
         .list_views(ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1678,7 +1708,7 @@ async fn test_list_views_empty_for_view_less_database() {
     let handler = handler(true);
     let response = handler
         .list_views(ListViewsRequest {
-            database: "analytics".into(),
+            database: Some("analytics".into()),
             cursor: None,
         })
         .await
@@ -1700,7 +1730,7 @@ async fn test_list_views_pagination_traverses_pages() {
     let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
     loop {
         let request = ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor,
         };
         let response = handler_paged.list_views(request).await.expect("paged list_views");
@@ -1713,7 +1743,7 @@ async fn test_list_views_pagination_traverses_pages() {
 
     let single = handler_full
         .list_views(ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1727,7 +1757,7 @@ async fn test_list_views_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
         .list_views(ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1741,7 +1771,7 @@ async fn test_list_triggers_returns_seeded_triggers() {
     let handler = handler(true);
     let response = handler
         .list_triggers(ListTriggersRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1764,7 +1794,7 @@ async fn test_list_triggers_excludes_internal_triggers() {
     let handler = handler(true);
     let response = handler
         .list_triggers(ListTriggersRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1785,7 +1815,7 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
     let handler = handler(true);
     let response = handler
         .list_triggers(ListTriggersRequest {
-            database: "analytics".into(),
+            database: Some("analytics".into()),
             cursor: None,
         })
         .await
@@ -1803,7 +1833,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
         .list_triggers(ListTriggersRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1820,7 +1850,7 @@ async fn test_list_functions_returns_seeded_functions() {
     let handler = handler(true);
     let response = handler
         .list_functions(ListFunctionsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1843,7 +1873,7 @@ async fn test_list_functions_excludes_procedures() {
     let handler = handler(true);
     let response = handler
         .list_functions(ListFunctionsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1863,7 +1893,7 @@ async fn test_list_procedures_returns_seeded_procedures() {
     let handler = handler(true);
     let response = handler
         .list_procedures(ListProceduresRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1886,7 +1916,7 @@ async fn test_list_procedures_excludes_functions() {
     let handler = handler(true);
     let response = handler
         .list_procedures(ListProceduresRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1906,7 +1936,7 @@ async fn test_list_materialized_views_returns_seeded_matviews() {
     let handler = handler(true);
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1929,7 +1959,7 @@ async fn test_list_views_excludes_materialized_views() {
     let handler = handler(true);
     let response = handler
         .list_views(ListViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1949,7 +1979,7 @@ async fn test_list_materialized_views_excludes_regular_views() {
     let handler = handler(true);
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
-            database: "app".into(),
+            database: Some("app".into()),
             cursor: None,
         })
         .await
@@ -1969,7 +1999,7 @@ async fn test_list_materialized_views_empty_for_empty_database() {
     let handler = handler(true);
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
-            database: "analytics".into(),
+            database: Some("analytics".into()),
             cursor: None,
         })
         .await

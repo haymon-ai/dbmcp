@@ -57,8 +57,9 @@ pub struct DropDatabaseRequest {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTablesRequest {
-    /// The database name to list tables from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list tables from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -79,8 +80,9 @@ pub struct ListTablesResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListViewsRequest {
-    /// The database name to list views from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list views from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -101,8 +103,9 @@ pub struct ListViewsResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTriggersRequest {
-    /// The database name to list triggers from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list triggers from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -123,8 +126,9 @@ pub struct ListTriggersResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFunctionsRequest {
-    /// The database name to list functions from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list functions from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -145,8 +149,9 @@ pub struct ListFunctionsResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProceduresRequest {
-    /// The database name to list procedures from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list procedures from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -167,8 +172,9 @@ pub struct ListProceduresResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListMaterializedViewsRequest {
-    /// The database name to list materialized views from. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to list materialized views from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -189,9 +195,10 @@ pub struct ListMaterializedViewsResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTableSchemaRequest {
-    /// The database name containing the table. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
-    /// The table name to inspect. Use `listTables` first to see available tables in the database.
+    /// Database containing the table. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// Table to inspect.
     pub table: String,
 }
 
@@ -211,8 +218,9 @@ pub struct TableSchemaResponse {
 pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
-    /// The database to run the query against. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to run the query against. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 /// Request for the `readQuery` tool.
@@ -221,8 +229,9 @@ pub struct QueryRequest {
 pub struct ReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
-    /// The database to run the query against. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to run the query against. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -253,8 +262,9 @@ pub struct ReadQueryResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplainQueryRequest {
-    /// The database to explain against. Required. Use `listDatabases` first to see available databases.
-    pub database: String,
+    /// Database to explain against. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
     /// The SQL query to explain.
     pub query: String,
     /// If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.

@@ -87,6 +87,12 @@ impl MysqlHandler {
         &self,
         ListFunctionsRequest { database, cursor }: ListFunctionsRequest,
     ) -> Result<ListFunctionsResponse, ErrorData> {
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
 
         let pager = Pager::new(cursor, self.config.page_size);

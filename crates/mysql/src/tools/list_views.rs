@@ -17,7 +17,7 @@ pub(crate) struct ListViewsTool;
 impl ListViewsTool {
     const NAME: &'static str = "listViews";
     const TITLE: &'static str = "List Views";
-    const DESCRIPTION: &'static str = r#"List all views in a specific database. Requires `database` — call `listDatabases` first to discover available databases.
+    const DESCRIPTION: &'static str = r#"List all views in a database.
 
 <usecase>
 Use when:
@@ -88,6 +88,12 @@ impl MysqlHandler {
         &self,
         ListViewsRequest { database, cursor }: ListViewsRequest,
     ) -> Result<ListViewsResponse, ErrorData> {
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
 
         let pager = Pager::new(cursor, self.config.page_size);
