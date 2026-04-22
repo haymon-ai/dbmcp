@@ -89,6 +89,7 @@ impl MysqlHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map_or_else(|| self.connection.default_database_name().to_owned(), str::to_owned);
+
         validate_ident(&database)?;
         validate_ident(&table)?;
 

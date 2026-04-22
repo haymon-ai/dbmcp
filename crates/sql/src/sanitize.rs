@@ -46,15 +46,18 @@ pub fn quote_literal(value: &str) -> String {
 
 /// Validates that `name` is a non-empty identifier without control characters.
 ///
+/// Returns the input on success so the call composes inside iterator chains
+/// (e.g. `Option::map(validate_ident).transpose()?`).
+///
 /// # Errors
 ///
 /// Returns [`SqlError::InvalidIdentifier`] if the name is empty,
 /// whitespace-only, or contains control characters.
-pub fn validate_ident(name: &str) -> Result<(), SqlError> {
+pub fn validate_ident(name: &str) -> Result<&str, SqlError> {
     if name.trim().is_empty() || name.chars().any(char::is_control) {
         return Err(SqlError::InvalidIdentifier(name.to_string()));
     }
-    Ok(())
+    Ok(name)
 }
 
 #[cfg(test)]

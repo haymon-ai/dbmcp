@@ -103,10 +103,12 @@ impl PostgresHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let db = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        if let Some(name) = &db {
-            validate_ident(name)?;
-        }
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(validate_ident)
+            .transpose()?;
         validate_ident(&table)?;
 
         let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table, &PostgreSqlDialect {}));
@@ -114,7 +116,7 @@ impl PostgresHandler {
             drop_sql.push_str(" CASCADE");
         }
 
-        self.connection.execute(drop_sql.as_str(), db).await?;
+        self.connection.execute(drop_sql.as_str(), database).await?;
 
         Ok(MessageResponse {
             message: format!("Table '{table}' dropped successfully."),
