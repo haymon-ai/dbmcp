@@ -2,6 +2,49 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.8.0] - 2026-04-22
+
+### Renamed from `database-mcp` to `dbmcp`
+
+**This release renames the project.** The binary is now `dbmcp`, the MCP
+`serverInfo.name` is now `"dbmcp"`, the GitHub repository is now
+`haymon-ai/dbmcp`, the docs live at `https://dbmcp.haymon.ai`, and the
+published workspace crates are now `dbmcp-*`. There is **no
+`database-mcp` binary shipped in this or any future release** — existing
+`database-mcp` installs keep working indefinitely at version 0.7.0 but
+do not auto-upgrade. Pinned `database-mcp-*` crates on crates.io at
+0.7.0 stay untouched (no yank, no deprecation release).
+
+Under Cargo's pre-1.0 compatibility rules, `0.7.x` → `0.8.0` is a
+breaking-change bump: a dependency specified as `^0.7` will **not**
+resolve to `0.8.0`. This is the intended signal.
+
+#### Migration
+
+| Surface | Before | After |
+| ------- | ------ | ----- |
+| Binary on `PATH` | `database-mcp` | `dbmcp` |
+| MCP client config server key | `"database-mcp"` | `"dbmcp"` |
+| MCP client config `command` | `database-mcp` | `dbmcp` |
+| MCP `serverInfo.name` | `"database-mcp"` | `"dbmcp"` |
+| MCP registry entry | `ai.haymon/database` (deprecated) | `ai.haymon/dbmcp` |
+| GitHub repository | `github.com/haymon-ai/database` (redirects) | `github.com/haymon-ai/dbmcp` |
+| Docs domain | `database.haymon.ai` (301 for ≥12 months) | `dbmcp.haymon.ai` |
+| Docker image | `ghcr.io/haymon-ai/database:0.7.0` | `ghcr.io/haymon-ai/dbmcp:0.8.0` |
+| Release tarball | `database-mcp-{target}.tar.gz` | `dbmcp-{target}.tar.gz` |
+| Release zip | `database-mcp-{target}.zip` | `dbmcp-{target}.zip` |
+| Cargo workspace crates | `database-mcp-{config,server,sql,mysql,postgres,sqlite}` | `dbmcp-{config,server,sql,mysql,postgres,sqlite}` |
+| Cargo root crate | `database-mcp` | `dbmcp` |
+
+CLI flags (`--db-backend`, `--db-host`, …), environment variables
+(`DB_*`, `HTTP_*`, `LOG_LEVEL`), MCP tool names and schemas, supported
+backends, transports, and security constraints are **all unchanged**.
+The `sqlx_to_json` crate is also unchanged.
+
+See commit `feat!: rename to dbmcp` and the [rename spec](specs/042-rename-to-dbmcp/spec.md)
+for the full scope and rationale.
+
+- - -
 ## [v0.7.0](https://github.com/haymon-ai/database-mcp/compare/3026a0304d1cdc444dfe6100f28138b9043d48e5..v0.7.0) - 2026-04-20
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**tools**) cursor pagination for list_* and read_query (#118) - ([30cb5cc](https://github.com/haymon-ai/database-mcp/commit/30cb5cc5ef383df13f2503f0b05a21659fe34854)) - [@athopen](https://github.com/athopen)

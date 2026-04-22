@@ -15,7 +15,7 @@ pre_bump_hooks = [
     "cargo check --release",
     "git add :/Cargo.lock",
     "sed -i 's/\"version\": \".*\"/\"version\": \"{{version}}\"/' server.json",
-    "sed -i 's|ghcr.io/haymon-ai/database:[0-9]*\\.[0-9]*\\.[0-9]*|ghcr.io/haymon-ai/database:{{version}}|g' server.json",
+    "sed -i 's|ghcr.io/haymon-ai/dbmcp:[0-9]*\\.[0-9]*\\.[0-9]*|ghcr.io/haymon-ai/dbmcp:{{version}}|g' server.json",
     "git add :/server.json",
 ]
 
@@ -35,7 +35,7 @@ path = "CHANGELOG.md"
 template = "remote"
 remote = "github.com"
 owner = "haymon-ai"
-repository = "database-mcp"
+repository = "dbmcp"
 
 authors = [{ username = "athopen", signature = "Andreas Penz" }]
 
