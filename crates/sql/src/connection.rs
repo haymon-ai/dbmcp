@@ -6,7 +6,7 @@
 
 use crate::SqlError;
 use serde_json::Value;
-use sqlx::{Decode, Executor, Row, Type};
+use sqlx::{Decode, Execute, Executor, Row, Type};
 use sqlx_json::{QueryResult as _, RowExt};
 
 use crate::timeout::execute_with_timeout;
@@ -16,6 +16,11 @@ use crate::timeout::execute_with_timeout;
 /// Backends supply three required items — [`DB`](Connection::DB),
 /// [`pool`](Connection::pool), and [`query_timeout`](Connection::query_timeout)
 /// — and receive default implementations for query execution.
+///
+/// Query methods accept any [`sqlx::Execute`] value: a plain `&str` for
+/// bindless statements (which routes through sqlx's unprepared text
+/// protocol, required for statements like `MySQL` `USE`), or an
+/// `sqlx::query(sql).bind(...)` value for parameterized statements.
 ///
 /// # Errors
 ///
@@ -50,9 +55,13 @@ where
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn execute(&self, query: &str, database: Option<&str>) -> Result<u64, SqlError> {
+    async fn execute<'q, E>(&self, query: E, database: Option<&str>) -> Result<u64, SqlError>
+    where
+        E: 'q + Execute<'q, Self::DB> + Send,
+    {
+        let sql = query.sql().to_owned();
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), query, async {
+        execute_with_timeout(self.query_timeout(), &sql, async move {
             Ok(pool.execute(query).await?.rows_affected())
         })
         .await
@@ -63,9 +72,13 @@ where
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_json(&self, query: &str, database: Option<&str>) -> Result<Vec<Value>, SqlError> {
+    async fn fetch_json<'q, E>(&self, query: E, database: Option<&str>) -> Result<Vec<Value>, SqlError>
+    where
+        E: 'q + Execute<'q, Self::DB> + Send,
+    {
+        let sql = query.sql().to_owned();
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), query, async {
+        execute_with_timeout(self.query_timeout(), &sql, async move {
             Ok(pool.fetch_all(query).await?.iter().map(RowExt::to_json).collect())
         })
         .await
@@ -79,12 +92,14 @@ where
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_optional<T>(&self, query: &str, database: Option<&str>) -> Result<Option<T>, SqlError>
+    async fn fetch_optional<'q, E, T>(&self, query: E, database: Option<&str>) -> Result<Option<T>, SqlError>
     where
+        E: 'q + Execute<'q, Self::DB> + Send,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
+        let sql = query.sql().to_owned();
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), query, async {
+        execute_with_timeout(self.query_timeout(), &sql, async move {
             Ok(pool.fetch_optional(query).await?.and_then(|r| r.try_get(0usize).ok()))
         })
         .await
@@ -95,12 +110,14 @@ where
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_scalar<T>(&self, query: &str, database: Option<&str>) -> Result<Vec<T>, SqlError>
+    async fn fetch_scalar<'q, E, T>(&self, query: E, database: Option<&str>) -> Result<Vec<T>, SqlError>
     where
+        E: 'q + Execute<'q, Self::DB> + Send,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
+        let sql = query.sql().to_owned();
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), query, async {
+        execute_with_timeout(self.query_timeout(), &sql, async move {
             let rows = pool.fetch_all(query).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })

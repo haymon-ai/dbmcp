@@ -10,13 +10,8 @@ use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::sanitize::validate_ident;
-use dbmcp_sql::timeout::execute_with_timeout;
 use moka::future::Cache;
-use sqlx::Postgres;
-use sqlx::Row;
-use sqlx::postgres::{PgArguments, PgConnectOptions, PgPool, PgSslMode};
-use sqlx::query::Query as SqlxQuery;
-use sqlx_json::RowExt;
+use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
@@ -107,64 +102,6 @@ impl PostgresConnection {
             .await;
 
         Ok(pool)
-    }
-}
-
-impl PostgresConnection {
-    /// Runs a parameter-bound query and extracts column 0 from every row.
-    ///
-    /// The `bind` closure receives an `sqlx::Query` wrapping `sql` and must
-    /// chain the required `.bind(...)` calls for every `$n` placeholder.
-    /// Postgres-local — keeps the shared [`Connection`] trait simple.
-    ///
-    /// # Errors
-    ///
-    /// - [`SqlError::InvalidIdentifier`] — `database` failed validation.
-    /// - [`SqlError::Query`] — the underlying driver failed.
-    /// - [`SqlError::QueryTimeout`] — the query exceeded the configured timeout.
-    pub(crate) async fn fetch_scalar_with_binds<T, F>(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-        bind: F,
-    ) -> Result<Vec<T>, SqlError>
-    where
-        T: for<'r> sqlx::Decode<'r, Postgres> + sqlx::Type<Postgres> + Send + Unpin,
-        F: for<'q> FnOnce(SqlxQuery<'q, Postgres, PgArguments>) -> SqlxQuery<'q, Postgres, PgArguments> + Send,
-    {
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.config.query_timeout, sql, async move {
-            let rows = bind(sqlx::query(sql)).fetch_all(&pool).await?;
-            rows.iter().map(|r| r.try_get::<T, _>(0usize)).collect()
-        })
-        .await
-    }
-
-    /// Runs a parameter-bound query and collects every row as JSON.
-    ///
-    /// The `bind` closure receives an `sqlx::Query` wrapping `sql` and must
-    /// chain the required `.bind(...)` calls for every `$n` placeholder.
-    ///
-    /// # Errors
-    ///
-    /// - [`SqlError::InvalidIdentifier`] — `database` failed validation.
-    /// - [`SqlError::Query`] — the underlying driver failed.
-    /// - [`SqlError::QueryTimeout`] — the query exceeded the configured timeout.
-    pub(crate) async fn fetch_json_with_binds<F>(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-        bind: F,
-    ) -> Result<Vec<serde_json::Value>, SqlError>
-    where
-        F: for<'q> FnOnce(SqlxQuery<'q, Postgres, PgArguments>) -> SqlxQuery<'q, Postgres, PgArguments> + Send,
-    {
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.config.query_timeout, sql, async move {
-            let rows = bind(sqlx::query(sql)).fetch_all(&pool).await?;
-            Ok(rows.iter().map(RowExt::to_json).collect())
-        })
-        .await
     }
 }
 
@@ -325,10 +262,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_scalar_with_binds_rejects_invalid_database_identifier() {
+    async fn fetch_scalar_rejects_invalid_database_identifier() {
         let connection = PostgresConnection::new(&base_config());
         let result: Result<Vec<String>, SqlError> = connection
-            .fetch_scalar_with_binds("SELECT $1::text", Some("bad\0name"), |q| q.bind("x"))
+            .fetch_scalar(sqlx::query("SELECT $1::text").bind("x"), Some("bad\0name"))
             .await;
         match result {
             Err(SqlError::InvalidIdentifier(_)) => {}
@@ -338,10 +275,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_json_with_binds_rejects_invalid_database_identifier() {
+    async fn fetch_json_rejects_invalid_database_identifier() {
         let connection = PostgresConnection::new(&base_config());
         let result = connection
-            .fetch_json_with_binds("SELECT $1::int AS n", Some("bad\nname"), |q| q.bind(1_i32))
+            .fetch_json(sqlx::query("SELECT $1::int AS n").bind(1_i32), Some("bad\nname"))
             .await;
         match result {
             Err(SqlError::InvalidIdentifier(_)) => {}

@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use dbmcp_server::pagination::{Cursor, Pager};
+use dbmcp_sql::Connection;
 use dbmcp_sql::sanitize::validate_ident;
 
 use crate::types::{ListTablesRequest, ListTablesResponse, TableEntries};
@@ -296,12 +297,12 @@ impl PostgresHandler {
         let offset = i64::try_from(pager.offset()).unwrap_or(i64::MAX);
 
         if !detailed {
-            let pattern_clone = pattern.clone();
             let rows: Vec<String> = self
                 .connection
-                .fetch_scalar_with_binds(BRIEF_SQL, database, move |q| {
-                    q.bind(pattern_clone).bind(limit).bind(offset)
-                })
+                .fetch_scalar(
+                    sqlx::query(BRIEF_SQL).bind(pattern.clone()).bind(limit).bind(offset),
+                    database,
+                )
                 .await?;
             let (tables, next_cursor) = pager.finalize(rows);
             return Ok(ListTablesResponse {
@@ -310,12 +311,12 @@ impl PostgresHandler {
             });
         }
 
-        let pattern_clone = pattern.clone();
         let rows = self
             .connection
-            .fetch_json_with_binds(DETAILED_SQL, database, move |q| {
-                q.bind(pattern_clone).bind(limit).bind(offset)
-            })
+            .fetch_json(
+                sqlx::query(DETAILED_SQL).bind(pattern.clone()).bind(limit).bind(offset),
+                database,
+            )
             .await?;
         // The CTE wraps each row as a JSON object under column `entry`;
         // when the row is flattened to JSON by `RowExt::to_json`, the

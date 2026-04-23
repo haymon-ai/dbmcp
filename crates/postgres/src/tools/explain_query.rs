@@ -120,7 +120,7 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        let rows = self.connection.fetch_json(&explain_sql, database).await?;
+        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
 
         Ok(QueryResponse { rows })
     }
