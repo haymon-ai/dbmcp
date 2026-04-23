@@ -30,7 +30,7 @@ Use when:
 <parameters>
 - `database` — Database to target. Defaults to the active database.
 - `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.
-- `search` — Case-insensitive substring filter on table names. `%`, `_`, `\` are literal.
+- `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.
 - `detailed` — When `true`, returns full metadata objects instead of bare name strings. Default `false`.
 </parameters>
 
@@ -89,7 +89,7 @@ const BRIEF_SQL: &str = r"
     SELECT tablename
     FROM pg_tables
     WHERE schemaname = 'public'
-      AND ($1::text IS NULL OR tablename ILIKE $1 ESCAPE '\')
+      AND ($1::text IS NULL OR tablename ILIKE '%' || $1 || '%')
     ORDER BY tablename
     LIMIT $2 OFFSET $3";
 
@@ -110,7 +110,7 @@ const DETAILED_SQL: &str = r"
         JOIN pg_namespace ns ON ns.oid = t.relnamespace
         WHERE t.relkind IN ('r', 'p')
           AND ns.nspname = 'public'
-          AND ($1::text IS NULL OR t.relname ILIKE $1 ESCAPE '\')
+          AND ($1::text IS NULL OR t.relname ILIKE '%' || $1 || '%')
         ORDER BY t.relname
         LIMIT $2 OFFSET $3
     ),
@@ -242,31 +242,6 @@ const DETAILED_SQL: &str = r"
     FROM table_info ti
     ORDER BY ti.schema_name, ti.table_name";
 
-/// Escapes LIKE metacharacters (`\`, `%`, `_`) in a substring search term.
-///
-/// Returned value is safe to concatenate into a `%...%` pattern bound with
-/// `ILIKE $1 ESCAPE '\'`. Does not quote — that is sqlx's job.
-fn escape_like(term: &str) -> String {
-    let mut out = String::with_capacity(term.len());
-    for ch in term.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// Builds the `Option<String>` pattern bound as `$1` for brief/detailed SQL.
-///
-/// `None` means "no filter". Whitespace-only input collapses to `None`.
-fn build_like_pattern(search: Option<&str>) -> Option<String> {
-    search
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("%{}%", escape_like(s)))
-}
-
 impl PostgresHandler {
     /// Lists one page of tables in a database, optionally filtered and/or detailed.
     ///
@@ -292,14 +267,14 @@ impl PostgresHandler {
             .transpose()?;
 
         let pager = Pager::new(cursor, self.config.page_size);
-        let pattern = build_like_pattern(search.as_deref());
+        let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         if !detailed {
             let rows: Vec<String> = self
                 .connection
                 .fetch_scalar(
                     sqlx::query(BRIEF_SQL)
-                        .bind(pattern.clone())
+                        .bind(pattern)
                         .bind(pager.limit())
                         .bind(pager.offset()),
                     database,
@@ -316,7 +291,7 @@ impl PostgresHandler {
             .connection
             .fetch_json(
                 sqlx::query(DETAILED_SQL)
-                    .bind(pattern.clone())
+                    .bind(pattern)
                     .bind(pager.limit())
                     .bind(pager.offset()),
                 database,
@@ -340,64 +315,4 @@ impl PostgresHandler {
 /// Mirrors [`Pager::finalize`] for an owned `Vec<Value>` without cloning the trait bound.
 fn finalize_detailed(pager: &Pager, mut items: Vec<serde_json::Value>) -> (Vec<serde_json::Value>, Option<Cursor>) {
     pager.finalize(std::mem::take(&mut items))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn escape_like_leaves_plain_text_unchanged() {
-        assert_eq!(escape_like(""), "");
-        assert_eq!(escape_like("orders"), "orders");
-        assert_eq!(escape_like("Robert tables"), "Robert tables");
-    }
-
-    #[test]
-    fn escape_like_escapes_percent() {
-        assert_eq!(escape_like("100%"), "100\\%");
-        assert_eq!(escape_like("%%"), "\\%\\%");
-    }
-
-    #[test]
-    fn escape_like_escapes_underscore() {
-        assert_eq!(escape_like("user_id"), "user\\_id");
-    }
-
-    #[test]
-    fn escape_like_escapes_backslash() {
-        assert_eq!(escape_like("a\\b"), "a\\\\b");
-    }
-
-    #[test]
-    fn escape_like_escapes_all_meta_together() {
-        assert_eq!(escape_like("100%_done\\"), "100\\%\\_done\\\\");
-    }
-
-    #[test]
-    fn escape_like_passes_through_sql_meta_chars() {
-        // Single quote, semicolon, double-dash are NOT LIKE meta — they must survive unchanged.
-        // (They are rendered safe by sqlx parameter binding, not by this function.)
-        assert_eq!(escape_like("Robert'; DROP TABLE --"), "Robert'; DROP TABLE --");
-    }
-
-    #[test]
-    fn build_like_pattern_none_for_none_empty_whitespace() {
-        assert_eq!(build_like_pattern(None), None);
-        assert_eq!(build_like_pattern(Some("")), None);
-        assert_eq!(build_like_pattern(Some("   ")), None);
-        assert_eq!(build_like_pattern(Some("\t\n")), None);
-    }
-
-    #[test]
-    fn build_like_pattern_wraps_and_escapes() {
-        assert_eq!(build_like_pattern(Some("order")), Some("%order%".into()));
-        assert_eq!(build_like_pattern(Some("100%")), Some("%100\\%%".into()));
-        assert_eq!(build_like_pattern(Some("user_id")), Some("%user\\_id%".into()));
-    }
-
-    #[test]
-    fn build_like_pattern_trims_surrounding_whitespace() {
-        assert_eq!(build_like_pattern(Some("  order  ")), Some("%order%".into()));
-    }
 }

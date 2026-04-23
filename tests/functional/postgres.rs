@@ -1907,11 +1907,18 @@ async fn test_list_tables_search_no_match_returns_empty() {
 }
 
 #[tokio::test]
-async fn test_list_tables_search_wildcards_are_literal() {
+async fn test_list_tables_search_supports_like_wildcards() {
     let handler = handler(true);
-    // `%` and `_` must be treated as literal text — no table name contains this sequence.
-    let names = search_names(&handler, "100%_done").await;
-    assert!(names.is_empty(), "wildcards must be literal, got {names:?}");
+    // `_` is the single-character LIKE wildcard. `order_items` has `_` at position 5;
+    // the pattern `order_items` matches it literally AND `_` would match any char.
+    // Use `_rder` to prove wildcarding: `_` must match `o`, yielding `%_rder%` → hit `order_items`,
+    // `orders`, `erp_orders`.
+    let names = search_names(&handler, "_rder").await;
+    assert_eq!(
+        names,
+        vec!["erp_orders", "order_items", "orders"],
+        "`_` must act as a single-char LIKE wildcard"
+    );
 }
 
 #[tokio::test]
