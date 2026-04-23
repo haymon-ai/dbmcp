@@ -293,14 +293,15 @@ impl PostgresHandler {
 
         let pager = Pager::new(cursor, self.config.page_size);
         let pattern = build_like_pattern(search.as_deref());
-        let limit = i64::try_from(pager.limit()).unwrap_or(i64::MAX);
-        let offset = i64::try_from(pager.offset()).unwrap_or(i64::MAX);
 
         if !detailed {
             let rows: Vec<String> = self
                 .connection
                 .fetch_scalar(
-                    sqlx::query(BRIEF_SQL).bind(pattern.clone()).bind(limit).bind(offset),
+                    sqlx::query(BRIEF_SQL)
+                        .bind(pattern.clone())
+                        .bind(pager.limit())
+                        .bind(pager.offset()),
                     database,
                 )
                 .await?;
@@ -314,7 +315,10 @@ impl PostgresHandler {
         let rows = self
             .connection
             .fetch_json(
-                sqlx::query(DETAILED_SQL).bind(pattern.clone()).bind(limit).bind(offset),
+                sqlx::query(DETAILED_SQL)
+                    .bind(pattern.clone())
+                    .bind(pager.limit())
+                    .bind(pager.offset()),
                 database,
             )
             .await?;

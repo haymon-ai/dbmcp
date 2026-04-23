@@ -12,7 +12,7 @@
 /// new line so a trailing `-- line comment` in the caller's SQL cannot
 /// swallow the wrap's own tokens.
 #[must_use]
-pub fn with_limit_offset(sql: &str, limit: usize, offset: u64) -> String {
+pub fn with_limit_offset(sql: &str, limit: i64, offset: i64) -> String {
     let trimmed = sql.trim_end();
     let inner = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
     format!("SELECT * FROM ({inner}\n) AS paginated LIMIT {limit} OFFSET {offset}")
