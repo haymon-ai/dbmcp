@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.8.0](https://github.com/haymon-ai/dbmcp/compare/52f9bad70438aa19032118b2a8b0368cd62f44a2..v0.8.0) - 2026-04-23
+#### Features
+- (**tools**) default `database` to configured --db-name when omitted (#121) - ([1492f28](https://github.com/haymon-ai/dbmcp/commit/1492f28d718e5780cad576b0ef910a53e3839d5c)) - [@athopen](https://github.com/athopen)
+- (**tools**) add schema object discovery tools - ([52f9bad](https://github.com/haymon-ai/dbmcp/commit/52f9bad70438aa19032118b2a8b0368cd62f44a2)) - athopen
+#### Bug Fixes
+- (**deps**) bump rustls-webpki to 0.103.13 for RUSTSEC-2026-0104 (#124) - ([d5f1e77](https://github.com/haymon-ai/dbmcp/commit/d5f1e7793d9637a42190ec4f3eba461da821af35)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) rename to dbmcp (#125) - ([3cbfb2e](https://github.com/haymon-ai/dbmcp/commit/3cbfb2e830ba5fbca6247e8a64cf454a028e7bd4)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.7.0](https://github.com/haymon-ai/database-mcp/compare/3026a0304d1cdc444dfe6100f28138b9043d48e5..v0.7.0) - 2026-04-20
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**tools**) cursor pagination for list_* and read_query (#118) - ([30cb5cc](https://github.com/haymon-ai/database-mcp/commit/30cb5cc5ef383df13f2503f0b05a21659fe34854)) - [@athopen](https://github.com/athopen)

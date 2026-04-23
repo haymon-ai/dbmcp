@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "clap",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-config"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "thiserror",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-mysql"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-server",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-postgres"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-server",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "rmcp",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-sql"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "dbmcp-sqlite"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-server",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx-json"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "serde_json",
