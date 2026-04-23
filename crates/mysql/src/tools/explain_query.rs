@@ -2,11 +2,11 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::types::{ExplainQueryRequest, QueryResponse};
-use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
-use database_mcp_sql::sanitize::validate_ident;
-use database_mcp_sql::validation::validate_read_only;
+use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
+use dbmcp_sql::Connection as _;
+use dbmcp_sql::SqlError;
+use dbmcp_sql::sanitize::validate_ident;
+use dbmcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 

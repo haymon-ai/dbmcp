@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Configure database-mcp with CLI flags, environment variables, and backend-specific defaults
+description: Configure dbmcp with CLI flags, environment variables, and backend-specific defaults
 ---
 
 Database MCP is configured through CLI flags and environment variables. This page documents every available option.
@@ -74,7 +74,7 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 
 ## HTTP Transport
 
-These options are available only when running in HTTP mode (`database-mcp http`):
+These options are available only when running in HTTP mode (`dbmcp http`):
 
 | CLI Flag | Default | Description |
 |----------|---------|-------------|
@@ -83,7 +83,7 @@ These options are available only when running in HTTP mode (`database-mcp http`)
 | `--allowed-origins` | `http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1` | Allowed CORS origins (comma-separated) |
 | `--allowed-hosts` | `localhost,127.0.0.1` | Allowed host names (comma-separated) |
 
-A transport subcommand is required — running `database-mcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
+A transport subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
 
 ## Client Configuration Examples
 
@@ -96,8 +96,8 @@ Create a `.mcp.json` file in your project root:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
-      "command": "database-mcp",
+    "dbmcp": {
+      "command": "dbmcp",
       "args": ["stdio"],
       "env": {
         "DB_BACKEND": "mysql",
@@ -116,7 +116,7 @@ Claude Code also supports HTTP transport for remote servers:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "type": "http",
       "url": "http://127.0.0.1:9001/mcp"
     }
@@ -131,13 +131,13 @@ Using Docker:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "type": "stdio",
       "command": "docker",
       "args": ["run", "-i", "--rm",
         "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
         "-e", "DB_PASSWORD", "-e", "DB_NAME",
-        "ghcr.io/haymon-ai/database"
+        "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
         "DB_BACKEND": "postgres",
@@ -159,8 +159,8 @@ Edit the config file at:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
-      "command": "database-mcp",
+    "dbmcp": {
+      "command": "dbmcp",
       "args": ["stdio"],
       "env": {
         "DB_BACKEND": "postgres",
@@ -179,12 +179,12 @@ Using Docker:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "command": "docker",
       "args": ["run", "-i", "--rm",
         "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
         "-e", "DB_PASSWORD", "-e", "DB_NAME",
-        "ghcr.io/haymon-ai/database"
+        "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
         "DB_BACKEND": "postgres",
@@ -207,9 +207,9 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "type": "stdio",
-      "command": "database-mcp",
+      "command": "dbmcp",
       "args": ["stdio"],
       "env": {
         "DB_BACKEND": "mysql",
@@ -228,13 +228,13 @@ Using Docker:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "type": "stdio",
       "command": "docker",
       "args": ["run", "-i", "--rm",
         "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
         "-e", "DB_PASSWORD", "-e", "DB_NAME",
-        "ghcr.io/haymon-ai/database"
+        "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
         "DB_BACKEND": "mysql",
@@ -258,8 +258,8 @@ Edit the config file at:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
-      "command": "database-mcp",
+    "dbmcp": {
+      "command": "dbmcp",
       "args": ["stdio"],
       "env": {
         "DB_BACKEND": "mysql",
@@ -278,12 +278,12 @@ Using Docker:
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "command": "docker",
       "args": ["run", "-i", "--rm",
         "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
         "-e", "DB_PASSWORD", "-e", "DB_NAME",
-        "ghcr.io/haymon-ai/database"
+        "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
         "DB_BACKEND": "mysql",

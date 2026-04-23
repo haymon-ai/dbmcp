@@ -1,5 +1,5 @@
-# Install script for database-mcp (Windows)
-# Usage: irm https://database.haymon.ai/install.ps1 | iex
+# Install script for dbmcp (Windows)
+# Usage: irm https://dbmcp.haymon.ai/install.ps1 | iex
 #    or: powershell -ExecutionPolicy Bypass -File install.ps1
 #
 # Environment variables:
@@ -10,7 +10,7 @@
 #                   script on an up-to-date install is a no-op (no download,
 #                   no file writes).
 #
-# The script probes https://github.com/haymon-ai/database/releases/latest
+# The script probes https://github.com/haymon-ai/dbmcp/releases/latest
 # (a HEAD request that follows redirects) to learn the latest version. The
 # no-op path performs zero downloads and zero writes to the install directory.
 
@@ -37,7 +37,7 @@
         param([string]$Version)
         if (-not $Version) { return '' }
         $v = $Version.Trim()
-        if ($v.StartsWith('database-mcp ')) { $v = $v.Substring('database-mcp '.Length) }
+        if ($v.StartsWith('dbmcp ')) { $v = $v.Substring('dbmcp '.Length) }
         if ($v.StartsWith('v') -or $v.StartsWith('V')) { $v = $v.Substring(1) }
         return $v
     }
@@ -127,7 +127,7 @@
         }
 
         # Priority 3: Default location
-        $DefaultDir = Join-Path $env:LOCALAPPDATA "Programs\database-mcp"
+        $DefaultDir = Join-Path $env:LOCALAPPDATA "Programs\dbmcp"
         return @{ Path = $DefaultDir; IsUpgrade = $false; OldVersion = "" }
     }
 
@@ -170,8 +170,8 @@
 
     # --- Main flow ---
 
-    $BinaryName = "database-mcp"
-    $Repo = "haymon-ai/database"
+    $BinaryName = "dbmcp"
+    $Repo = "haymon-ai/dbmcp"
     $Target = "x86_64-pc-windows-msvc"
     $Asset = "$BinaryName-$Target.zip"
     $BaseUrl = "https://github.com/$Repo/releases/latest/download"
@@ -182,7 +182,7 @@
 
     try {
         Write-Host ""
-        Write-Host "Installing database-mcp..." -ForegroundColor Cyan
+        Write-Host "Installing dbmcp..." -ForegroundColor Cyan
         Write-Host ""
 
         # Resolve install directory
@@ -192,7 +192,7 @@
         $BinDir = $InstallInfo.Path
 
         if ($IsUpgrade) {
-            Write-Host "Found existing database-mcp at $BinDir ($OldVersion)" -ForegroundColor Cyan
+            Write-Host "Found existing dbmcp at $BinDir ($OldVersion)" -ForegroundColor Cyan
 
             # No-op / force / newer-than-latest check. Only runs when an
             # existing binary was detected. Skipped entirely if the version
@@ -220,7 +220,7 @@
                     Write-Host "Upgrading to $LatestVersion" -ForegroundColor Cyan
                 }
             } else {
-                Write-Host "Upgrading database-mcp at $BinDir (current: $OldVersion)" -ForegroundColor Cyan
+                Write-Host "Upgrading dbmcp at $BinDir (current: $OldVersion)" -ForegroundColor Cyan
             }
         } else {
             Write-Host "Install directory: $BinDir" -ForegroundColor Cyan
@@ -262,7 +262,7 @@
         try {
             Copy-Item -Path $BinaryPath -Destination $Dest -Force
         } catch {
-            throw "failed to install binary to $BinDir - is an existing database-mcp process running? ($($_.Exception.Message))"
+            throw "failed to install binary to $BinDir - is an existing dbmcp process running? ($($_.Exception.Message))"
         }
 
         # Verify
@@ -278,13 +278,13 @@
 
         Write-Host ""
         if ($ForceReinstall) {
-            Write-Host "Successfully reinstalled database-mcp!" -ForegroundColor Green
+            Write-Host "Successfully reinstalled dbmcp!" -ForegroundColor Green
             Write-Host "  Version: $InstalledVersion"
         } elseif ($IsUpgrade) {
-            Write-Host "Successfully upgraded database-mcp!" -ForegroundColor Green
+            Write-Host "Successfully upgraded dbmcp!" -ForegroundColor Green
             Write-Host "  $OldVersion -> $InstalledVersion"
         } else {
-            Write-Host "Successfully installed database-mcp!" -ForegroundColor Green
+            Write-Host "Successfully installed dbmcp!" -ForegroundColor Green
             Write-Host "  Version: $InstalledVersion"
         }
         Write-Host "  Location: $Dest"

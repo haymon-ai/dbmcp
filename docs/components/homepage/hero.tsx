@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { InstallCommand } from "./install";
 
-const gitHubUrl = "https://github.com/haymon-ai/database";
+const gitHubUrl = "https://github.com/haymon-ai/dbmcp";
 
 export function Hero() {
   return (

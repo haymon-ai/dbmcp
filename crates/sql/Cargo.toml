@@ -1,6 +1,6 @@
 [package]
-name = "database-mcp-sql"
-description = "SQL validation and identifier utilities for database-mcp"
+name = "dbmcp-sql"
+description = "SQL validation and identifier utilities for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -12,7 +12,7 @@ rmcp = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true }
-sqlx_to_json = { workspace = true }
+sqlx-json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

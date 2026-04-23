@@ -5,6 +5,6 @@ export const docsRoute = '/docs';
 
 export const gitConfig = {
   user: 'haymon-ai',
-  repo: 'database-mcp',
+  repo: 'dbmcp',
   branch: 'master',
 };

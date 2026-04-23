@@ -21,19 +21,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: database-mcp
+            artifact: dbmcp
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: database-mcp
+            artifact: dbmcp
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: database-mcp
+            artifact: dbmcp
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: database-mcp
+            artifact: dbmcp
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact: database-mcp.exe
+            artifact: dbmcp.exe
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -58,18 +58,18 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../database-mcp-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          tar czf ../../../dbmcp-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/${{ matrix.artifact }} -DestinationPath database-mcp-${{ matrix.target }}.zip
+          Compress-Archive -Path target/${{ matrix.target }}/release/${{ matrix.artifact }} -DestinationPath dbmcp-${{ matrix.target }}.zip
 
       - uses: actions/upload-artifact@v7
         with:
-          name: database-mcp-${{ matrix.target }}
-          path: database-mcp-${{ matrix.target }}.*
+          name: dbmcp-${{ matrix.target }}
+          path: dbmcp-${{ matrix.target }}.*
 
   release:
     name: Create Release
@@ -122,8 +122,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
           labels: |
-            io.modelcontextprotocol.server.name=ai.haymon/database
-            org.opencontainers.image.title=database-mcp
+            io.modelcontextprotocol.server.name=ai.haymon/dbmcp
+            org.opencontainers.image.title=dbmcp
             org.opencontainers.image.description=Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite
             org.opencontainers.image.licenses=MIT
 

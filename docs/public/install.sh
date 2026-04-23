@@ -1,7 +1,7 @@
 #!/bin/sh
-# Install script for database-mcp
-# Usage: curl -fsSL https://database.haymon.ai/install.sh | bash
-#    or: wget -qO- https://database.haymon.ai/install.sh | bash
+# Install script for dbmcp
+# Usage: curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
+#    or: wget -qO- https://dbmcp.haymon.ai/install.sh | bash
 #    or: sh install.sh
 #
 # Environment variables:
@@ -12,7 +12,7 @@
 #                   script on an up-to-date install is a no-op (no download,
 #                   no file writes).
 #
-# The script probes https://github.com/haymon-ai/database/releases/latest
+# The script probes https://github.com/haymon-ai/dbmcp/releases/latest
 # (a HEAD request that follows redirects) to learn the latest version. The
 # no-op path performs zero downloads and zero writes to the install directory.
 
@@ -79,7 +79,7 @@ main() {
     # universally portable).
     normalize_version() {
         _v=$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        _v=${_v#database-mcp }
+        _v=${_v#dbmcp }
         _v=${_v#v}
         printf '%s' "$_v"
     }
@@ -211,7 +211,7 @@ main() {
         fi
 
         # Priority 2: Existing binary detection (upgrade in-place)
-        _existing=$(command -v database-mcp 2>/dev/null || true)
+        _existing=$(command -v dbmcp 2>/dev/null || true)
         if [ -n "$_existing" ]; then
             # Resolve symlinks to find the actual binary location
             _existing=$(readlink -f "$_existing" 2>/dev/null || echo "$_existing")
@@ -295,13 +295,13 @@ main() {
 
     # --- Main flow (T008, T009-T012) ---
 
-    BINARY_NAME="database-mcp"
-    REPO="haymon-ai/database"
+    BINARY_NAME="dbmcp"
+    REPO="haymon-ai/dbmcp"
     BASE_URL="https://github.com/${REPO}/releases/latest/download"
     USE_SUDO=false
     FORCE_REINSTALL=false
 
-    info "Installing database-mcp..."
+    info "Installing dbmcp..."
     echo ""
 
     # T005-T006: Detect platform and target
@@ -313,7 +313,7 @@ main() {
     resolve_install_dir
 
     if [ "$UPGRADE" = true ]; then
-        info "Found existing database-mcp at ${BIN_DIR} (${OLD_VERSION})"
+        info "Found existing dbmcp at ${BIN_DIR} (${OLD_VERSION})"
 
         # No-op / force / newer-than-latest check. Only runs when an existing
         # binary was detected. Skipped entirely if the version lookup fails,
@@ -343,14 +343,14 @@ main() {
                 info "Upgrading to ${_latest_version}"
             fi
         else
-            info "Upgrading database-mcp at ${BIN_DIR} (current: ${OLD_VERSION})"
+            info "Upgrading dbmcp at ${BIN_DIR} (current: ${OLD_VERSION})"
         fi
     else
         info "Install directory: ${BIN_DIR}"
     fi
 
     # T008: Temp directory with cleanup trap
-    _tmpdir=$(mktemp -d 2>/dev/null || mktemp -d -t database-mcp)
+    _tmpdir=$(mktemp -d 2>/dev/null || mktemp -d -t dbmcp)
     trap 'rm -rf "$_tmpdir"' EXIT
 
     # T009: Download
@@ -386,13 +386,13 @@ main() {
 
     echo ""
     if [ "$FORCE_REINSTALL" = true ]; then
-        success "Successfully reinstalled database-mcp!"
+        success "Successfully reinstalled dbmcp!"
         echo "  Version: ${_installed_version}"
     elif [ "$UPGRADE" = true ]; then
-        success "Successfully upgraded database-mcp!"
+        success "Successfully upgraded dbmcp!"
         echo "  ${OLD_VERSION} → ${_installed_version}"
     else
-        success "Successfully installed database-mcp!"
+        success "Successfully installed dbmcp!"
         echo "  Version: ${_installed_version}"
     fi
     echo "  Location: ${_dest}"

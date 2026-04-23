@@ -9,11 +9,11 @@ expression: info
     "tools": {}
   },
   "serverInfo": {
-    "name": "database-mcp",
+    "name": "dbmcp",
     "title": "Database MCP Server",
     "version": "[version]",
     "description": "Database MCP Server for SQLite",
-    "websiteUrl": "https://database.haymon.ai"
+    "websiteUrl": "https://dbmcp.haymon.ai"
   },
   "instructions": "## Workflow\n\n1. Call `listTables` to discover tables in the connected database.\n2. Call `listViews` to discover views in the connected database.\n3. Call `listTriggers` to discover triggers in the connected database.\n4. Call `getTableSchema` with a `table` to inspect columns, types, and foreign keys before writing queries.\n5. Use `readQuery` for read-only SQL (SELECT).\n6. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n7. Use `explainQuery` to analyze query execution plans and diagnose slow queries.\n8. Use `dropTable` to remove a table from the database.\n\n## Constraints\n\n- The `writeQuery` and `dropTable` tools are hidden when read-only mode is active.\n- Multi-statement queries are not supported. Send one statement per request."
 }

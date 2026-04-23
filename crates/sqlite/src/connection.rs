@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
-use database_mcp_config::DatabaseConfig;
-use database_mcp_sql::Connection;
-use database_mcp_sql::SqlError;
+use dbmcp_config::DatabaseConfig;
+use dbmcp_sql::Connection;
+use dbmcp_sql::SqlError;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use tracing::info;
 
@@ -79,7 +79,7 @@ fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
+    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

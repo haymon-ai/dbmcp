@@ -5,8 +5,8 @@
 //! surface and a small set of thin delegators that per-tool
 //! implementations call.
 
-use database_mcp_config::DatabaseConfig;
-use database_mcp_server::{Server, server_info};
+use dbmcp_config::DatabaseConfig;
+use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
@@ -150,7 +150,7 @@ impl ServerHandler for MysqlHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database_mcp_config::DatabaseBackend;
+    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

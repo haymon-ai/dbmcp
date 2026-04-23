@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug or unexpected behavior in database-mcp
+description: Report a bug or unexpected behavior in dbmcp
 labels: ["bug"]
 body:
   - type: markdown
@@ -8,8 +8,8 @@ body:
         Thanks for reporting a bug! Please fill out the form below to help us investigate.
 
         Before submitting, please:
-        - Search [existing issues](https://github.com/haymon-ai/database/issues) for duplicates
-        - Make sure you're using the latest version of database-mcp
+        - Search [existing issues](https://github.com/haymon-ai/dbmcp/issues) for duplicates
+        - Make sure you're using the latest version of dbmcp
 
   - type: checkboxes
     id: prerequisites
@@ -18,14 +18,14 @@ body:
       options:
         - label: I have searched existing issues for duplicates
           required: true
-        - label: I am using the latest version of database-mcp
+        - label: I am using the latest version of dbmcp
           required: true
 
   - type: input
     id: version
     attributes:
       label: Version
-      description: Which version or commit of database-mcp are you using?
+      description: Which version or commit of dbmcp are you using?
       placeholder: "e.g., 0.1.0, git commit abc1234, or latest main"
     validations:
       required: true
@@ -79,7 +79,7 @@ body:
       label: Steps to Reproduce
       description: Steps to reproduce the behavior
       placeholder: |
-        1. Configure database-mcp with '...'
+        1. Configure dbmcp with '...'
         2. Run command '...'
         3. Execute query '...'
         4. See error

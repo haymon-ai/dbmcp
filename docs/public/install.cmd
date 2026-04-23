@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Install script for database-mcp (Windows CMD)
-REM Usage: curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+REM Install script for dbmcp (Windows CMD)
+REM Usage: curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 REM
 REM Environment variables:
 REM   INSTALL_DIR   - Override the install directory
@@ -12,12 +12,12 @@ REM                   latest published release. Without this, re-running the
 REM                   script on an up-to-date install is a no-op (no download,
 REM                   no file writes).
 REM
-REM The script probes https://github.com/haymon-ai/database/releases/latest
+REM The script probes https://github.com/haymon-ai/dbmcp/releases/latest
 REM (a HEAD request that follows redirects) to learn the latest version. The
 REM no-op path performs zero downloads and zero writes to the install directory.
 
-set "BINARY_NAME=database-mcp"
-set "REPO=haymon-ai/database"
+set "BINARY_NAME=dbmcp"
+set "REPO=haymon-ai/dbmcp"
 set "TARGET=x86_64-pc-windows-msvc"
 set "ASSET=%BINARY_NAME%-%TARGET%.zip"
 set "BASE_URL=https://github.com/%REPO%/releases/latest/download"
@@ -25,7 +25,7 @@ set "URL=%BASE_URL%/%ASSET%"
 set "IS_REINSTALL=0"
 
 echo.
-echo Installing database-mcp...
+echo Installing dbmcp...
 echo.
 
 REM Resolve install directory
@@ -70,11 +70,11 @@ goto :resolved
 
 :default_dir
 REM Priority 3: Default location
-set "BIN_DIR=%LOCALAPPDATA%\Programs\database-mcp"
+set "BIN_DIR=%LOCALAPPDATA%\Programs\dbmcp"
 
 :resolved
 if %IS_UPGRADE% equ 1 (
-    echo Found existing database-mcp at %BIN_DIR% ^(%OLD_VERSION%^)
+    echo Found existing dbmcp at %BIN_DIR% ^(%OLD_VERSION%^)
 ) else (
     echo Install directory: %BIN_DIR%
     goto :prepare_install
@@ -102,7 +102,7 @@ set "DBMCP_REPO=%REPO%"
 REM Write a small helper script to a temp file and invoke it. This keeps the
 REM PowerShell logic readable without relying on the fragile combination of
 REM `for /f`, backquotes, and caret line-continuation.
-set "NOOP_HELPER=%TEMP%\database-mcp-noop-%RANDOM%%RANDOM%.ps1"
+set "NOOP_HELPER=%TEMP%\dbmcp-noop-%RANDOM%%RANDOM%.ps1"
 > "%NOOP_HELPER%" echo $ErrorActionPreference='SilentlyContinue'
 >>"%NOOP_HELPER%" echo try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 >>"%NOOP_HELPER%" echo $r = $null
@@ -116,7 +116,7 @@ set "NOOP_HELPER=%TEMP%\database-mcp-noop-%RANDOM%%RANDOM%.ps1"
 >>"%NOOP_HELPER%" echo $inst = $env:DBMCP_OLD_VERSION
 >>"%NOOP_HELPER%" echo if (-not $inst) { exit 0 }
 >>"%NOOP_HELPER%" echo $iN = $inst.Trim()
->>"%NOOP_HELPER%" echo if ($iN.StartsWith('database-mcp ')) { $iN = $iN.Substring('database-mcp '.Length) }
+>>"%NOOP_HELPER%" echo if ($iN.StartsWith('dbmcp ')) { $iN = $iN.Substring('dbmcp '.Length) }
 >>"%NOOP_HELPER%" echo if ($iN.StartsWith('v') -or $iN.StartsWith('V')) { $iN = $iN.Substring(1) }
 >>"%NOOP_HELPER%" echo $lN = $tag
 >>"%NOOP_HELPER%" echo if ($lN.StartsWith('v') -or $lN.StartsWith('V')) { $lN = $lN.Substring(1) }
@@ -154,7 +154,7 @@ if /i "%ACTION%"=="UPGRADE" (
     echo Upgrading to %LATEST_VERSION%
 )
 if "%ACTION%"=="" (
-    echo Upgrading database-mcp at %BIN_DIR% ^(current: %OLD_VERSION%^)
+    echo Upgrading dbmcp at %BIN_DIR% ^(current: %OLD_VERSION%^)
 )
 
 :prepare_install
@@ -162,7 +162,7 @@ REM Create install directory if needed
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
 
 REM Create temp directory (double %RANDOM% for better collision resistance)
-set "TMPDIR=%TEMP%\database-mcp-install-%RANDOM%%RANDOM%"
+set "TMPDIR=%TEMP%\dbmcp-install-%RANDOM%%RANDOM%"
 mkdir "%TMPDIR%"
 
 echo Downloading %ASSET%...
@@ -192,7 +192,7 @@ REM Install
 copy /y "%TMPDIR%\extracted\%BINARY_NAME%.exe" "%BIN_DIR%\%BINARY_NAME%.exe" >nul
 if %errorlevel% neq 0 (
     echo error: failed to install binary to %BIN_DIR%
-    echo   Is an existing database-mcp process running?
+    echo   Is an existing dbmcp process running?
     goto :cleanup_fail
 )
 
@@ -206,14 +206,14 @@ if not defined INSTALLED_VERSION (
 
 echo.
 if %IS_REINSTALL% equ 1 (
-    echo Successfully reinstalled database-mcp!
+    echo Successfully reinstalled dbmcp!
     echo   Version: %INSTALLED_VERSION%
 ) else (
     if %IS_UPGRADE% equ 1 (
-        echo Successfully upgraded database-mcp!
+        echo Successfully upgraded dbmcp!
         echo   %OLD_VERSION% -^> %INSTALLED_VERSION%
     ) else (
-        echo Successfully installed database-mcp!
+        echo Successfully installed dbmcp!
         echo   Version: %INSTALLED_VERSION%
     )
 )

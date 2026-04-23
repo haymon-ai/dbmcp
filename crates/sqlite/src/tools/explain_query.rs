@@ -2,10 +2,10 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::types::QueryResponse;
+use dbmcp_server::types::QueryResponse;
 
-use database_mcp_sql::Connection as _;
-use database_mcp_sql::SqlError;
+use dbmcp_sql::Connection as _;
+use dbmcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 

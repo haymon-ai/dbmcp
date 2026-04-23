@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "ai.haymon/database",
+  "name": "ai.haymon/dbmcp",
   "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite",
   "version": "0.7.0",
-  "websiteUrl": "https://database.haymon.ai",
+  "websiteUrl": "https://dbmcp.haymon.ai",
   "repository": {
-    "url": "https://github.com/haymon-ai/database",
+    "url": "https://github.com/haymon-ai/dbmcp",
     "source": "github"
   },
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/database:0.7.0",
+      "identifier": "ghcr.io/haymon-ai/dbmcp:0.7.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
@@ -27,7 +27,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/database:0.7.0",
+      "identifier": "ghcr.io/haymon-ai/dbmcp:0.7.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "streamable-http",

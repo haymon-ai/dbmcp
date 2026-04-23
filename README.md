@@ -1,15 +1,15 @@
 # Database MCP
 
-[![CI](https://github.com/haymon-ai/database/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/database/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/haymon-ai/database)](https://github.com/haymon-ai/database/releases/latest)
+[![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/haymon-ai/dbmcp)](https://github.com/haymon-ai/dbmcp/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-database.haymon.ai-black)](https://database.haymon.ai/docs/)
+[![Docs](https://img.shields.io/badge/docs-dbmcp.haymon.ai-black)](https://dbmcp.haymon.ai/docs/)
 
 A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases. Connect your AI assistant to MySQL/MariaDB, PostgreSQL, or SQLite with zero runtime dependencies.
 
-**[Website](https://database.haymon.ai)** · **[Documentation](https://database.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/database/releases)**
+**[Website](https://dbmcp.haymon.ai)** · **[Documentation](https://dbmcp.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/dbmcp/releases)**
 
-![demo](https://raw.githubusercontent.com/haymon-ai/database/master/docs/public/demo.gif)
+![demo](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/docs/public/demo.gif)
 
 ## Features
 
@@ -24,22 +24,22 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 **macOS, Linux, WSL**:
 
 ```bash
-curl -fsSL https://database.haymon.ai/install.sh | bash
+curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
 ```
 
 **Windows PowerShell**:
 
 ```powershell
-irm https://database.haymon.ai/install.ps1 | iex
+irm https://dbmcp.haymon.ai/install.ps1 | iex
 ```
 
 **Windows CMD**:
 
 ```batch
-curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
-See the [installation docs](https://database.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
+See the [installation docs](https://dbmcp.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
 
 ## Quick Start
 
@@ -52,8 +52,8 @@ Add a `.mcp.json` file to your project root. MCP clients read this file and conf
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
-      "command": "database-mcp",
+    "dbmcp": {
+      "command": "dbmcp",
       "args": ["stdio"],
       "env": {
         "DB_BACKEND": "mysql",
@@ -72,13 +72,13 @@ Add a `.mcp.json` file to your project root. MCP clients read this file and conf
 
 ```bash
 # Start the server first
-database-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
+dbmcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 ```
 
 ```json
 {
   "mcpServers": {
-    "database-mcp": {
+    "dbmcp": {
       "type": "http",
       "url": "http://127.0.0.1:9001/mcp"
     }
@@ -92,22 +92,22 @@ database-mcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 
 ```bash
 # MySQL/MariaDB
-database-mcp stdio --db-backend mysql --db-host localhost --db-user root --db-name mydb
+dbmcp stdio --db-backend mysql --db-host localhost --db-user root --db-name mydb
 
 # PostgreSQL
-database-mcp stdio --db-backend postgres --db-host localhost --db-user postgres --db-name mydb
+dbmcp stdio --db-backend postgres --db-host localhost --db-user postgres --db-name mydb
 
 # SQLite
-database-mcp stdio --db-backend sqlite --db-name ./data.db
+dbmcp stdio --db-backend sqlite --db-name ./data.db
 
 # HTTP transport
-database-mcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
+dbmcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
 ```
 
 ### Using environment variables
 
 ```bash
-DB_BACKEND=mysql DB_USER=root DB_NAME=mydb database-mcp stdio
+DB_BACKEND=mysql DB_USER=root DB_NAME=mydb dbmcp stdio
 ```
 
 ## Configuration
@@ -126,7 +126,7 @@ Environment variables are typically set by your MCP client (via `env` or `envFil
 | `http` | Run in HTTP/SSE mode |
 | `version` | Print version information and exit |
 
-A subcommand is required — running `database-mcp` with no subcommand prints usage help and exits with a non-zero status.
+A subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status.
 
 ### Database Options (shared across subcommands)
 
@@ -179,11 +179,11 @@ A subcommand is required — running `database-mcp` with no subcommand prints us
 
 ### listDatabases
 
-Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details. Not available for SQLite.
+Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details. Not available for SQLite.
 
 ### listTables
 
-Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### getTableSchema
 
@@ -191,7 +191,7 @@ Returns column definitions (type, nullable, key, default, extra) and foreign key
 
 ### readQuery
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://database.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### writeQuery
 
@@ -239,7 +239,7 @@ cargo test --workspace --lib --bins
 ./tests/run.sh --filter sqlite
 
 # With MCP Inspector
-npx @modelcontextprotocol/inspector ./target/release/database-mcp stdio
+npx @modelcontextprotocol/inspector ./target/release/dbmcp stdio
 
 # HTTP mode testing
 curl -X POST http://localhost:9001/mcp \
@@ -254,14 +254,14 @@ This is a Cargo workspace with the following crates:
 
 | Crate | Path | Description |
 |-------|------|-------------|
-| `database-mcp` | `.` (root) | Main binary — CLI, transports, database backends |
-| `database-mcp-backend` | `crates/backend/` | Shared error types, validation, and identifier utilities |
-| `database-mcp-config` | `crates/config/` | Configuration structs and CLI argument mapping |
-| `database-mcp-server` | `crates/server/` | Shared MCP tool implementations and server info |
-| `database-mcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
-| `database-mcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
-| `database-mcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
-| `sqlx-to-json` | `crates/sqlx-to-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
+| `dbmcp` | `.` (root) | Main binary — CLI, transports, database backends |
+| `dbmcp-sql` | `crates/backend/` | Shared error types, validation, and identifier utilities |
+| `dbmcp-config` | `crates/config/` | Configuration structs and CLI argument mapping |
+| `dbmcp-server` | `crates/server/` | Shared MCP tool implementations and server info |
+| `dbmcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
+| `dbmcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
+| `dbmcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
+| `sqlx-json` | `crates/sqlx-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
 
 ## Development
 

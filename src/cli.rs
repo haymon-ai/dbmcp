@@ -55,7 +55,7 @@ impl From<LogLevel> for tracing::Level {
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(name = "database-mcp", about = "Database MCP Server", version)]
+#[command(name = "dbmcp", about = "Database MCP Server", version)]
 struct Arguments {
     /// Subcommand selector.
     #[command(subcommand)]

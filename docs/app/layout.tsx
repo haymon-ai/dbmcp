@@ -8,7 +8,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://database.haymon.ai"),
+  metadataBase: new URL("https://dbmcp.haymon.ai"),
   title: {
     default: "Haymon Database MCP — AI access to your SQL databases",
     template: "%s | Haymon Database MCP",
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     title: "Haymon Database MCP — AI access to your SQL databases",
     description:
       "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite. Zero runtime dependencies, read-only by default.",
-    url: "https://database.haymon.ai",
+    url: "https://dbmcp.haymon.ai",
     siteName: "Haymon Database MCP",
     type: "website",
   },

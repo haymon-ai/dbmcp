@@ -1,5 +1,5 @@
 [package]
-name = "database-mcp"
+name = "dbmcp"
 version.workspace = true
 edition.workspace = true
 description.workspace = true
@@ -16,19 +16,19 @@ members = [".", "crates/*"]
 version = "0.7.0"
 edition = "2024"
 description = "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite"
-homepage = "https://database.haymon.ai"
+homepage = "https://dbmcp.haymon.ai"
 license = "MIT"
-repository = "https://github.com/haymon-ai/database"
+repository = "https://github.com/haymon-ai/dbmcp"
 
 [workspace.dependencies]
 # Internal workspace crates
-database-mcp-config = { path = "crates/config", version = "0.7.0" }
-database-mcp-mysql = { path = "crates/mysql", version = "0.7.0" }
-database-mcp-postgres = { path = "crates/postgres", version = "0.7.0" }
-database-mcp-server = { path = "crates/server", version = "0.7.0" }
-database-mcp-sql = { path = "crates/sql", version = "0.7.0" }
-database-mcp-sqlite = { path = "crates/sqlite", version = "0.7.0" }
-sqlx_to_json = { path = "crates/sqlx-to-json", version = "0.7.0" }
+dbmcp-config = { path = "crates/config", version = "0.7.0" }
+dbmcp-mysql = { path = "crates/mysql", version = "0.7.0" }
+dbmcp-postgres = { path = "crates/postgres", version = "0.7.0" }
+dbmcp-server = { path = "crates/server", version = "0.7.0" }
+dbmcp-sql = { path = "crates/sql", version = "0.7.0" }
+dbmcp-sqlite = { path = "crates/sqlite", version = "0.7.0" }
+sqlx-json = { path = "crates/sqlx-json", version = "0.7.0" }
 
 # External dependencies
 axum = "0.8"
@@ -82,11 +82,11 @@ workspace = true
 [dependencies]
 axum = { workspace = true }
 clap = { workspace = true }
-database-mcp-config = { workspace = true }
-database-mcp-mysql = { workspace = true }
-database-mcp-postgres = { workspace = true }
-database-mcp-server = { workspace = true }
-database-mcp-sqlite = { workspace = true }
+dbmcp-config = { workspace = true }
+dbmcp-mysql = { workspace = true }
+dbmcp-postgres = { workspace = true }
+dbmcp-server = { workspace = true }
+dbmcp-sqlite = { workspace = true }
 mimalloc = { workspace = true }
 rmcp = { workspace = true }
 thiserror = { workspace = true }

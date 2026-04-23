@@ -3,7 +3,7 @@
 //! Provides duplex transport setup and client lifecycle management
 //! used by tool schema snapshot tests.
 
-use database_mcp_server::Server;
+use dbmcp_server::Server;
 use rmcp::service::{Peer, RunningService, ServiceExt};
 
 /// Connects a [`Server`] over a duplex transport, runs a closure, then cleans up.

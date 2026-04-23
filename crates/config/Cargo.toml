@@ -1,6 +1,6 @@
 [package]
-name = "database-mcp-config"
-description = "Config for database-mcp"
+name = "dbmcp-config"
+description = "Config for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true

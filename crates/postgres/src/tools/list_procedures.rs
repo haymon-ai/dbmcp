@@ -2,10 +2,10 @@
 
 use std::borrow::Cow;
 
-use database_mcp_server::pagination::Pager;
-use database_mcp_server::types::{ListProceduresRequest, ListProceduresResponse};
-use database_mcp_sql::Connection as _;
-use database_mcp_sql::sanitize::validate_ident;
+use dbmcp_server::pagination::Pager;
+use dbmcp_server::types::{ListProceduresRequest, ListProceduresResponse};
+use dbmcp_sql::Connection as _;
+use dbmcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 

@@ -1,5 +1,5 @@
 [package]
-name = "sqlx_to_json"
+name = "sqlx-json"
 description = "Database-agnostic row-to-JSON conversion for sqlx"
 version.workspace = true
 edition.workspace = true

@@ -15,7 +15,7 @@ Set TypingSpeed 80ms
 Set Framerate 24
 Set CursorBlink false
 
-Set Theme {"name":"database-mcp","black":"#1a1a1a","red":"#ff4800","green":"#16a34a","yellow":"#d97706","blue":"#2563eb","magenta":"#9333ea","cyan":"#0891b2","white":"#374151","brightBlack":"#6b7280","brightRed":"#ff6b35","brightGreen":"#22c55e","brightYellow":"#f59e0b","brightBlue":"#3b82f6","brightMagenta":"#a855f7","brightCyan":"#06b6d4","brightWhite":"#111827","background":"#ffffff","foreground":"#1a1a1a","selection":"#ff480020","cursor":"#ff4800"}
+Set Theme {"name":"dbmcp","black":"#1a1a1a","red":"#ff4800","green":"#16a34a","yellow":"#d97706","blue":"#2563eb","magenta":"#9333ea","cyan":"#0891b2","white":"#374151","brightBlack":"#6b7280","brightRed":"#ff6b35","brightGreen":"#22c55e","brightYellow":"#f59e0b","brightBlue":"#3b82f6","brightMagenta":"#a855f7","brightCyan":"#06b6d4","brightWhite":"#111827","background":"#ffffff","foreground":"#1a1a1a","selection":"#ff480020","cursor":"#ff4800"}
 
 # Hidden setup: launch interactive simulation
 Hide

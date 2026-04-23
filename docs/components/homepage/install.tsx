@@ -10,16 +10,16 @@ interface InstallTab {
 const tabs: InstallTab[] = [
   {
     label: "macOS, Linux, WSL",
-    command: "curl -fsSL https://database.haymon.ai/install.sh | bash",
+    command: "curl -fsSL https://dbmcp.haymon.ai/install.sh | bash",
   },
   {
     label: "Windows PowerShell",
-    command: "irm https://database.haymon.ai/install.ps1 | iex",
+    command: "irm https://dbmcp.haymon.ai/install.ps1 | iex",
   },
   {
     label: "Windows CMD",
     command:
-      "curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd",
+      "curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd",
   },
 ];
 

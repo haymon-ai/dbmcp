@@ -7,7 +7,7 @@
 use crate::SqlError;
 use serde_json::Value;
 use sqlx::{Decode, Executor, Row, Type};
-use sqlx_to_json::{QueryResult as _, RowExt};
+use sqlx_json::{QueryResult as _, RowExt};
 
 use crate::timeout::execute_with_timeout;
 
@@ -30,7 +30,7 @@ where
     for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
     usize: sqlx::ColumnIndex<<Self::DB as sqlx::Database>::Row>,
     <Self::DB as sqlx::Database>::Row: RowExt,
-    <Self::DB as sqlx::Database>::QueryResult: sqlx_to_json::QueryResult,
+    <Self::DB as sqlx::Database>::QueryResult: sqlx_json::QueryResult,
 {
     /// The sqlx database driver type (e.g. `sqlx::MySql`).
     type DB: sqlx::Database;

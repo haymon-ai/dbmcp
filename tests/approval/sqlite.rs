@@ -4,9 +4,9 @@
 
 mod common;
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_server::Server;
-use database_mcp_sqlite::SqliteHandler;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_server::Server;
+use dbmcp_sqlite::SqliteHandler;
 
 /// Creates a `SQLite`-backed [`Server`] from the `DB_PATH` environment variable.
 fn server(read_only: bool) -> Server {

@@ -7,10 +7,10 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_postgres::PostgresHandler;
-use database_mcp_postgres::types::DropTableRequest;
-use database_mcp_server::types::{
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_postgres::PostgresHandler;
+use dbmcp_postgres::types::DropTableRequest;
+use dbmcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesRequest,
     ListFunctionsRequest, ListMaterializedViewsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
     ListViewsRequest, QueryRequest, ReadQueryRequest,
@@ -1198,7 +1198,7 @@ const PG_DB: &str = "app";
 
 async fn collect_all_paged(handler: &PostgresHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ListTablesRequest {
             database: Some(PG_DB.into()),
@@ -1288,7 +1288,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
 
     let handler = handler(true);
     let request = ListTablesRequest {
@@ -1338,7 +1338,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
 
 async fn collect_all_paged_databases(handler: &PostgresHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ListDatabasesRequest { cursor };
         let response = handler.list_databases(request).await.expect("list page");
@@ -1410,7 +1410,7 @@ async fn test_list_databases_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
 
     let handler = handler(true);
     let request = ListDatabasesRequest {
@@ -1446,7 +1446,7 @@ async fn test_list_databases_respects_configured_page_size() {
 
 async fn collect_all_paged_read_query(handler: &PostgresHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ReadQueryRequest {
             query: query.into(),
@@ -1546,7 +1546,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
 
 #[tokio::test]
 async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
         .read_query(ReadQueryRequest {
@@ -1584,7 +1584,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
 #[tokio::test]
 async fn test_read_query_non_select_show_server_version_single_page() {
     // SHOW is classified as NonSelect; cursor must be ignored.
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
@@ -1727,7 +1727,7 @@ async fn test_list_views_pagination_traverses_pages() {
     let handler_full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ListViewsRequest {
             database: Some("app".into()),

@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install database-mcp via Docker, prebuilt binary, or from source
+description: Install dbmcp via Docker, prebuilt binary, or from source
 ---
 
 Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
@@ -10,25 +10,25 @@ Database MCP is distributed as a single binary with no runtime dependencies. Cho
 **macOS, Linux, WSL**:
 
 ```bash
-curl -fsSL https://database.haymon.ai/install.sh | bash
+curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
 ```
 
 Or with `wget`:
 
 ```bash
-wget -qO- https://database.haymon.ai/install.sh | bash
+wget -qO- https://dbmcp.haymon.ai/install.sh | bash
 ```
 
 **Windows** (PowerShell):
 
 ```powershell
-irm https://database.haymon.ai/install.ps1 | iex
+irm https://dbmcp.haymon.ai/install.ps1 | iex
 ```
 
 **Windows** (CMD):
 
 ```batch
-curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
 This detects your platform, downloads the correct binary, and installs it. Re-run the same command to upgrade to the latest version.
@@ -36,15 +36,15 @@ This detects your platform, downloads the correct binary, and installs it. Re-ru
 To install to a custom directory:
 
 ```bash
-INSTALL_DIR=/opt/bin curl -fsSL https://database.haymon.ai/install.sh | bash
+INSTALL_DIR=/opt/bin curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
 ```
 
 ```powershell
-$env:INSTALL_DIR = "C:\tools\database-mcp"; irm https://database.haymon.ai/install.ps1 | iex
+$env:INSTALL_DIR = "C:\tools\dbmcp"; irm https://dbmcp.haymon.ai/install.ps1 | iex
 ```
 
 ```batch
-set INSTALL_DIR=C:\tools\database-mcp && curl -fsSL https://database.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+set INSTALL_DIR=C:\tools\dbmcp && curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
 ## Prebuilt Binaries
@@ -56,17 +56,17 @@ Download the latest release from GitHub.
 **x86_64 (Intel/AMD)**:
 
 ```bash
-curl -LO https://github.com/haymon-ai/database/releases/latest/download/database-mcp-x86_64-unknown-linux-gnu.tar.gz
-tar xzf database-mcp-x86_64-unknown-linux-gnu.tar.gz
-sudo mv database-mcp /usr/local/bin/
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-unknown-linux-gnu.tar.gz
+tar xzf dbmcp-x86_64-unknown-linux-gnu.tar.gz
+sudo mv dbmcp /usr/local/bin/
 ```
 
 **aarch64 (ARM)**:
 
 ```bash
-curl -LO https://github.com/haymon-ai/database/releases/latest/download/database-mcp-aarch64-unknown-linux-gnu.tar.gz
-tar xzf database-mcp-aarch64-unknown-linux-gnu.tar.gz
-sudo mv database-mcp /usr/local/bin/
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-aarch64-unknown-linux-gnu.tar.gz
+tar xzf dbmcp-aarch64-unknown-linux-gnu.tar.gz
+sudo mv dbmcp /usr/local/bin/
 ```
 
 ### macOS
@@ -74,17 +74,17 @@ sudo mv database-mcp /usr/local/bin/
 **Apple Silicon (M1/M2/M3/M4)**:
 
 ```bash
-curl -LO https://github.com/haymon-ai/database/releases/latest/download/database-mcp-aarch64-apple-darwin.tar.gz
-tar xzf database-mcp-aarch64-apple-darwin.tar.gz
-sudo mv database-mcp /usr/local/bin/
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-aarch64-apple-darwin.tar.gz
+tar xzf dbmcp-aarch64-apple-darwin.tar.gz
+sudo mv dbmcp /usr/local/bin/
 ```
 
 **Intel**:
 
 ```bash
-curl -LO https://github.com/haymon-ai/database/releases/latest/download/database-mcp-x86_64-apple-darwin.tar.gz
-tar xzf database-mcp-x86_64-apple-darwin.tar.gz
-sudo mv database-mcp /usr/local/bin/
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-apple-darwin.tar.gz
+tar xzf dbmcp-x86_64-apple-darwin.tar.gz
+sudo mv dbmcp /usr/local/bin/
 ```
 
 ### Windows
@@ -94,26 +94,26 @@ sudo mv database-mcp /usr/local/bin/
 Download the latest release:
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/haymon-ai/database/releases/latest/download/database-mcp-x86_64-pc-windows-msvc.zip -OutFile database-mcp.zip
-Expand-Archive database-mcp.zip -DestinationPath .
+Invoke-WebRequest -Uri https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-pc-windows-msvc.zip -OutFile dbmcp.zip
+Expand-Archive dbmcp.zip -DestinationPath .
 ```
 
-Move `database-mcp.exe` to a directory on your PATH, or run it directly from the extracted location.
+Move `dbmcp.exe` to a directory on your PATH, or run it directly from the extracted location.
 
 Verify the installation:
 
 ```powershell
-database-mcp.exe --help
+dbmcp.exe --help
 ```
 
 ---
 
-For older versions or other assets, see the [GitHub Releases](https://github.com/haymon-ai/database/releases) page.
+For older versions or other assets, see the [GitHub Releases](https://github.com/haymon-ai/dbmcp/releases) page.
 
 Verify the installation (Linux/macOS):
 
 ```bash
-database-mcp --help
+dbmcp --help
 ```
 
 ## Docker
@@ -121,7 +121,7 @@ database-mcp --help
 No Rust toolchain or compilation needed.
 
 ```bash
-docker pull ghcr.io/haymon-ai/database:latest
+docker pull ghcr.io/haymon-ai/dbmcp:latest
 ```
 
 **stdio mode** (for Claude Desktop, Cursor, and other MCP clients):
@@ -131,7 +131,7 @@ docker run -i --rm \
   -e DB_BACKEND=postgres \
   -e DB_HOST=host.docker.internal \
   -e DB_USER=postgres \
-  ghcr.io/haymon-ai/database
+  ghcr.io/haymon-ai/dbmcp
 ```
 
 **HTTP mode** (for web clients and remote access):
@@ -142,7 +142,7 @@ docker run --rm \
   -e DB_HOST=host.docker.internal \
   -e DB_USER=postgres \
   -p 9001:9001 \
-  ghcr.io/haymon-ai/database http --host 0.0.0.0
+  ghcr.io/haymon-ai/dbmcp http --host 0.0.0.0
 ```
 
 **SQLite with a mounted volume**:
@@ -152,10 +152,10 @@ docker run -i --rm \
   -e DB_BACKEND=sqlite \
   -e DB_NAME=/data/my.db \
   -v /path/to/local/db:/data \
-  ghcr.io/haymon-ai/database
+  ghcr.io/haymon-ai/dbmcp
 ```
 
-Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/database:<version>`.
+Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/dbmcp:<version>`.
 
 ## Package Managers
 
@@ -164,7 +164,7 @@ Images are available for `linux/amd64` and `linux/arm64`. A specific version can
 If you have the [Rust toolchain](https://rustup.rs/) installed:
 
 ```bash
-cargo install database-mcp
+cargo install dbmcp
 ```
 
 This builds from source and installs the binary to `~/.cargo/bin/`.
@@ -172,7 +172,7 @@ This builds from source and installs the binary to `~/.cargo/bin/`.
 Verify the installation:
 
 ```bash
-database-mcp --help
+dbmcp --help
 ```
 
 ## Build from Source
@@ -185,21 +185,21 @@ database-mcp --help
 ### Build
 
 ```bash
-git clone https://github.com/haymon-ai/database.git
-cd database-mcp
+git clone https://github.com/haymon-ai/dbmcp.git
+cd dbmcp
 cargo build --release
 ```
 
 Copy the binary to a directory on your PATH:
 
 ```bash
-sudo cp target/release/database-mcp /usr/local/bin/
+sudo cp target/release/dbmcp /usr/local/bin/
 ```
 
 Verify the installation:
 
 ```bash
-database-mcp --help
+dbmcp --help
 ```
 
 ## Comparison

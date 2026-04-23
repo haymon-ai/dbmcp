@@ -1,6 +1,6 @@
 [package]
-name = "database-mcp-mysql"
-description = "MySQL/MariaDB for database-mcp"
+name = "dbmcp-mysql"
+description = "MySQL/MariaDB for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-database-mcp-config = { workspace = true }
-database-mcp-server = { workspace = true }
-database-mcp-sql = { workspace = true }
+dbmcp-config = { workspace = true }
+dbmcp-server = { workspace = true }
+dbmcp-sql = { workspace = true }
 moka = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }

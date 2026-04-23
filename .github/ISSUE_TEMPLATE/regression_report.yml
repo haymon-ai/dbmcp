@@ -8,8 +8,8 @@ body:
         Thanks for reporting a regression! This template helps us quickly identify what changed.
 
         Before submitting, please:
-        - Search [existing issues](https://github.com/haymon-ai/database/issues) for duplicates
-        - Make sure you're using the latest version of database-mcp
+        - Search [existing issues](https://github.com/haymon-ai/dbmcp/issues) for duplicates
+        - Make sure you're using the latest version of dbmcp
 
   - type: checkboxes
     id: prerequisites
@@ -18,7 +18,7 @@ body:
       options:
         - label: I have searched existing issues for duplicates
           required: true
-        - label: I am using the latest version of database-mcp
+        - label: I am using the latest version of dbmcp
           required: true
 
   - type: input
@@ -80,7 +80,7 @@ body:
       label: Steps to Reproduce
       description: Steps to reproduce the regression
       placeholder: |
-        1. Configure database-mcp with '...'
+        1. Configure dbmcp with '...'
         2. Run command '...'
         3. Execute query '...'
         4. See error

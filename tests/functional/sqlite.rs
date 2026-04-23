@@ -9,9 +9,9 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use database_mcp_config::{DatabaseBackend, DatabaseConfig};
-use database_mcp_sqlite::SqliteHandler;
-use database_mcp_sqlite::types::{
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_sqlite::SqliteHandler;
+use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, GetTableSchemaRequest, ListTablesRequest, ListTriggersRequest,
     ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
@@ -642,7 +642,7 @@ async fn test_create_drop_table_with_spaces() {
 
 async fn collect_all_paged(handler: &SqliteHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ListTablesRequest { cursor };
         let response = handler.list_tables(request).await.expect("list page");
@@ -714,7 +714,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
 
     let handler = handler(true);
     let request = ListTablesRequest {
@@ -785,7 +785,7 @@ async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
 
 async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let request = ReadQueryRequest {
             query: query.into(),
@@ -881,7 +881,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
 
 #[tokio::test]
 async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
         .read_query(ReadQueryRequest {
@@ -898,7 +898,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
 async fn test_read_query_pagination_survives_trailing_line_comment() {
     // A trailing `-- comment` in the caller's SQL must not swallow the
     // subquery-wrap's closing paren + LIMIT/OFFSET. Regression guard for
-    // the newline-before-`)` fix in database_mcp_sql::pagination::with_limit_offset.
+    // the newline-before-`)` fix in dbmcp_sql::pagination::with_limit_offset.
     let handler = handler_with_page_size(2);
     let response = handler
         .read_query(ReadQueryRequest {
@@ -953,7 +953,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
 
 #[tokio::test]
 async fn test_read_query_cursor_does_not_bypass_read_only() {
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
     let result = handler
         .read_query(ReadQueryRequest {
@@ -971,7 +971,7 @@ async fn test_read_query_cursor_does_not_bypass_read_only() {
 async fn test_read_query_non_select_single_page_with_cursor_ignored() {
     // EXPLAIN is classified as NonSelect; cursor must be ignored (no error,
     // no nextCursor, response identical to the no-cursor call).
-    use database_mcp_server::pagination::Cursor;
+    use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
@@ -1066,7 +1066,7 @@ async fn test_list_views_pagination_traverses_pages() {
     let handler_full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<database_mcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
         let response = handler_paged
             .list_views(ListViewsRequest { cursor })
