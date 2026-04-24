@@ -31,7 +31,7 @@ Use when:
 - `database` — Database to target. Defaults to the active database.
 - `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.
 - `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.
-- `detailed` — When `true`, returns full metadata objects instead of bare name strings. Default `false`.
+- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.
 </parameters>
 
 <examples>
@@ -41,8 +41,8 @@ Use when:
 </examples>
 
 <what_it_returns>
-Brief mode (default): a sorted JSON array of table-name strings.
-Detailed mode: a sorted JSON array of objects with `schema`, `name`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers`.
+Brief mode (default): a sorted JSON array of table-name strings, e.g. `["customers", "orders"]`.
+Detailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{"orders": {"schema": "public", "kind": "TABLE", …}}`.
 </what_it_returns>
 
 <pagination>
@@ -187,9 +187,8 @@ const DETAILED_SQL: &str = r"
         JOIN table_info ti ON tg.tgrelid = ti.table_oid
         WHERE NOT tg.tgisinternal
     )
-    SELECT json_build_object(
+    SELECT ti.table_name AS name, json_build_object(
         'schema',  ti.schema_name,
-        'name',    ti.table_name,
         'kind',    CASE ti.object_kind
                        WHEN 'r' THEN 'TABLE'
                        WHEN 'p' THEN 'PARTITIONED_TABLE'
@@ -276,13 +275,19 @@ impl PostgresHandler {
         self.list_tables_brief(database, pattern, pager).await
     }
 
-    /// Detailed-mode page: unwraps each CTE row's `entry` object.
+    /// Detailed-mode page: deserialises each row into a `(name, entry)` pair.
     async fn list_tables_detailed(
         &self,
         database: Option<&str>,
         pattern: Option<&str>,
         pager: Pager,
     ) -> Result<ListTablesResponse, ErrorData> {
+        #[derive(serde::Deserialize)]
+        struct DetailedRow {
+            name: String,
+            entry: serde_json::Value,
+        }
+
         let rows = self
             .connection
             .fetch_json(
@@ -293,14 +298,15 @@ impl PostgresHandler {
                 database,
             )
             .await?;
-        // Each row is `{"entry": {...}}` — lift the inner object out.
-        let entries: Vec<_> = rows
+
+        let rows: Vec<DetailedRow> = rows
             .into_iter()
-            .map(|mut v| v.as_object_mut().and_then(|o| o.remove("entry")).unwrap_or(v))
+            .map(|row| serde_json::from_value(row).expect("row must match DETAILED_SQL shape"))
             .collect();
-        let (entries, next_cursor) = pager.finalize(entries);
+
+        let (rows, next_cursor) = pager.finalize(rows);
         Ok(ListTablesResponse {
-            tables: TableEntries::Detailed(entries),
+            tables: TableEntries::Detailed(rows.into_iter().map(|r| (r.name, r.entry)).collect()),
             next_cursor,
         })
     }

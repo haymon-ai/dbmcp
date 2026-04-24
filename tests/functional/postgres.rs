@@ -15,6 +15,7 @@ use dbmcp_server::types::{
     ListMaterializedViewsRequest, ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
     ReadQueryRequest,
 };
+use indexmap::IndexMap;
 use serde_json::Value;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -1984,8 +1985,8 @@ async fn test_list_tables_search_paginates_filtered_results() {
 // Phase 4 — User Story 2: detailed mode
 // =====================================================================
 
-/// Returns the list of detailed entries (one per matching table) for a search term.
-async fn detailed_entries(handler: &PostgresHandler, search: &str) -> Vec<Value> {
+/// Returns the keyed detailed-mode map (table name → metadata) for a search term.
+async fn detailed_entries(handler: &PostgresHandler, search: &str) -> IndexMap<String, Value> {
     let request = ListTablesRequest {
         database: Some(PG_DB.into()),
         search: Some(search.into()),
@@ -1993,17 +1994,14 @@ async fn detailed_entries(handler: &PostgresHandler, search: &str) -> Vec<Value>
         ..Default::default()
     };
     let response = handler.list_tables(request).await.expect("listTables detailed ok");
-    response.tables.as_detailed().expect("detailed mode").to_vec()
+    response.tables.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
 async fn test_list_tables_detailed_returns_full_metadata_for_orders() {
     let handler = handler(true);
     let entries = detailed_entries(&handler, "orders").await;
-    let orders = entries
-        .iter()
-        .find(|e| e["name"] == "orders")
-        .expect("orders entry present");
+    let orders = entries.get("orders").expect("orders entry present");
     assert_eq!(orders["kind"], "TABLE");
     assert_eq!(orders["schema"], "public");
 
@@ -2060,10 +2058,7 @@ async fn test_list_tables_detailed_returns_full_metadata_for_orders() {
 async fn test_list_tables_detailed_distinguishes_partitioned_tables() {
     let handler = handler(true);
     let entries = detailed_entries(&handler, "logs").await;
-    let logs = entries
-        .iter()
-        .find(|e| e["name"] == "logs")
-        .expect("logs entry present");
+    let logs = entries.get("logs").expect("logs entry present");
     assert_eq!(logs["kind"], "PARTITIONED_TABLE");
 }
 
@@ -2072,10 +2067,7 @@ async fn test_list_tables_detailed_empty_arrays_when_no_metadata() {
     let handler = handler(true);
     // `inventory` has a PK and a UNIQUE on sku but no trigger and no non-index constraints besides those.
     let entries = detailed_entries(&handler, "inventory").await;
-    let inventory = entries
-        .iter()
-        .find(|e| e["name"] == "inventory")
-        .expect("inventory entry present");
+    let inventory = entries.get("inventory").expect("inventory entry present");
     assert!(inventory["triggers"].is_array(), "triggers must be array");
     assert!(inventory["constraints"].is_array(), "constraints must be array");
     assert!(inventory["indexes"].is_array(), "indexes must be array");
@@ -2114,15 +2106,26 @@ async fn test_list_tables_detailed_with_search_only_fetches_filtered_subset() {
     let handler = handler(true);
     // "order" matches three tables: erp_orders, order_items, orders.
     let entries = detailed_entries(&handler, "order").await;
-    let names: Vec<_> = entries
-        .iter()
-        .filter_map(|e| e["name"].as_str().map(String::from))
-        .collect();
+    let names: Vec<_> = entries.keys().cloned().collect();
     assert_eq!(
         names,
         vec!["erp_orders", "order_items", "orders"],
         "detailed search must return only filtered subset"
     );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_values_have_no_redundant_name_field() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "order").await;
+    assert!(!entries.is_empty(), "fixture must yield at least one match for 'order'");
+    for (key, value) in &entries {
+        assert!(value.is_object(), "value for {key} must be a JSON object: {value}");
+        assert!(
+            value.get("name").is_none(),
+            "FR-002 violated: value for {key} still carries 'name': {value}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2142,9 +2145,7 @@ async fn test_list_tables_detailed_paginates() {
             .expect("page");
         let entries = response.tables.as_detailed().expect("detailed");
         assert!(entries.len() <= 1, "page_size=1 must cap to 1 per page");
-        for e in entries {
-            collected_names.push(e["name"].as_str().unwrap_or_default().into());
-        }
+        collected_names.extend(entries.keys().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -2154,5 +2155,26 @@ async fn test_list_tables_detailed_paginates() {
         collected_names,
         vec!["erp_orders", "order_items", "orders"],
         "detailed pagination must yield filtered sequence"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_key_order_matches_brief_order() {
+    let handler = handler(true);
+    let brief = handler
+        .list_tables(ListTablesRequest {
+            database: Some(PG_DB.into()),
+            search: Some("order".into()),
+            detailed: false,
+            ..Default::default()
+        })
+        .await
+        .expect("listTables brief ok");
+    let detailed = detailed_entries(&handler, "order").await;
+    let brief_names: Vec<String> = brief.tables.as_brief().expect("brief mode").to_vec();
+    let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
+    assert_eq!(
+        brief_names, detailed_keys,
+        "detailed key order must match brief string order — FR-003"
     );
 }

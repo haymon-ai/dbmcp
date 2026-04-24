@@ -5,8 +5,8 @@
 //! available on other backends.
 
 use dbmcp_server::pagination::Cursor;
-use rmcp::schemars;
-use rmcp::schemars::JsonSchema;
+use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -56,17 +56,18 @@ pub struct ListTablesResponse {
     pub next_cursor: Option<Cursor>,
 }
 
-/// Two-shape table listing payload: bare names in brief mode, full objects in detailed mode.
+/// Two-shape table listing payload: bare names in brief mode, name-keyed map in detailed mode.
 ///
-/// Chosen by the handler based on [`ListTablesRequest::detailed`]. Serialises as an untagged
-/// JSON array — callers see a list of strings or a list of objects, never a discriminator.
+/// Chosen by the handler based on [`ListTablesRequest::detailed`]. Serialises untagged: brief
+/// mode becomes a JSON array of strings, detailed mode becomes a JSON object whose keys are
+/// table names and whose values are the per-table metadata.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum TableEntries {
     /// Brief mode: sorted array of bare table-name strings.
     Brief(Vec<String>),
-    /// Detailed mode: one object per table with full introspected metadata.
-    Detailed(Vec<Value>),
+    /// Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.
+    Detailed(IndexMap<String, Value>),
 }
 
 impl TableEntries {
@@ -75,7 +76,7 @@ impl TableEntries {
     pub fn len(&self) -> usize {
         match self {
             Self::Brief(v) => v.len(),
-            Self::Detailed(v) => v.len(),
+            Self::Detailed(m) => m.len(),
         }
     }
 
@@ -91,17 +92,17 @@ impl TableEntries {
         if let Self::Brief(v) = self { Some(v) } else { None }
     }
 
-    /// Returns the detailed-mode entries as a slice, or `None` in brief mode.
+    /// Returns the detailed-mode map of name → metadata, or `None` in brief mode.
     #[must_use]
-    pub fn as_detailed(&self) -> Option<&[Value]> {
-        if let Self::Detailed(v) = self { Some(v) } else { None }
+    pub fn as_detailed(&self) -> Option<&IndexMap<String, Value>> {
+        if let Self::Detailed(m) = self { Some(m) } else { None }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ListTablesRequest, ListTablesResponse, TableEntries};
-    use serde_json::json;
+    use super::{IndexMap, ListTablesRequest, ListTablesResponse, TableEntries};
+    use serde_json::{Value, json};
 
     #[test]
     fn list_tables_request_defaults_to_brief_mode_without_search() {
@@ -125,10 +126,28 @@ mod tests {
     }
 
     #[test]
-    fn table_entries_detailed_serializes_as_object_array() {
-        let entries = TableEntries::Detailed(vec![json!({"name": "orders", "kind": "TABLE"})]);
+    fn table_entries_detailed_serializes_as_keyed_object() {
+        let entries = TableEntries::Detailed(IndexMap::from([("orders".into(), json!({"kind": "TABLE"}))]));
         let value = serde_json::to_value(&entries).expect("serialize detailed");
-        assert_eq!(value, json!([{"name": "orders", "kind": "TABLE"}]));
+        assert_eq!(value, json!({"orders": {"kind": "TABLE"}}));
+    }
+
+    #[test]
+    fn table_entries_detailed_empty_serializes_as_empty_object() {
+        let value = serde_json::to_value(TableEntries::Detailed(IndexMap::new())).expect("serialize");
+        assert_eq!(value, json!({}));
+    }
+
+    #[test]
+    fn table_entries_detailed_preserves_insertion_order() {
+        let map = IndexMap::from([
+            ("c".into(), json!({})),
+            ("a".into(), json!({})),
+            ("b".into(), json!({})),
+        ]);
+        let serialized = serde_json::to_string(&TableEntries::Detailed(map)).expect("serialize");
+        let positions = ["\"c\"", "\"a\"", "\"b\""].map(|k| serialized.find(k).expect(k));
+        assert!(positions.is_sorted(), "insertion order not preserved: {serialized}");
     }
 
     #[test]
@@ -146,5 +165,60 @@ mod tests {
         };
         let value = serde_json::to_value(&response).expect("serialize response");
         assert_eq!(value, json!({"tables": ["a"]}));
+    }
+
+    /// SC-001: detailed keyed payload must be strictly smaller than the prior array-of-objects
+    /// form for a representative 10-table fixture. Magnitude is fixture-dependent (the saving is
+    /// one `"name": "<table>",` fragment per entry); the contractual claim is the strict reduction.
+    #[test]
+    fn sc001_detailed_payload_strictly_smaller_than_array_form() {
+        // Values are identical across entries — only the table name distinguishes them. That's
+        // enough to exercise the "name field removed" saving without varying metadata per entry.
+        let metadata = json!({
+            "schema": "public",
+            "kind": "TABLE",
+            "owner": "app",
+            "comment": null,
+            "columns": [
+                {"name": "id", "dataType": "bigint", "ordinalPosition": 1, "nullable": false, "default": null, "comment": null},
+                {"name": "created_at", "dataType": "timestamptz", "ordinalPosition": 2, "nullable": false, "default": "now()", "comment": null},
+                {"name": "updated_at", "dataType": "timestamptz", "ordinalPosition": 3, "nullable": true, "default": null, "comment": null},
+            ],
+            "constraints": [
+                {"name": "pk", "type": "PRIMARY KEY", "columns": ["id"], "definition": "PRIMARY KEY (id)", "referencedTable": null, "referencedColumns": null},
+            ],
+            "indexes": [
+                {"name": "pk_idx", "columns": ["id"], "unique": true, "primary": true, "method": "btree", "definition": "CREATE UNIQUE INDEX pk_idx ON t USING btree (id)"},
+            ],
+            "triggers": []
+        });
+        let tables = [
+            "customers",
+            "orders",
+            "order_items",
+            "products",
+            "inventory",
+            "suppliers",
+            "shipments",
+            "invoices",
+            "payments",
+            "audits",
+        ];
+
+        let new_map: IndexMap<String, Value> = tables.iter().map(|n| ((*n).into(), metadata.clone())).collect();
+        let old: Vec<Value> = tables
+            .iter()
+            .map(|n| {
+                let mut v = metadata.clone();
+                v["name"] = json!(n);
+                v
+            })
+            .collect();
+
+        let new_len = serde_json::to_vec(&TableEntries::Detailed(new_map))
+            .expect("serialize new")
+            .len();
+        let old_len = serde_json::to_vec(&old).expect("serialize old").len();
+        assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
     }
 }

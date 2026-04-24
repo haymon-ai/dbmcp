@@ -294,7 +294,7 @@ expression: tools
   {
     "name": "listTables",
     "title": "List Tables",
-    "description": "List tables in a database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` tool.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in mydb?\" → listTables(database=\"mydb\")\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings.\nDetailed mode: a sorted JSON array of objects with `schema`, `name`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
+    "description": "List tables in a database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` tool.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in mydb?\" → listTables(database=\"mydb\")\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"public\", \"kind\": \"TABLE\", …}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the Postgres `listTables` tool — extends the shared shape with `search` and `detailed`.",
@@ -344,12 +344,12 @@ expression: tools
               "type": "array"
             },
             {
-              "description": "Detailed mode: one object per table with full introspected metadata.",
-              "items": true,
-              "type": "array"
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
             }
           ],
-          "description": "Two-shape table listing payload: bare names in brief mode, full objects in detailed mode.\n\nChosen by the handler based on [`ListTablesRequest::detailed`]. Serialises as an untagged\nJSON array — callers see a list of strings or a list of objects, never a discriminator."
+          "description": "Two-shape table listing payload: bare names in brief mode, name-keyed map in detailed mode.\n\nChosen by the handler based on [`ListTablesRequest::detailed`]. Serialises untagged: brief\nmode becomes a JSON array of strings, detailed mode becomes a JSON object whose keys are\ntable names and whose values are the per-table metadata."
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
