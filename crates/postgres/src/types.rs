@@ -34,8 +34,8 @@ pub struct ListTablesRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
-    /// Optional case-insensitive substring filter on table names.
-    /// Wildcards `%` / `_` / `\` are treated as literal characters.
+    /// Optional case-insensitive filter on table names. The input is used within an `ILIKE`
+    /// clause: `%` matches any sequence of characters and `_` matches any single character.
     #[serde(default)]
     pub search: Option<String>,
     /// When `true`, each returned entry is a full metadata object (columns,

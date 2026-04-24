@@ -322,7 +322,7 @@ expression: tools
         },
         "search": {
           "default": null,
-          "description": "Optional case-insensitive substring filter on table names.\nWildcards `%` / `_` / `\\` are treated as literal characters.",
+          "description": "Optional case-insensitive filter on table names. The input is used within an `ILIKE` clause: `%` matches any sequence of characters and `_` matches any single character.",
           "type": [
             "string",
             "null"

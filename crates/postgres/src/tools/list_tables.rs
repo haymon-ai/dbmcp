@@ -275,7 +275,7 @@ impl PostgresHandler {
         self.list_tables_brief(database, pattern, pager).await
     }
 
-    /// Detailed-mode page: deserialises each row into a `(name, entry)` pair.
+    /// Detailed-mode page: deserializes each row into a `(name, entry)` pair.
     async fn list_tables_detailed(
         &self,
         database: Option<&str>,
