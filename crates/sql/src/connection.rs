@@ -6,7 +6,7 @@
 
 use crate::SqlError;
 use serde_json::Value;
-use sqlx::{Decode, Execute, Executor, Row, Type};
+use sqlx::{Decode, Execute, Executor, FromRow, Row, Type};
 use sqlx_json::{QueryResult as _, RowExt};
 
 use crate::timeout::execute_with_timeout;
@@ -120,6 +120,27 @@ where
         execute_with_timeout(self.query_timeout(), &sql, async move {
             let rows = pool.fetch_all(query).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
+        })
+        .await
+    }
+
+    /// Runs a query and decodes every row into `T` via [`sqlx::FromRow`].
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation. Row decode failures (column type
+    /// mismatch, malformed JSON inside a [`sqlx::types::Json`] column, etc.)
+    /// surface as [`SqlError::Query`].
+    async fn fetch<'q, E, T>(&self, query: E, database: Option<&str>) -> Result<Vec<T>, SqlError>
+    where
+        E: 'q + Execute<'q, Self::DB>,
+        T: for<'r> FromRow<'r, <Self::DB as sqlx::Database>::Row> + Send + Unpin,
+    {
+        let sql = query.sql().to_owned();
+        let pool = self.pool(database).await?;
+        execute_with_timeout(self.query_timeout(), &sql, async move {
+            let rows = pool.fetch_all(query).await?;
+            rows.iter().map(T::from_row).collect()
         })
         .await
     }

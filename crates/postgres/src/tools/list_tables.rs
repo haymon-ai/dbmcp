@@ -278,9 +278,9 @@ impl PostgresHandler {
         pattern: Option<&str>,
         pager: Pager,
     ) -> Result<ListTablesResponse, ErrorData> {
-        let rows = self
+        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
             .connection
-            .fetch_json(
+            .fetch(
                 sqlx::query(DETAILED_SQL)
                     .bind(pattern)
                     .bind(pager.limit())
@@ -288,7 +288,8 @@ impl PostgresHandler {
                 database,
             )
             .await?;
-        Ok(ListTablesResponse::detailed(rows, pager))
+        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
+        Ok(ListTablesResponse::detailed(pairs, pager))
     }
 
     /// Brief-mode page: returns sorted table-name strings via [`ListTablesResponse::brief`].

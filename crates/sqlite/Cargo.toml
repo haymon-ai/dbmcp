@@ -16,7 +16,7 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
-sqlx = { workspace = true, features = ["sqlite"] }
+sqlx = { workspace = true, features = ["sqlite", "json"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -80,50 +80,18 @@ impl ListTablesResponse {
         }
     }
 
-    /// Builds a detailed-mode response from raw `{name, entry}` rows.
+    /// Builds a detailed-mode response from typed `(name, entry)` pairs.
     ///
-    /// Each row is split via [`split_named_entry`] (handles `MariaDB`/`SQLite`'s
-    /// JSON-as-text quirk) before pagination trim and conversion to a name-keyed map.
+    /// Backends decode `entry` via [`sqlx::types::Json<Value>`] at the row-read
+    /// site, so this constructor only paginates and wraps; no JSON reparsing.
     #[must_use]
-    pub fn detailed(rows: Vec<Value>, pager: Pager) -> Self {
-        let pairs: Vec<(String, Value)> = rows.into_iter().map(split_named_entry).collect();
+    pub fn detailed(pairs: Vec<(String, Value)>, pager: Pager) -> Self {
         let (pairs, next_cursor) = pager.finalize(pairs);
         Self {
             tables: TableEntries::Detailed(pairs.into_iter().collect()),
             next_cursor,
         }
     }
-}
-
-/// Splits a `listTables` detailed row into its `(name, entry)` pair.
-///
-/// Backend SQL projects each row as `{"name": "<table>", "entry": <metadata>}`.
-/// `entry` arrives as a `serde_json::Value` on `PostgreSQL` (native JSON column)
-/// and as a JSON-formatted string on `SQLite` (`json_object` returns TEXT) and
-/// `MariaDB` (its `JSON` type is a `LONGTEXT` alias). The string form is
-/// reparsed transparently here so handlers do not need backend-specific glue.
-///
-/// # Panics
-///
-/// Panics if the row is not a JSON object, lacks the `name`/`entry` keys,
-/// `name` is not a string, or `entry` is a string that does not parse as JSON.
-/// Each indicates a programming error in the backend SQL, not user input.
-#[must_use]
-pub fn split_named_entry(row: Value) -> (String, Value) {
-    let mut obj = match row {
-        Value::Object(map) => map,
-        other => panic!("listTables row must be a JSON object, got {other:?}"),
-    };
-    let name = match obj.remove("name") {
-        Some(Value::String(s)) => s,
-        other => panic!("listTables row missing string `name`, got {other:?}"),
-    };
-    let entry = obj.remove("entry").expect("listTables row missing `entry`");
-    let entry = match entry {
-        Value::String(s) => serde_json::from_str(&s).expect("listTables `entry` must be valid JSON"),
-        other => other,
-    };
-    (name, entry)
 }
 
 /// Response for tools with no structured return data.
@@ -440,30 +408,6 @@ mod tests {
         let new_len = serde_json::to_vec(&TableEntries::Detailed(new_map)).unwrap().len();
         let old_len = serde_json::to_vec(&old).unwrap().len();
         assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
-    }
-
-    #[test]
-    fn split_named_entry_handles_native_json_value() {
-        let row = json!({"name": "orders", "entry": {"kind": "TABLE"}});
-        assert_eq!(
-            super::split_named_entry(row),
-            ("orders".into(), json!({"kind": "TABLE"}))
-        );
-    }
-
-    #[test]
-    fn split_named_entry_reparses_json_string_form() {
-        let row = json!({"name": "orders", "entry": r#"{"kind":"TABLE"}"#});
-        assert_eq!(
-            super::split_named_entry(row),
-            ("orders".into(), json!({"kind": "TABLE"}))
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "listTables row missing string `name`")]
-    fn split_named_entry_panics_without_name() {
-        let _ = super::split_named_entry(json!({"entry": {}}));
     }
 
     #[test]

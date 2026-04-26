@@ -307,13 +307,13 @@ impl SqliteHandler {
 
     /// Detailed-mode page: name-keyed metadata map.
     ///
-    /// `json_object(...)` returns TEXT on `SQLite`, so each `entry` column
-    /// arrives as a JSON-encoded string; [`ListTablesResponse::detailed`]
-    /// reparses transparently.
+    /// `json_object(...)` returns TEXT on `SQLite`; sqlx's
+    /// [`sqlx::types::Json<Value>`] decoder reads the TEXT column directly
+    /// via `serde_json::from_str`, so no manual reparse is needed.
     async fn list_tables_detailed(&self, pattern: Option<&str>, pager: Pager) -> Result<ListTablesResponse, ErrorData> {
-        let rows = self
+        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
             .connection
-            .fetch_json(
+            .fetch(
                 sqlx::query(DETAILED_SQL)
                     .bind(pattern)
                     .bind(pager.limit())
@@ -321,6 +321,7 @@ impl SqliteHandler {
                 None,
             )
             .await?;
-        Ok(ListTablesResponse::detailed(rows, pager))
+        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
+        Ok(ListTablesResponse::detailed(pairs, pager))
     }
 }
