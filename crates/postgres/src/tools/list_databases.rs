@@ -21,7 +21,7 @@ impl ListDatabasesTool {
 <usecase>
 ALWAYS call this tool FIRST when:
 - You need to explore what databases exist on the server
-- You need a database name for listTables, getTableSchema, or query tools
+- You need a database name for listTables or query tools
 - The user asks what data is available
 </usecase>
 

@@ -10,11 +10,10 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::DropTableRequest;
+use dbmcp_mysql::types::{DropTableRequest, ListTablesRequest, TableEntries};
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesRequest,
-    ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest,
-    QueryRequest, ReadQueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
+    ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -157,7 +156,9 @@ async fn test_lists_tables() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let TableEntries::Brief(tables) = response.tables else {
+        panic!("expected brief-mode tables");
+    };
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -165,46 +166,6 @@ async fn test_lists_tables() {
             "Missing '{expected}' in: {tables:?}"
         );
     }
-}
-
-#[tokio::test]
-async fn test_gets_table_schema() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "users".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-
-    assert_eq!(schema.table, "users");
-    let columns = schema.columns.as_object().expect("columns object");
-    for col in ["id", "name", "email", "created_at"] {
-        assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
-    }
-}
-
-#[tokio::test]
-async fn test_gets_table_schema_with_relations() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "posts".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
-    let user_id = columns["user_id"].as_object().expect("user_id object");
-    assert!(
-        user_id.contains_key("foreignKey"),
-        "Missing 'foreignKey' in user_id column"
-    );
-    assert!(
-        !user_id["foreignKey"].is_null(),
-        "foreignKey should not be null for user_id"
-    );
 }
 
 #[tokio::test]
@@ -325,7 +286,9 @@ async fn test_lists_tables_cross_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let TableEntries::Brief(tables) = response.tables else {
+        panic!("expected brief-mode tables");
+    };
 
     assert!(
         tables.iter().any(|t| t == "events"),
@@ -348,26 +311,6 @@ async fn test_executes_sql_cross_database() {
 
     let response = handler.read_query(request).await.unwrap();
     assert_eq!(response.rows.len(), 2, "Expected 2 events, got {}", response.rows.len());
-}
-
-#[tokio::test]
-async fn test_gets_table_schema_cross_database() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("analytics".into()),
-        table: "events".into(),
-    };
-
-    let response = handler.get_table_schema(request).await.unwrap();
-
-    assert_eq!(response.table, "events");
-    let columns = response.columns.as_object().expect("columns object");
-    for col in ["id", "name", "payload", "created_at"] {
-        assert!(
-            columns.contains_key(col),
-            "Missing '{col}' in analytics events schema: {columns:?}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -409,7 +352,9 @@ async fn test_uses_default_pool_for_matching_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let TableEntries::Brief(tables) = response.tables else {
+        panic!("expected brief-mode tables");
+    };
 
     assert!(
         tables.iter().any(|t| t == "users"),
@@ -489,7 +434,9 @@ async fn test_drop_table_success() {
         ..Default::default()
     };
     let response = handler.list_tables(tables_request).await.unwrap();
-    let tables = response.tables;
+    let TableEntries::Brief(tables) = response.tables else {
+        panic!("expected brief-mode tables");
+    };
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -578,60 +525,6 @@ async fn test_explain_query_analyze_write_blocked_read_only() {
 }
 
 #[tokio::test]
-async fn test_get_table_schema_nonexistent_table() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "nonexistent_table_xyz".into(),
-    };
-
-    let response = handler.get_table_schema(request).await;
-    assert!(response.is_err(), "Expected error for nonexistent table");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_invalid_table_name() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: String::new(),
-    };
-
-    let response = handler.get_table_schema(request).await;
-    assert!(response.is_err(), "Expected error for empty table name");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_empty_database_falls_back_to_default() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some(String::new()),
-        table: "users".into(),
-    };
-
-    let response = handler
-        .get_table_schema(request)
-        .await
-        .expect("empty db should default to --db-name");
-    assert_eq!(response.table, "users");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_omitted_database_falls_back_to_default() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: None,
-        table: "users".into(),
-    };
-
-    let response = handler
-        .get_table_schema(request)
-        .await
-        .expect("omitted db should default to --db-name");
-    assert_eq!(response.table, "users");
-}
-
-#[tokio::test]
 async fn test_list_tables_nonexistent_database_returns_empty() {
     let handler = handler(false);
     let request = ListTablesRequest {
@@ -661,10 +554,10 @@ async fn test_list_tables_empty_database_falls_back_to_default() {
         .list_tables(request)
         .await
         .expect("empty db should default to --db-name");
+    let tables = response.tables.as_brief().expect("brief-mode tables");
     assert!(
-        response.tables.iter().any(|t| t == "users"),
-        "expected default-database tables, got {:?}",
-        response.tables
+        tables.iter().any(|t| t == "users"),
+        "expected default-database tables, got {tables:?}",
     );
 }
 
@@ -680,10 +573,10 @@ async fn test_list_tables_omitted_database_falls_back_to_default() {
         .list_tables(request)
         .await
         .expect("omitted db should default to --db-name");
+    let tables = response.tables.as_brief().expect("brief-mode tables");
     assert!(
-        response.tables.iter().any(|t| t == "users"),
-        "expected default-database tables, got {:?}",
-        response.tables
+        tables.iter().any(|t| t == "users"),
+        "expected default-database tables, got {tables:?}",
     );
 }
 
@@ -920,35 +813,6 @@ async fn test_write_query_cross_database() {
 }
 
 #[tokio::test]
-async fn test_get_table_schema_junction_table() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "post_tags".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table, "post_tags");
-
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("post_id"), "Missing 'post_id'");
-    assert!(columns.contains_key("tag_id"), "Missing 'tag_id'");
-
-    // Both columns should have foreign keys
-    let post_id = columns["post_id"].as_object().expect("post_id object");
-    assert!(
-        post_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
-        "post_id should have a foreign key"
-    );
-
-    let tag_id = columns["tag_id"].as_object().expect("tag_id object");
-    assert!(
-        tag_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
-        "tag_id should have a foreign key"
-    );
-}
-
-#[tokio::test]
 async fn test_read_query_empty_result_set() {
     let handler = handler(false);
     let request = ReadQueryRequest {
@@ -1137,31 +1001,6 @@ async fn test_write_query_invalid_sql() {
 }
 
 #[tokio::test]
-async fn test_get_table_schema_column_details() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "users".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    let columns = schema.columns.as_object().expect("columns object");
-
-    // Verify id column has key info (PRIMARY KEY)
-    let id_col = columns["id"].as_object().expect("id object");
-    let key = id_col.get("key").and_then(|v| v.as_str()).unwrap_or("");
-    assert_eq!(key, "PRI", "id should be PRI key");
-
-    // Verify email column type
-    let email_col = columns["email"].as_object().expect("email object");
-    let col_type = email_col.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(
-        col_type.to_lowercase().contains("varchar"),
-        "email type should contain 'varchar', got: {col_type}"
-    );
-}
-
-#[tokio::test]
 async fn test_read_query_with_limit() {
     let handler = handler(false);
     let request = ReadQueryRequest {
@@ -1221,21 +1060,6 @@ async fn test_read_query_into_dumpfile_blocked() {
 
     let response = handler.read_query(request).await;
     assert!(response.is_err(), "Expected error for INTO DUMPFILE");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_no_foreign_keys() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "tags".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table, "tags");
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("id"));
-    assert!(columns.contains_key("name"));
 }
 
 #[tokio::test]
@@ -1339,9 +1163,10 @@ async fn collect_all_paged(handler: &MysqlHandler) -> Vec<String> {
         let request = ListTablesRequest {
             database: Some(MY_DB.into()),
             cursor,
+            ..Default::default()
         };
         let response = handler.list_tables(request).await.expect("list page");
-        all.extend(response.tables);
+        all.extend(response.tables.into_brief().expect("brief-mode page"));
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1365,8 +1190,9 @@ async fn test_list_tables_pagination_traverses_pages() {
         .await
         .expect("single page");
 
+    let single_page_tables = single_page.tables.into_brief().expect("brief-mode page");
     assert_eq!(
-        collected, single_page.tables,
+        collected, single_page_tables,
         "paged traversal must yield identical results (and ordering) to a single full page"
     );
     let unique: std::collections::HashSet<&String> = collected.iter().collect();
@@ -1430,6 +1256,7 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
     let request = ListTablesRequest {
         database: Some(MY_DB.into()),
         cursor: Some(Cursor { offset: 10_000 }),
+        ..Default::default()
     };
     let response = handler.list_tables(request).await.unwrap();
 
@@ -1748,14 +1575,15 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 5 seeded base tables (users, posts, tags,
-    // post_tags, temporal) plus 2 seeded views (active_users, published_posts);
-    // MySQL's SHOW TABLES lists both. Must not be paginated even with page_size=2.
+    // SHOW TABLES in `app` returns 7 seeded base tables (users, posts, tags,
+    // post_tags, temporal, posts_audit, events_by_year) plus 2 seeded views
+    // (active_users, published_posts); MySQL's SHOW TABLES lists both. Must
+    // not be paginated even with page_size=2.
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        7,
-        "SHOW TABLES must not be paginated: expected all 7 seeded tables+views, got {}",
+        9,
+        "SHOW TABLES must not be paginated: expected all 9 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -2156,5 +1984,398 @@ async fn test_list_routines_empty_for_empty_database() {
         procedures.procedures.is_empty(),
         "analytics has no procedures, got {:?}",
         procedures.procedures
+    );
+}
+
+// ----- listTables enrichment (spec 047) -----
+
+async fn brief_tables(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
+    let response = handler
+        .list_tables(ListTablesRequest {
+            database: Some("app".into()),
+            search: search.map(str::to_owned),
+            ..Default::default()
+        })
+        .await
+        .expect("brief list_tables");
+    response.tables.into_brief().expect("brief mode")
+}
+
+async fn detailed_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+    let response = handler
+        .list_tables(ListTablesRequest {
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("detailed list_tables");
+    response.tables.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn list_tables_brief_excludes_views() {
+    let handler = handler(true);
+    let names = brief_tables(&handler, None).await;
+    for view in ["active_users", "published_posts"] {
+        assert!(
+            !names.contains(&view.to_string()),
+            "FR-014a violated: view `{view}` leaked into brief listTables: {names:?}",
+        );
+    }
+    assert!(
+        names.contains(&"posts".to_string()),
+        "expected base table `posts` in {names:?}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_brief_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = brief_tables(&handler, Some("post")).await;
+    let upper = brief_tables(&handler, Some("POST")).await;
+    let mixed = brief_tables(&handler, Some("Post")).await;
+    assert_eq!(lower, upper, "case-insensitive: lower vs upper");
+    assert_eq!(lower, mixed, "case-insensitive: lower vs mixed");
+    assert!(
+        lower.iter().all(|n| n.to_lowercase().contains("post")),
+        "every match must contain 'post' case-insensitively: {lower:?}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_brief_search_wildcards() {
+    let handler = handler(true);
+    // `_` matches any single char — `post_` would match "posts" (s) and "posts_audit" up to underscore? actually
+    // LIKE 'post_' matches exactly 5 chars starting with "post". Use CONCAT('%', ?, '%') so 'post_' embeds.
+    let underscore = brief_tables(&handler, Some("post_")).await;
+    assert!(
+        underscore.iter().any(|n| n == "post_tags" || n == "posts_audit"),
+        "underscore wildcard should match `post_tags` or `posts_audit`: {underscore:?}",
+    );
+
+    // Literal `%` is *not* escaped — passing '%post%' is the same as 'post' wrapped in CONCAT.
+    let pct = brief_tables(&handler, Some("%post%")).await;
+    assert!(
+        pct.iter().any(|n| n == "posts"),
+        "percent wildcard should match `posts`: {pct:?}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_brief_search_empty_is_no_filter() {
+    let handler = handler(true);
+    let baseline = brief_tables(&handler, None).await;
+    let empty = brief_tables(&handler, Some("")).await;
+    let blanks = brief_tables(&handler, Some("   ")).await;
+    assert_eq!(baseline, empty, "empty search must equal None");
+    assert_eq!(baseline, blanks, "whitespace search must equal None");
+}
+
+#[tokio::test]
+async fn list_tables_brief_pagination_under_search() {
+    let handler = handler_with_page_size(1);
+    let mut collected = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = handler
+            .list_tables(ListTablesRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("post".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("paged brief search");
+        let page = response.tables.into_brief().expect("brief mode");
+        assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
+        collected.extend(page);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert!(
+        collected.iter().all(|n| n.to_lowercase().contains("post")),
+        "paged search must apply filter consistently: {collected:?}",
+    );
+    assert!(
+        collected.contains(&"posts".to_string()) && collected.contains(&"post_tags".to_string()),
+        "paged search must yield expected matches: {collected:?}",
+    );
+    // Order is server-determined (collation: utf8mb4_general_ci on MariaDB
+    // sorts `_` after letters; binary collation sorts it before). Just check
+    // the collected sequence has no duplicates and matches the engine's sort.
+    let mut dedup = collected.clone();
+    dedup.sort();
+    dedup.dedup();
+    assert_eq!(
+        dedup.len(),
+        collected.len(),
+        "paged sequence has duplicates: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_returns_keyed_object() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "posts").await;
+    assert!(entries.contains_key("posts"), "expected `posts` key: {entries:?}");
+    for (name, value) in &entries {
+        assert!(value.is_object(), "value for `{name}` must be a JSON object: {value}");
+    }
+}
+
+#[tokio::test]
+async fn list_tables_detailed_includes_check_constraint() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "posts").await;
+    let posts = entries.get("posts").expect("posts entry");
+    let constraints = posts["constraints"].as_array().expect("constraints array");
+    let check = constraints
+        .iter()
+        .find(|c| c["type"] == "CHECK" && c["name"] == "posts_user_id_positive")
+        .expect("seeded CHECK constraint must surface");
+    assert_eq!(check["columns"], serde_json::json!([]));
+    let definition = check["definition"].as_str().expect("CHECK definition is text");
+    assert!(
+        definition.contains("user_id"),
+        "CHECK definition must reference user_id: {definition}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_marks_partitioned_table() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "events_by_year").await;
+    let events = entries.get("events_by_year").expect("events_by_year entry");
+    assert_eq!(events["kind"], "PARTITIONED_TABLE");
+
+    let plain = detailed_entries(&handler, "tags").await;
+    let tags = plain.get("tags").expect("tags entry");
+    assert_eq!(tags["kind"], "TABLE", "non-partitioned table stays kind=TABLE");
+}
+
+#[tokio::test]
+async fn list_tables_detailed_synthesises_index_definitions() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "posts").await;
+    let posts = entries.get("posts").expect("posts entry");
+    let indexes = posts["indexes"].as_array().expect("indexes array");
+
+    let by_name = |n: &str| {
+        indexes
+            .iter()
+            .find(|i| i["name"] == n)
+            .unwrap_or_else(|| panic!("missing index `{n}` in {indexes:?}"))
+    };
+
+    let pk = by_name("PRIMARY");
+    assert_eq!(pk["primary"], true);
+    assert_eq!(pk["unique"], true);
+    let pk_def = pk["definition"].as_str().expect("PK definition");
+    assert!(pk_def.starts_with("PRIMARY KEY"), "PK definition shape: {pk_def}");
+    assert!(pk_def.contains("USING BTREE"), "PK uses BTREE: {pk_def}");
+
+    let unique = by_name("posts_user_title_uidx");
+    assert_eq!(unique["unique"], true);
+    assert_eq!(unique["primary"], false);
+    let unique_def = unique["definition"].as_str().expect("UNIQUE definition");
+    assert!(
+        unique_def.starts_with("CREATE UNIQUE INDEX"),
+        "composite UNIQUE definition shape: {unique_def}",
+    );
+
+    let fts = by_name("posts_body_fts");
+    assert_eq!(fts["method"], "fulltext");
+    let fts_def = fts["definition"].as_str().expect("FULLTEXT definition");
+    assert!(
+        fts_def.contains("FULLTEXT INDEX") && fts_def.contains("USING FULLTEXT"),
+        "FULLTEXT index definition shape: {fts_def}",
+    );
+
+    let secondary = by_name("posts_published_idx");
+    assert_eq!(secondary["unique"], false);
+    let sec_def = secondary["definition"].as_str().expect("BTREE definition");
+    assert!(
+        sec_def.starts_with("CREATE INDEX") && sec_def.contains("USING BTREE"),
+        "secondary BTREE definition shape: {sec_def}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_generated_column_expression_in_default() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "users").await;
+    let users = entries.get("users").expect("users entry");
+    let columns = users["columns"].as_array().expect("columns array");
+    let display = columns
+        .iter()
+        .find(|c| c["name"] == "display_name")
+        .expect("display_name column present");
+    let default = display["default"].as_str().expect("generated column default text");
+    assert!(
+        default.contains("name") && default.contains("email"),
+        "generated column default must carry GENERATION_EXPRESSION: {default}",
+    );
+    assert!(
+        display.get("generated").is_none(),
+        "FR/Q3: no separate `generated` field — expression rides in `default`: {display}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_triggers_reconstruct_create_trigger() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "posts").await;
+    let posts = entries.get("posts").expect("posts entry");
+    let triggers = posts["triggers"].as_array().expect("triggers array");
+    let trigger = triggers
+        .iter()
+        .find(|t| t["name"] == "posts_after_insert")
+        .expect("seeded posts_after_insert trigger");
+    let definition = trigger["definition"].as_str().expect("trigger definition text");
+    assert!(
+        definition.starts_with("CREATE DEFINER="),
+        "definition prefix: {definition}"
+    );
+    assert!(
+        definition.contains("AFTER INSERT ON"),
+        "timing+event in definition: {definition}"
+    );
+    assert!(
+        definition.contains("FOR EACH ROW"),
+        "row scope in definition: {definition}"
+    );
+    assert!(
+        definition.contains("posts_audit"),
+        "action statement preserved in definition: {definition}",
+    );
+    assert_eq!(trigger["enabled"], true, "MySQL/MariaDB triggers always enabled");
+}
+
+#[tokio::test]
+async fn list_tables_detailed_comments_trimmed_to_null_when_empty() {
+    let handler = handler(true);
+
+    let entries = detailed_entries(&handler, "posts").await;
+    let posts = entries.get("posts").expect("posts entry");
+    assert_eq!(
+        posts["comment"],
+        Value::String("Blog post entries.".into()),
+        "seeded TABLE COMMENT must surface verbatim",
+    );
+    let columns = posts["columns"].as_array().expect("columns");
+    let body = columns.iter().find(|c| c["name"] == "body").expect("body column");
+    assert_eq!(
+        body["comment"],
+        Value::String("Markdown-encoded post body.".into()),
+        "seeded COLUMN COMMENT must surface verbatim",
+    );
+
+    let plain = detailed_entries(&handler, "tags").await;
+    let tags = plain.get("tags").expect("tags entry");
+    assert!(
+        tags["comment"].is_null(),
+        "absent TABLE COMMENT must be null, not empty string"
+    );
+    let tag_cols = tags["columns"].as_array().expect("tags columns");
+    let id = tag_cols.iter().find(|c| c["name"] == "id").expect("id column");
+    assert!(
+        id["comment"].is_null(),
+        "absent COLUMN COMMENT must be null, not empty string"
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_search_preserves_filter_across_pages() {
+    let handler = handler_with_page_size(1);
+    let mut collected = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = handler
+            .list_tables(ListTablesRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("post".into()),
+                detailed: true,
+            })
+            .await
+            .expect("paged detailed search");
+        let page = response.tables.as_detailed().expect("detailed mode");
+        assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
+        collected.extend(page.keys().cloned());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert!(
+        collected.iter().all(|n| n.to_lowercase().contains("post")),
+        "detailed pagination must apply the filter on every page: {collected:?}",
+    );
+    assert!(
+        collected.contains(&"posts".to_string()) && collected.contains(&"post_tags".to_string()),
+        "detailed paged search must yield expected matches: {collected:?}",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_excludes_system_schemas_passes_through_validation() {
+    // Today's MysqlHandler::list_tables runs `validate_ident` on `database`.
+    // `information_schema` passes (alphanumeric + underscore) — so the call
+    // succeeds and returns whatever metadata that schema's TABLE rows expose.
+    // This is a regression test pinning the existing behaviour.
+    let handler = handler(true);
+    let response = handler
+        .list_tables(ListTablesRequest {
+            database: Some("information_schema".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("information_schema is identifier-valid");
+    let entries = response.tables.as_detailed().expect("detailed mode");
+    for (name, value) in entries {
+        assert_eq!(
+            value["schema"], "information_schema",
+            "every entry from information_schema must report that schema, got `{name}`: {value}",
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_tables_detailed_omits_inner_name_field() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "post").await;
+    assert!(!entries.is_empty(), "fixture must yield at least one match");
+    for (key, value) in &entries {
+        assert!(
+            value.get("name").is_none(),
+            "value for `{key}` must not carry redundant `name`: {value}",
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_tables_detailed_iteration_order_matches_brief_sort() {
+    let handler = handler(true);
+    let brief = brief_tables(&handler, Some("post")).await;
+    let detailed = detailed_entries(&handler, "post").await;
+    let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
+    assert_eq!(
+        brief, detailed_keys,
+        "detailed key order must match brief alphabetical order — FR-010",
+    );
+}
+
+#[tokio::test]
+async fn list_tables_detailed_empty_page_is_empty_object() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "zzznosuchprefix").await;
+    assert!(
+        entries.is_empty(),
+        "no-match search must yield empty map (serialises as `{{}}`): {entries:?}",
     );
 }

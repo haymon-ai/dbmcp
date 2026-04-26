@@ -29,7 +29,7 @@ Use when:
 <examples>
 ✓ "What views are in the mydb database?" → listViews(database="mydb")
 ✓ "Does an active_users view exist?" → listViews to check
-✗ "Show me the columns of a view" → use getTableSchema instead
+✗ "Show me the columns of a view" → use listTables with detailed=true instead
 ✗ "List materialized views" → use listMaterializedViews (PostgreSQL only)
 </examples>
 

@@ -53,29 +53,6 @@ pub struct DropDatabaseRequest {
     pub database: String,
 }
 
-/// Request for the `listTables` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListTablesRequest {
-    /// Database to list tables from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-}
-
-/// Response for the `listTables` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListTablesResponse {
-    /// Sorted list of table names for this page.
-    pub tables: Vec<String>,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -189,27 +166,6 @@ pub struct ListMaterializedViewsResponse {
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
-}
-
-/// Request for the `getTableSchema` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTableSchemaRequest {
-    /// Database containing the table. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-    /// Table to inspect.
-    pub table: String,
-}
-
-/// Response for the `getTableSchema` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TableSchemaResponse {
-    /// Name of the inspected table.
-    pub table: String,
-    /// Column definitions keyed by column name.
-    pub columns: Value,
 }
 
 /// Request for the `writeQuery` tool.
