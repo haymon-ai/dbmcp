@@ -11,15 +11,15 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 
 ![demo](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/docs/public/demo.gif)
 
-## Features
+## Features ✨
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **MCP tools** — `listDatabases`, `listTables` (with optional `search` filter and `detailed` mode), `readQuery`, `writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`, `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`).
+- **MCP tools** — schema discovery (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`), data access (`readQuery`, `writeQuery`), DDL (`createDatabase`, `dropDatabase`, `dropTable`), and `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`). See [MCP Tools](#mcp-tools) for per-backend availability.
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
 
-## Install
+## Install 📦
 
 **macOS, Linux, WSL**:
 
@@ -41,7 +41,7 @@ curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && 
 
 See the [installation docs](https://dbmcp.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
 
-## Quick Start
+## Quick Start 🚀
 
 ### Using `.mcp.json` (recommended)
 
@@ -110,7 +110,7 @@ dbmcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --por
 DB_BACKEND=mysql DB_USER=root DB_NAME=mydb dbmcp stdio
 ```
 
-## Configuration
+## Configuration ⚙️
 
 Configuration is loaded with clear precedence:
 
@@ -175,7 +175,7 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 | `--allowed-origins` | localhost variants | CORS allowed origins (comma-separated) |
 | `--allowed-hosts` | `localhost,127.0.0.1` | Trusted Host headers (comma-separated) |
 
-## MCP Tools
+## MCP Tools 🧩
 
 ### listDatabases
 
@@ -193,6 +193,26 @@ Parameters: `database` (defaults to the active database; SQLite has no `database
 
 - **Brief** (default) — `tables` is a sorted JSON array of bare table-name strings.
 - **Detailed** (`detailed: true`) — `tables` is a JSON object keyed by table name; each value carries the table's `schema`, `kind`, `owner`, `comment`, `columns[]`, `constraints[]`, `indexes[]`, and `triggers[]`. One call returns both the table list and the per-table metadata.
+
+### listViews
+
+Lists views in a database, paginated via `cursor` / `nextCursor`. Returns a sorted JSON array of view names. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+
+### listTriggers
+
+Lists user-defined triggers on tables, paginated via `cursor` / `nextCursor`. Internal constraint and foreign-key triggers are excluded. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+
+### listFunctions
+
+Lists user-defined SQL functions, paginated via `cursor` / `nextCursor`. PostgreSQL excludes aggregates, window functions, and procedures; MySQL excludes loadable UDFs (`mysql.func`). Available on MySQL/MariaDB and PostgreSQL (`public` schema). Not available for SQLite. Parameters: `database`, `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+
+### listProcedures
+
+Lists user-defined stored procedures, paginated via `cursor` / `nextCursor`. Available on MySQL/MariaDB and PostgreSQL (`public` schema, PostgreSQL 11+). Not available for SQLite. Parameters: `database`, `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+
+### listMaterializedViews
+
+Lists materialized views in the `public` schema, paginated via `cursor` / `nextCursor`. PostgreSQL only — not available for MySQL/MariaDB or SQLite. Parameters: `database`, `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### readQuery
 
@@ -218,7 +238,7 @@ Drops a table from a database. If the table has foreign key dependents, the data
 
 Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB). In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements since it actually executes the query. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database`, `analyze` (PostgreSQL/MySQL only).
 
-## Security
+## Security 🔒
 
 - **Read-only mode** (default) — write tools hidden from AI assistant; `readQuery` enforces AST-based SQL validation
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
@@ -228,7 +248,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **SSL/TLS** — configured via individual `DB_SSL_*` variables
 - **Credential redaction** — database password is never shown in logs or debug output
 
-## Testing
+## Testing 🧪
 
 ```bash
 # Unit tests
@@ -253,7 +273,7 @@ curl -X POST http://localhost:9001/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}'
 ```
 
-## Project Structure
+## Project Structure 🗂️
 
 This is a Cargo workspace with the following crates:
 
@@ -268,7 +288,7 @@ This is a Cargo workspace with the following crates:
 | `dbmcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
 | `sqlx-json` | `crates/sqlx-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
 
-## Development
+## Development 🧰
 
 ```bash
 cargo build              # Development build
@@ -279,6 +299,6 @@ cargo fmt                # Format
 cargo doc --no-deps      # Build documentation
 ```
 
-## License
+## License 📄
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

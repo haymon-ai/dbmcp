@@ -28,6 +28,11 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 |------|-----------------|------------|--------|------------------------|
 | `listDatabases` | Yes | Yes | No | No |
 | `listTables` | Yes | Yes | Yes | No |
+| `listViews` | Yes | Yes | Yes | No |
+| `listTriggers` | Yes | Yes | Yes | No |
+| `listFunctions` | Yes | Yes | No | No |
+| `listProcedures` | Yes | Yes | No | No |
+| `listMaterializedViews` | No | Yes | No | No |
 | `readQuery` | Yes | Yes | Yes | No |
 | `writeQuery` | Yes | Yes | Yes | Yes |
 | `createDatabase` | Yes | Yes | No | Yes |
@@ -35,11 +40,11 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 | `dropTable` | Yes | Yes | Yes | Yes |
 | `explainQuery` | Yes | Yes | Yes | No |
 
-SQLite is file-based with a single database, so `listDatabases`, `createDatabase`, and `dropDatabase` are not applicable.
+SQLite is file-based with a single database, so `listDatabases`, `createDatabase`, `dropDatabase`, `listFunctions`, `listProcedures`, and `listMaterializedViews` are not applicable. `listMaterializedViews` is PostgreSQL-only — MySQL and MariaDB do not have a materialized-view feature.
 
 ### Cursor Pagination
 
-Three tools — `listDatabases`, `listTables`, and `readQuery` (for `SELECT` results) — return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
+All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`) and `readQuery` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
 
 To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
 
@@ -94,6 +99,71 @@ In **detailed mode** the response is keyed by table name:
 ```
 
 Field availability follows what the backend exposes — `owner` is null on SQLite and MariaDB; PostgreSQL fills `schema` from the catalog while SQLite uses `main`.
+
+### `listViews`
+
+List the views defined in a database. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of view-name strings:
+
+```json
+{
+  "views": ["active_users", "monthly_revenue"],
+  "nextCursor": "<opaque or absent>"
+}
+```
+
+On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+
+### `listTriggers`
+
+List user-defined triggers on tables in a database. Internal constraint and foreign-key triggers are excluded. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of trigger-name strings:
+
+```json
+{
+  "triggers": ["audit_orders_after_insert", "set_updated_at"],
+  "nextCursor": null
+}
+```
+
+On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+
+### `listFunctions`
+
+List user-defined SQL functions in a database. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs registered in `mysql.func`. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of function-name strings:
+
+```json
+{
+  "functions": ["calc_total", "format_phone"],
+  "nextCursor": null
+}
+```
+
+Available on MySQL/MariaDB and PostgreSQL (`public` schema). Not available for SQLite.
+
+### `listProcedures`
+
+List user-defined stored procedures in a database. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of procedure-name strings:
+
+```json
+{
+  "procedures": ["archive_user", "rebuild_indexes"],
+  "nextCursor": null
+}
+```
+
+Available on MySQL/MariaDB and PostgreSQL (`public` schema, PostgreSQL 11+). Not available for SQLite.
+
+### `listMaterializedViews`
+
+List materialized views in the `public` schema of a PostgreSQL database. Unlike regular views, materialized views store their results physically and must be refreshed explicitly. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of materialized-view name strings:
+
+```json
+{
+  "materializedViews": ["mv_recent_orders", "mv_top_customers"],
+  "nextCursor": null
+}
+```
+
+PostgreSQL only — not available for MySQL, MariaDB, or SQLite.
 
 ### `readQuery`
 
