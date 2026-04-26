@@ -31,7 +31,7 @@ Use when:
 <examples>
 ✓ "What views are in this database?"
 ✓ "Does an active_users view exist?" → listViews to check
-✗ "Show me the columns of a view" → use getTableSchema instead
+✗ "Show me the columns of a view" → use listTables with `detailed: true` instead
 </examples>
 
 <what_it_returns>

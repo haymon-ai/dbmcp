@@ -260,4 +260,30 @@ mod tests {
             connection.pools.entry_count()
         );
     }
+
+    #[tokio::test]
+    async fn fetch_scalar_rejects_invalid_database_identifier() {
+        let connection = PostgresConnection::new(&base_config());
+        let result: Result<Vec<String>, SqlError> = connection
+            .fetch_scalar(sqlx::query("SELECT $1::text").bind("x"), Some("bad\0name"))
+            .await;
+        match result {
+            Err(SqlError::InvalidIdentifier(_)) => {}
+            Err(other) => panic!("expected InvalidIdentifier, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_json_rejects_invalid_database_identifier() {
+        let connection = PostgresConnection::new(&base_config());
+        let result = connection
+            .fetch_json(sqlx::query("SELECT $1::int AS n").bind(1_i32), Some("bad\nname"))
+            .await;
+        match result {
+            Err(SqlError::InvalidIdentifier(_)) => {}
+            Err(other) => panic!("expected InvalidIdentifier, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
 }

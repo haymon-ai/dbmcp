@@ -474,6 +474,7 @@ dependencies = [
  "dbmcp-postgres",
  "dbmcp-server",
  "dbmcp-sqlite",
+ "indexmap",
  "insta",
  "mimalloc",
  "rmcp",
@@ -503,6 +504,7 @@ dependencies = [
  "dbmcp-sql",
  "moka",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "sqlparser",
@@ -520,10 +522,12 @@ dependencies = [
  "dbmcp-sql",
  "moka",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "sqlparser",
  "sqlx",
+ "sqlx-json",
  "tokio",
  "tracing",
 ]
@@ -533,7 +537,9 @@ name = "dbmcp-server"
 version = "0.8.0"
 dependencies = [
  "base64",
+ "indexmap",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -559,6 +565,7 @@ dependencies = [
  "dbmcp-server",
  "dbmcp-sql",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "sqlparser",
@@ -1888,6 +1895,7 @@ checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
  "chrono",
  "dyn-clone",
+ "indexmap",
  "ref-cast",
  "schemars_derive",
  "serde",

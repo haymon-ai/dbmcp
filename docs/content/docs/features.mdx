@@ -28,7 +28,6 @@ Database MCP exposes tools through the MCP protocol. The available tool set depe
 |------|-----------------|------------|--------|------------------------|
 | `listDatabases` | Yes | Yes | No | No |
 | `listTables` | Yes | Yes | Yes | No |
-| `getTableSchema` | Yes | Yes | Yes | No |
 | `readQuery` | Yes | Yes | Yes | No |
 | `writeQuery` | Yes | Yes | Yes | Yes |
 | `createDatabase` | Yes | Yes | No | Yes |
@@ -54,11 +53,47 @@ Discover accessible databases on the connected server. This is typically the fir
 
 ### `listTables`
 
-List tables in a specific database, one page at a time. Requires a database name (use `listDatabases` first on MySQL/MariaDB/PostgreSQL). Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol.
+List tables in a database, one page at a time. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter.
 
-### `getTableSchema`
+The tool accepts two optional parameters that shape the response:
 
-Inspect column definitions for a table — column names, types, nullability, keys, default values, and foreign key relationships (constraint name, referenced table/column, cascade rules). Helps assistants understand both table structure and how tables connect to each other.
+- `search` — a case-insensitive `LIKE`/`ILIKE` pattern filtering on table name. `%` matches any sequence of characters, `_` matches a single character. Pass `users%` for a prefix match, `%order%` for a substring match. A bare word with no wildcards matches only an exact table name (PostgreSQL uses `ILIKE`; MySQL and SQLite use `LIKE`, which is also ASCII-case-insensitive by default).
+- `detailed` — when `true`, the response includes per-table metadata (columns, constraints, indexes, triggers) so a single call enumerates the tables and inspects them. Defaults to `false`.
+
+In **brief mode** (default) the response shape is:
+
+```json
+{
+  "tables": ["customers", "orders", "products"],
+  "nextCursor": "<opaque or absent>"
+}
+```
+
+In **detailed mode** the response is keyed by table name:
+
+```json
+{
+  "tables": {
+    "orders": {
+      "schema": "public",
+      "kind": "TABLE",
+      "owner": "app",
+      "comment": null,
+      "columns": [
+        { "name": "id", "dataType": "bigint", "ordinalPosition": 1, "nullable": false, "default": null, "comment": null }
+      ],
+      "constraints": [
+        { "name": "pk", "type": "PRIMARY KEY", "columns": ["id"], "definition": "PRIMARY KEY (id)" }
+      ],
+      "indexes": [],
+      "triggers": []
+    }
+  },
+  "nextCursor": null
+}
+```
+
+Field availability follows what the backend exposes — `owner` is null on SQLite and MariaDB; PostgreSQL fills `schema` from the catalog while SQLite uses `main`.
 
 ### `readQuery`
 

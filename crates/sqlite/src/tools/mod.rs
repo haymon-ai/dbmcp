@@ -7,7 +7,6 @@
 
 mod drop_table;
 mod explain_query;
-mod get_table_schema;
 mod list_tables;
 mod list_triggers;
 mod list_views;
@@ -16,7 +15,6 @@ mod write_query;
 
 pub(crate) use drop_table::DropTableTool;
 pub(crate) use explain_query::ExplainQueryTool;
-pub(crate) use get_table_schema::GetTableSchemaTool;
 pub(crate) use list_tables::ListTablesTool;
 pub(crate) use list_triggers::ListTriggersTool;
 pub(crate) use list_views::ListViewsTool;

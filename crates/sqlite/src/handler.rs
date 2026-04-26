@@ -16,8 +16,7 @@ use rmcp::{ErrorData, ServerHandler};
 
 use crate::connection::SqliteConnection;
 use crate::tools::{
-    DropTableTool, ExplainQueryTool, GetTableSchemaTool, ListTablesTool, ListTriggersTool, ListViewsTool,
-    ReadQueryTool, WriteQueryTool,
+    DropTableTool, ExplainQueryTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
 };
 
 /// Backend-specific description for `SQLite`.
@@ -26,14 +25,13 @@ const DESCRIPTION: &str = "Database MCP Server for SQLite";
 /// Backend-specific instructions for `SQLite`.
 const INSTRUCTIONS: &str = r"## Workflow
 
-1. Call `listTables` to discover tables in the connected database.
+1. Call `listTables` to discover tables in the connected database. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
 2. Call `listViews` to discover views in the connected database.
 3. Call `listTriggers` to discover triggers in the connected database.
-4. Call `getTableSchema` with a `table` to inspect columns, types, and foreign keys before writing queries.
-5. Use `readQuery` for read-only SQL (SELECT).
-6. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-7. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-8. Use `dropTable` to remove a table from the database.
+4. Use `readQuery` for read-only SQL (SELECT).
+5. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+6. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+7. Use `dropTable` to remove a table from the database.
 
 ## Constraints
 
@@ -88,7 +86,6 @@ fn build_tool_router(read_only: bool) -> ToolRouter<SqliteHandler> {
         .with_async_tool::<ListTablesTool>()
         .with_async_tool::<ListViewsTool>()
         .with_async_tool::<ListTriggersTool>()
-        .with_async_tool::<GetTableSchemaTool>()
         .with_async_tool::<ReadQueryTool>()
         .with_async_tool::<ExplainQueryTool>();
 
@@ -149,19 +146,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_exposes_all_eight_tools_in_read_write_mode() {
+    async fn router_exposes_all_seven_tools_in_read_write_mode() {
         let router = handler(false).tool_router;
         for name in [
             "listTables",
             "listViews",
             "listTriggers",
-            "getTableSchema",
             "dropTable",
             "readQuery",
             "writeQuery",
             "explainQuery",
         ] {
             assert!(router.has_route(name), "missing tool: {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn router_excludes_get_table_schema() {
+        // Spec 046 US4: `getTableSchema` is retired on SQLite. Both read-only and
+        // read-write catalogues must no longer advertise it.
+        for read_only in [false, true] {
+            let router = handler(read_only).tool_router;
+            assert!(
+                !router.has_route("getTableSchema"),
+                "getTableSchema must be absent (read_only={read_only})"
+            );
         }
     }
 
@@ -186,7 +195,6 @@ mod tests {
         assert!(router.has_route("listTables"));
         assert!(router.has_route("listViews"));
         assert!(router.has_route("listTriggers"));
-        assert!(router.has_route("getTableSchema"));
         assert!(router.has_route("readQuery"));
         assert!(router.has_route("explainQuery"));
         assert!(!router.has_route("writeQuery"));

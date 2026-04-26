@@ -9,12 +9,13 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
-use dbmcp_postgres::types::DropTableRequest;
+use dbmcp_postgres::types::{DropTableRequest, ListTablesRequest};
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, GetTableSchemaRequest, ListDatabasesRequest,
-    ListFunctionsRequest, ListMaterializedViewsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
-    ListViewsRequest, QueryRequest, ReadQueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
+    ListMaterializedViewsRequest, ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
+    ReadQueryRequest,
 };
+use indexmap::IndexMap;
 use serde_json::Value;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -153,7 +154,7 @@ async fn test_lists_tables() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let tables = response.tables.as_brief().expect("brief mode").to_vec();
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -161,46 +162,6 @@ async fn test_lists_tables() {
             "Missing '{expected}' in: {tables:?}"
         );
     }
-}
-
-#[tokio::test]
-async fn test_gets_table_schema() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "users".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-
-    assert_eq!(schema.table, "users");
-    let columns = schema.columns.as_object().expect("columns object");
-    for col in ["id", "name", "email", "created_at"] {
-        assert!(columns.contains_key(col), "Missing '{col}' in: {columns:?}");
-    }
-}
-
-#[tokio::test]
-async fn test_gets_table_schema_with_relations() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "posts".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("user_id"), "Missing 'user_id' column");
-    let user_id = columns["user_id"].as_object().expect("user_id object");
-    assert!(
-        user_id.contains_key("foreignKey"),
-        "Missing 'foreignKey' in user_id column"
-    );
-    assert!(
-        !user_id["foreignKey"].is_null(),
-        "foreignKey should not be null for user_id"
-    );
 }
 
 #[tokio::test]
@@ -321,7 +282,7 @@ async fn test_lists_tables_cross_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let tables = response.tables.as_brief().expect("brief mode").to_vec();
 
     assert!(
         tables.iter().any(|t| t == "events"),
@@ -344,26 +305,6 @@ async fn test_executes_sql_cross_database() {
 
     let response = handler.read_query(request).await.unwrap();
     assert_eq!(response.rows.len(), 2, "Expected 2 events, got {}", response.rows.len());
-}
-
-#[tokio::test]
-async fn test_gets_table_schema_cross_database() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("analytics".into()),
-        table: "events".into(),
-    };
-
-    let response = handler.get_table_schema(request).await.unwrap();
-
-    assert_eq!(response.table, "events");
-    let columns = response.columns.as_object().expect("columns object");
-    for col in ["id", "name", "payload", "created_at"] {
-        assert!(
-            columns.contains_key(col),
-            "Missing '{col}' in analytics events schema: {columns:?}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -418,7 +359,7 @@ async fn test_uses_default_pool_for_matching_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let tables = response.tables;
+    let tables = response.tables.as_brief().expect("brief mode").to_vec();
 
     assert!(
         tables.iter().any(|t| t == "users"),
@@ -499,7 +440,7 @@ async fn test_drop_table_success() {
         ..Default::default()
     };
     let response = handler.list_tables(tables_request).await.unwrap();
-    let tables = response.tables;
+    let tables = response.tables.as_brief().expect("brief mode").to_vec();
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -682,30 +623,6 @@ async fn test_explain_query_invalid_query() {
 }
 
 #[tokio::test]
-async fn test_get_table_schema_nonexistent_table() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "nonexistent_table_xyz".into(),
-    };
-
-    let response = handler.get_table_schema(request).await;
-    assert!(response.is_err(), "Expected error for nonexistent table");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_invalid_table_name() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: String::new(),
-    };
-
-    let response = handler.get_table_schema(request).await;
-    assert!(response.is_err(), "Expected error for empty table name");
-}
-
-#[tokio::test]
 async fn test_create_database_already_exists() {
     let handler = handler(false);
     let request = CreateDatabaseRequest { database: "app".into() };
@@ -745,10 +662,10 @@ async fn test_list_tables_empty_database_falls_back_to_default() {
         .list_tables(request)
         .await
         .expect("empty db should default to --db-name");
+    let names = response.tables.as_brief().expect("brief mode");
     assert!(
-        response.tables.iter().any(|t| t == "users"),
-        "expected default-database tables, got {:?}",
-        response.tables
+        names.iter().any(|t| t == "users"),
+        "expected default-database tables, got {names:?}"
     );
 }
 
@@ -764,10 +681,10 @@ async fn test_list_tables_omitted_database_falls_back_to_default() {
         .list_tables(request)
         .await
         .expect("omitted db should default to --db-name");
+    let names = response.tables.as_brief().expect("brief mode");
     assert!(
-        response.tables.iter().any(|t| t == "users"),
-        "expected default-database tables, got {:?}",
-        response.tables
+        names.iter().any(|t| t == "users"),
+        "expected default-database tables, got {names:?}"
     );
 }
 
@@ -869,35 +786,6 @@ async fn test_write_query_cross_database() {
         database: Some("analytics".into()),
     };
     handler.write_query(delete).await.unwrap();
-}
-
-#[tokio::test]
-async fn test_get_table_schema_junction_table() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "post_tags".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table, "post_tags");
-
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("post_id"), "Missing 'post_id'");
-    assert!(columns.contains_key("tag_id"), "Missing 'tag_id'");
-
-    // Both columns should have foreign keys
-    let post_id = columns["post_id"].as_object().expect("post_id object");
-    assert!(
-        post_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
-        "post_id should have a foreign key"
-    );
-
-    let tag_id = columns["tag_id"].as_object().expect("tag_id object");
-    assert!(
-        tag_id.get("foreignKey").is_some_and(|fk| !fk.is_null()),
-        "tag_id should have a foreign key"
-    );
 }
 
 #[tokio::test]
@@ -1031,30 +919,6 @@ async fn test_write_query_invalid_sql() {
 }
 
 #[tokio::test]
-async fn test_get_table_schema_column_details() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "users".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    let columns = schema.columns.as_object().expect("columns object");
-
-    // Verify email column type
-    let email_col = columns["email"].as_object().expect("email object");
-    let col_type = email_col.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(
-        col_type.to_lowercase().contains("character varying") || col_type.to_lowercase().contains("varchar"),
-        "email type should contain 'character varying' or 'varchar', got: {col_type}"
-    );
-
-    // Verify nullable field
-    let nullable = email_col.get("nullable").and_then(Value::as_bool);
-    assert_eq!(nullable, Some(false), "email should be NOT NULL");
-}
-
-#[tokio::test]
 async fn test_read_query_with_limit() {
     let handler = handler(false);
     let request = ReadQueryRequest {
@@ -1102,21 +966,6 @@ async fn test_read_query_with_line_comment() {
     let response = handler.read_query(request).await.unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Line-comment prefixed SELECT should work");
-}
-
-#[tokio::test]
-async fn test_get_table_schema_no_foreign_keys() {
-    let handler = handler(false);
-    let request = GetTableSchemaRequest {
-        database: Some("app".into()),
-        table: "tags".into(),
-    };
-
-    let schema = handler.get_table_schema(request).await.unwrap();
-    assert_eq!(schema.table, "tags");
-    let columns = schema.columns.as_object().expect("columns object");
-    assert!(columns.contains_key("id"));
-    assert!(columns.contains_key("name"));
 }
 
 #[tokio::test]
@@ -1203,9 +1052,10 @@ async fn collect_all_paged(handler: &PostgresHandler) -> Vec<String> {
         let request = ListTablesRequest {
             database: Some(PG_DB.into()),
             cursor,
+            ..Default::default()
         };
         let response = handler.list_tables(request).await.expect("list page");
-        all.extend(response.tables);
+        all.extend(response.tables.as_brief().expect("brief mode").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1229,8 +1079,9 @@ async fn test_list_tables_pagination_traverses_pages() {
         .await
         .expect("single page");
 
+    let single_page_names = single_page.tables.as_brief().expect("brief mode").to_vec();
     assert_eq!(
-        collected, single_page.tables,
+        collected, single_page_names,
         "paged traversal must yield identical results (and ordering) to a single full page"
     );
     let unique: std::collections::HashSet<&String> = collected.iter().collect();
@@ -1294,6 +1145,7 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
     let request = ListTablesRequest {
         database: Some(PG_DB.into()),
         cursor: Some(Cursor { offset: 10_000 }),
+        ..Default::default()
     };
     let response = handler.list_tables(request).await.unwrap();
 
@@ -2009,5 +1861,312 @@ async fn test_list_materialized_views_empty_for_empty_database() {
         response.materialized_views.is_empty(),
         "analytics has no matviews, got {:?}",
         response.materialized_views
+    );
+}
+
+/// Returns a cloned Vec<String> of matched table names for a given search term.
+async fn search_names(handler: &PostgresHandler, search: &str) -> Vec<String> {
+    let request = ListTablesRequest {
+        database: Some(PG_DB.into()),
+        search: Some(search.into()),
+        ..Default::default()
+    };
+    let response = handler.list_tables(request).await.expect("listTables ok");
+    response.tables.as_brief().expect("brief mode").to_vec()
+}
+
+#[tokio::test]
+async fn test_list_tables_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let names = search_names(&handler, "order").await;
+    assert_eq!(
+        names,
+        vec!["erp_orders", "order_items", "orders"],
+        "search 'order' must return only matching tables, alphabetically"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_search_is_case_insensitive() {
+    let handler = handler(true);
+    assert_eq!(
+        search_names(&handler, "order").await,
+        search_names(&handler, "ORDER").await,
+        "ILIKE must be case-insensitive"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let names = search_names(&handler, "nonexistent_concept_xyz").await;
+    assert!(names.is_empty(), "no match must return empty, got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_tables_search_supports_like_wildcards() {
+    // `_` is the LIKE single-char wildcard — `_rder` must match any name
+    // with one char + `rder` (e.g. `orders`, `order_items`, `erp_orders`).
+    let handler = handler(true);
+    let names = search_names(&handler, "_rder").await;
+    assert_eq!(names, vec!["erp_orders", "order_items", "orders"]);
+}
+
+#[tokio::test]
+async fn test_list_tables_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let with_empty = search_names(&handler, "").await;
+    let without = handler
+        .list_tables(ListTablesRequest {
+            database: Some(PG_DB.into()),
+            ..Default::default()
+        })
+        .await
+        .expect("listTables ok")
+        .tables
+        .as_brief()
+        .expect("brief")
+        .to_vec();
+    assert_eq!(with_empty, without, "empty search must behave like no filter");
+}
+
+#[tokio::test]
+async fn test_list_tables_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\", "%", "_"] {
+        let result = handler
+            .list_tables(ListTablesRequest {
+                database: Some(PG_DB.into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "adversarial search payload {payload:?} must not raise a SQL error: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_tables_search_paginates_filtered_results() {
+    let handler = handler_with_page_size(2);
+    // Collect every page with the filter held constant.
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = handler
+            .list_tables(ListTablesRequest {
+                database: Some(PG_DB.into()),
+                cursor,
+                search: Some("order".into()),
+                detailed: false,
+            })
+            .await
+            .expect("page");
+        collected.extend(response.tables.as_brief().expect("brief mode").iter().cloned());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert_eq!(
+        collected,
+        vec!["erp_orders", "order_items", "orders"],
+        "filter must hold across pages"
+    );
+}
+
+/// Returns the keyed detailed-mode map (table name → metadata) for a search term.
+async fn detailed_entries(handler: &PostgresHandler, search: &str) -> IndexMap<String, Value> {
+    let request = ListTablesRequest {
+        database: Some(PG_DB.into()),
+        search: Some(search.into()),
+        detailed: true,
+        ..Default::default()
+    };
+    let response = handler.list_tables(request).await.expect("listTables detailed ok");
+    response.tables.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_returns_full_metadata_for_orders() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "orders").await;
+    let orders = entries.get("orders").expect("orders entry present");
+    assert_eq!(orders["kind"], "TABLE");
+    assert_eq!(orders["schema"], "public");
+
+    // Columns — check a few by name.
+    let columns = orders["columns"].as_array().expect("columns array");
+    let col_names: Vec<_> = columns
+        .iter()
+        .filter_map(|c| c["name"].as_str().map(String::from))
+        .collect();
+    for expected in ["id", "customer_id", "total", "status", "created_at"] {
+        assert!(col_names.contains(&expected.into()), "missing column: {expected}");
+    }
+    let status = columns.iter().find(|c| c["name"] == "status").expect("status column");
+    assert_eq!(status["nullable"], false);
+
+    // Constraints — PRIMARY KEY, FOREIGN KEY, CHECK at minimum.
+    let constraints = orders["constraints"].as_array().expect("constraints array");
+    let types: Vec<_> = constraints
+        .iter()
+        .filter_map(|c| c["type"].as_str().map(String::from))
+        .collect();
+    assert!(types.contains(&"PRIMARY KEY".into()), "no PRIMARY KEY: {types:?}");
+    assert!(types.contains(&"FOREIGN KEY".into()), "no FOREIGN KEY: {types:?}");
+    assert!(types.contains(&"CHECK".into()), "no CHECK: {types:?}");
+    let fk = constraints.iter().find(|c| c["type"] == "FOREIGN KEY").expect("FK row");
+    assert_eq!(fk["referencedTable"], "customers");
+    assert_eq!(fk["referencedColumns"].as_array().expect("refcols").len(), 1);
+
+    // Indexes — primary + secondary.
+    let indexes = orders["indexes"].as_array().expect("indexes array");
+    let names: Vec<_> = indexes
+        .iter()
+        .filter_map(|i| i["name"].as_str().map(String::from))
+        .collect();
+    assert!(names.iter().any(|n| n == "orders_pkey"), "no primary index: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "orders_customer_created_idx"),
+        "no secondary index: {names:?}"
+    );
+
+    // Triggers.
+    let triggers = orders["triggers"].as_array().expect("triggers array");
+    let trigger_names: Vec<_> = triggers
+        .iter()
+        .filter_map(|t| t["name"].as_str().map(String::from))
+        .collect();
+    assert!(
+        trigger_names.iter().any(|n| n == "orders_audit_trigger"),
+        "no trigger: {trigger_names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_distinguishes_partitioned_tables() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "logs").await;
+    let logs = entries.get("logs").expect("logs entry present");
+    assert_eq!(logs["kind"], "PARTITIONED_TABLE");
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_empty_arrays_when_no_metadata() {
+    let handler = handler(true);
+    // `inventory` has a PK and a UNIQUE on sku but no trigger and no non-index constraints besides those.
+    let entries = detailed_entries(&handler, "inventory").await;
+    let inventory = entries.get("inventory").expect("inventory entry present");
+    assert!(inventory["triggers"].is_array(), "triggers must be array");
+    assert!(inventory["constraints"].is_array(), "constraints must be array");
+    assert!(inventory["indexes"].is_array(), "indexes must be array");
+    assert!(inventory["columns"].is_array(), "columns must be array");
+    assert_eq!(
+        inventory["triggers"].as_array().expect("array").len(),
+        0,
+        "inventory has no triggers"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_brief_without_parameters_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_tables(ListTablesRequest {
+            database: Some(PG_DB.into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list");
+    let value = serde_json::to_value(&response.tables).expect("serialize");
+    assert!(
+        value
+            .as_array()
+            .expect("array")
+            .first()
+            .expect("at least one")
+            .is_string(),
+        "brief-mode entries must be strings on the wire, got {value:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_with_search_only_fetches_filtered_subset() {
+    let handler = handler(true);
+    // "order" matches three tables: erp_orders, order_items, orders.
+    let entries = detailed_entries(&handler, "order").await;
+    let names: Vec<_> = entries.keys().cloned().collect();
+    assert_eq!(
+        names,
+        vec!["erp_orders", "order_items", "orders"],
+        "detailed search must return only filtered subset"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_values_have_no_redundant_name_field() {
+    let handler = handler(true);
+    let entries = detailed_entries(&handler, "order").await;
+    assert!(!entries.is_empty(), "fixture must yield at least one match for 'order'");
+    for (key, value) in &entries {
+        assert!(value.is_object(), "value for {key} must be a JSON object: {value}");
+        assert!(
+            value.get("name").is_none(),
+            "FR-002 violated: value for {key} still carries 'name': {value}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_paginates() {
+    let handler = handler_with_page_size(1);
+    let mut collected_names: Vec<String> = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = handler
+            .list_tables(ListTablesRequest {
+                database: Some(PG_DB.into()),
+                cursor,
+                search: Some("order".into()),
+                detailed: true,
+            })
+            .await
+            .expect("page");
+        let entries = response.tables.as_detailed().expect("detailed");
+        assert!(entries.len() <= 1, "page_size=1 must cap to 1 per page");
+        collected_names.extend(entries.keys().cloned());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert_eq!(
+        collected_names,
+        vec!["erp_orders", "order_items", "orders"],
+        "detailed pagination must yield filtered sequence"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_key_order_matches_brief_order() {
+    let handler = handler(true);
+    let brief = handler
+        .list_tables(ListTablesRequest {
+            database: Some(PG_DB.into()),
+            search: Some("order".into()),
+            detailed: false,
+            ..Default::default()
+        })
+        .await
+        .expect("listTables brief ok");
+    let detailed = detailed_entries(&handler, "order").await;
+    let brief_names: Vec<String> = brief.tables.as_brief().expect("brief mode").to_vec();
+    let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
+    assert_eq!(
+        brief_names, detailed_keys,
+        "detailed key order must match brief string order — FR-003"
     );
 }

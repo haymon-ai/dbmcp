@@ -136,6 +136,64 @@ CREATE MATERIALIZED VIEW mv_recent_orders AS
 CREATE MATERIALIZED VIEW mv_user_cohort AS
     SELECT id, name FROM users;
 
+-- Additional fixtures for listTables search + detailed mode (spec 043)
+--
+-- Exercises case-insensitive substring filter, literal-wildcard safety, and the
+-- full detailed payload (PK, FK, UNIQUE, CHECK, multiple indexes, trigger,
+-- comments, partitioned-table kind).
+
+CREATE TABLE customers (
+    id           BIGSERIAL PRIMARY KEY,
+    email        TEXT NOT NULL UNIQUE,
+    display_name TEXT
+);
+COMMENT ON TABLE customers IS 'End customers of the shop';
+COMMENT ON COLUMN customers.email IS 'Login and contact email';
+
+CREATE TABLE orders (
+    id           BIGSERIAL PRIMARY KEY,
+    customer_id  BIGINT NOT NULL REFERENCES customers(id),
+    total        NUMERIC(12, 2) NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'new',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT orders_status_check CHECK (status IN ('new', 'paid', 'shipped'))
+);
+CREATE INDEX orders_customer_created_idx ON orders (customer_id, created_at);
+
+CREATE TABLE erp_orders (
+    id           BIGSERIAL PRIMARY KEY,
+    external_ref TEXT
+);
+
+CREATE TABLE order_items (
+    id       BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id),
+    sku      TEXT NOT NULL,
+    qty      INTEGER NOT NULL
+);
+
+CREATE TABLE inventory (
+    id  BIGSERIAL PRIMARY KEY,
+    sku TEXT UNIQUE
+);
+
+CREATE OR REPLACE FUNCTION orders_audit_fn() RETURNS trigger AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER orders_audit_trigger
+    AFTER INSERT OR UPDATE ON orders
+    FOR EACH ROW EXECUTE FUNCTION orders_audit_fn();
+
+-- Partitioned table exercises the `kind` field in the detailed payload.
+CREATE TABLE logs (
+    id        BIGSERIAL,
+    logged_at TIMESTAMPTZ NOT NULL,
+    payload   TEXT
+) PARTITION BY RANGE (logged_at);
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

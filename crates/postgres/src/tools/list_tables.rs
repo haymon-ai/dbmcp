@@ -3,9 +3,9 @@
 use std::borrow::Cow;
 
 use dbmcp_server::pagination::Pager;
-use dbmcp_server::types::{ListTablesRequest, ListTablesResponse};
-use dbmcp_sql::Connection as _;
-use dbmcp_sql::sanitize::validate_ident;
+use dbmcp_sql::Connection;
+
+use crate::types::{ListTablesRequest, ListTablesResponse};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -17,27 +17,35 @@ pub(crate) struct ListTablesTool;
 impl ListTablesTool {
     const NAME: &'static str = "listTables";
     const TITLE: &'static str = "List Tables";
-    const DESCRIPTION: &'static str = r#"List all tables in a database.
+    const DESCRIPTION: &'static str = r#"List tables in a database, optionally filtered and/or with full metadata.
 
 <usecase>
 Use when:
-- Exploring a database to find relevant tables
-- Verifying a table exists before querying or inspecting it
-- The user asks what tables are in a database
+- Exploring a database to find relevant tables (brief mode, default).
+- Searching for a table by partial name (pass `search`).
+- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` tool.
 </usecase>
 
+<parameters>
+- `database` — Database to target. Defaults to the active database.
+- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.
+- `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.
+- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.
+</parameters>
+
 <examples>
-✓ "What tables are in the mydb database?" → listTables(database="mydb")
-✓ "Does a users table exist?" → listTables to check
-✗ "Show me the columns of users" → use getTableSchema instead
+✓ "What tables are in mydb?" → listTables(database="mydb")
+✓ "Find the orders table" → listTables(search="order")
+✓ "What columns does orders have?" → listTables(search="orders", detailed=true)
 </examples>
 
 <what_it_returns>
-A sorted JSON array of table name strings.
+Brief mode (default): a sorted JSON array of table-name strings, e.g. `["customers", "orders"]`.
+Detailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{"orders": {"schema": "public", "kind": "TABLE", …}}`.
 </what_it_returns>
 
 <pagination>
-Paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.
+Paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.
 </pagination>"#;
 }
 
@@ -75,8 +83,165 @@ impl AsyncTool<PostgresHandler> for ListTablesTool {
     }
 }
 
+/// Brief-mode SQL: single `pg_tables` scan with optional `ILIKE` filter.
+const BRIEF_SQL: &str = r"
+    SELECT tablename
+    FROM pg_tables
+    WHERE schemaname = 'public'
+      AND ($1::text IS NULL OR tablename ILIKE '%' || $1 || '%')
+    ORDER BY tablename
+    LIMIT $2 OFFSET $3";
+
+/// Detailed-mode SQL: single CTE returning one `json_build_object` per table.
+///
+/// `LIMIT`/`OFFSET` are pushed into `table_info` so every downstream CTE
+/// scans at most `page_size + 1` tables, never the full schema.
+const DETAILED_SQL: &str = r"
+    WITH table_info AS (
+        SELECT
+            t.oid AS table_oid,
+            ns.nspname AS schema_name,
+            t.relname AS table_name,
+            pg_get_userbyid(t.relowner) AS table_owner,
+            obj_description(t.oid, 'pg_class') AS table_comment,
+            t.relkind AS object_kind
+        FROM pg_class t
+        JOIN pg_namespace ns ON ns.oid = t.relnamespace
+        WHERE t.relkind IN ('r', 'p')
+          AND ns.nspname = 'public'
+          AND ($1::text IS NULL OR t.relname ILIKE '%' || $1 || '%')
+        ORDER BY t.relname
+        LIMIT $2 OFFSET $3
+    ),
+    columns_info AS (
+        SELECT
+            att.attrelid AS table_oid,
+            att.attname AS column_name,
+            format_type(att.atttypid, att.atttypmod) AS data_type,
+            att.attnum AS ordinal_position,
+            NOT att.attnotnull AS nullable,
+            pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+            col_description(att.attrelid, att.attnum) AS column_comment
+        FROM pg_attribute att
+        LEFT JOIN pg_attrdef ad ON att.attrelid = ad.adrelid AND att.attnum = ad.adnum
+        JOIN table_info ti ON att.attrelid = ti.table_oid
+        WHERE att.attnum > 0 AND NOT att.attisdropped
+    ),
+    constraints_info AS (
+        SELECT
+            con.conrelid AS table_oid,
+            con.conname AS constraint_name,
+            pg_get_constraintdef(con.oid) AS constraint_definition,
+            CASE con.contype
+                WHEN 'p' THEN 'PRIMARY KEY'
+                WHEN 'f' THEN 'FOREIGN KEY'
+                WHEN 'u' THEN 'UNIQUE'
+                WHEN 'c' THEN 'CHECK'
+                ELSE con.contype::text
+            END AS constraint_type,
+            COALESCE((
+                SELECT array_agg(att.attname ORDER BY u.attposition)
+                FROM unnest(con.conkey) WITH ORDINALITY AS u(attnum, attposition)
+                JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
+            ), ARRAY[]::name[]) AS constraint_columns,
+            CASE WHEN con.confrelid <> 0
+                 THEN (con.confrelid::regclass)::text
+                 ELSE NULL END AS referenced_table,
+            (
+                SELECT array_agg(att.attname ORDER BY u.attposition)
+                FROM unnest(con.confkey) WITH ORDINALITY AS u(attnum, attposition)
+                JOIN pg_attribute att ON att.attrelid = con.confrelid AND att.attnum = u.attnum
+                WHERE con.contype = 'f'
+            ) AS referenced_columns
+        FROM pg_constraint con
+        JOIN table_info ti ON con.conrelid = ti.table_oid
+        WHERE con.contype IN ('p', 'f', 'u', 'c')
+    ),
+    indexes_info AS (
+        SELECT
+            idx.indrelid AS table_oid,
+            ic.relname AS index_name,
+            pg_get_indexdef(idx.indexrelid) AS index_definition,
+            idx.indisunique AS is_unique,
+            idx.indisprimary AS is_primary,
+            am.amname AS index_method,
+            (
+                SELECT array_agg(att.attname ORDER BY u.ord)
+                FROM unnest(idx.indkey::int[]) WITH ORDINALITY AS u(colidx, ord)
+                LEFT JOIN pg_attribute att ON att.attrelid = idx.indrelid AND att.attnum = u.colidx
+                WHERE u.colidx <> 0
+            ) AS index_columns
+        FROM pg_index idx
+        JOIN pg_class ic ON ic.oid = idx.indexrelid
+        JOIN pg_am am ON am.oid = ic.relam
+        JOIN table_info ti ON idx.indrelid = ti.table_oid
+    ),
+    triggers_info AS (
+        SELECT
+            tg.tgrelid AS table_oid,
+            tg.tgname AS trigger_name,
+            pg_get_triggerdef(tg.oid) AS trigger_definition,
+            tg.tgenabled::text AS trigger_enabled
+        FROM pg_trigger tg
+        JOIN table_info ti ON tg.tgrelid = ti.table_oid
+        WHERE NOT tg.tgisinternal
+    )
+    SELECT ti.table_name AS name, json_build_object(
+        'schema',  ti.schema_name,
+        'kind',    CASE ti.object_kind
+                       WHEN 'r' THEN 'TABLE'
+                       WHEN 'p' THEN 'PARTITIONED_TABLE'
+                       ELSE ti.object_kind::text
+                   END,
+        'owner',   ti.table_owner,
+        'comment', ti.table_comment,
+        'columns', COALESCE((
+            SELECT json_agg(json_build_object(
+                'name',            ci.column_name,
+                'dataType',        ci.data_type,
+                'ordinalPosition', ci.ordinal_position,
+                'nullable',        ci.nullable,
+                'default',         ci.column_default,
+                'comment',         ci.column_comment
+            ) ORDER BY ci.ordinal_position)
+            FROM columns_info ci WHERE ci.table_oid = ti.table_oid
+        ), '[]'::json),
+        'constraints', COALESCE((
+            SELECT json_agg(json_build_object(
+                'name',              cons.constraint_name,
+                'type',              cons.constraint_type,
+                'columns',           cons.constraint_columns,
+                'definition',        cons.constraint_definition,
+                'referencedTable',   cons.referenced_table,
+                'referencedColumns', cons.referenced_columns
+            ))
+            FROM constraints_info cons WHERE cons.table_oid = ti.table_oid
+        ), '[]'::json),
+        'indexes', COALESCE((
+            SELECT json_agg(json_build_object(
+                'name',       ii.index_name,
+                'columns',    ii.index_columns,
+                'unique',     ii.is_unique,
+                'primary',    ii.is_primary,
+                'method',     ii.index_method,
+                'definition', ii.index_definition
+            ))
+            FROM indexes_info ii WHERE ii.table_oid = ti.table_oid
+        ), '[]'::json),
+        'triggers', COALESCE((
+            SELECT json_agg(json_build_object(
+                'name',       tri.trigger_name,
+                'definition', tri.trigger_definition,
+                'enabled',    tri.trigger_enabled
+            ))
+            FROM triggers_info tri WHERE tri.table_oid = ti.table_oid
+        ), '[]'::json)
+    ) AS entry
+    FROM table_info ti
+    ORDER BY ti.schema_name, ti.table_name";
+
 impl PostgresHandler {
-    /// Lists one page of tables in a database.
+    /// Lists one page of tables in a database, optionally filtered and/or detailed.
     ///
     /// # Errors
     ///
@@ -85,30 +250,65 @@ impl PostgresHandler {
     /// or the underlying query fails.
     pub async fn list_tables(
         &self,
-        ListTablesRequest { database, cursor }: ListTablesRequest,
+        ListTablesRequest {
+            database,
+            cursor,
+            search,
+            detailed,
+        }: ListTablesRequest,
     ) -> Result<ListTablesResponse, ErrorData> {
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(validate_ident)
-            .transpose()?;
+        // Identifier validation runs inside the connection pool — passing the
+        // trimmed name straight through avoids a redundant round-trip check.
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let pager = Pager::new(cursor, self.config.page_size);
-        let query = format!(
-            r"
-            SELECT tablename
-            FROM pg_tables
-            WHERE schemaname = 'public'
-            ORDER BY tablename
-            LIMIT {} OFFSET {}",
-            pager.limit(),
-            pager.offset(),
-        );
+        let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), database).await?;
-        let (tables, next_cursor) = pager.finalize(rows);
+        if detailed {
+            return self.list_tables_detailed(database, pattern, pager).await;
+        }
 
-        Ok(ListTablesResponse { tables, next_cursor })
+        self.list_tables_brief(database, pattern, pager).await
+    }
+
+    /// Detailed-mode page: returns name-keyed metadata via [`ListTablesResponse::detailed`].
+    async fn list_tables_detailed(
+        &self,
+        database: Option<&str>,
+        pattern: Option<&str>,
+        pager: Pager,
+    ) -> Result<ListTablesResponse, ErrorData> {
+        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
+            .connection
+            .fetch(
+                sqlx::query(DETAILED_SQL)
+                    .bind(pattern)
+                    .bind(pager.limit())
+                    .bind(pager.offset()),
+                database,
+            )
+            .await?;
+        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
+        Ok(ListTablesResponse::detailed(pairs, pager))
+    }
+
+    /// Brief-mode page: returns sorted table-name strings via [`ListTablesResponse::brief`].
+    async fn list_tables_brief(
+        &self,
+        database: Option<&str>,
+        pattern: Option<&str>,
+        pager: Pager,
+    ) -> Result<ListTablesResponse, ErrorData> {
+        let rows: Vec<String> = self
+            .connection
+            .fetch_scalar(
+                sqlx::query(BRIEF_SQL)
+                    .bind(pattern)
+                    .bind(pager.limit())
+                    .bind(pager.offset()),
+                database,
+            )
+            .await?;
+        Ok(ListTablesResponse::brief(rows, pager))
     }
 }

@@ -33,7 +33,7 @@ Use when:
 <when_not_to_use>
 - Data changes (INSERT, UPDATE, DELETE) → use writeQuery
 - Query performance analysis → use explainQuery
-- Discovering tables or columns → use listTables or getTableSchema
+- Discovering tables or columns → use listTables (pass `detailed: true` to get columns, keys, and indexes)
 </when_not_to_use>
 
 <examples>
