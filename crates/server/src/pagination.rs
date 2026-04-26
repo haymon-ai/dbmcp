@@ -79,7 +79,7 @@ impl JsonSchema for Cursor {
 #[derive(Debug, Clone, Copy)]
 pub struct Pager {
     offset: u64,
-    size: usize,
+    size: u16,
 }
 
 impl Pager {
@@ -88,20 +88,27 @@ impl Pager {
     pub fn new(cursor: Option<Cursor>, size: u16) -> Self {
         Self {
             offset: cursor.map_or(0, |c| c.offset),
-            size: usize::from(size),
+            size,
         }
     }
 
     /// Row offset at which this page starts.
+    ///
+    /// Returned as `i64` so the value is directly bindable to sqlx
+    /// LIMIT/OFFSET placeholders across every backend. Saturates at
+    /// [`i64::MAX`] for cursor offsets that exceed the signed range.
     #[must_use]
-    pub fn offset(&self) -> u64 {
-        self.offset
+    pub fn offset(&self) -> i64 {
+        i64::try_from(self.offset).unwrap_or(i64::MAX)
     }
 
     /// Row count to fetch from the backend (`size + 1`, for lookahead).
+    ///
+    /// Returned as `i64` for direct sqlx binding. Capped at `u16::MAX + 1`
+    /// since `size` is constructed from a `u16`.
     #[must_use]
-    pub fn limit(&self) -> usize {
-        self.size + 1
+    pub fn limit(&self) -> i64 {
+        i64::from(self.size) + 1
     }
 
     /// Trims over-fetched items to `size` and derives the next cursor.
@@ -111,9 +118,10 @@ impl Pager {
     /// returned unchanged with `None`.
     #[must_use]
     pub fn finalize<T>(&self, mut items: Vec<T>) -> (Vec<T>, Option<Cursor>) {
-        if items.len() > self.size {
-            items.truncate(self.size);
-            let offset = self.offset + self.size as u64;
+        let size = usize::from(self.size);
+        if items.len() > size {
+            items.truncate(size);
+            let offset = self.offset + u64::from(self.size);
             (items, Some(Cursor { offset }))
         } else {
             (items, None)

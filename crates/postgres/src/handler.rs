@@ -17,9 +17,9 @@ use rmcp::{ErrorData, ServerHandler};
 use crate::connection::PostgresConnection;
 
 use crate::tools::{
-    CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, GetTableSchemaTool, ListDatabasesTool,
-    ListFunctionsTool, ListMaterializedViewsTool, ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool,
-    ReadQueryTool, WriteQueryTool,
+    CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, ListDatabasesTool, ListFunctionsTool,
+    ListMaterializedViewsTool, ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool,
+    WriteQueryTool,
 };
 
 /// Backend-specific description for `PostgreSQL`.
@@ -29,19 +29,18 @@ const DESCRIPTION: &str = "Database MCP Server for PostgreSQL";
 const INSTRUCTIONS: &str = r"## Workflow
 
 1. Call `listDatabases` to discover available databases.
-2. Call `listTables` to see tables.
+2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
 3. Call `listViews` to see views in the `public` schema.
 4. Call `listTriggers` to see user-defined triggers in the `public` schema.
 5. Call `listFunctions` to see user-defined functions in the `public` schema.
 6. Call `listProcedures` to see user-defined procedures in the `public` schema.
 7. Call `listMaterializedViews` to see materialized views in the `public` schema.
-8. Call `getTableSchema` to inspect columns, types, and foreign keys before writing queries.
-9. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).
-10. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-11. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-12. Use `createDatabase` to create a new database.
-13. Use `dropDatabase` to drop an existing database.
-14. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).
+8. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).
+9. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
+10. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+11. Use `createDatabase` to create a new database.
+12. Use `dropDatabase` to drop an existing database.
+13. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).
 
 Per-database tools default to the active database; pass `database` to target another.
 
@@ -104,7 +103,6 @@ fn build_tool_router(read_only: bool) -> ToolRouter<PostgresHandler> {
         .with_async_tool::<ListFunctionsTool>()
         .with_async_tool::<ListProceduresTool>()
         .with_async_tool::<ListMaterializedViewsTool>()
-        .with_async_tool::<GetTableSchemaTool>()
         .with_async_tool::<ReadQueryTool>()
         .with_async_tool::<ExplainQueryTool>();
 
@@ -183,7 +181,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_exposes_all_fourteen_tools_in_read_write_mode() {
+    async fn router_exposes_all_thirteen_tools_in_read_write_mode() {
         let router = handler(false).tool_router;
         for name in [
             "listDatabases",
@@ -193,7 +191,6 @@ mod tests {
             "listFunctions",
             "listProcedures",
             "listMaterializedViews",
-            "getTableSchema",
             "readQuery",
             "explainQuery",
             "createDatabase",
@@ -215,12 +212,27 @@ mod tests {
         assert!(router.has_route("listFunctions"));
         assert!(router.has_route("listProcedures"));
         assert!(router.has_route("listMaterializedViews"));
-        assert!(router.has_route("getTableSchema"));
         assert!(router.has_route("readQuery"));
         assert!(router.has_route("explainQuery"));
         assert!(!router.has_route("writeQuery"));
         assert!(!router.has_route("createDatabase"));
         assert!(!router.has_route("dropDatabase"));
         assert!(!router.has_route("dropTable"));
+    }
+
+    #[tokio::test]
+    async fn router_does_not_expose_get_table_schema() {
+        // Postgres drops `getTableSchema` in favour of `listTables({detailed: true})`.
+        // MySQL and SQLite still expose it; their routers are tested separately.
+        let rw = handler(false).tool_router;
+        let ro = handler(true).tool_router;
+        assert!(
+            !rw.has_route("getTableSchema"),
+            "read-write router must not expose getTableSchema"
+        );
+        assert!(
+            !ro.has_route("getTableSchema"),
+            "read-only router must not expose getTableSchema"
+        );
     }
 }

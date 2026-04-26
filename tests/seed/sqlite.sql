@@ -29,6 +29,19 @@ CREATE TABLE IF NOT EXISTS post_tags (
     CONSTRAINT fk_post_tags_tag FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
+-- Secondary indexes on posts for detailed-mode coverage (spec 046 US2).
+CREATE UNIQUE INDEX IF NOT EXISTS posts_user_title_uidx ON posts (user_id, title);
+CREATE INDEX IF NOT EXISTS posts_published_idx ON posts (published, id);
+
+-- WITHOUT ROWID table — spec 046 edge case.
+CREATE TABLE IF NOT EXISTS lookup_codes (
+    code TEXT PRIMARY KEY,
+    label TEXT
+) WITHOUT ROWID;
+
+-- FTS5 virtual table — spec 046 US2 virtual-table kind coverage.
+CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(title, body);
+
 -- Sample data: 3 users
 INSERT INTO users (name, email) VALUES
     ('Alice Johnson', 'alice@example.com'),

@@ -91,7 +91,7 @@ impl PostgresHandler {
         validate_ident(&database)?;
 
         let create_sql = format!("CREATE DATABASE {}", quote_ident(&database, &PostgreSqlDialect {}));
-        self.connection.execute(&create_sql, None).await.map_err(|e| {
+        self.connection.execute(create_sql.as_str(), None).await.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("already exists") {
                 return SqlError::Query(format!("Database '{database}' already exists."));

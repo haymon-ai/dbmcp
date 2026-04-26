@@ -1,13 +1,12 @@
 ---
 source: tests/approval/sqlite.rs
-assertion_line: 46
 expression: tools
 ---
 [
   {
     "name": "explainQuery",
     "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery or writeQuery\n- Checking table structure → use getTableSchema\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explainQuery\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n</what_it_returns>",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery or writeQuery\n- Checking table structure → use listTables with `detailed: true`\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explainQuery\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `explainQuery` tool.",
@@ -47,59 +46,58 @@ expression: tools
     }
   },
   {
-    "name": "getTableSchema",
-    "title": "Get Table Schema",
-    "description": "Get column definitions and foreign key relationships for a table. Requires `table` — call `listTables` first.\n\n<usecase>\nALWAYS call this before writing queries to understand:\n- Column names and data types\n- Which columns are nullable, primary keys, or have defaults\n- Foreign key relationships for writing JOINs\n</usecase>\n\n<examples>\n✓ \"What columns does the orders table have?\" → getTableSchema(table=\"orders\")\n✓ Before writing a SELECT → getTableSchema first to confirm column names\n✓ \"How are users and orders related?\" → check foreign keys in both tables\n</examples>\n\n<what_it_returns>\nA JSON object with table and columns keyed by column name, each containing type, nullable, key, default, and foreignKey info.\n</what_it_returns>",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `getTableSchema` tool.",
-      "properties": {
-        "table": {
-          "description": "The table name to inspect. Use `listTables` first to see available tables.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "table"
-      ],
-      "title": "GetTableSchemaRequest",
-      "type": "object"
-    },
-    "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `getTableSchema` tool.",
-      "properties": {
-        "columns": {
-          "description": "Column definitions keyed by column name."
-        },
-        "table": {
-          "description": "Name of the inspected table.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "table",
-        "columns"
-      ],
-      "title": "TableSchemaResponse",
-      "type": "object"
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
     "name": "listTables",
     "title": "List Tables",
-    "description": "List all tables in the connected SQLite database. Use this tool to discover what tables are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what tables exist in the database\n- You need a table name for getTableSchema or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What tables are in this database?\"\n✓ \"Does a users table exist?\" → listTables to check\n✗ \"Show me the columns of users\" → use getTableSchema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of table name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List tables in the connected database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` workflow.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in this database?\" → listTables()\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"main\", \"kind\": \"TABLE\", ...}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
-      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `SQLite` `listTables` tool — supports optional search filter and detailed mode.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detailed": {
+          "default": false,
+          "description": "When `true`, each returned entry is a full metadata object (columns,\nconstraints, indexes, triggers); when `false` or omitted, each entry\nis the bare table-name string.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": null,
+          "description": "Optional case-insensitive filter on table names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ListTablesRequest",
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "TableEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare table-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape table listing payload: bare names in brief mode, name-keyed map in detailed mode.\n\nChosen by the handler based on [`ListTablesRequest::detailed`]. Serialises untagged: brief\nmode becomes a JSON array of strings, detailed mode becomes a JSON object whose keys are\ntable names and whose values are the per-table metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listTables` tool.",
       "properties": {
@@ -111,11 +109,8 @@ expression: tools
           ]
         },
         "tables": {
-          "description": "Sorted list of table names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/TableEntries",
+          "description": "Page of matching tables. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [
@@ -174,7 +169,7 @@ expression: tools
   {
     "name": "listViews",
     "title": "List Views",
-    "description": "List all views in the connected SQLite database.\n\n<usecase>\nUse when:\n- Exploring what views exist in the database alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are available\n</usecase>\n\n<examples>\n✓ \"What views are in this database?\"\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use getTableSchema instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List all views in the connected SQLite database.\n\n<usecase>\nUse when:\n- Exploring what views exist in the database alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are available\n</usecase>\n\n<examples>\n✓ \"What views are in this database?\"\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use listTables with `detailed: true` instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -214,7 +209,7 @@ expression: tools
   {
     "name": "readQuery",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables or getTableSchema\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass `detailed: true` for columns)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `readQuery` tool.",

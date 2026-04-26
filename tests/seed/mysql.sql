@@ -8,8 +8,9 @@ CREATE DATABASE `app`;
 
 CREATE TABLE `app`.`users` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
-    `name` VARCHAR(100) NOT NULL,
+    `name` VARCHAR(100) NOT NULL COMMENT 'Display name; trimmed by trigger on insert.',
     `email` VARCHAR(255) NOT NULL UNIQUE,
+    `display_name` VARCHAR(400) GENERATED ALWAYS AS (CONCAT(`name`, ' <', `email`, '>')) STORED,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -17,10 +18,14 @@ CREATE TABLE `app`.`posts` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `user_id` INT NOT NULL,
     `title` VARCHAR(255) NOT NULL,
-    `body` TEXT,
+    `body` TEXT COMMENT 'Markdown-encoded post body.',
     `published` TINYINT(1) DEFAULT 0,
-    CONSTRAINT `fk_posts_user` FOREIGN KEY (`user_id`) REFERENCES `app`.`users`(`id`)
-) ENGINE=InnoDB;
+    CONSTRAINT `fk_posts_user` FOREIGN KEY (`user_id`) REFERENCES `app`.`users`(`id`),
+    CONSTRAINT `posts_user_id_positive` CHECK (`user_id` > 0),
+    UNIQUE KEY `posts_user_title_uidx` (`user_id`, `title`),
+    KEY `posts_published_idx` (`published`, `id`),
+    FULLTEXT KEY `posts_body_fts` (`body`)
+) ENGINE=InnoDB COMMENT='Blog post entries.';
 
 CREATE TABLE `app`.`tags` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -71,6 +76,27 @@ CREATE TABLE `app`.`temporal` (
     `timestamp` TIMESTAMP NOT NULL
 ) ENGINE=InnoDB;
 
+-- Audit log written to by the posts_after_insert trigger.
+CREATE TABLE `app`.`posts_audit` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `post_id` INT NOT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Partitioned table — exercises the kind: "PARTITIONED_TABLE" detection path.
+-- The primary key includes `year` because MySQL requires every UNIQUE key to
+-- include the partitioning column.
+CREATE TABLE `app`.`events_by_year` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `year` SMALLINT NOT NULL,
+    `payload` TEXT,
+    PRIMARY KEY (`id`, `year`)
+) ENGINE=InnoDB
+PARTITION BY RANGE (`year`) (
+    PARTITION `p_pre_2025` VALUES LESS THAN (2025),
+    PARTITION `p_future` VALUES LESS THAN MAXVALUE
+);
+
 -- Sample data: 1 temporal row
 INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00');
@@ -90,6 +116,9 @@ CREATE TRIGGER `app`.`users_before_insert` BEFORE INSERT ON `app`.`users`
 
 CREATE TRIGGER `app`.`posts_before_update` BEFORE UPDATE ON `app`.`posts`
     FOR EACH ROW SET NEW.`title` = TRIM(NEW.`title`);
+
+CREATE TRIGGER `app`.`posts_after_insert` AFTER INSERT ON `app`.`posts`
+    FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`) VALUES (NEW.`id`);
 
 -- Stored functions & procedures (single-statement bodies so no DELIMITER needed)
 

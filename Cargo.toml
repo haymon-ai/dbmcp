@@ -34,6 +34,7 @@ sqlx-json = { path = "crates/sqlx-json", version = "0.8.0" }
 axum = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
+indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
 rmcp = { version = "1.3", features = [
@@ -42,6 +43,7 @@ rmcp = { version = "1.3", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
+schemars = { version = "1.2", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlparser = { version = "0.61", features = ["visitor"] }
@@ -97,6 +99,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+indexmap = { workspace = true }
 insta = { workspace = true }
 rmcp = { workspace = true, features = ["client"] }
 serde_json = { workspace = true }

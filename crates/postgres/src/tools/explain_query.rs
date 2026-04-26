@@ -30,7 +30,7 @@ Use when:
 
 <when_not_to_use>
 - Running actual queries → use readQuery or writeQuery
-- Checking table structure → use getTableSchema
+- Checking table structure → use listTables(detailed=true)
 </when_not_to_use>
 
 <examples>
@@ -120,7 +120,7 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        let rows = self.connection.fetch_json(&explain_sql, database).await?;
+        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
 
         Ok(QueryResponse { rows })
     }

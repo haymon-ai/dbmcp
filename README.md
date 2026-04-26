@@ -14,7 +14,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 ## Features
 
 - **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
-- **9 MCP tools** — `listDatabases`, `listTables`, `getTableSchema`, `readQuery`, `writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`, `explainQuery`
+- **MCP tools** — `listDatabases`, `listTables` (with optional `search` filter and `detailed` mode), `readQuery`, `writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`, `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`).
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
@@ -183,11 +183,16 @@ Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor P
 
 ### listTables
 
-Lists tables in a database, paginated via `cursor` / `nextCursor`. Requires `database`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists tables in a database, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
-### getTableSchema
+Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`.
 
-Returns column definitions (type, nullable, key, default, extra) and foreign key relationships (constraint name, referenced table/column, on update/delete rules) for a table. Parameters: `database`, `table`.
+`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards — pass `users%` to match names beginning with `users`, or `%order%` for substring matching. A bare word with no wildcards matches only an exact table name.
+
+`detailed` (default `false`) switches the response shape:
+
+- **Brief** (default) — `tables` is a sorted JSON array of bare table-name strings.
+- **Detailed** (`detailed: true`) — `tables` is a JSON object keyed by table name; each value carries the table's `schema`, `kind`, `owner`, `comment`, `columns[]`, `constraints[]`, `indexes[]`, and `triggers[]`. One call returns both the table list and the per-table metadata.
 
 ### readQuery
 
