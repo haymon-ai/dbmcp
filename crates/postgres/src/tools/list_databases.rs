@@ -101,7 +101,7 @@ impl PostgresHandler {
         );
 
         let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
-        let (databases, next_cursor) = pager.finalize(rows);
+        let (databases, next_cursor) = pager.paginate(rows);
 
         Ok(ListDatabasesResponse { databases, next_cursor })
     }

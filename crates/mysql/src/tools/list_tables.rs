@@ -38,6 +38,11 @@ const BRIEF_SQL: &str = r"
 /// text columns are `VARBINARY`-typed), so column names are wrapped via plain
 /// `CONCAT('"', x, '"')` — safe because identifiers cannot contain `"` or `\`.
 /// JSON booleans are produced via `JSON_EXTRACT(IF(cond, 'true', 'false'), '$')`.
+/// The `triggers_info` CTE renders the `DEFINER` clause in canonical
+/// `SHOW CREATE TRIGGER` form with each component backtick-quoted. The
+/// `DEFINER` column stores `user@host` unquoted and `user` may itself
+/// contain `@` (e.g. `'foo@bar'@'localhost'`), so the host is the
+/// segment after the **last** `@` and the user is everything before it.
 const DETAILED_SQL: &str = r#"
 WITH table_info AS (
     SELECT
@@ -189,7 +194,11 @@ triggers_info AS (
         tr.EVENT_OBJECT_TABLE  AS TABLE_NAME,
         tr.TRIGGER_NAME        AS trigger_name,
         CONCAT(
-            'CREATE DEFINER=', QUOTE(tr.DEFINER),
+            'CREATE DEFINER=`',
+            REPLACE(LEFT(tr.DEFINER, LENGTH(tr.DEFINER) - LENGTH(SUBSTRING_INDEX(tr.DEFINER, '@', -1)) - 1), '`', '``'),
+            '`@`',
+            REPLACE(SUBSTRING_INDEX(tr.DEFINER, '@', -1), '`', '``'),
+            '`',
             ' TRIGGER ', '`', REPLACE(tr.TRIGGER_NAME, '`', '``'), '`',
             ' ', tr.ACTION_TIMING, ' ', tr.EVENT_MANIPULATION,
             ' ON ',
@@ -368,35 +377,38 @@ impl MysqlHandler {
             detailed,
         }: ListTablesRequest,
     ) -> Result<ListTablesResponse, ErrorData> {
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.connection.default_database_name())
-            .to_owned();
-        validate_ident(&database)?;
+        let database = validate_ident(
+            database
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| self.connection.default_database_name()),
+        )?;
 
-        let pager = Pager::new(cursor, self.config.page_size);
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let pager = Pager::new(cursor, self.config.page_size);
 
         if detailed {
-            return self.list_tables_detailed(&database, pattern, pager).await;
+            let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
+                .connection
+                .fetch(
+                    sqlx::query(DETAILED_SQL)
+                        .bind(database)
+                        .bind(pattern)
+                        .bind(pattern)
+                        .bind(pager.limit())
+                        .bind(pager.offset())
+                        .bind(database),
+                    None,
+                )
+                .await?;
+            let (rows, next_cursor) = pager.paginate(rows);
+            return Ok(ListTablesResponse::detailed(
+                rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
+                next_cursor,
+            ));
         }
 
-        self.list_tables_brief(&database, pattern, pager).await
-    }
-
-    /// Brief-mode page: sorted array of bare table-name strings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an internal-error [`ErrorData`] if the underlying query fails.
-    async fn list_tables_brief(
-        &self,
-        database: &str,
-        pattern: Option<&str>,
-        pager: Pager,
-    ) -> Result<ListTablesResponse, ErrorData> {
         let rows: Vec<String> = self
             .connection
             .fetch_scalar(
@@ -409,34 +421,7 @@ impl MysqlHandler {
                 None,
             )
             .await?;
-        Ok(ListTablesResponse::brief(rows, pager))
-    }
-
-    /// Detailed-mode page: name-keyed metadata map.
-    ///
-    /// # Errors
-    ///
-    /// Returns an internal-error [`ErrorData`] if the underlying query fails.
-    async fn list_tables_detailed(
-        &self,
-        database: &str,
-        pattern: Option<&str>,
-        pager: Pager,
-    ) -> Result<ListTablesResponse, ErrorData> {
-        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-            .connection
-            .fetch(
-                sqlx::query(DETAILED_SQL)
-                    .bind(database)
-                    .bind(pattern)
-                    .bind(pattern)
-                    .bind(pager.limit())
-                    .bind(pager.offset())
-                    .bind(database),
-                None,
-            )
-            .await?;
-        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
-        Ok(ListTablesResponse::detailed(pairs, pager))
+        let (tables, next_cursor) = pager.paginate(rows);
+        Ok(ListTablesResponse::brief(tables, next_cursor))
     }
 }

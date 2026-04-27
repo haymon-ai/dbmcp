@@ -187,12 +187,36 @@ CREATE TRIGGER orders_audit_trigger
     AFTER INSERT OR UPDATE ON orders
     FOR EACH ROW EXECUTE FUNCTION orders_audit_fn();
 
+-- Additional fixtures for listTriggers detailed mode (spec 052):
+-- statement-level + disabled trigger, partitioned-parent trigger.
+
+CREATE OR REPLACE FUNCTION block_inventory_delete_fn() RETURNS trigger AS $$
+BEGIN
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER block_inventory_delete
+    BEFORE DELETE ON inventory
+    FOR EACH STATEMENT EXECUTE FUNCTION block_inventory_delete_fn();
+ALTER TABLE inventory DISABLE TRIGGER block_inventory_delete;
+
 -- Partitioned table exercises the `kind` field in the detailed payload.
 CREATE TABLE logs (
     id        BIGSERIAL,
     logged_at TIMESTAMPTZ NOT NULL,
     payload   TEXT
 ) PARTITION BY RANGE (logged_at);
+
+CREATE OR REPLACE FUNCTION logs_redact_fn() RETURNS trigger AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER logs_redact_before_insert
+    BEFORE INSERT ON logs
+    FOR EACH ROW EXECUTE FUNCTION logs_redact_fn();
 
 -- analytics database
 

@@ -115,16 +115,48 @@ On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database 
 
 ### `listTriggers`
 
-List user-defined triggers on tables in a database. Internal constraint and foreign-key triggers are excluded. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of trigger-name strings:
+List user-defined triggers on tables in a database. Internal constraint, foreign-key, and `sqlite_*` triggers are excluded. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+
+The tool accepts these optional parameters:
+
+- `cursor` — opaque pagination token; pass back the prior response's `nextCursor` to fetch the next page.
+- `search` — a case-insensitive `LIKE`/`ILIKE` pattern filtering on trigger name. `%` matches any sequence of characters, `_` matches a single character. Pass `audit%` for a prefix match, `%audit%` for a substring match. A bare word with no wildcards matches only an exact trigger name. The `search` value must remain identical across paginated calls for cursor continuity.
+- `detailed` — when `true`, the response includes per-trigger metadata (timing, events, full `CREATE TRIGGER` text, and backend-specific extras) so a single call enumerates triggers and inspects them. Defaults to `false`.
+
+In **brief mode** (default) the response shape is:
 
 ```json
 {
-  "triggers": ["audit_orders_after_insert", "set_updated_at"],
+  "triggers": ["customers_audit_after_insert", "orders_audit_after_insert", "set_updated_at"],
+  "nextCursor": "<opaque or absent>"
+}
+```
+
+In **detailed mode** the response is keyed by trigger name. The PostgreSQL payload is the richest:
+
+```json
+{
+  "triggers": {
+    "orders_audit_after_iu": {
+      "schema": "public",
+      "table": "orders",
+      "status": "ENABLED",
+      "timing": "AFTER",
+      "events": ["INSERT", "UPDATE"],
+      "activationLevel": "ROW",
+      "functionName": "audit_orders",
+      "definition": "CREATE TRIGGER orders_audit_after_iu AFTER INSERT OR UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.audit_orders()"
+    }
+  },
   "nextCursor": null
 }
 ```
 
-On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+The detailed-mode field set diverges per backend:
+
+- **PostgreSQL** — `schema` (always `"public"`), `table`, `status` (`ENABLED` / `DISABLED` / `REPLICA` / `ALWAYS`), `timing` (`BEFORE` / `AFTER` / `INSTEAD OF`), `events` (non-empty subset of `INSERT` / `UPDATE` / `DELETE` / `TRUNCATE` in that fixed order), `activationLevel` (`ROW` / `STATEMENT`), `functionName` (handler function), `definition` (full output of `pg_get_triggerdef`).
+- **MySQL / MariaDB** — `schema`, `table`, `timing` (`BEFORE` / `AFTER`), `events` (always single-element: `["INSERT"]`, `["UPDATE"]`, or `["DELETE"]`), `activationLevel` (always `"ROW"`), `definition` (reconstructed `CREATE DEFINER=` … `TRIGGER` … `FOR EACH ROW` …), plus the session context active at trigger-creation time: `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`. `status` and `functionName` are absent — MySQL/MariaDB has no per-trigger enabled flag and no separate handler function (the body is inline).
+- **SQLite** — `schema` (always `"main"`), `table` (may be a view name for `INSTEAD OF` triggers), and `definition` (the original `CREATE TRIGGER` text from `sqlite_schema.sql`, byte-for-byte). All other fields are absent — SQLite's catalogue does not expose `timing`, `events`, `activationLevel`, etc. as columns; clients that need those keywords can read them off the prefix of `definition`. Triggers whose `sqlite_schema.sql` is `NULL` (rare; extension-generated rows or hand-edited catalogues) are silently omitted from detailed mode but still listed by name in brief mode.
 
 ### `listFunctions`
 

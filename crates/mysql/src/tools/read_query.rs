@@ -125,7 +125,7 @@ impl MysqlHandler {
                 let pager = Pager::new(cursor, self.config.page_size);
                 let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
                 let rows = self.connection.fetch_json(wrapped.as_str(), database).await?;
-                let (rows, next_cursor) = pager.finalize(rows);
+                let (rows, next_cursor) = pager.paginate(rows);
                 Ok(ReadQueryResponse { rows, next_cursor })
             }
             StatementKind::NonSelect => {

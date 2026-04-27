@@ -7,23 +7,23 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::pagination::{Cursor, Pager};
+use crate::pagination::Cursor;
 
-/// Two-shape table listing payload: bare names in brief mode, name-keyed map in detailed mode.
+/// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///
-/// Chosen by the handler based on [`ListTablesRequest::detailed`]. Serialises untagged: brief
-/// mode becomes a JSON array of strings, detailed mode becomes a JSON object whose keys are
-/// table names and whose values are the per-table metadata.
+/// Shared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:
+/// brief mode → JSON array of strings, detailed mode → JSON object whose keys are
+/// entity names and whose values are the per-entity metadata.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
-pub enum TableEntries {
-    /// Brief mode: sorted array of bare table-name strings.
+pub enum ListEntries {
+    /// Brief mode: sorted array of bare entity-name strings.
     Brief(Vec<String>),
     /// Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.
     Detailed(IndexMap<String, Value>),
 }
 
-impl TableEntries {
+impl ListEntries {
     /// Number of entries in the page, regardless of variant.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -63,32 +63,27 @@ impl TableEntries {
 #[serde(rename_all = "camelCase")]
 pub struct ListTablesResponse {
     /// Page of matching tables. Shape depends on the request's `detailed` flag.
-    pub tables: TableEntries,
+    pub tables: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
 impl ListTablesResponse {
-    /// Builds a brief-mode response: trims the over-fetch and wraps the names.
+    /// Builds a brief-mode response from a page of bare table names.
     #[must_use]
-    pub fn brief(rows: Vec<String>, pager: Pager) -> Self {
-        let (tables, next_cursor) = pager.finalize(rows);
+    pub fn brief(tables: Vec<String>, next_cursor: Option<Cursor>) -> Self {
         Self {
-            tables: TableEntries::Brief(tables),
+            tables: ListEntries::Brief(tables),
             next_cursor,
         }
     }
 
-    /// Builds a detailed-mode response from typed `(name, entry)` pairs.
-    ///
-    /// Backends decode `entry` via [`sqlx::types::Json<Value>`] at the row-read
-    /// site, so this constructor only paginates and wraps; no JSON reparsing.
+    /// Builds a detailed-mode response from a page of name → metadata entries.
     #[must_use]
-    pub fn detailed(pairs: Vec<(String, Value)>, pager: Pager) -> Self {
-        let (pairs, next_cursor) = pager.finalize(pairs);
+    pub fn detailed(tables: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
         Self {
-            tables: TableEntries::Detailed(pairs.into_iter().collect()),
+            tables: ListEntries::Detailed(tables),
             next_cursor,
         }
     }
@@ -171,17 +166,46 @@ pub struct ListTriggersRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
+    /// Optional case-insensitive filter on trigger names. The input is used within a `LIKE`
+    /// clause: `%` matches any sequence of characters and `_` matches any single character.
+    #[serde(default)]
+    pub search: Option<String>,
+    /// When `true`, each returned entry is a full metadata object (schema, table, timing,
+    /// events, activationLevel, definition, plus backend-specific fields); when `false` or
+    /// omitted, each entry is the bare trigger-name string.
+    #[serde(default)]
+    pub detailed: bool,
 }
 
 /// Response for the `listTriggers` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTriggersResponse {
-    /// Sorted list of trigger names for this page.
-    pub triggers: Vec<String>,
+    /// Page of matching triggers. Shape depends on the request's `detailed` flag.
+    pub triggers: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+impl ListTriggersResponse {
+    /// Builds a brief-mode response from a page of bare trigger names.
+    #[must_use]
+    pub fn brief(triggers: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            triggers: ListEntries::Brief(triggers),
+            next_cursor,
+        }
+    }
+
+    /// Builds a detailed-mode response from a page of name → metadata entries.
+    #[must_use]
+    pub fn detailed(triggers: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            triggers: ListEntries::Detailed(triggers),
+            next_cursor,
+        }
+    }
 }
 
 /// Request for the `listFunctions` tool.
@@ -315,18 +339,32 @@ pub struct ExplainQueryRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexMap, ListTablesResponse, TableEntries};
+    use super::{IndexMap, ListEntries, ListTablesResponse, ListTriggersRequest, ListTriggersResponse};
     use serde_json::{Value, json};
 
     #[test]
+    fn list_triggers_request_defaults_to_brief_mode_without_search() {
+        let req: ListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
+        assert!(req.search.is_none());
+        assert!(!req.detailed, "detailed must default to false");
+    }
+
+    #[test]
+    fn list_triggers_request_accepts_search_and_detailed() {
+        let req: ListTriggersRequest = serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
+        assert_eq!(req.search.as_deref(), Some("audit"));
+        assert!(req.detailed);
+    }
+
+    #[test]
     fn brief_serializes_as_bare_string_array() {
-        let entries = TableEntries::Brief(vec!["customers".into(), "orders".into()]);
+        let entries = ListEntries::Brief(vec!["customers".into(), "orders".into()]);
         assert_eq!(serde_json::to_value(&entries).unwrap(), json!(["customers", "orders"]));
     }
 
     #[test]
     fn detailed_serializes_as_keyed_object() {
-        let entries = TableEntries::Detailed(IndexMap::from([("orders".into(), json!({"kind": "TABLE"}))]));
+        let entries = ListEntries::Detailed(IndexMap::from([("orders".into(), json!({"kind": "TABLE"}))]));
         assert_eq!(
             serde_json::to_value(&entries).unwrap(),
             json!({"orders": {"kind": "TABLE"}})
@@ -334,18 +372,15 @@ mod tests {
     }
 
     #[test]
-    fn detailed_empty_serializes_as_empty_object() {
-        assert_eq!(
-            serde_json::to_value(TableEntries::Detailed(IndexMap::new())).unwrap(),
-            json!({})
-        );
+    fn brief_empty_serializes_as_empty_array() {
+        assert_eq!(serde_json::to_value(ListEntries::Brief(Vec::new())).unwrap(), json!([]));
     }
 
     #[test]
-    fn brief_empty_serializes_as_empty_array() {
+    fn detailed_empty_serializes_as_empty_object() {
         assert_eq!(
-            serde_json::to_value(TableEntries::Brief(Vec::new())).unwrap(),
-            json!([])
+            serde_json::to_value(ListEntries::Detailed(IndexMap::new())).unwrap(),
+            json!({})
         );
     }
 
@@ -356,18 +391,38 @@ mod tests {
             ("a".into(), json!({})),
             ("b".into(), json!({})),
         ]);
-        let s = serde_json::to_string(&TableEntries::Detailed(map)).unwrap();
+        let s = serde_json::to_string(&ListEntries::Detailed(map)).unwrap();
         let positions = ["\"c\"", "\"a\"", "\"b\""].map(|k| s.find(k).expect(k));
         assert!(positions.is_sorted(), "insertion order not preserved: {s}");
     }
 
     #[test]
-    fn response_brief_matches_legacy_wire_shape() {
+    fn list_tables_response_brief_matches_legacy_wire_shape() {
         let response = ListTablesResponse {
-            tables: TableEntries::Brief(vec!["a".into()]),
+            tables: ListEntries::Brief(vec!["a".into()]),
             next_cursor: None,
         };
         assert_eq!(serde_json::to_value(&response).unwrap(), json!({"tables": ["a"]}));
+    }
+
+    #[test]
+    fn list_triggers_response_brief_matches_legacy_wire_shape() {
+        let response = ListTriggersResponse {
+            triggers: ListEntries::Brief(vec!["t1".into()]),
+            next_cursor: None,
+        };
+        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"triggers": ["t1"]}));
+    }
+
+    #[test]
+    fn as_brief_and_as_detailed_unwrap_correct_variant() {
+        let brief = ListEntries::Brief(vec!["a".into()]);
+        assert_eq!(brief.as_brief(), Some(&["a".into()][..]));
+        assert!(brief.as_detailed().is_none());
+
+        let det = ListEntries::Detailed(IndexMap::from([("x".into(), json!(1))]));
+        assert!(det.as_brief().is_none());
+        assert_eq!(det.as_detailed().map(IndexMap::len), Some(1));
     }
 
     /// Detailed keyed payload must be strictly smaller than the prior array-of-objects
@@ -405,26 +460,8 @@ mod tests {
                 v
             })
             .collect();
-        let new_len = serde_json::to_vec(&TableEntries::Detailed(new_map)).unwrap().len();
+        let new_len = serde_json::to_vec(&ListEntries::Detailed(new_map)).unwrap().len();
         let old_len = serde_json::to_vec(&old).unwrap().len();
         assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
-    }
-
-    #[test]
-    fn helpers_unwrap_correct_variant() {
-        let brief = TableEntries::Brief(vec!["a".into()]);
-        assert_eq!(brief.len(), 1);
-        assert!(!brief.is_empty());
-        assert!(brief.as_brief().is_some());
-        assert!(brief.as_detailed().is_none());
-
-        let det = TableEntries::Detailed(IndexMap::from([("x".into(), json!(1))]));
-        assert_eq!(det.len(), 1);
-        assert!(det.as_brief().is_none());
-        assert!(det.as_detailed().is_some());
-        assert_eq!(
-            TableEntries::Brief(vec!["a".into()]).into_brief(),
-            Some(vec!["a".into()])
-        );
     }
 }

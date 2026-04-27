@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use dbmcp_server::pagination::Pager;
-use dbmcp_sql::Connection;
+use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -89,16 +89,20 @@ impl AsyncTool<SqliteHandler> for ListTablesTool {
 /// (`type = 'shadow'`). Restricting to `('table', 'virtual')` hides shadow
 /// tables from users while still surfacing user-declared virtual tables.
 ///
-/// `COLLATE NOCASE` makes the filter case-insensitive. User-facing wildcards
-/// (`%`, `_`) in `?1` flow straight into LIKE semantics — this matches the
-/// `PostgreSQL` contract established in commit `dbe917f`.
+/// `SQLite`'s `LIKE` operator is case-insensitive for ASCII by default and
+/// `dbmcp` does not toggle the `case_sensitive_like` PRAGMA, so a bare
+/// `LIKE` already matches case-insensitively (a `COLLATE NOCASE` on the
+/// RHS pattern would be a no-op — `LIKE` does not honor right-hand-side
+/// collation; see <https://www.sqlite.org/lang_expr.html>). User-facing
+/// wildcards (`%`, `_`) in `?1` flow straight into LIKE semantics — this
+/// matches the `PostgreSQL` contract established in commit `dbe917f`.
 const BRIEF_SQL: &str = r"
     SELECT tl.name
     FROM pragma_table_list tl
     WHERE tl.schema = 'main'
       AND tl.type IN ('table', 'virtual')
       AND tl.name NOT LIKE 'sqlite_%'
-      AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%' COLLATE NOCASE)
+      AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%')
     ORDER BY tl.name
     LIMIT ?2 OFFSET ?3";
 
@@ -130,7 +134,7 @@ const DETAILED_SQL: &str = r#"
         WHERE tl.schema = 'main'
           AND tl.type IN ('table', 'virtual')
           AND tl.name NOT LIKE 'sqlite_%'
-          AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%' COLLATE NOCASE)
+          AND (?1 IS NULL OR tl.name LIKE '%' || ?1 || '%')
         ORDER BY tl.name
         LIMIT ?2 OFFSET ?3
     ),
@@ -280,18 +284,27 @@ impl SqliteHandler {
             detailed,
         }: ListTablesRequest,
     ) -> Result<ListTablesResponse, ErrorData> {
-        let pager = Pager::new(cursor, self.config.page_size);
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let pager = Pager::new(cursor, self.config.page_size);
 
         if detailed {
-            return self.list_tables_detailed(pattern, pager).await;
+            let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
+                .connection
+                .fetch(
+                    sqlx::query(DETAILED_SQL)
+                        .bind(pattern)
+                        .bind(pager.limit())
+                        .bind(pager.offset()),
+                    None,
+                )
+                .await?;
+            let (rows, next_cursor) = pager.paginate(rows);
+            return Ok(ListTablesResponse::detailed(
+                rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
+                next_cursor,
+            ));
         }
 
-        self.list_tables_brief(pattern, pager).await
-    }
-
-    /// Brief-mode page: sorted bare table-name strings.
-    async fn list_tables_brief(&self, pattern: Option<&str>, pager: Pager) -> Result<ListTablesResponse, ErrorData> {
         let rows: Vec<String> = self
             .connection
             .fetch_scalar(
@@ -302,26 +315,7 @@ impl SqliteHandler {
                 None,
             )
             .await?;
-        Ok(ListTablesResponse::brief(rows, pager))
-    }
-
-    /// Detailed-mode page: name-keyed metadata map.
-    ///
-    /// `json_object(...)` returns TEXT on `SQLite`; sqlx's
-    /// [`sqlx::types::Json<Value>`] decoder reads the TEXT column directly
-    /// via `serde_json::from_str`, so no manual reparse is needed.
-    async fn list_tables_detailed(&self, pattern: Option<&str>, pager: Pager) -> Result<ListTablesResponse, ErrorData> {
-        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-            .connection
-            .fetch(
-                sqlx::query(DETAILED_SQL)
-                    .bind(pattern)
-                    .bind(pager.limit())
-                    .bind(pager.offset()),
-                None,
-            )
-            .await?;
-        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
-        Ok(ListTablesResponse::detailed(pairs, pager))
+        let (tables, next_cursor) = pager.paginate(rows);
+        Ok(ListTablesResponse::brief(tables, next_cursor))
     }
 }

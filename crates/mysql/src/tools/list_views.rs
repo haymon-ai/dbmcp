@@ -110,7 +110,7 @@ impl MysqlHandler {
         );
 
         let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
-        let (views, next_cursor) = pager.finalize(rows);
+        let (views, next_cursor) = pager.paginate(rows);
 
         Ok(ListViewsResponse { views, next_cursor })
     }

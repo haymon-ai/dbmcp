@@ -104,3 +104,41 @@ CREATE TRIGGER IF NOT EXISTS posts_before_update
     BEGIN
         SELECT CASE WHEN NEW.title IS NULL THEN RAISE(ABORT, 'title required') END;
     END;
+
+-- *_audit_* triggers — exercise FR-001 (search) and detailed mode.
+-- The first one carries a literal newline + quote in its body so the detailed-mode
+-- `definition` field can be asserted to round-trip multi-line bodies (spec edge case).
+-- Bodies are intentionally side-effect-free SELECT statements so that the existing
+-- write_query tests against `users` / `posts` keep their pre-feature semantics.
+CREATE TRIGGER IF NOT EXISTS users_audit_after_insert
+    AFTER INSERT ON users
+    BEGIN
+        SELECT 'a note
+spans two lines';
+    END;
+
+CREATE TRIGGER IF NOT EXISTS users_audit_after_update
+    AFTER UPDATE ON users
+    BEGIN
+        SELECT NEW.id;
+    END;
+
+CREATE TRIGGER IF NOT EXISTS users_audit_after_delete
+    AFTER DELETE ON users
+    BEGIN
+        SELECT OLD.id;
+    END;
+
+CREATE TRIGGER IF NOT EXISTS posts_audit_after_insert
+    AFTER INSERT ON posts
+    BEGIN
+        SELECT NEW.id;
+    END;
+
+-- INSTEAD OF trigger on a view — exercises spec edge case "trigger attached to a
+-- view rather than a table"; `tbl_name` reports the view name in detailed mode.
+CREATE TRIGGER IF NOT EXISTS published_posts_instead_of_delete
+    INSTEAD OF DELETE ON published_posts
+    BEGIN
+        SELECT OLD.id;
+    END;

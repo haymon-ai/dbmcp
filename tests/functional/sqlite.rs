@@ -994,19 +994,18 @@ async fn test_list_views_works_in_read_only_mode() {
 async fn test_list_triggers_returns_seeded_triggers() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest { cursor: None })
+        .list_triggers(ListTriggersRequest::default())
         .await
         .expect("list_triggers");
 
+    let names = response.triggers.as_brief().expect("brief mode");
     assert!(
-        response.triggers.contains(&"users_before_insert".to_string()),
-        "expected seeded users_before_insert trigger, got {:?}",
-        response.triggers
+        names.contains(&"users_before_insert".to_string()),
+        "expected seeded users_before_insert trigger, got {names:?}"
     );
     assert!(
-        response.triggers.contains(&"posts_before_update".to_string()),
-        "expected seeded posts_before_update trigger, got {:?}",
-        response.triggers
+        names.contains(&"posts_before_update".to_string()),
+        "expected seeded posts_before_update trigger, got {names:?}"
     );
 }
 
@@ -1014,7 +1013,7 @@ async fn test_list_triggers_returns_seeded_triggers() {
 async fn test_list_triggers_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest { cursor: None })
+        .list_triggers(ListTriggersRequest::default())
         .await
         .expect("list_triggers in read-only mode");
 
@@ -1406,4 +1405,388 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
         brief_names, detailed_keys,
         "detailed key order must match brief string order — FR-010"
     );
+}
+
+// =====================================================================
+// listTriggers — feature 054 (search + detailed)
+// =====================================================================
+
+const AUDIT_TRIGGERS: &[&str] = &[
+    "posts_audit_after_insert",
+    "users_audit_after_delete",
+    "users_audit_after_insert",
+    "users_audit_after_update",
+];
+
+#[tokio::test]
+async fn test_list_triggers_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("brief + search");
+    let names = response.triggers.as_brief().expect("brief mode").to_vec();
+    let expected: Vec<String> = AUDIT_TRIGGERS.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        names, expected,
+        "search 'audit' must match exactly the four *_audit_* triggers, alphabetically"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("lower");
+    let upper = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("AUDIT".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("upper");
+    assert_eq!(
+        lower.triggers.as_brief().expect("brief"),
+        upper.triggers.as_brief().expect("brief"),
+        "case-insensitive (SQLite `LIKE` is ASCII-case-insensitive by default)"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("nonexistent_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("brief + search");
+    assert!(response.triggers.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_supports_wildcard_semantics() {
+    let handler = handler(true);
+    // `%audit%` is `LIKE`-equivalent to plain `audit` substring — both must yield identical sets.
+    let bare = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("bare");
+    let wildcards = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("%audit%".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("wildcards");
+    assert_eq!(
+        bare.triggers.as_brief().expect("brief"),
+        wildcards.triggers.as_brief().expect("brief"),
+        "%/_ retain LIKE wildcard semantics consistent with listTables"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\"", "/* */", "'; DROP TABLE users; --"] {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("payload {payload:?} must not error: {e:?}"));
+        // Bound payload — no SQL parse error, possibly empty result.
+        let _ = response.triggers.as_brief().expect("brief").to_vec();
+    }
+    // Users table must survive every adversarial payload.
+    let follow_up = handler
+        .list_tables(ListTablesRequest::default())
+        .await
+        .expect("users table check");
+    assert!(
+        follow_up.tables.as_brief().expect("brief").iter().any(|n| n == "users"),
+        "users table must survive every adversarial search payload"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_paginates_filtered_results() {
+    let handler = handler_with_page_size(2);
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                cursor,
+                search: Some("audit".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("paged brief + search");
+        let page = response.triggers.as_brief().expect("brief").to_vec();
+        assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
+        collected.extend(page);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    let expected: Vec<String> = AUDIT_TRIGGERS.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        collected, expected,
+        "paginated audit-filter must yield the full set in alphabetical order"
+    );
+}
+
+async fn detailed_trigger_entries(handler: &SqliteHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some(search.into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("detailed + search");
+    response.triggers.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_returns_keyed_object_with_three_fields() {
+    let handler = handler(true);
+    let entries = detailed_trigger_entries(&handler, "users_audit_after_insert").await;
+    assert_eq!(entries.len(), 1, "exactly one match for the exact name");
+    let entry = entries
+        .get("users_audit_after_insert")
+        .expect("entry keyed by trigger name");
+    let obj = entry.as_object().expect("entry is an object");
+    let keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    assert_eq!(keys.len(), 3, "detailed entry has exactly three fields, got {keys:?}");
+    assert_eq!(entry["schema"], "main", "schema literal");
+    assert_eq!(entry["table"], "users", "table = tbl_name");
+    let definition = entry["definition"].as_str().expect("definition is a string");
+    assert!(
+        definition.starts_with("CREATE TRIGGER"),
+        "definition must start with the original CREATE TRIGGER text: {definition:?}"
+    );
+    assert!(
+        definition.contains("AFTER INSERT ON users"),
+        "definition must reflect the seeded body: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_omits_unrelated_keys() {
+    let handler = handler(true);
+    let entries = detailed_trigger_entries(&handler, "audit").await;
+    assert!(!entries.is_empty(), "audit search must match");
+    for (name, entry) in &entries {
+        let obj = entry.as_object().expect("entry object");
+        for forbidden in [
+            "timing",
+            "events",
+            "activationLevel",
+            "status",
+            "functionName",
+            "sqlMode",
+            "characterSetClient",
+            "collationConnection",
+            "databaseCollation",
+            "created",
+            "name",
+        ] {
+            assert!(
+                !obj.contains_key(forbidden),
+                "trigger {name:?} must not carry forbidden field {forbidden:?} (per Clarification Q1 / FR-005)"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_instead_of_view_carries_view_name_in_table() {
+    let handler = handler(true);
+    let entries = detailed_trigger_entries(&handler, "published_posts_instead_of_delete").await;
+    let entry = entries
+        .get("published_posts_instead_of_delete")
+        .expect("INSTEAD OF trigger entry");
+    assert_eq!(
+        entry["table"], "published_posts",
+        "INSTEAD OF triggers attach to a view; `table` reports the view name"
+    );
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("INSTEAD OF DELETE ON published_posts"),
+        "definition must reflect the INSTEAD OF clause: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
+    let handler = handler(true);
+    let entries = detailed_trigger_entries(&handler, "users_audit_after_insert").await;
+    let entry = entries
+        .get("users_audit_after_insert")
+        .expect("multi-statement trigger entry");
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("a note\nspans two lines"),
+        "definition must preserve the seeded literal newline + quote characters byte-for-byte: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest::default())
+        .await
+        .expect("brief default");
+    let names = response.triggers.as_brief().expect("brief mode");
+    assert!(
+        names.iter().all(|n| !n.is_empty()),
+        "brief response is a flat array of bare strings: {names:?}"
+    );
+    // Existing seeded triggers from before this feature must still be listed.
+    assert!(names.contains(&"users_before_insert".to_string()));
+    assert!(names.contains(&"posts_before_update".to_string()));
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_search_narrows_payload() {
+    let handler = handler(true);
+    let entries = detailed_trigger_entries(&handler, "audit").await;
+    for name in entries.keys() {
+        assert!(
+            name.contains("audit"),
+            "search 'audit' + detailed must not surface unrelated triggers: got {name:?}"
+        );
+    }
+    assert!(
+        !entries.contains_key("users_before_insert"),
+        "non-audit triggers must not appear in detailed audit-filtered response"
+    );
+    assert!(
+        !entries.contains_key("posts_before_update"),
+        "non-audit triggers must not appear in detailed audit-filtered response"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_paginates() {
+    let handler = handler_with_page_size(2);
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                cursor,
+                search: Some("audit".into()),
+                detailed: true,
+            })
+            .await
+            .expect("paged detailed + search");
+        let page = response.triggers.as_detailed().expect("detailed mode");
+        assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
+        collected.extend(page.keys().cloned());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    let expected: Vec<String> = AUDIT_TRIGGERS.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        collected, expected,
+        "paginated detailed audit-filter must yield the full set in alphabetical order"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
+    let handler = handler(false);
+
+    // Seed a synthetic NULL-sql trigger row using PRAGMA writable_schema.
+    // Scoped to this test only; reset PRAGMA back to OFF immediately.
+    handler
+        .write_query(QueryRequest {
+            query: "PRAGMA writable_schema = ON".into(),
+        })
+        .await
+        .expect("writable_schema on");
+    handler
+        .write_query(QueryRequest {
+            query: "INSERT INTO sqlite_schema (type, name, tbl_name, rootpage, sql) \
+                    VALUES ('trigger', 'orphan_trigger', 'users', 0, NULL)"
+                .into(),
+        })
+        .await
+        .expect("synthetic NULL-sql row");
+    handler
+        .write_query(QueryRequest {
+            query: "PRAGMA writable_schema = OFF".into(),
+        })
+        .await
+        .expect("writable_schema off");
+
+    let brief = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("orphan".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("brief search");
+    let names = brief.triggers.as_brief().expect("brief").to_vec();
+    assert_eq!(
+        names,
+        vec!["orphan_trigger"],
+        "brief mode lists NULL-sql triggers by name"
+    );
+
+    let detailed = handler
+        .list_triggers(ListTriggersRequest {
+            search: Some("orphan".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("detailed search");
+    let keyed = detailed.triggers.as_detailed().expect("detailed");
+    assert!(
+        keyed.is_empty(),
+        "detailed mode silently omits NULL-sql triggers (FR-018 / Clarification Q2): {keyed:?}"
+    );
+
+    // Cleanup.
+    handler
+        .write_query(QueryRequest {
+            query: "PRAGMA writable_schema = ON".into(),
+        })
+        .await
+        .expect("writable_schema on");
+    handler
+        .write_query(QueryRequest {
+            query: "DELETE FROM sqlite_schema WHERE name = 'orphan_trigger'".into(),
+        })
+        .await
+        .expect("cleanup synthetic row");
+    handler
+        .write_query(QueryRequest {
+            query: "PRAGMA writable_schema = OFF".into(),
+        })
+        .await
+        .expect("writable_schema off");
 }

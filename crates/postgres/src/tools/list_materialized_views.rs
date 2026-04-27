@@ -107,7 +107,7 @@ impl PostgresHandler {
         );
 
         let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), database).await?;
-        let (materialized_views, next_cursor) = pager.finalize(rows);
+        let (materialized_views, next_cursor) = pager.paginate(rows);
 
         Ok(ListMaterializedViewsResponse {
             materialized_views,

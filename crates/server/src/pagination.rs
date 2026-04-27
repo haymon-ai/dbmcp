@@ -73,7 +73,7 @@ impl JsonSchema for Cursor {
 /// A single page request resolved from an optional cursor and a page size.
 ///
 /// Paginated tools follow a fetch-one-extra pattern: query `size + 1` rows,
-/// then call [`Self::finalize`] to trim the extra row and emit a next cursor
+/// then call [`Self::paginate`] to trim the extra row and emit a next cursor
 /// when present. Construct with [`Self::new`]; read [`Self::offset`] /
 /// [`Self::limit`] when building the SQL statement.
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +117,7 @@ impl Pager {
     /// pointing at the next offset is returned. Otherwise the items are
     /// returned unchanged with `None`.
     #[must_use]
-    pub fn finalize<T>(&self, mut items: Vec<T>) -> (Vec<T>, Option<Cursor>) {
+    pub fn paginate<T>(&self, mut items: Vec<T>) -> (Vec<T>, Option<Cursor>) {
         let size = usize::from(self.size);
         if items.len() > size {
             items.truncate(size);
@@ -254,42 +254,42 @@ mod tests {
     }
 
     #[test]
-    fn page_finalize_emits_next_cursor_when_over_fetched() {
+    fn page_paginate_emits_next_cursor_when_over_fetched() {
         let pager = Pager::new(None, 3);
-        let (items, next) = pager.finalize(vec!["a", "b", "c", "d"]);
+        let (items, next) = pager.paginate(vec!["a", "b", "c", "d"]);
         assert_eq!(items, ["a", "b", "c"]);
         assert_eq!(next, Some(Cursor { offset: 3 }));
     }
 
     #[test]
-    fn page_finalize_drops_next_cursor_on_exact_fit() {
+    fn page_paginate_drops_next_cursor_on_exact_fit() {
         let pager = Pager::new(None, 3);
-        let (items, next) = pager.finalize(vec!["a", "b", "c"]);
+        let (items, next) = pager.paginate(vec!["a", "b", "c"]);
         assert_eq!(items, ["a", "b", "c"]);
         assert!(next.is_none());
     }
 
     #[test]
-    fn page_finalize_drops_next_cursor_on_short_page() {
+    fn page_paginate_drops_next_cursor_on_short_page() {
         let pager = Pager::new(None, 3);
-        let (items, next) = pager.finalize(vec!["a"]);
+        let (items, next) = pager.paginate(vec!["a"]);
         assert_eq!(items, ["a"]);
         assert!(next.is_none());
     }
 
     #[test]
-    fn page_finalize_drops_next_cursor_on_empty_result() {
+    fn page_paginate_drops_next_cursor_on_empty_result() {
         let pager = Pager::new(Some(Cursor { offset: 99 }), 3);
-        let (items, next) = pager.finalize(Vec::<&str>::new());
+        let (items, next) = pager.paginate(Vec::<&str>::new());
         assert!(items.is_empty());
         assert!(next.is_none());
     }
 
     #[test]
-    fn page_finalize_advances_offset_by_page_size() {
+    fn page_paginate_advances_offset_by_page_size() {
         let pager = Pager::new(Some(Cursor { offset: 100 }), 50);
         let items: Vec<u32> = (0..51).collect();
-        let (_, next) = pager.finalize(items);
+        let (_, next) = pager.paginate(items);
         assert_eq!(next, Some(Cursor { offset: 150 }));
     }
 }

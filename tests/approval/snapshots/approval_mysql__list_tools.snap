@@ -405,10 +405,10 @@ expression: tools
     },
     "outputSchema": {
       "$defs": {
-        "TableEntries": {
+        "ListEntries": {
           "anyOf": [
             {
-              "description": "Brief mode: sorted array of bare table-name strings.",
+              "description": "Brief mode: sorted array of bare entity-name strings.",
               "items": {
                 "type": "string"
               },
@@ -420,7 +420,7 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Two-shape table listing payload: bare names in brief mode, name-keyed map in detailed mode.\n\nChosen by the handler based on [`ListTablesRequest::detailed`]. Serialises untagged: brief\nmode becomes a JSON array of strings, detailed mode becomes a JSON object whose keys are\ntable names and whose values are the per-table metadata."
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -434,7 +434,7 @@ expression: tools
           ]
         },
         "tables": {
-          "$ref": "#/$defs/TableEntries",
+          "$ref": "#/$defs/ListEntries",
           "description": "Page of matching tables. Shape depends on the request's `detailed` flag."
         }
       },
@@ -454,7 +454,7 @@ expression: tools
   {
     "name": "listTriggers",
     "title": "List Triggers",
-    "description": "List all triggers in a database.\n\n<usecase>\nUse when:\n- Investigating side-effects on INSERT/UPDATE/DELETE for a table\n- Auditing trigger coverage across a database\n- The user asks what triggers fire in a database\n</usecase>\n\n<examples>\n✓ \"What triggers are in the mydb database?\" → listTriggers(database=\"mydb\")\n✓ \"Does an order-audit trigger exist?\" → listTriggers to check\n✗ \"Show me a trigger's body\" → use readQuery against information_schema.TRIGGERS\n</examples>\n\n<what_it_returns>\nA sorted JSON array of trigger name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List user-defined triggers in a database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Auditing trigger coverage across a database (brief mode, default).\n- Searching for a trigger by partial name (pass `search`).\n- Inspecting a trigger's timing, event, activation level, full `CREATE TRIGGER` text, and the session context active at trigger-creation time before reasoning about side-effects (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `information_schema.TRIGGERS`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on trigger names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by trigger name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What triggers are in the mydb database?\" → listTriggers(database=\"mydb\")\n✓ \"Find the audit triggers\" → listTriggers(search=\"audit\")\n✓ \"What does orders_audit_after_insert do?\" → listTriggers(search=\"orders_audit_after_insert\", detailed=true)\n✗ \"Show me a trigger's body\" → use detailed mode; the `definition` field carries the full `CREATE TRIGGER` text\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of trigger-name strings, e.g. `[\"customers_audit_after_insert\", \"orders_audit_after_insert\"]`.\nDetailed mode: a JSON object keyed by trigger name; each value carries `schema`, `table`, `timing` (BEFORE/AFTER), `events` (single-element array — `INSERT`, `UPDATE`, or `DELETE`), `activationLevel` (always `ROW` on MySQL/MariaDB), `definition` (the canonical `CREATE TRIGGER` text including `DEFINER=` in `` `user`@`host` `` form), `sqlMode`, `characterSetClient`, `collationConnection`, and `databaseCollation`. The Postgres-only `status` and `functionName` fields are intentionally absent (no per-trigger enabled/disabled flag and no separate handler-function reference on MySQL/MariaDB); the four session-context fields are MySQL/MariaDB-only additions versus the Postgres detailed payload.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `listTriggers` tool.",
@@ -474,12 +474,44 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "detailed": {
+          "default": false,
+          "description": "When `true`, each returned entry is a full metadata object (schema, table, timing,\nevents, activationLevel, definition, plus backend-specific fields); when `false` or\nomitted, each entry is the bare trigger-name string.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": null,
+          "description": "Optional case-insensitive filter on trigger names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "title": "ListTriggersRequest",
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "ListEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listTriggers` tool.",
       "properties": {
@@ -491,11 +523,8 @@ expression: tools
           ]
         },
         "triggers": {
-          "description": "Sorted list of trigger names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/ListEntries",
+          "description": "Page of matching triggers. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [

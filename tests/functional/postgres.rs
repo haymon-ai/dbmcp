@@ -9,11 +9,10 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
-use dbmcp_postgres::types::{DropTableRequest, ListTablesRequest};
+use dbmcp_postgres::types::{DropTableRequest, ListTablesRequest, ListTriggersRequest};
 use dbmcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
-    ListMaterializedViewsRequest, ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
-    ReadQueryRequest,
+    ListMaterializedViewsRequest, ListProceduresRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -1624,20 +1623,19 @@ async fn test_list_triggers_returns_seeded_triggers() {
     let response = handler
         .list_triggers(ListTriggersRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers");
 
+    let names = response.triggers.as_brief().expect("brief mode");
     assert!(
-        response.triggers.contains(&"users_before_insert".to_string()),
-        "expected seeded users_before_insert trigger, got {:?}",
-        response.triggers
+        names.contains(&"users_before_insert".to_string()),
+        "expected seeded users_before_insert trigger, got {names:?}"
     );
     assert!(
-        response.triggers.contains(&"posts_before_update".to_string()),
-        "expected seeded posts_before_update trigger, got {:?}",
-        response.triggers
+        names.contains(&"posts_before_update".to_string()),
+        "expected seeded posts_before_update trigger, got {names:?}"
     );
 }
 
@@ -1647,17 +1645,17 @@ async fn test_list_triggers_excludes_internal_triggers() {
     let response = handler
         .list_triggers(ListTriggersRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers");
 
+    let names = response.triggers.as_brief().expect("brief mode");
     // RI_ConstraintTrigger_* are the internal triggers backing FK constraints.
-    for trg in &response.triggers {
+    for trg in names {
         assert!(
             !trg.starts_with("RI_ConstraintTrigger"),
-            "internal FK trigger {trg} leaked into listTriggers output: {:?}",
-            response.triggers
+            "internal FK trigger {trg} leaked into listTriggers output: {names:?}"
         );
     }
 }
@@ -1668,16 +1666,13 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
     let response = handler
         .list_triggers(ListTriggersRequest {
             database: Some("analytics".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers");
 
-    assert!(
-        response.triggers.is_empty(),
-        "analytics has no user triggers, got {:?}",
-        response.triggers
-    );
+    let names = response.triggers.as_brief().expect("brief mode");
+    assert!(names.is_empty(), "analytics has no user triggers, got {names:?}");
 }
 
 #[tokio::test]
@@ -1686,7 +1681,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
     let response = handler
         .list_triggers(ListTriggersRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers in read-only mode");
@@ -1695,6 +1690,343 @@ async fn test_list_triggers_works_in_read_only_mode() {
         !response.triggers.is_empty(),
         "read-only mode must still allow listTriggers"
     );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let names = response.triggers.as_brief().expect("brief mode");
+    assert_eq!(names, &["orders_audit_trigger".to_string()], "got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_is_case_insensitive() {
+    let handler = handler(true);
+    let upper = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("AUDIT".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("upper");
+    let lower = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("lower");
+    assert_eq!(upper.triggers.as_brief(), lower.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("nonexistent_trigger_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    assert!(response.triggers.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_supports_wildcard_semantics() {
+    // Mirrors the `listTables` contract: ILIKE wildcards (`%`, `_`) are exposed
+    // as pattern semantics. `%audit%` and the implicit `%term%` produce the
+    // same match set.
+    let handler = handler(true);
+    let plain = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("plain");
+    let with_wildcard = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("%audit%".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("wildcard");
+    assert_eq!(plain.triggers.as_brief(), with_wildcard.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\", "%", "_"] {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("list_triggers failed for payload {payload:?}: {e:?}"));
+
+        assert!(
+            response.triggers.as_brief().is_some(),
+            "payload {payload:?} returned non-brief shape"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(1);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("before".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("list_triggers paginated");
+        let names = response.triggers.as_brief().expect("brief").to_vec();
+        all.extend(names);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("before".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_triggers");
+    assert_eq!(
+        all,
+        single.triggers.as_brief().expect("brief"),
+        "paginated traversal should equal single-page result"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let no_filter = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("no filter");
+    let empty = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("empty filter");
+    let whitespace = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("   ".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("whitespace");
+
+    assert_eq!(no_filter.triggers.as_brief(), empty.triggers.as_brief());
+    assert_eq!(no_filter.triggers.as_brief(), whitespace.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_brief_without_parameters_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+    let payload = serde_json::to_value(&response).expect("serialize");
+    let triggers = payload.get("triggers").expect("triggers field");
+    assert!(triggers.is_array(), "expected array, got {triggers:?}");
+    assert!(
+        triggers.as_array().unwrap().iter().all(serde_json::Value::is_string),
+        "expected every brief-mode entry to be a JSON string, got {triggers:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_returns_full_metadata_for_orders_audit() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("orders_audit_trigger".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let map = response.triggers.as_detailed().expect("detailed mode");
+    let entry = map.get("orders_audit_trigger").expect("orders_audit_trigger entry");
+    assert_eq!(entry["schema"], serde_json::json!("public"));
+    assert_eq!(entry["table"], serde_json::json!("orders"));
+    assert_eq!(entry["status"], serde_json::json!("ENABLED"));
+    assert_eq!(entry["timing"], serde_json::json!("AFTER"));
+    assert_eq!(entry["events"], serde_json::json!(["INSERT", "UPDATE"]));
+    assert_eq!(entry["activationLevel"], serde_json::json!("ROW"));
+    assert_eq!(entry["functionName"], serde_json::json!("orders_audit_fn"));
+    assert!(
+        entry["definition"]
+            .as_str()
+            .expect("definition string")
+            .starts_with("CREATE TRIGGER orders_audit_trigger"),
+        "definition shape: {:?}",
+        entry["definition"]
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_disabled_status() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("block_inventory_delete".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+    let map = response.triggers.as_detailed().expect("detailed mode");
+    let entry = map.get("block_inventory_delete").expect("entry");
+    assert_eq!(entry["status"], serde_json::json!("DISABLED"));
+    assert_eq!(entry["timing"], serde_json::json!("BEFORE"));
+    assert_eq!(entry["events"], serde_json::json!(["DELETE"]));
+    assert_eq!(entry["activationLevel"], serde_json::json!("STATEMENT"));
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_partitioned_parent() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("logs_redact_before_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+    let map = response.triggers.as_detailed().expect("detailed mode");
+    let entry = map.get("logs_redact_before_insert").expect("entry");
+    assert_eq!(entry["table"], serde_json::json!("logs"));
+    assert_eq!(entry["timing"], serde_json::json!("BEFORE"));
+    assert_eq!(entry["events"], serde_json::json!(["INSERT"]));
+    assert_eq!(entry["activationLevel"], serde_json::json!("ROW"));
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_with_search_only_includes_filtered() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let map = response.triggers.as_detailed().expect("detailed");
+    assert!(map.contains_key("orders_audit_trigger"));
+    assert!(!map.contains_key("block_inventory_delete"));
+    assert!(!map.contains_key("logs_redact_before_insert"));
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_paginates() {
+    let paged = handler_with_page_size(1);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                cursor,
+                detailed: true,
+                ..Default::default()
+            })
+            .await
+            .expect("list_triggers paginated");
+
+        let map = response.triggers.as_detailed().expect("detailed");
+        assert!(map.len() <= 1, "page exceeded page_size=1: {} entries", map.len());
+        all.extend(map.keys().cloned());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page brief");
+    assert_eq!(
+        all,
+        single.triggers.as_brief().expect("brief").to_vec(),
+        "paginated detailed traversal must walk every trigger in brief order"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_internal_triggers_excluded() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+    let map = response.triggers.as_detailed().expect("detailed");
+    for name in map.keys() {
+        assert!(
+            !name.starts_with("RI_ConstraintTrigger"),
+            "internal FK trigger leaked: {name}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2057,17 +2389,18 @@ async fn test_list_tables_detailed_distinguishes_partitioned_tables() {
 #[tokio::test]
 async fn test_list_tables_detailed_empty_arrays_when_no_metadata() {
     let handler = handler(true);
-    // `inventory` has a PK and a UNIQUE on sku but no trigger and no non-index constraints besides those.
-    let entries = detailed_entries(&handler, "inventory").await;
-    let inventory = entries.get("inventory").expect("inventory entry present");
-    assert!(inventory["triggers"].is_array(), "triggers must be array");
-    assert!(inventory["constraints"].is_array(), "constraints must be array");
-    assert!(inventory["indexes"].is_array(), "indexes must be array");
-    assert!(inventory["columns"].is_array(), "columns must be array");
+    // `erp_orders` has a PK and an external_ref column but no trigger, no non-PK constraints,
+    // and no secondary indexes — exercises the empty-array `COALESCE` paths in the CTE.
+    let entries = detailed_entries(&handler, "erp_orders").await;
+    let entry = entries.get("erp_orders").expect("erp_orders entry present");
+    assert!(entry["triggers"].is_array(), "triggers must be array");
+    assert!(entry["constraints"].is_array(), "constraints must be array");
+    assert!(entry["indexes"].is_array(), "indexes must be array");
+    assert!(entry["columns"].is_array(), "columns must be array");
     assert_eq!(
-        inventory["triggers"].as_array().expect("array").len(),
+        entry["triggers"].as_array().expect("array").len(),
         0,
-        "inventory has no triggers"
+        "erp_orders has no triggers"
     );
 }
 

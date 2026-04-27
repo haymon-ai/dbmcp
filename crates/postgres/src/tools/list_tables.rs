@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use dbmcp_server::pagination::Pager;
-use dbmcp_sql::Connection;
+use dbmcp_sql::Connection as _;
 
 use crate::types::{ListTablesRequest, ListTablesResponse};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
@@ -260,45 +260,27 @@ impl PostgresHandler {
         // Identifier validation runs inside the connection pool — passing the
         // trimmed name straight through avoids a redundant round-trip check.
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-
-        let pager = Pager::new(cursor, self.config.page_size);
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let pager = Pager::new(cursor, self.config.page_size);
 
         if detailed {
-            return self.list_tables_detailed(database, pattern, pager).await;
+            let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
+                .connection
+                .fetch(
+                    sqlx::query(DETAILED_SQL)
+                        .bind(pattern)
+                        .bind(pager.limit())
+                        .bind(pager.offset()),
+                    database,
+                )
+                .await?;
+            let (rows, next_cursor) = pager.paginate(rows);
+            return Ok(ListTablesResponse::detailed(
+                rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
+                next_cursor,
+            ));
         }
 
-        self.list_tables_brief(database, pattern, pager).await
-    }
-
-    /// Detailed-mode page: returns name-keyed metadata via [`ListTablesResponse::detailed`].
-    async fn list_tables_detailed(
-        &self,
-        database: Option<&str>,
-        pattern: Option<&str>,
-        pager: Pager,
-    ) -> Result<ListTablesResponse, ErrorData> {
-        let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-            .connection
-            .fetch(
-                sqlx::query(DETAILED_SQL)
-                    .bind(pattern)
-                    .bind(pager.limit())
-                    .bind(pager.offset()),
-                database,
-            )
-            .await?;
-        let pairs = rows.into_iter().map(|(name, json)| (name, json.0)).collect();
-        Ok(ListTablesResponse::detailed(pairs, pager))
-    }
-
-    /// Brief-mode page: returns sorted table-name strings via [`ListTablesResponse::brief`].
-    async fn list_tables_brief(
-        &self,
-        database: Option<&str>,
-        pattern: Option<&str>,
-        pager: Pager,
-    ) -> Result<ListTablesResponse, ErrorData> {
         let rows: Vec<String> = self
             .connection
             .fetch_scalar(
@@ -309,6 +291,7 @@ impl PostgresHandler {
                 database,
             )
             .await?;
-        Ok(ListTablesResponse::brief(rows, pager))
+        let (tables, next_cursor) = pager.paginate(rows);
+        Ok(ListTablesResponse::brief(tables, next_cursor))
     }
 }

@@ -120,6 +120,32 @@ CREATE TRIGGER `app`.`posts_before_update` BEFORE UPDATE ON `app`.`posts`
 CREATE TRIGGER `app`.`posts_after_insert` AFTER INSERT ON `app`.`posts`
     FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`) VALUES (NEW.`id`);
 
+-- Audit-named triggers — exercise FR-001 search semantics. One per event
+-- (INSERT, UPDATE, DELETE) on `posts` plus one on `users` for cross-table search.
+CREATE TRIGGER `app`.`posts_audit_after_insert` AFTER INSERT ON `app`.`posts`
+    FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`) VALUES (NEW.`id`);
+
+CREATE TRIGGER `app`.`posts_audit_after_update` AFTER UPDATE ON `app`.`posts`
+    FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`) VALUES (NEW.`id`);
+
+CREATE TRIGGER `app`.`posts_audit_after_delete` AFTER DELETE ON `app`.`posts`
+    FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`) VALUES (OLD.`id`);
+
+-- Single-statement body with a literal newline + single quote inside a
+-- string literal — exercises the spec edge case "trigger body contains
+-- literal newlines or quote characters" without needing DELIMITER directives.
+CREATE TRIGGER `app`.`users_audit_after_insert` AFTER INSERT ON `app`.`users`
+    FOR EACH ROW INSERT INTO `app`.`posts_audit`(`post_id`)
+    SELECT NEW.`id` FROM DUAL WHERE 'a note
+spans two lines' IS NOT NULL;
+
+-- Note: MySQL/MariaDB enforce per-schema trigger-name uniqueness via the
+-- `(TRIGGER_SCHEMA, TRIGGER_NAME)` primary key on `information_schema.TRIGGERS`,
+-- so `ORDER BY TRIGGER_NAME` alone is a total order for a single-schema
+-- listing — no tiebreaker columns are needed and none are emitted. The
+-- integration test asserts deterministic name-ordering across consecutive
+-- calls as a regression guard.
+
 -- Stored functions & procedures (single-statement bodies so no DELIMITER needed)
 
 CREATE FUNCTION `app`.`calc_total`(n INT) RETURNS INT DETERMINISTIC RETURN n * 2;

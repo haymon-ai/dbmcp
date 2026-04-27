@@ -10,7 +10,7 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::{DropTableRequest, ListTablesRequest, TableEntries};
+use dbmcp_mysql::types::{DropTableRequest, ListEntries, ListTablesRequest};
 use dbmcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
     ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
@@ -156,7 +156,7 @@ async fn test_lists_tables() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let TableEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
 
@@ -286,7 +286,7 @@ async fn test_lists_tables_cross_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let TableEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
 
@@ -352,7 +352,7 @@ async fn test_uses_default_pool_for_matching_database() {
     };
 
     let response = handler.list_tables(request).await.unwrap();
-    let TableEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
 
@@ -434,7 +434,7 @@ async fn test_drop_table_success() {
         ..Default::default()
     };
     let response = handler.list_tables(tables_request).await.unwrap();
-    let TableEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
     assert!(
@@ -1786,19 +1786,19 @@ async fn test_list_triggers_returns_seeded_triggers() {
         .list_triggers(ListTriggersRequest {
             database: Some("app".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers");
 
+    let names = response.triggers.as_brief().expect("brief mode");
     assert!(
-        response.triggers.contains(&"users_before_insert".to_string()),
-        "expected seeded users_before_insert trigger, got {:?}",
-        response.triggers
+        names.contains(&"users_before_insert".to_string()),
+        "expected seeded users_before_insert trigger, got {names:?}"
     );
     assert!(
-        response.triggers.contains(&"posts_before_update".to_string()),
-        "expected seeded posts_before_update trigger, got {:?}",
-        response.triggers
+        names.contains(&"posts_before_update".to_string()),
+        "expected seeded posts_before_update trigger, got {names:?}"
     );
 }
 
@@ -1809,15 +1809,13 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
         .list_triggers(ListTriggersRequest {
             database: Some("analytics".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers");
 
-    assert!(
-        response.triggers.is_empty(),
-        "analytics has no triggers, got {:?}",
-        response.triggers
-    );
+    let names = response.triggers.as_brief().expect("brief mode");
+    assert!(names.is_empty(), "analytics has no triggers, got {names:?}");
 }
 
 #[tokio::test]
@@ -1827,6 +1825,7 @@ async fn test_list_triggers_empty_database_falls_back_to_default() {
         .list_triggers(ListTriggersRequest {
             database: Some(String::new()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("empty db should default to --db-name");
@@ -1844,6 +1843,7 @@ async fn test_list_triggers_omitted_database_falls_back_to_default() {
         .list_triggers(ListTriggersRequest {
             database: None,
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("omitted db should default to --db-name");
@@ -1861,6 +1861,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
         .list_triggers(ListTriggersRequest {
             database: Some("app".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_triggers in read-only mode");
@@ -1869,6 +1870,636 @@ async fn test_list_triggers_works_in_read_only_mode() {
         !response.triggers.is_empty(),
         "read-only mode must still allow listTriggers"
     );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let names = response.triggers.as_brief().expect("brief mode");
+    let expected = [
+        "posts_audit_after_delete".to_string(),
+        "posts_audit_after_insert".to_string(),
+        "posts_audit_after_update".to_string(),
+        "users_audit_after_insert".to_string(),
+    ];
+    assert_eq!(names, &expected, "got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_is_case_insensitive() {
+    let handler = handler(true);
+    let upper = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("AUDIT".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("upper");
+    let lower = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("lower");
+    assert_eq!(upper.triggers.as_brief(), lower.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("nonexistent_trigger_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    assert!(response.triggers.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_supports_wildcard_semantics() {
+    // Mirrors the `listTables` contract: LIKE wildcards (`%`, `_`) are exposed
+    // as pattern semantics. `%audit%` and the implicit `%term%` produce the
+    // same match set.
+    let handler = handler(true);
+    let plain = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("plain");
+    let with_wildcard = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("%audit%".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("wildcard");
+    assert_eq!(plain.triggers.as_brief(), with_wildcard.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\", "`", "/* */"] {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("list_triggers failed for payload {payload:?}: {e:?}"));
+
+        assert!(
+            response.triggers.as_brief().is_some(),
+            "payload {payload:?} returned non-brief shape"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(2);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("audit".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("list_triggers paginated");
+        let names = response.triggers.as_brief().expect("brief").to_vec();
+        all.extend(names);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_triggers");
+    assert_eq!(
+        all,
+        single.triggers.as_brief().expect("brief"),
+        "paginated traversal should equal single-page result"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let no_filter = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("no filter");
+    let empty = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("empty filter");
+    let whitespace = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("   ".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("whitespace");
+
+    assert_eq!(no_filter.triggers.as_brief(), empty.triggers.as_brief());
+    assert_eq!(no_filter.triggers.as_brief(), whitespace.triggers.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_triggers_invalid_database_identifier_is_rejected() {
+    // FR-009: the active-database identifier flows through `validate_ident`
+    // before the SQL runs. `validate_ident`'s contract is "non-empty + no
+    // control characters"; SQL meta-characters (`;`, `'`, `"`, etc.) are not
+    // identifier syntax violations and are safe because the database value
+    // is parameter-bound to `TRIGGER_SCHEMA = ?`, never interpolated into SQL.
+    // This test exercises the negative path of the validator.
+    let handler = handler(true);
+    for bad in ["\0name", "name\x01", "name\nwith_newline"] {
+        let result = handler
+            .list_triggers(ListTriggersRequest {
+                database: Some(bad.into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "expected validate_ident to reject {bad:?}, got {result:?}"
+        );
+    }
+
+    // SQL meta-characters are NOT validate_ident violations — they are
+    // bound as literal values and produce empty results (no SQL injection).
+    for bound in ["shop;DROP", "shop'", "shop\"", "shop`"] {
+        let result = handler
+            .list_triggers(ListTriggersRequest {
+                database: Some(bound.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("expected bound-literal handling, got error: {e:?} for {bound:?}"));
+        assert!(
+            result.triggers.as_brief().expect("brief").is_empty(),
+            "non-existent schema {bound:?} should return empty list, got {:?}",
+            result.triggers
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    assert_eq!(entries.len(), 1, "expected one match, got {entries:?}");
+    let entry = entries
+        .get("posts_audit_after_insert")
+        .expect("posts_audit_after_insert key present");
+
+    let obj = entry.as_object().expect("entry is object");
+    let expected_keys = [
+        "schema",
+        "table",
+        "timing",
+        "events",
+        "activationLevel",
+        "definition",
+        "sqlMode",
+        "characterSetClient",
+        "collationConnection",
+        "databaseCollation",
+    ];
+    for key in expected_keys {
+        assert!(obj.contains_key(key), "missing key {key:?} in {obj:?}");
+    }
+    assert_eq!(obj.len(), expected_keys.len(), "unexpected extra keys: {obj:?}");
+    for forbidden in ["status", "functionName", "created", "name"] {
+        assert!(
+            !obj.contains_key(forbidden),
+            "forbidden key {forbidden:?} present in {obj:?}"
+        );
+    }
+
+    assert_eq!(obj.get("schema").and_then(Value::as_str), Some("app"));
+    assert_eq!(obj.get("table").and_then(Value::as_str), Some("posts"));
+    assert_eq!(obj.get("timing").and_then(Value::as_str), Some("AFTER"));
+    assert_eq!(
+        obj.get("events").and_then(Value::as_array).map(Vec::len),
+        Some(1),
+        "events must be a single-element array, got {:?}",
+        obj.get("events")
+    );
+    assert_eq!(
+        obj.get("events")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str),
+        Some("INSERT")
+    );
+    assert_eq!(obj.get("activationLevel").and_then(Value::as_str), Some("ROW"));
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_definition_uses_canonical_definer_form() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entry = entries.get("posts_audit_after_insert").expect("entry present");
+    let definition = entry
+        .get("definition")
+        .and_then(Value::as_str)
+        .expect("definition string");
+
+    // Canonical form: starts with `CREATE DEFINER=` followed by backtick-quoted user/host.
+    assert!(
+        definition.starts_with("CREATE DEFINER=`"),
+        "expected canonical DEFINER form, got: {definition:?}"
+    );
+    assert!(
+        definition.contains("`@`"),
+        "expected `@` separator, got: {definition:?}"
+    );
+    assert!(
+        definition.contains(" TRIGGER `posts_audit_after_insert`"),
+        "expected backtick-quoted trigger name, got: {definition:?}"
+    );
+    // Must not be the legacy single-quoted form.
+    assert!(
+        !definition.starts_with("CREATE DEFINER='"),
+        "legacy single-quoted DEFINER form leaked: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger() {
+    // Asserts the structural shape of the reconstructed `definition` against
+    // a known fixture — every component (DEFINER, TRIGGER name, timing/event,
+    // ON table, FOR EACH ROW, body) is present in the expected order.
+    //
+    // Note: full byte-identity with `SHOW CREATE TRIGGER` is **not** asserted
+    // here because MySQL 9 and MariaDB 12 disagree on the engine-emitted
+    // form (MariaDB qualifies trigger and table names with the schema and
+    // adds whitespace before `FOR EACH ROW`; MySQL emits the unqualified
+    // single-line form). The reconstruction matches MySQL's canonical form;
+    // both engines accept it as a valid `CREATE TRIGGER` body.
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let definition = entries
+        .get("posts_audit_after_insert")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition string");
+
+    for needle in [
+        "CREATE DEFINER=`",
+        "`@`",
+        " TRIGGER `posts_audit_after_insert`",
+        " AFTER INSERT",
+        " ON `posts`",
+        " FOR EACH ROW ",
+        "INSERT INTO",
+    ] {
+        assert!(
+            definition.contains(needle),
+            "definition missing {needle:?}: {definition:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_per_event_returns_single_element_events_array() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("posts_audit_after".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let cases = [
+        ("posts_audit_after_delete", "DELETE"),
+        ("posts_audit_after_insert", "INSERT"),
+        ("posts_audit_after_update", "UPDATE"),
+    ];
+    for (name, expected_event) in cases {
+        let entry = entries.get(name).unwrap_or_else(|| panic!("{name} missing"));
+        let events = entry
+            .get("events")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("{name} events not array"));
+        assert_eq!(events.len(), 1, "{name} events must have exactly one element");
+        assert_eq!(
+            events[0].as_str(),
+            Some(expected_event),
+            "{name} expected events=[{expected_event:?}]"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_session_context_fields_are_populated() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    assert!(!entries.is_empty(), "expected at least one audit trigger");
+    for (name, entry) in entries {
+        for field in [
+            "sqlMode",
+            "characterSetClient",
+            "collationConnection",
+            "databaseCollation",
+        ] {
+            let value = entry.get(field).and_then(Value::as_str);
+            assert!(
+                value.is_some_and(|v| !v.is_empty()),
+                "{name}.{field} must be a non-empty string, got {value:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
+    // The seeded `users_audit_after_insert` carries a multi-statement body
+    // containing a literal newline and a single-quote — covers spec Edge Case
+    // "trigger body contains literal newlines or quote characters".
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("users_audit_after_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let definition = entries
+        .get("users_audit_after_insert")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition string");
+
+    // Engine divergence: MySQL 9 stores `ACTION_STATEMENT` with the literal
+    // newline; MariaDB 12 stores it as the escape sequence `\n`. Both forms
+    // are valid round-trips of the seeded body. Accept either presentation.
+    let has_real_newline = definition.contains("a note\nspans two lines");
+    let has_escape = definition.contains("a note\\nspans two lines");
+    assert!(
+        has_real_newline || has_escape,
+        "expected literal newline (or `\\n` escape on MariaDB) preserved in body, got: {definition:?}"
+    );
+    assert!(
+        definition.contains("'a note"),
+        "expected single-quoted string literal in body, got: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let payload = serde_json::to_value(&response).expect("serialize");
+    let triggers = payload.get("triggers").expect("triggers field");
+    assert!(triggers.is_array(), "expected array, got {triggers:?}");
+    assert!(
+        triggers.as_array().unwrap().iter().all(Value::is_string),
+        "expected every brief-mode entry to be a JSON string, got {triggers:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_search_narrows_payload() {
+    let handler = handler(true);
+    let response = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers");
+
+    let entries = response.triggers.as_detailed().expect("detailed mode");
+    for name in entries.keys() {
+        assert!(
+            name.contains("audit"),
+            "non-matching trigger {name:?} appeared in audit-filtered detailed payload"
+        );
+    }
+    // Non-audit triggers must NOT appear.
+    for forbidden in ["users_before_insert", "posts_before_update", "posts_after_insert"] {
+        assert!(
+            !entries.contains_key(forbidden),
+            "{forbidden} must be excluded from audit-filtered payload"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_paginates() {
+    let paged = handler_with_page_size(2);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("audit".into()),
+                detailed: true,
+            })
+            .await
+            .expect("list_triggers paginated");
+        let entries = response.triggers.as_detailed().expect("detailed");
+        assert!(entries.len() <= 2, "page exceeds page_size: {}", entries.len());
+        all.extend(entries.keys().cloned());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("audit".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_triggers");
+    let single_keys: Vec<String> = single
+        .triggers
+        .as_detailed()
+        .expect("detailed")
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(
+        all, single_keys,
+        "paginated detailed traversal should equal single-page key order"
+    );
+}
+
+#[tokio::test]
+async fn test_list_triggers_detailed_sort_is_deterministic() {
+    // MySQL/MariaDB enforce per-schema trigger-name uniqueness via the
+    // `(TRIGGER_SCHEMA, TRIGGER_NAME)` primary key on
+    // `information_schema.TRIGGERS`, so `ORDER BY TRIGGER_NAME` alone is a
+    // total order for a single-schema listing. This test asserts
+    // deterministic name-ordering across consecutive calls (cursor stability
+    // depends on it).
+    let handler = handler(true);
+    let mut calls = Vec::new();
+    for _ in 0..3 {
+        let response = handler
+            .list_triggers(ListTriggersRequest {
+                database: Some("app".into()),
+                detailed: true,
+                ..Default::default()
+            })
+            .await
+            .expect("list_triggers");
+        let keys: Vec<String> = response
+            .triggers
+            .as_detailed()
+            .expect("detailed")
+            .keys()
+            .cloned()
+            .collect();
+        calls.push(keys);
+    }
+    assert!(
+        calls.windows(2).all(|w| w[0] == w[1]),
+        "non-deterministic order: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
+    // Cross-tool regression: the list_tables `triggers_info` CTE was migrated
+    // from `QUOTE(tr.DEFINER)` to canonical `DEFINER=`<user>`@`<host>`` form
+    // as part of Clarification Q1. Verify here so a future revert is caught.
+    let handler = handler(true);
+    let response = handler
+        .list_tables(ListTablesRequest {
+            database: Some("app".into()),
+            search: Some("posts".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_tables");
+
+    let entries = response.tables.as_detailed().expect("detailed mode");
+    let posts = entries.get("posts").expect("posts table present");
+    let triggers = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
+    assert!(!triggers.is_empty(), "posts has at least one seeded trigger");
+
+    for trigger in triggers {
+        let definition = trigger
+            .get("definition")
+            .and_then(Value::as_str)
+            .expect("trigger definition");
+        assert!(
+            definition.starts_with("CREATE DEFINER=`"),
+            "list_tables trigger definition not in canonical form: {definition:?}"
+        );
+        assert!(
+            !definition.starts_with("CREATE DEFINER='"),
+            "legacy single-quoted DEFINER leaked in list_tables: {definition:?}"
+        );
+    }
 }
 
 #[tokio::test]

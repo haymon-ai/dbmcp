@@ -200,7 +200,16 @@ Lists views in a database, paginated via `cursor` / `nextCursor`. Returns a sort
 
 ### listTriggers
 
-Lists user-defined triggers on tables, paginated via `cursor` / `nextCursor`. Internal constraint and foreign-key triggers are excluded. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists user-defined triggers on tables, paginated via `cursor` / `nextCursor`. Internal constraint and foreign-key triggers are excluded. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`.
+
+`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
+
+`detailed` (default `false`) switches the response shape:
+
+- **Brief** (default) — `triggers` is a sorted JSON array of bare trigger-name strings.
+- **Detailed** (`detailed: true`) — `triggers` is a JSON object keyed by trigger name; each value carries the per-backend metadata payload (timing, events, definition, and backend-specific extras like PostgreSQL `status`/`functionName` or MySQL/MariaDB session-context fields). See the [`listTriggers` reference](https://dbmcp.haymon.ai/docs/features#listtriggers) for the full per-backend field list.
+
+See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### listFunctions
 
