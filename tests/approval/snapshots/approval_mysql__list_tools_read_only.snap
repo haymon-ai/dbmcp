@@ -1,5 +1,6 @@
 ---
 source: tests/approval/mysql.rs
+assertion_line: 51
 expression: tools
 ---
 [
@@ -202,10 +203,10 @@ expression: tools
   {
     "name": "listProcedures",
     "title": "List Procedures",
-    "description": "List all stored procedures in a specific database.\n\n<usecase>\nUse when:\n- Exploring a database's stored logic\n- Verifying a procedure exists before calling it\n- The user asks what procedures are defined\n</usecase>\n\n<examples>\n✓ \"What procedures are in the mydb database?\" → listProcedures(database=\"mydb\")\n✓ \"Does an archive_user procedure exist?\" → listProcedures to check\n✗ \"List functions\" → use listFunctions instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of procedure name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List user-defined stored procedures in a database, optionally filtered and/or with full metadata. Stored functions and loadable UDFs (`mysql.func`) are excluded.\n\n<usecase>\nUse when:\n- Auditing stored procedures across a database (brief mode, default).\n- Searching for a procedure by partial name (pass `search`).\n- Inspecting a procedure's language, parameter list (with `IN`/`OUT`/`INOUT` modes), determinism, SQL-data-access classification, security mode, definer, comment, session context, and full reconstructed `CREATE PROCEDURE` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `information_schema.ROUTINES` / `information_schema.PARAMETERS`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on procedure names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by procedure name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What procedures are in the mydb database?\" → listProcedures(database=\"mydb\")\n✓ \"Find the order archival routine\" → listProcedures(search=\"archive\")\n✓ \"What does archive_order do?\" → listProcedures(search=\"archive_order\", detailed=true)\n✗ \"List functions\" → use listFunctions instead\n✗ \"List loadable UDFs from mysql.func\" → not supported; only routines in information_schema.ROUTINES are returned\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of procedure-name strings, e.g. `[\"archive_order\", \"archive_order_history\", \"purge_order_archive\", \"touch_post\"]`.\nDetailed mode: a JSON object keyed by bare procedure name (MySQL/MariaDB do not allow procedure overloading, so no signature suffix is needed); each value carries `schema`, `language` (typically `\"SQL\"`; MariaDB external-language procedures report the external language name), `arguments` (comma-separated `MODE name type` triples from `information_schema.PARAMETERS` — `MODE` is one of `IN`, `OUT`, `INOUT`; empty string for zero-parameter procedures), `deterministic` (boolean), `sqlDataAccess` (one of `CONTAINS_SQL`, `NO_SQL`, `READS_SQL_DATA`, `MODIFIES_SQL_DATA`), `security` (`INVOKER` or `DEFINER`), `definer` (`user@host`), `description` (the `COMMENT` text or `null` when no comment was set — the empty string MySQL stores is coerced to JSON `null`), `definition` (the canonical reconstructed `CREATE PROCEDURE` text including `DEFINER=` in `` `user`@`host` `` form; no `RETURNS` clause — procedures have no return type), `sqlMode`, `characterSetClient`, `collationConnection`, and `databaseCollation`. Versus the Postgres `listProcedures` detailed payload: `volatility`, `parallelSafety`, `strict`, and `returnType` are intentionally absent (no MySQL/MariaDB analogues for the first three; procedures have no return type for the fourth — the Postgres-side payload also omits all four), `owner` is renamed to `definer` (more accurate for the MySQL `DEFINER` concept), keys are bare names rather than `name(arguments)` (no overloads possible), the four session-context fields (`sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`) are MySQL/MariaDB-only additions, and `deterministic` plus `sqlDataAccess` are MySQL/MariaDB-only additions versus the Postgres `listProcedures` detailed payload (which omits both because Postgres procedures have no equivalent attributes).\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `listProcedures` tool.",
+      "description": "Request for the MySQL/MariaDB `listProcedures` tool — supports search + detailed mode.",
       "properties": {
         "cursor": {
           "default": null,
@@ -222,12 +223,44 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "detailed": {
+          "default": false,
+          "description": "When `true`, each returned entry is a full metadata object (schema, language,\narguments with IN/OUT/INOUT mode tokens, deterministic, sqlDataAccess, security,\ndefiner, description, definition, sqlMode, characterSetClient,\ncollationConnection, databaseCollation); when `false` or omitted, each entry\nis the bare procedure-name string.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": null,
+          "description": "Optional case-insensitive filter on procedure names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "title": "ListProceduresRequest",
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "ListEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listProcedures` tool.",
       "properties": {
@@ -239,11 +272,8 @@ expression: tools
           ]
         },
         "procedures": {
-          "description": "Sorted list of procedure names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/ListEntries",
+          "description": "Page of matching procedures. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [

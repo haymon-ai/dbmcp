@@ -10,10 +10,12 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::{DropTableRequest, ListEntries, ListFunctionsRequest, ListTablesRequest};
+use dbmcp_mysql::types::{
+    DropTableRequest, ListEntries, ListFunctionsRequest, ListProceduresRequest, ListTablesRequest,
+};
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListProceduresRequest,
-    ListTriggersRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListTriggersRequest,
+    ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -2552,20 +2554,19 @@ async fn test_list_procedures_returns_seeded_procedures() {
     let response = handler
         .list_procedures(ListProceduresRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_procedures");
 
+    let names = response.procedures.as_brief().expect("brief mode").to_vec();
     assert!(
-        response.procedures.contains(&"archive_user".to_string()),
-        "expected seeded archive_user procedure, got {:?}",
-        response.procedures
+        names.contains(&"archive_user".to_string()),
+        "expected seeded archive_user procedure, got {names:?}"
     );
     assert!(
-        response.procedures.contains(&"touch_post".to_string()),
-        "expected seeded touch_post procedure, got {:?}",
-        response.procedures
+        names.contains(&"touch_post".to_string()),
+        "expected seeded touch_post procedure, got {names:?}"
     );
 }
 
@@ -2575,16 +2576,16 @@ async fn test_list_procedures_excludes_functions() {
     let response = handler
         .list_procedures(ListProceduresRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_procedures");
 
+    let names = response.procedures.as_brief().expect("brief mode").to_vec();
     for func_name in ["calc_total", "double_it"] {
         assert!(
-            !response.procedures.contains(&func_name.to_string()),
-            "function `{func_name}` leaked into listProcedures output: {:?}",
-            response.procedures
+            !names.contains(&func_name.to_string()),
+            "function `{func_name}` leaked into listProcedures output: {names:?}"
         );
     }
 }
@@ -2609,7 +2610,7 @@ async fn test_list_routines_empty_for_empty_database() {
     let procedures = handler
         .list_procedures(ListProceduresRequest {
             database: Some("analytics".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_procedures");
@@ -3728,4 +3729,389 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
             "legacy single-quoted DEFINER leaked in list_tables: {def:?}"
         );
     }
+}
+
+// ----- listProcedures enrichment (spec 062) -----
+
+async fn brief_procedures(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            search: search.map(str::to_owned),
+            ..Default::default()
+        })
+        .await
+        .expect("brief list_procedures");
+    response.procedures.into_brief().expect("brief mode")
+}
+
+async fn detailed_procedure_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("detailed list_procedures");
+    response.procedures.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_filters_by_substring() {
+    let handler = handler(true);
+    let names = brief_procedures(&handler, Some("archive")).await;
+    let expected = [
+        "archive_order".to_string(),
+        "archive_order_history".to_string(),
+        "archive_user".to_string(),
+        "purge_order_archive".to_string(),
+    ];
+    assert_eq!(names, expected, "got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = brief_procedures(&handler, Some("archive")).await;
+    let upper = brief_procedures(&handler, Some("ArChIvE")).await;
+    assert_eq!(lower, upper);
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let names = brief_procedures(&handler, Some("nonexistent_proc_xyz")).await;
+    assert!(names.is_empty(), "expected empty list, got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_keeps_like_wildcards() {
+    let handler = handler(true);
+    // `_` is a `LIKE` single-char wildcard — `archive_user` matches but so do
+    // any other procedure with a single char between `archive` and `user`.
+    // The seed only contains `archive_user`, so the match set is `[archive_user]`.
+    let underscore = brief_procedures(&handler, Some("archive_user")).await;
+    assert!(
+        underscore.contains(&"archive_user".to_string()),
+        "underscore wildcard should match archive_user: {underscore:?}"
+    );
+    // `%` matches everything — must be a superset of the unfiltered list size.
+    let pct = brief_procedures(&handler, Some("%")).await;
+    let unfiltered = brief_procedures(&handler, None).await;
+    assert_eq!(pct, unfiltered, "% must match every procedure");
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_resists_sql_meta_chars() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "`", "\\", "archive'; DROP PROCEDURE bad; --"] {
+        let result = handler
+            .list_procedures(ListProceduresRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "adversarial payload {payload:?} must not error: {:?}",
+            result.err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_brief_wire_shape_unchanged() {
+    let handler = handler(true);
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_procedures");
+
+    let names = response.procedures.as_brief().expect("brief mode (Vec<String>)");
+    assert!(
+        names.iter().all(|s| !s.is_empty()),
+        "brief mode names must be non-empty strings, got {names:?}"
+    );
+    let json = serde_json::to_value(&response).expect("serialize");
+    let procedures = json.get("procedures").expect("procedures key");
+    assert!(
+        procedures.is_array(),
+        "brief mode `procedures` must be a JSON array, got {procedures:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_returns_keyed_object_with_all_fields() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    // search "archive_order" matches both `archive_order` and
+    // `archive_order_history`. Field-shape assertions only need archive_order.
+    let entry = entries.get("archive_order").expect("archive_order key present");
+
+    let obj = entry.as_object().expect("entry is object");
+    let expected_keys = [
+        "schema",
+        "language",
+        "arguments",
+        "deterministic",
+        "sqlDataAccess",
+        "security",
+        "definer",
+        "description",
+        "definition",
+        "sqlMode",
+        "characterSetClient",
+        "collationConnection",
+        "databaseCollation",
+    ];
+    for key in expected_keys {
+        assert!(obj.contains_key(key), "missing key {key:?} in {obj:?}");
+    }
+    assert_eq!(obj.len(), expected_keys.len(), "unexpected extra keys: {obj:?}");
+    for forbidden in ["returnType", "volatility", "parallelSafety", "strict", "owner", "name"] {
+        assert!(
+            !obj.contains_key(forbidden),
+            "forbidden key {forbidden:?} present in {obj:?}"
+        );
+    }
+
+    assert_eq!(obj.get("schema").and_then(Value::as_str), Some("app"));
+    assert_eq!(obj.get("deterministic").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        obj.get("sqlDataAccess").and_then(Value::as_str),
+        Some("MODIFIES_SQL_DATA")
+    );
+    assert_eq!(obj.get("security").and_then(Value::as_str), Some("INVOKER"));
+    assert_eq!(
+        obj.get("description").and_then(Value::as_str),
+        Some("Archives an order and returns the count")
+    );
+    let language = obj.get("language").and_then(Value::as_str).expect("language");
+    assert!(
+        language.eq_ignore_ascii_case("SQL"),
+        "expected language `SQL` (any casing), got {language:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_renders_in_out_inout_modes_in_arguments() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "compute_user_metrics").await;
+    let arguments = entries
+        .get("compute_user_metrics")
+        .and_then(|e| e.get("arguments"))
+        .and_then(Value::as_str)
+        .expect("arguments");
+
+    let upper = arguments.to_uppercase();
+    assert!(upper.contains("IN UID"), "expected `IN uid` in {arguments:?}");
+    assert!(
+        upper.contains("OUT METRIC_TOTAL"),
+        "expected `OUT metric_total` in {arguments:?}"
+    );
+    assert!(
+        upper.contains("INOUT METRIC_AVG"),
+        "expected `INOUT metric_avg` in {arguments:?}"
+    );
+    let in_pos = upper.find("IN UID").unwrap();
+    let out_pos = upper.find("OUT METRIC_TOTAL").unwrap();
+    let inout_pos = upper.find("INOUT METRIC_AVG").unwrap();
+    assert!(
+        in_pos < out_pos && out_pos < inout_pos,
+        "parameter order must follow ORDINAL_POSITION: {arguments:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_omits_returntype_field() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    let entry = entries.get("archive_order").expect("archive_order");
+    let obj = entry.as_object().expect("object");
+    assert!(
+        !obj.contains_key("returnType"),
+        "procedures must NOT carry returnType: {obj:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_definition_omits_returns_clause() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    let definition = entries
+        .get("archive_order")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition");
+
+    assert!(
+        !definition.contains(" RETURNS "),
+        "procedure `definition` must not contain ` RETURNS `: {definition:?}"
+    );
+    assert!(
+        definition.starts_with("CREATE DEFINER=`"),
+        "expected canonical CREATE DEFINER opener: {definition:?}"
+    );
+    assert!(
+        definition.contains(" PROCEDURE `archive_order`"),
+        "expected ` PROCEDURE `archive_order`` in: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_zero_parameter_arguments_is_empty_string() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "no_arg_proc").await;
+    let entry = entries.get("no_arg_proc").expect("no_arg_proc");
+    assert_eq!(
+        entry.get("arguments").and_then(Value::as_str),
+        Some(""),
+        "zero-parameter procedure `arguments` must be empty string"
+    );
+    let definition = entry.get("definition").and_then(Value::as_str).expect("definition");
+    assert!(
+        definition.contains("PROCEDURE `no_arg_proc`()"),
+        "expected `PROCEDURE `no_arg_proc`()` in: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_security_definer_reports_definer() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "compute_user_metrics").await;
+    let security = entries
+        .get("compute_user_metrics")
+        .and_then(|e| e.get("security"))
+        .and_then(Value::as_str)
+        .expect("security");
+    assert_eq!(security, "DEFINER", "got {security:?}");
+
+    let entries_invoker = detailed_procedure_entries(&handler, "archive_order").await;
+    let security_invoker = entries_invoker
+        .get("archive_order")
+        .and_then(|e| e.get("security"))
+        .and_then(Value::as_str)
+        .expect("security");
+    assert_eq!(security_invoker, "INVOKER", "got {security_invoker:?}");
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_no_comment_yields_null_description() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "purge_order_archive").await;
+    let description = entries
+        .get("purge_order_archive")
+        .and_then(|e| e.get("description"))
+        .expect("description field present");
+    assert!(
+        description.is_null(),
+        "no-comment procedure must coerce empty ROUTINE_COMMENT to JSON null, got {description:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_combined_with_search_filters_before_metadata() {
+    let handler = handler(true);
+    let detailed = detailed_procedure_entries(&handler, "archive").await;
+    let brief = brief_procedures(&handler, Some("archive")).await;
+
+    let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
+    assert_eq!(detailed_keys, brief, "detailed key set must equal brief filtered set");
+    for key in detailed.keys() {
+        assert!(
+            key.to_lowercase().contains("archive"),
+            "non-matching procedure {key:?} leaked into detailed payload"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_iteration_order_matches_brief_sort() {
+    let handler = handler(true);
+    let brief = brief_procedures(&handler, Some("archive")).await;
+    let detailed = detailed_procedure_entries(&handler, "archive").await;
+    let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
+    assert_eq!(
+        brief, detailed_keys,
+        "detailed iteration order must match brief alphabetical sort"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_session_context_fields_populated() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    let entry = entries.get("archive_order").expect("archive_order");
+    for key in [
+        "sqlMode",
+        "characterSetClient",
+        "collationConnection",
+        "databaseCollation",
+    ] {
+        let value = entry.get(key).and_then(Value::as_str);
+        assert!(
+            matches!(value, Some(s) if !s.is_empty()),
+            "session-context field {key:?} must be a non-empty string, got {value:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_round_trips_body_with_quotes_and_newlines() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "no_arg_proc").await;
+    let definition = entries
+        .get("no_arg_proc")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition");
+
+    // MySQL 9 interprets `\n` in the source as a literal newline char in
+    // ROUTINE_DEFINITION; MariaDB 12 preserves the two-byte `\n` escape
+    // sequence verbatim. Accept either form — the contract is "body content
+    // round-trips without truncation".
+    assert!(
+        definition.contains('\n') || definition.contains("\\n"),
+        "expected newline (literal or escape) in body round-trip: {definition:?}"
+    );
+    // MySQL 9 strips SQL-escape doubling on stored bodies (returns `'here'`);
+    // MariaDB 12 preserves the doubled form (returns `''here''`). Both
+    // contain `'here'` as a substring — assert that.
+    assert!(
+        definition.contains("'here'"),
+        "expected `'here'` in body round-trip: {definition:?}"
+    );
+    assert!(
+        definition.contains("first line"),
+        "expected first-line marker in body round-trip: {definition:?}"
+    );
+    assert!(
+        definition.contains("second line"),
+        "expected second-line marker in body round-trip: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_definition_uses_canonical_definer_form() {
+    let handler = handler(true);
+    let entries = detailed_procedure_entries(&handler, "archive_order").await;
+    let definition = entries
+        .get("archive_order")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition");
+    assert!(
+        definition.starts_with("CREATE DEFINER=`"),
+        "canonical DEFINER form regressed: {definition:?}"
+    );
+    assert!(
+        !definition.starts_with("CREATE DEFINER='"),
+        "legacy single-quoted DEFINER leaked: {definition:?}"
+    );
 }

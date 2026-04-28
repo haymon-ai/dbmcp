@@ -262,10 +262,10 @@ expression: tools
   {
     "name": "listProcedures",
     "title": "List Procedures",
-    "description": "List all user-defined procedures in the `public` schema of a database (PostgreSQL 11+).\n\n<usecase>\nUse when:\n- Exploring a database's stored logic\n- Verifying a procedure exists before calling it\n- The user asks what procedures are defined\n</usecase>\n\n<examples>\n✓ \"What procedures are in the mydb database?\" → listProcedures(database=\"mydb\")\n✓ \"Does an archive_user procedure exist?\" → listProcedures to check\n✗ \"List functions\" → use listFunctions instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of procedure name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List user-defined procedures in the `public` schema, optionally filtered and/or with full metadata. Functions, aggregates, and window functions are excluded.\n\n<usecase>\nUse when:\n- Auditing procedures across a database (brief mode, default).\n- Searching for a procedure by partial name (pass `search`).\n- Inspecting a procedure's language, signature, security mode, owner, comment, and full `CREATE PROCEDURE` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_proc` / `information_schema.routines`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on procedure names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by `name(arguments)` instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What procedures are in mydb?\" → listProcedures(database=\"mydb\")\n✓ \"Find the order archival routine\" → listProcedures(search=\"archive\")\n✓ \"What does archive_order do?\" → listProcedures(search=\"archive_order\", detailed=true)\n✗ \"List functions\" → use listFunctions instead\n✗ \"List aggregates\" → not supported; aggregates are excluded\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of procedure-name strings, e.g. `[\"archive_order\", \"archive_order_history\", \"archive_order_history\"]`. Overloaded procedures appear as one entry per overload (duplicate name strings allowed).\nDetailed mode: a JSON object keyed by procedure signature `name(arguments)`; each value carries `schema`, `name`, `language`, `arguments`, `security` (INVOKER/DEFINER), `owner`, `description` (or null when no `COMMENT ON PROCEDURE`), and `definition` (the full `CREATE OR REPLACE PROCEDURE` text). Overloads occupy distinct keys (e.g. `archive_order_history(integer)` vs `archive_order_history(integer, boolean)`). Zero-arg procedures key as `name()` — the parens are always present so the key shape stays uniform.\n\nDetailed mode deliberately omits the `listFunctions`-only fields `returnType`, `volatility`, `strict`, and `parallelSafety`: procedures don't return a value, `pg_proc.provolatile` / `proisstrict` are not user-settable for procedures, and `proparallel` carries no procedure-level guarantee in PostgreSQL.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `(proname, oid)` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `listProcedures` tool.",
+      "description": "Request for the Postgres `listProcedures` tool — extends the shared shape with `search` and `detailed`.",
       "properties": {
         "cursor": {
           "default": null,
@@ -282,12 +282,44 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "detailed": {
+          "default": false,
+          "description": "When `true`, each returned entry is a full metadata object (schema, name,\nlanguage, arguments, security, owner, description, definition); when `false`\nor omitted, each entry is the bare procedure-name string.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": null,
+          "description": "Optional case-insensitive filter on procedure names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "title": "ListProceduresRequest",
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "ListEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listProcedures` tool.",
       "properties": {
@@ -299,11 +331,8 @@ expression: tools
           ]
         },
         "procedures": {
-          "description": "Sorted list of procedure names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/ListEntries",
+          "description": "Page of matching procedures. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [

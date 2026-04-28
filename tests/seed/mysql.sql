@@ -206,6 +206,53 @@ CREATE PROCEDURE `app`.`archive_user`(IN uid INT)
 CREATE PROCEDURE `app`.`touch_post`(IN pid INT)
     UPDATE `app`.`posts` SET `title` = `title` WHERE `id` = pid;
 
+-- *archive* / *order* search-target procedures — exercise FR-001 search
+-- semantics and FR-004 detailed-mode coverage (parameter modes, deterministic
+-- flag, sqlDataAccess classification, security mode, comment handling).
+-- Single-statement bodies (no DELIMITER required).
+
+CREATE PROCEDURE `app`.`archive_order_history`(IN order_id INT)
+    DETERMINISTIC
+    CONTAINS SQL
+    SQL SECURITY INVOKER
+    COMMENT 'Archives an order history row'
+    UPDATE `app`.`posts` SET `title` = `title` WHERE `id` = order_id;
+
+CREATE PROCEDURE `app`.`archive_order`(IN n INT, OUT archived_count INT)
+    DETERMINISTIC
+    MODIFIES SQL DATA
+    SQL SECURITY INVOKER
+    COMMENT 'Archives an order and returns the count'
+    SET archived_count = n * 2;
+
+CREATE PROCEDURE `app`.`purge_order_archive`(INOUT counter INT)
+    NOT DETERMINISTIC
+    READS SQL DATA
+    SQL SECURITY INVOKER
+    SET counter = (SELECT COALESCE(MAX(`id`), 0) FROM `app`.`posts`);
+
+CREATE PROCEDURE `app`.`compute_user_metrics`(
+    IN uid INT,
+    OUT metric_total DECIMAL(10,2) UNSIGNED,
+    INOUT metric_avg DECIMAL(10,2)
+)
+    DETERMINISTIC
+    NO SQL
+    SQL SECURITY DEFINER
+    COMMENT 'Multi-mode parameter fixture'
+    SET metric_total = uid * 1.5;
+
+-- Zero-parameter procedure with body containing a literal newline + escaped
+-- single quote — exercises spec Edge Case "procedure body containing literal
+-- newlines, quote characters".
+CREATE PROCEDURE `app`.`no_arg_proc`()
+    DETERMINISTIC
+    NO SQL
+    SQL SECURITY INVOKER
+    COMMENT 'Zero-parameter round-trip fixture'
+    SELECT 'first line
+second line with quote ''here''' AS note;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS `analytics`;

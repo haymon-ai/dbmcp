@@ -9,10 +9,12 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
-use dbmcp_postgres::types::{DropTableRequest, ListFunctionsRequest, ListTablesRequest, ListTriggersRequest};
+use dbmcp_postgres::types::{
+    DropTableRequest, ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
+};
 use dbmcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest,
-    ListMaterializedViewsRequest, ListProceduresRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
+    ListMaterializedViewsRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -2393,20 +2395,19 @@ async fn test_list_procedures_returns_seeded_procedures() {
     let response = handler
         .list_procedures(ListProceduresRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_procedures");
 
+    let names = response.procedures.as_brief().expect("brief mode").to_vec();
     assert!(
-        response.procedures.contains(&"archive_user".to_string()),
-        "expected seeded archive_user procedure, got {:?}",
-        response.procedures
+        names.contains(&"archive_user".to_string()),
+        "expected seeded archive_user procedure, got {names:?}"
     );
     assert!(
-        response.procedures.contains(&"touch_post".to_string()),
-        "expected seeded touch_post procedure, got {:?}",
-        response.procedures
+        names.contains(&"touch_post".to_string()),
+        "expected seeded touch_post procedure, got {names:?}"
     );
 }
 
@@ -2416,18 +2417,368 @@ async fn test_list_procedures_excludes_functions() {
     let response = handler
         .list_procedures(ListProceduresRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_procedures");
 
+    let names = response.procedures.as_brief().expect("brief mode").to_vec();
     for func_name in ["calc_total", "double_it"] {
         assert!(
-            !response.procedures.contains(&func_name.to_string()),
-            "function `{func_name}` leaked into listProcedures output: {:?}",
-            response.procedures
+            !names.contains(&func_name.to_string()),
+            "function `{func_name}` leaked into listProcedures output: {names:?}"
         );
     }
+}
+
+// -----------------------------------------------------------------------
+// listProcedures search + detailed mode (spec 061)
+// -----------------------------------------------------------------------
+
+async fn list_procedures_brief(handler: &PostgresHandler, search: Option<&str>) -> Vec<String> {
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            search: search.map(str::to_string),
+            ..Default::default()
+        })
+        .await
+        .expect("list_procedures");
+    response.procedures.as_brief().expect("brief mode").to_vec()
+}
+
+async fn list_procedures_detailed(
+    handler: &PostgresHandler,
+    search: &str,
+) -> indexmap::IndexMap<String, serde_json::Value> {
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_procedures detailed");
+    response.procedures.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let names = list_procedures_brief(&handler, Some("archive_order")).await;
+    assert_eq!(
+        names,
+        vec![
+            "archive_order".to_string(),
+            "archive_order_history".to_string(),
+            "archive_order_history".to_string(),
+        ],
+        "expected three archive_order* matches (overload duplication)"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = list_procedures_brief(&handler, Some("archive_order")).await;
+    let upper = list_procedures_brief(&handler, Some("ARCHIVE_ORDER")).await;
+    assert_eq!(lower, upper);
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            search: Some("nonexistent_procedure_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_procedures");
+    assert!(response.procedures.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_supports_wildcard_semantics() {
+    // `_` is the ILIKE single-char wildcard. `a_chive` matches `archive` —
+    // a literal-substring contract would not.
+    let handler = handler(true);
+    let names = list_procedures_brief(&handler, Some("a_chive")).await;
+    assert!(
+        !names.is_empty(),
+        "expected `_` to be honoured as wildcard; empty result implies literal-substring mode"
+    );
+    assert!(
+        names.iter().all(|n| n.contains("archive")),
+        "all wildcard matches should contain `archive`, got {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\"] {
+        let response = handler
+            .list_procedures(ListProceduresRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("list_procedures failed for payload {payload:?}: {e:?}"));
+        assert!(
+            response.procedures.as_brief().is_some(),
+            "payload {payload:?} returned non-brief shape"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(1);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_procedures(ListProceduresRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("archive_order".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("list_procedures paged");
+        all.extend(response.procedures.as_brief().expect("brief").to_vec());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let single = list_procedures_brief(&handler(true), Some("archive_order")).await;
+    assert_eq!(all, single, "paginated traversal should equal single-page result");
+}
+
+#[tokio::test]
+async fn test_list_procedures_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let none_filter = list_procedures_brief(&handler, None).await;
+    let empty = list_procedures_brief(&handler, Some("")).await;
+    let whitespace = list_procedures_brief(&handler, Some("   ")).await;
+    assert_eq!(none_filter, empty);
+    assert_eq!(none_filter, whitespace);
+}
+
+#[tokio::test]
+async fn test_list_procedures_excludes_functions_aggregates_and_window() {
+    let handler = handler(true);
+    // Function calc_total (prokind='f') must not appear.
+    let func = list_procedures_brief(&handler, Some("calc_total")).await;
+    assert!(func.is_empty(), "function leaked into listProcedures: {func:?}");
+    // Aggregate sum_demo (prokind='a') must not appear.
+    let agg = list_procedures_brief(&handler, Some("sum_demo")).await;
+    assert!(agg.is_empty(), "aggregate leaked into listProcedures: {agg:?}");
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_returns_full_metadata_for_archive_order() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "archive_order").await;
+    // `archive_order` (single-arg) should be present; the overload pair
+    // `archive_order_history` also matches and shares the search prefix, so the
+    // result has at least three entries — pick the single-arg `archive_order`.
+    let key = detailed
+        .keys()
+        .find(|k| k.starts_with("archive_order(") && !k.starts_with("archive_order_history"))
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "archive_order key missing; got {:?}",
+                detailed.keys().collect::<Vec<_>>()
+            )
+        });
+    let entry = &detailed[&key];
+    assert_eq!(entry["schema"], "public");
+    assert_eq!(entry["name"], "archive_order");
+    assert_eq!(entry["language"], "plpgsql");
+    let args = entry["arguments"].as_str().expect("arguments string");
+    assert!(args.contains("order_id integer"), "arguments missing param: {args}");
+    assert_eq!(entry["security"], "INVOKER");
+    assert_eq!(entry["owner"], "app_user");
+    assert_eq!(entry["description"], "Moves an order into the archive table");
+    let definition = entry["definition"].as_str().expect("definition is string");
+    assert!(
+        definition.contains("archive_order"),
+        "definition missing procedure name: {definition}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_security_definer() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "elevate_user_proc").await;
+    let entry = detailed.values().next().expect("elevate_user_proc entry");
+    assert_eq!(entry["security"], "DEFINER");
+    assert_eq!(entry["description"], "Privileged helper - runs as definer.");
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_no_comment_yields_null_description() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "tmp_cleanup").await;
+    let entry = detailed.get("tmp_cleanup()").expect("zero-arg key with empty parens");
+    assert_eq!(entry["arguments"], "");
+    assert!(
+        entry["description"].is_null(),
+        "description should be null, got {:?}",
+        entry["description"]
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_zero_arg_key_uniformity() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "tmp_cleanup").await;
+    let keys: Vec<&str> = detailed.keys().map(String::as_str).collect();
+    assert!(
+        keys.contains(&"tmp_cleanup()"),
+        "zero-arg key MUST be `tmp_cleanup()` (with empty parens), got {keys:?}"
+    );
+    assert!(
+        !keys.contains(&"tmp_cleanup"),
+        "zero-arg key MUST NOT be bare `tmp_cleanup`; got {keys:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_multi_arg_signature() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "summarise_orders").await;
+    let entry = detailed.values().next().expect("summarise_orders entry");
+    let args = entry["arguments"].as_str().expect("arguments string");
+    for substring in [
+        "tenant_id integer",
+        "OUT total integer",
+        "INOUT cursor_name",
+        "VARIADIC tags",
+    ] {
+        assert!(args.contains(substring), "arguments missing {substring:?}: {args}");
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_overload_disambiguation() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "archive_order_history").await;
+    let keys: Vec<&str> = detailed.keys().map(String::as_str).collect();
+    assert!(
+        keys.iter()
+            .any(|k| k.starts_with("archive_order_history(") && !k.contains("boolean")),
+        "missing single-arg overload key, got {keys:?}"
+    );
+    assert!(
+        keys.iter()
+            .any(|k| k.starts_with("archive_order_history(") && k.contains("boolean")),
+        "missing two-arg overload key (with boolean), got {keys:?}"
+    );
+    assert_eq!(detailed.len(), 2, "expected exactly two overload entries, got {keys:?}");
+}
+
+#[tokio::test]
+async fn test_list_procedures_brief_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_procedures(ListProceduresRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_procedures");
+    let value = serde_json::to_value(&response).expect("serialise");
+    let arr = value["procedures"]
+        .as_array()
+        .expect("procedures is array in brief mode");
+    for entry in arr {
+        assert!(entry.is_string(), "expected string entry, got {entry:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_with_search_only_includes_filtered() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "archive_order_history").await;
+    let keys: Vec<&str> = detailed.keys().map(String::as_str).collect();
+    for excluded in [
+        "archive_user",
+        "archive_order(",
+        "elevate_user_proc",
+        "tmp_cleanup",
+        "summarise_orders",
+        "noop_proc",
+        "touch_post",
+    ] {
+        assert!(
+            !keys.iter().any(|k| k.starts_with(excluded)),
+            "excluded procedure {excluded} leaked: {keys:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_paginates() {
+    let paged = handler_with_page_size(1);
+    let mut all_keys = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_procedures(ListProceduresRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("archive_order".into()),
+                detailed: true,
+            })
+            .await
+            .expect("list_procedures detailed paged");
+        let page = response.procedures.as_detailed().expect("detailed").clone();
+        assert!(page.len() <= 1, "page size 1 must not exceed 1 entry");
+        all_keys.extend(page.into_keys());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        all_keys.len(),
+        3,
+        "expected 3 archive_order* entries across pages, got {all_keys:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_procedures_detailed_omits_function_only_fields() {
+    let handler = handler(true);
+    let detailed = list_procedures_detailed(&handler, "archive_order").await;
+    let entry = detailed.values().next().expect("at least one entry");
+    let obj = entry.as_object().expect("entry is object");
+    let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+    let expected: std::collections::BTreeSet<&str> = [
+        "schema",
+        "name",
+        "language",
+        "arguments",
+        "security",
+        "owner",
+        "description",
+        "definition",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        keys, expected,
+        "detailed entry must carry exactly the eight procedure fields; got {keys:?}"
+    );
 }
 
 #[tokio::test]

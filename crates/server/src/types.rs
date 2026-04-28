@@ -251,27 +251,35 @@ impl ListFunctionsResponse {
     }
 }
 
-/// Request for the `listProcedures` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListProceduresRequest {
-    /// Database to list procedures from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-}
-
 /// Response for the `listProcedures` tool.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProceduresResponse {
-    /// Sorted list of procedure names for this page.
-    pub procedures: Vec<String>,
+    /// Page of matching procedures. Shape depends on the request's `detailed` flag.
+    pub procedures: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+impl ListProceduresResponse {
+    /// Builds a brief-mode response from a page of bare procedure names.
+    #[must_use]
+    pub fn brief(procedures: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            procedures: ListEntries::Brief(procedures),
+            next_cursor,
+        }
+    }
+
+    /// Builds a detailed-mode response from a page of signature → metadata entries.
+    #[must_use]
+    pub fn detailed(procedures: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            procedures: ListEntries::Detailed(procedures),
+            next_cursor,
+        }
+    }
 }
 
 /// Request for the `listMaterializedViews` tool.
@@ -507,6 +515,29 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&response).unwrap(),
             json!({"functions": ["audit_user_login"]})
+        );
+    }
+
+    #[test]
+    fn list_procedures_response_brief_constructor_wraps_vec() {
+        let response = super::ListProceduresResponse::brief(vec!["archive_order".into()], None);
+        assert!(matches!(response.procedures, ListEntries::Brief(ref v) if v == &["archive_order"]));
+        assert!(response.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_procedures_response_detailed_constructor_wraps_indexmap() {
+        let map = IndexMap::from([("archive_order(integer)".into(), json!({"language": "plpgsql"}))]);
+        let response = super::ListProceduresResponse::detailed(map, None);
+        assert!(matches!(response.procedures, ListEntries::Detailed(_)));
+    }
+
+    #[test]
+    fn list_procedures_response_brief_matches_legacy_wire_shape() {
+        let response = super::ListProceduresResponse::brief(vec!["archive_order".into()], None);
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({"procedures": ["archive_order"]})
         );
     }
 }

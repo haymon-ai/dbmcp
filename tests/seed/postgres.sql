@@ -286,6 +286,55 @@ CREATE OR REPLACE PROCEDURE noop_proc()
 LANGUAGE plpgsql
 AS $$ BEGIN END; $$;
 
+-- Additional fixtures for listProcedures search + detailed mode (spec 061):
+-- exercises every metadata field (security/owner/description) and the
+-- overload-disambiguation contract for procedures (prokind='p').
+-- `app_user` role already created above by spec 057's block.
+
+CREATE OR REPLACE PROCEDURE archive_order(order_id integer)
+LANGUAGE plpgsql
+AS $$ BEGIN END; $$;
+COMMENT ON PROCEDURE archive_order(integer) IS 'Moves an order into the archive table';
+ALTER PROCEDURE archive_order(integer) OWNER TO app_user;
+
+-- Overload pair: same name, different parameter signatures.
+CREATE OR REPLACE PROCEDURE archive_order_history(order_id integer)
+LANGUAGE plpgsql AS $$ BEGIN END; $$;
+ALTER PROCEDURE archive_order_history(integer) OWNER TO app_user;
+
+CREATE OR REPLACE PROCEDURE archive_order_history(order_id integer, soft_delete boolean)
+LANGUAGE plpgsql AS $$ BEGIN END; $$;
+ALTER PROCEDURE archive_order_history(integer, boolean) OWNER TO app_user;
+
+-- SECURITY DEFINER procedure (must report security: "DEFINER").
+-- Distinct name from the homonymous function `elevate_user(bigint)`.
+CREATE OR REPLACE PROCEDURE elevate_user_proc(uid bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$ BEGIN END; $$;
+COMMENT ON PROCEDURE elevate_user_proc(bigint) IS 'Privileged helper - runs as definer.';
+
+-- Zero-arg procedure with no comment (description must be null in detailed mode;
+-- detailed-map key must be `tmp_cleanup()`, not `tmp_cleanup`).
+CREATE OR REPLACE PROCEDURE tmp_cleanup()
+LANGUAGE plpgsql
+AS $$ BEGIN END; $$;
+ALTER PROCEDURE tmp_cleanup() OWNER TO app_user;
+
+-- Multi-arg with defaults + IN / OUT / INOUT / VARIADIC.
+-- PostgreSQL forbids OUT parameters after a defaulted IN parameter on
+-- procedures, so `since_days` is non-defaulted here.
+CREATE OR REPLACE PROCEDURE summarise_orders(
+    IN tenant_id integer,
+    IN since_days integer,
+    OUT total integer,
+    INOUT cursor_name text,
+    VARIADIC tags text[]
+)
+LANGUAGE plpgsql
+AS $$ BEGIN total := 0; END; $$;
+ALTER PROCEDURE summarise_orders(integer, integer, text, text[]) OWNER TO app_user;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;
