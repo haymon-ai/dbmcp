@@ -10,10 +10,10 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::{DropTableRequest, ListEntries, ListTablesRequest};
+use dbmcp_mysql::types::{DropTableRequest, ListEntries, ListFunctionsRequest, ListTablesRequest};
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
-    ListProceduresRequest, ListTriggersRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListProceduresRequest,
+    ListTriggersRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use serde_json::Value;
 
@@ -2509,19 +2509,19 @@ async fn test_list_functions_returns_seeded_functions() {
         .list_functions(ListFunctionsRequest {
             database: Some("app".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_functions");
 
+    let names = response.functions.as_brief().expect("brief mode").to_vec();
     assert!(
-        response.functions.contains(&"calc_total".to_string()),
-        "expected seeded calc_total function, got {:?}",
-        response.functions
+        names.contains(&"calc_total".to_string()),
+        "expected calc_total, got {names:?}"
     );
     assert!(
-        response.functions.contains(&"double_it".to_string()),
-        "expected seeded double_it function, got {:?}",
-        response.functions
+        names.contains(&"double_it".to_string()),
+        "expected double_it, got {names:?}"
     );
 }
 
@@ -2532,15 +2532,16 @@ async fn test_list_functions_excludes_procedures() {
         .list_functions(ListFunctionsRequest {
             database: Some("app".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_functions");
 
+    let names = response.functions.as_brief().expect("brief mode").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
-            !response.functions.contains(&proc_name.to_string()),
-            "procedure `{proc_name}` leaked into listFunctions output: {:?}",
-            response.functions
+            !names.contains(&proc_name.to_string()),
+            "procedure `{proc_name}` leaked into listFunctions output: {names:?}",
         );
     }
 }
@@ -2595,6 +2596,7 @@ async fn test_list_routines_empty_for_empty_database() {
         .list_functions(ListFunctionsRequest {
             database: Some("analytics".into()),
             cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_functions");
@@ -3009,4 +3011,721 @@ async fn list_tables_detailed_empty_page_is_empty_object() {
         entries.is_empty(),
         "no-match search must yield empty map (serialises as `{{}}`): {entries:?}",
     );
+}
+
+// ----- listFunctions enrichment (spec 058) -----
+
+#[tokio::test]
+async fn test_list_functions_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let names = response.functions.as_brief().expect("brief mode");
+    let expected = [
+        "calc_order_subtotal".to_string(),
+        "calc_order_total".to_string(),
+        "recalc_order_total_v2".to_string(),
+    ];
+    assert_eq!(names, &expected, "got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_functions_search_is_case_insensitive() {
+    let handler = handler(true);
+    let upper = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("ORDER".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("upper");
+    let lower = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("lower");
+    assert_eq!(upper.functions.as_brief(), lower.functions.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_functions_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("nonexistent_function_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    assert!(response.functions.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_functions_search_supports_wildcard_semantics() {
+    let handler = handler(true);
+    let plain = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("plain");
+    let with_wildcard = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("%order%".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("wildcard");
+    assert_eq!(plain.functions.as_brief(), with_wildcard.functions.as_brief());
+}
+
+#[tokio::test]
+async fn test_list_functions_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in [
+        "'",
+        ";",
+        "--",
+        "\\",
+        "`",
+        "/* */",
+        "'; DROP FUNCTION calc_order_total; --",
+    ] {
+        let response = handler
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("list_functions failed for payload {payload:?}: {e:?}"));
+
+        assert!(
+            response.functions.as_brief().is_some(),
+            "payload {payload:?} returned non-brief shape"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(2);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("order".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("list_functions paginated");
+        let names = response.functions.as_brief().expect("brief").to_vec();
+        all.extend(names);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_functions");
+    assert_eq!(
+        all,
+        single.functions.as_brief().expect("brief"),
+        "paginated traversal should equal single-page result"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_invalid_database_identifier_is_rejected() {
+    // `validate_ident` rejects empty + whitespace-only + control-character
+    // identifiers; arbitrary user payloads (including `;`, `"`, `--`) are
+    // accepted by the helper and reach the engine via parameter binding (no
+    // injection possible). The control-char case is the regression guard.
+    let handler = handler(true);
+    let result = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("test\x00db".into()),
+            ..Default::default()
+        })
+        .await;
+    assert!(result.is_err(), "control char in database name should be rejected");
+}
+
+#[tokio::test]
+async fn test_list_functions_brief_mode_wire_shape_unchanged() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let names = response.functions.as_brief().expect("brief mode (Vec<String>)");
+    assert!(
+        names.iter().all(|s| !s.is_empty()),
+        "brief mode names must be non-empty strings, got {names:?}"
+    );
+    // Must serialise as a flat array of strings (no object wrapping).
+    let json = serde_json::to_value(&response).expect("serialize");
+    let functions = json.get("functions").expect("functions key");
+    assert!(
+        functions.is_array(),
+        "brief mode `functions` must be a JSON array, got {functions:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let entries = response.functions.as_detailed().expect("detailed mode");
+    // Search "calc_order_total" matches both `calc_order_total` and
+    // `recalc_order_total_v2` because the latter contains the former as a
+    // substring. Field-shape assertions only need the calc_order_total entry.
+    let entry = entries.get("calc_order_total").expect("calc_order_total key present");
+
+    let obj = entry.as_object().expect("entry is object");
+    let expected_keys = [
+        "schema",
+        "language",
+        "arguments",
+        "returnType",
+        "deterministic",
+        "sqlDataAccess",
+        "security",
+        "definer",
+        "description",
+        "definition",
+        "sqlMode",
+        "characterSetClient",
+        "collationConnection",
+        "databaseCollation",
+    ];
+    for key in expected_keys {
+        assert!(obj.contains_key(key), "missing key {key:?} in {obj:?}");
+    }
+    assert_eq!(obj.len(), expected_keys.len(), "unexpected extra keys: {obj:?}");
+    for forbidden in ["volatility", "parallelSafety", "strict", "owner", "name"] {
+        assert!(
+            !obj.contains_key(forbidden),
+            "forbidden key {forbidden:?} present in {obj:?}"
+        );
+    }
+
+    assert_eq!(obj.get("schema").and_then(Value::as_str), Some("app"));
+    assert_eq!(obj.get("deterministic").and_then(Value::as_bool), Some(true));
+    assert_eq!(obj.get("sqlDataAccess").and_then(Value::as_str), Some("READS_SQL_DATA"));
+    assert_eq!(obj.get("security").and_then(Value::as_str), Some("INVOKER"));
+    assert_eq!(
+        obj.get("description").and_then(Value::as_str),
+        Some("Sums line items for an order")
+    );
+    let language = obj.get("language").and_then(Value::as_str).expect("language");
+    assert!(
+        language.eq_ignore_ascii_case("SQL"),
+        "expected language `SQL` (any casing), got {language:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_definition_uses_canonical_definer_form() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let entries = response.functions.as_detailed().expect("detailed");
+    let definition = entries
+        .get("calc_order_total")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition string");
+
+    assert!(
+        definition.starts_with("CREATE DEFINER=`"),
+        "expected canonical DEFINER form, got: {definition:?}"
+    );
+    assert!(
+        definition.contains("`@`"),
+        "expected `@` separator, got: {definition:?}"
+    );
+    assert!(
+        definition.contains(" FUNCTION `calc_order_total`"),
+        "expected backtick-quoted function name, got: {definition:?}"
+    );
+    assert!(
+        !definition.starts_with("CREATE DEFINER='"),
+        "legacy single-quoted DEFINER form leaked: {definition:?}"
+    );
+    // Reconstructed text must include the declared characteristics in keyword form.
+    for needle in [
+        " RETURNS decimal(12,2)",
+        " DETERMINISTIC",
+        " READS SQL DATA",
+        " SQL SECURITY INVOKER",
+        " COMMENT 'Sums line items for an order'",
+    ] {
+        assert!(
+            definition.contains(needle),
+            "expected `{needle}` in definition, got: {definition:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_two_field_safety_split() {
+    let handler = handler(true);
+
+    // recalc_order_total_v2 — NOT DETERMINISTIC + MODIFIES SQL DATA + DEFINER security.
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("recalc_order_total_v2".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("recalc_order_total_v2")
+        .expect("entry")
+        .clone();
+    assert_eq!(entry.get("deterministic").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        entry.get("sqlDataAccess").and_then(Value::as_str),
+        Some("MODIFIES_SQL_DATA")
+    );
+    assert_eq!(entry.get("security").and_then(Value::as_str), Some("DEFINER"));
+
+    // current_pricing_version — NO_SQL.
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("current_pricing_version".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("current_pricing_version")
+        .expect("entry")
+        .clone();
+    assert_eq!(entry.get("deterministic").and_then(Value::as_bool), Some(true));
+    assert_eq!(entry.get("sqlDataAccess").and_then(Value::as_str), Some("NO_SQL"));
+    assert_eq!(entry.get("security").and_then(Value::as_str), Some("INVOKER"));
+
+    // double_it — CONTAINS_SQL (default for declarations without an access clause).
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("double_it".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("double_it")
+        .expect("entry")
+        .clone();
+    assert_eq!(entry.get("sqlDataAccess").and_then(Value::as_str), Some("CONTAINS_SQL"));
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
+    let handler = handler(true);
+
+    // Multi-parameter function — `arguments` follows ORDINAL_POSITION ASC.
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("calc_order_subtotal".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("calc_order_subtotal")
+        .expect("entry")
+        .clone();
+    let arguments = entry
+        .get("arguments")
+        .and_then(Value::as_str)
+        .expect("arguments string");
+    // Engine casing of identifier names varies (MySQL preserves declaration case;
+    // MariaDB lowercases). Compare case-insensitively.
+    let lower = arguments.to_lowercase();
+    assert!(
+        lower.contains("order_id") && lower.contains("exclude_title"),
+        "expected both parameter names in arguments, got {arguments:?}"
+    );
+    assert!(
+        lower.contains("int") && lower.contains("varchar"),
+        "expected both DTD types in arguments, got {arguments:?}"
+    );
+    // ORDINAL_POSITION ASC: order_id (pos 1) appears before exclude_title (pos 2).
+    let order_id_pos = lower.find("order_id").expect("order_id present");
+    let exclude_pos = lower.find("exclude_title").expect("exclude_title present");
+    assert!(
+        order_id_pos < exclude_pos,
+        "arguments must be ordered by ORDINAL_POSITION; got {arguments:?}"
+    );
+
+    // Zero-parameter function — `arguments` is empty string, not null.
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("current_pricing_version".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("current_pricing_version")
+        .expect("entry")
+        .clone();
+    assert_eq!(
+        entry.get("arguments").and_then(Value::as_str),
+        Some(""),
+        "zero-parameter function must report empty-string arguments, got {:?}",
+        entry.get("arguments")
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_description_null_coercion() {
+    let handler = handler(true);
+
+    // Function with no COMMENT — description must be JSON null (NOT empty string).
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("double_it".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("double_it")
+        .expect("entry")
+        .clone();
+    assert!(
+        entry.get("description").is_some_and(Value::is_null),
+        "expected description=null for no-comment function, got {:?}",
+        entry.get("description")
+    );
+
+    // Function with a COMMENT — description carries the text.
+    let resp = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("calc_order_total".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let entry = resp
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("calc_order_total")
+        .expect("entry")
+        .clone();
+    assert_eq!(
+        entry.get("description").and_then(Value::as_str),
+        Some("Sums line items for an order")
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_session_context_fields_are_populated() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let entries = response.functions.as_detailed().expect("detailed");
+    assert!(!entries.is_empty(), "expected order matches");
+    for (name, value) in entries {
+        for key in [
+            "sqlMode",
+            "characterSetClient",
+            "collationConnection",
+            "databaseCollation",
+        ] {
+            let s = value
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("{name}: {key} missing or non-string"));
+            assert!(!s.is_empty(), "{name}: {key} must be non-empty");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("format_audit_note".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let definition = response
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .get("format_audit_note")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("definition string")
+        .to_string();
+
+    // Body must contain the literal newline + escaped quote round-tripped.
+    assert!(
+        definition.contains("note: contains a quote"),
+        "body content missing from definition: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_search_narrows_payload() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("order".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let keys: Vec<String> = response
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .keys()
+        .cloned()
+        .collect();
+    let expected = vec![
+        "calc_order_subtotal".to_string(),
+        "calc_order_total".to_string(),
+        "recalc_order_total_v2".to_string(),
+    ];
+    assert_eq!(keys, expected, "got {keys:?}");
+    for forbidden in [
+        "current_pricing_version",
+        "double_it",
+        "format_audit_note",
+        "calc_total",
+    ] {
+        assert!(!keys.contains(&forbidden.to_string()), "leaked: {forbidden}");
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_paginates() {
+    let paged = handler_with_page_size(2);
+    let mut all_keys = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                cursor,
+                detailed: true,
+                ..Default::default()
+            })
+            .await
+            .expect("list_functions paginated");
+        let entries = response.functions.as_detailed().expect("detailed");
+        assert!(entries.len() <= 2, "page exceeded page_size: {entries:?}");
+        all_keys.extend(entries.keys().cloned());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    let single = handler(true)
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_functions");
+    let single_keys: Vec<String> = single
+        .functions
+        .as_detailed()
+        .expect("detailed")
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(all_keys, single_keys, "paginated traversal mismatched single-page");
+}
+
+#[tokio::test]
+async fn test_list_functions_excludes_loadable_udfs_and_procedures() {
+    // Procedures (existing seed: `archive_user`, `touch_post`) must not surface
+    // through listFunctions — ROUTINE_TYPE='FUNCTION' filter enforces this.
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+
+    let names = response.functions.as_brief().expect("brief").to_vec();
+    for proc_name in ["archive_user", "touch_post"] {
+        assert!(
+            !names.contains(&proc_name.to_string()),
+            "procedure `{proc_name}` leaked into listFunctions output: {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction() {
+    // Cross-tool regression guard for the spec-053-canonical DEFINER fragment
+    // extraction performed in spec 058. Both `listTriggers` detailed mode and
+    // `listTables` (`triggers_info` CTE inside detailed mode) must continue to
+    // emit the canonical `CREATE DEFINER=`<u>`@`<h>`` form byte-identically.
+    let handler = handler(true);
+
+    let triggers = handler
+        .list_triggers(ListTriggersRequest {
+            database: Some("app".into()),
+            search: Some("posts_audit_after_insert".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_triggers detailed");
+    let trigger_def = triggers
+        .triggers
+        .as_detailed()
+        .expect("detailed")
+        .get("posts_audit_after_insert")
+        .and_then(|e| e.get("definition"))
+        .and_then(Value::as_str)
+        .expect("trigger definition");
+    assert!(
+        trigger_def.starts_with("CREATE DEFINER=`"),
+        "triggers DEFINER regressed: {trigger_def:?}"
+    );
+    assert!(
+        !trigger_def.starts_with("CREATE DEFINER='"),
+        "legacy single-quoted DEFINER leaked in triggers: {trigger_def:?}"
+    );
+
+    let tables = handler
+        .list_tables(ListTablesRequest {
+            database: Some("app".into()),
+            search: Some("posts".into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_tables detailed");
+    let posts = tables
+        .tables
+        .as_detailed()
+        .expect("detailed")
+        .get("posts")
+        .expect("posts entry")
+        .clone();
+    let trigger_entries = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
+    assert!(!trigger_entries.is_empty(), "expected at least one trigger on posts");
+    for tr in trigger_entries {
+        let def = tr.get("definition").and_then(Value::as_str).expect("definition");
+        assert!(
+            def.starts_with("CREATE DEFINER=`"),
+            "list_tables triggers_info DEFINER regressed: {def:?}"
+        );
+        assert!(
+            !def.starts_with("CREATE DEFINER='"),
+            "legacy single-quoted DEFINER leaked in list_tables: {def:?}"
+        );
+    }
 }

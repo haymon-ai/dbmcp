@@ -249,10 +249,10 @@ expression: tools
   {
     "name": "listFunctions",
     "title": "List Functions",
-    "description": "List all user-defined functions in the `public` schema of a database. Aggregates, window functions, and procedures are excluded.\n\n<usecase>\nUse when:\n- Exploring a database's stored logic\n- Verifying a function exists before calling it\n- The user asks what functions are defined\n</usecase>\n\n<examples>\n✓ \"What functions are in the mydb database?\" → listFunctions(database=\"mydb\")\n✓ \"Does a calc_total function exist?\" → listFunctions to check\n✗ \"List stored procedures\" → use listProcedures instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of function name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "description": "List user-defined functions in the `public` schema, optionally filtered and/or with full metadata. Aggregates, window functions, and procedures are excluded.\n\n<usecase>\nUse when:\n- Auditing functions across a database (brief mode, default).\n- Searching for a function by partial name (pass `search`).\n- Inspecting a function's language, signature, return type, volatility, strictness, security mode, parallel-safety, owner, comment, and full `CREATE FUNCTION` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_proc` / `information_schema.routines`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on function names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by `name(arguments)` instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What functions are in mydb?\" → listFunctions(database=\"mydb\")\n✓ \"Find the order-total calculation\" → listFunctions(search=\"order\")\n✓ \"What does calc_order_total do?\" → listFunctions(search=\"calc_order_total\", detailed=true)\n✗ \"List stored procedures\" → use listProcedures instead\n✗ \"List aggregates\" → not supported; aggregates are excluded\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of function-name strings, e.g. `[\"audit_user_login\", \"calc_order_subtotal\", \"calc_order_total\", \"calc_order_total\"]`. Overloaded functions appear as one entry per overload (duplicate name strings allowed).\nDetailed mode: a JSON object keyed by function signature `name(arguments)`; each value carries `schema`, `name`, `language`, `arguments`, `returnType`, `volatility` (IMMUTABLE/STABLE/VOLATILE), `strict` (boolean), `security` (INVOKER/DEFINER), `parallelSafety` (SAFE/RESTRICTED/UNSAFE), `owner`, `description` (or null when no `COMMENT ON FUNCTION`), and `definition` (the full `CREATE OR REPLACE FUNCTION` text). Overloads occupy distinct keys (e.g. `calc_total(integer)` vs `calc_total(integer, numeric)`).\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `(proname, oid)` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `listFunctions` tool.",
+      "description": "Request for the Postgres `listFunctions` tool — extends the shared shape with `search` and `detailed`.",
       "properties": {
         "cursor": {
           "default": null,
@@ -269,21 +269,50 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "detailed": {
+          "default": false,
+          "description": "When `true`, each returned entry is a full metadata object (schema, name,\nlanguage, arguments, returnType, volatility, strict, security,\nparallelSafety, owner, description, definition); when `false` or omitted,\neach entry is the bare function-name string.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": null,
+          "description": "Optional case-insensitive filter on function names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "title": "ListFunctionsRequest",
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "ListEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listFunctions` tool.",
       "properties": {
         "functions": {
-          "description": "Sorted list of function names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/ListEntries",
+          "description": "Page of matching functions. Shape depends on the request's `detailed` flag."
         },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",

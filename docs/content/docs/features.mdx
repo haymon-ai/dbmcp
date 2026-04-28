@@ -160,16 +160,51 @@ The detailed-mode field set diverges per backend:
 
 ### `listFunctions`
 
-List user-defined SQL functions in a database. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs registered in `mysql.func`. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of function-name strings:
+List user-defined SQL functions in a database. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs registered in `mysql.func`. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The `database` parameter selects which database to inspect and defaults to the active database. PostgreSQL restricts the listing to the `public` schema. Available on MySQL/MariaDB and PostgreSQL only — not available for SQLite.
+
+The tool accepts these optional parameters:
+
+- `cursor` — opaque pagination token; pass back the prior response's `nextCursor` to fetch the next page.
+- `search` — a case-insensitive `LIKE`/`ILIKE` pattern filtering on function name. `%` matches any sequence of characters, `_` matches a single character. Pass `calc%` for a prefix match, `%order%` for a substring match. A bare word with no wildcards matches only an exact function name. The `search` value must remain identical across paginated calls for cursor continuity.
+- `detailed` — when `true`, the response includes per-function metadata (language, arguments, return type, full `CREATE FUNCTION` text, and backend-specific extras) so a single call enumerates functions and inspects them. Defaults to `false`.
+
+In **brief mode** (default) the response is a sorted JSON array of function-name strings. PostgreSQL overloads appear as one entry per overload — duplicate name strings are expected:
 
 ```json
 {
-  "functions": ["calc_total", "format_phone"],
+  "functions": ["calc_order_subtotal", "calc_order_total", "calc_order_total"],
   "nextCursor": null
 }
 ```
 
-Available on MySQL/MariaDB and PostgreSQL (`public` schema). Not available for SQLite.
+In **detailed mode** the response is keyed by function signature. The PostgreSQL payload disambiguates overloads via `name(arguments)`:
+
+```json
+{
+  "functions": {
+    "calc_order_total(order_id integer, tax_rate numeric)": {
+      "schema": "public",
+      "name": "calc_order_total",
+      "language": "sql",
+      "arguments": "order_id integer, tax_rate numeric",
+      "returnType": "numeric",
+      "volatility": "IMMUTABLE",
+      "strict": true,
+      "security": "INVOKER",
+      "parallelSafety": "SAFE",
+      "owner": "app_user",
+      "description": "Sums line items minus discounts",
+      "definition": "CREATE OR REPLACE FUNCTION public.calc_order_total(order_id integer, tax_rate numeric) RETURNS numeric ..."
+    }
+  },
+  "nextCursor": null
+}
+```
+
+The detailed-mode field set diverges per backend:
+
+- **PostgreSQL** — keyed by `name(arguments)` (overloads disambiguate). Each value carries `schema`, `name`, `language`, `arguments`, `returnType`, `volatility` (`IMMUTABLE` / `STABLE` / `VOLATILE`), `strict`, `security` (`INVOKER` / `DEFINER`), `parallelSafety` (`SAFE` / `RESTRICTED` / `UNSAFE`), `owner`, `description` (or `null` when no `COMMENT ON FUNCTION`), and `definition` (the full `pg_get_functiondef` output). Brief and detailed pages share the same `(proname, oid)` row order, so a client can switch `detailed` mid-pagination without losing position.
+- **MySQL / MariaDB** — keyed by bare function name (the engines do not allow function overloading). Each value carries `schema`, `language` (typically `"SQL"`; MariaDB external-language functions report the external language name), `arguments` (comma-separated `name type` pairs from `information_schema.PARAMETERS`, empty string for zero-parameter functions), `returnType` (full `DTD_IDENTIFIER` including length/precision/unsigned/enum/set members), `deterministic` (boolean), `sqlDataAccess` (`CONTAINS_SQL` / `NO_SQL` / `READS_SQL_DATA` / `MODIFIES_SQL_DATA`), `security` (`INVOKER` / `DEFINER`), `definer` (`user@host`), `description` (or `null` when no `COMMENT`), `definition` (canonical reconstructed `CREATE FUNCTION` text including `DEFINER=` in `` `user`@`host` `` form), plus the session context active at function-creation time: `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`. `volatility`, `parallelSafety`, and `strict` are absent — no MySQL/MariaDB analogues. `owner` is renamed to `definer` to match the engine's terminology.
 
 ### `listProcedures`
 

@@ -1,6 +1,12 @@
 -- Seed schema and data for MySQL/MariaDB
 -- This file is mounted to /docker-entrypoint-initdb.d/ and auto-executed on first start
 
+-- Allow non-deterministic stored functions to be created without each function
+-- explicitly declaring DETERMINISTIC / NO SQL / READS SQL DATA. The seed
+-- intentionally exercises a NOT DETERMINISTIC + MODIFIES SQL DATA function
+-- (`recalc_order_total_v2`) to cover spec FR-004 acceptance values.
+SET GLOBAL log_bin_trust_function_creators = 1;
+
 -- app database
 
 DROP DATABASE IF EXISTS `app`;
@@ -151,6 +157,48 @@ spans two lines' IS NOT NULL;
 CREATE FUNCTION `app`.`calc_total`(n INT) RETURNS INT DETERMINISTIC RETURN n * 2;
 
 CREATE FUNCTION `app`.`double_it`(n INT) RETURNS INT DETERMINISTIC RETURN n + n;
+
+-- *order* search-target functions — exercise FR-001 search semantics + FR-004
+-- detailed-mode `sqlDataAccess` / `deterministic` / `security` / `description`
+-- coverage. Single-statement bodies (no DELIMITER required).
+
+CREATE FUNCTION `app`.`calc_order_total`(order_id INT) RETURNS DECIMAL(12,2)
+    DETERMINISTIC
+    READS SQL DATA
+    SQL SECURITY INVOKER
+    COMMENT 'Sums line items for an order'
+    RETURN (SELECT COALESCE(MAX(`id`), 0) FROM `app`.`posts` WHERE `id` = order_id);
+
+CREATE FUNCTION `app`.`calc_order_subtotal`(order_id INT, exclude_title VARCHAR(64)) RETURNS DECIMAL(12,2)
+    DETERMINISTIC
+    READS SQL DATA
+    SQL SECURITY INVOKER
+    COMMENT 'Sums line items for an order, excluding one title'
+    RETURN (SELECT COALESCE(MAX(`id`), 0) FROM `app`.`posts` WHERE `id` = order_id AND `title` <> exclude_title);
+
+CREATE FUNCTION `app`.`recalc_order_total_v2`(order_id INT) RETURNS DECIMAL(12,2)
+    NOT DETERMINISTIC
+    MODIFIES SQL DATA
+    SQL SECURITY DEFINER
+    COMMENT 'Recomputes and writes back the orders.total cache (v2)'
+    RETURN order_id * 2;
+
+-- Zero-parameter function with NO_SQL access flavour, no COMMENT (exercises
+-- the `description === null` coercion in FR-004 acceptance #6).
+CREATE FUNCTION `app`.`current_pricing_version`() RETURNS INT
+    DETERMINISTIC
+    NO SQL
+    SQL SECURITY INVOKER
+    RETURN 7;
+
+-- Body containing literal newline + escaped single quote — exercises spec
+-- Edge Case "function body containing literal newlines, quote characters".
+CREATE FUNCTION `app`.`format_audit_note`(order_id INT) RETURNS VARCHAR(512)
+    DETERMINISTIC
+    NO SQL
+    SQL SECURITY INVOKER
+    COMMENT 'Returns a multi-line note for the audit log'
+    RETURN CONCAT('order ', order_id, '\nnote: contains a quote '' and a newline');
 
 CREATE PROCEDURE `app`.`archive_user`(IN uid INT)
     UPDATE `app`.`users` SET `name` = CONCAT(`name`, ' (archived)') WHERE `id` = uid;

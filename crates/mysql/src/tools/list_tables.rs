@@ -42,7 +42,9 @@ const BRIEF_SQL: &str = r"
 /// `SHOW CREATE TRIGGER` form with each component backtick-quoted. The
 /// `DEFINER` column stores `user@host` unquoted and `user` may itself
 /// contain `@` (e.g. `'foo@bar'@'localhost'`), so the host is the
-/// segment after the **last** `@` and the user is everything before it.
+/// segment after the **last** `@` (`SUBSTRING_INDEX(..., '@', -1)`) and the
+/// user is everything before it (`LEFT(..., LENGTH - host_len - 1)`), with
+/// embedded backticks doubled in both components.
 const DETAILED_SQL: &str = r#"
 WITH table_info AS (
     SELECT

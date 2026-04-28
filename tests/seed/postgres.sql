@@ -218,6 +218,74 @@ CREATE TRIGGER logs_redact_before_insert
     BEFORE INSERT ON logs
     FOR EACH ROW EXECUTE FUNCTION logs_redact_fn();
 
+-- Additional fixtures for listFunctions search + detailed mode (spec 057):
+-- exercises every metadata field (volatility/strict/security/parallelSafety/
+-- description) and the overload-disambiguation contract.
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+        CREATE ROLE app_user;
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION calc_order_subtotal(order_id integer)
+RETURNS numeric LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT 0::numeric $$;
+COMMENT ON FUNCTION calc_order_subtotal(integer) IS 'Sums line items minus discounts';
+ALTER FUNCTION calc_order_subtotal(integer) OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION calc_order_total(order_id integer)
+RETURNS numeric LANGUAGE sql IMMUTABLE STRICT
+AS $$ SELECT 0::numeric $$;
+COMMENT ON FUNCTION calc_order_total(integer) IS 'Sums line items for an order';
+ALTER FUNCTION calc_order_total(integer) OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION calc_order_total(order_id integer, tax_rate numeric)
+RETURNS numeric LANGUAGE sql IMMUTABLE STRICT
+AS $$ SELECT 0::numeric $$;
+ALTER FUNCTION calc_order_total(integer, numeric) OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION audit_user_login(uid bigint)
+RETURNS void LANGUAGE plpgsql VOLATILE
+AS $$ BEGIN END; $$;
+ALTER FUNCTION audit_user_login(bigint) OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION elevate_user(uid bigint)
+RETURNS void LANGUAGE plpgsql VOLATILE
+SECURITY DEFINER
+AS $$ BEGIN END; $$;
+COMMENT ON FUNCTION elevate_user(bigint) IS 'Privileged helper - runs as definer.';
+
+CREATE OR REPLACE FUNCTION ratelimit_check(key text)
+RETURNS boolean LANGUAGE sql STABLE STRICT PARALLEL SAFE
+AS $$ SELECT true $$;
+ALTER FUNCTION ratelimit_check(text) OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION tmp_helper()
+RETURNS integer LANGUAGE plpgsql
+AS $$ BEGIN RETURN 42; END; $$;
+ALTER FUNCTION tmp_helper() OWNER TO app_user;
+
+CREATE OR REPLACE FUNCTION multi_arg_demo(
+    a integer,
+    b integer DEFAULT 0,
+    OUT total integer,
+    VARIADIC tags text[] DEFAULT ARRAY[]::text[]
+)
+LANGUAGE plpgsql
+AS $$ BEGIN total := a + b; END; $$;
+ALTER FUNCTION multi_arg_demo(integer, integer, text[]) OWNER TO app_user;
+
+-- Aggregate + procedure: must NOT appear in listFunctions output (FR-010).
+CREATE OR REPLACE FUNCTION sum_state(state numeric, val numeric)
+RETURNS numeric LANGUAGE sql IMMUTABLE
+AS $$ SELECT state + val $$;
+CREATE AGGREGATE sum_demo(numeric) (SFUNC = sum_state, STYPE = numeric);
+
+CREATE OR REPLACE PROCEDURE noop_proc()
+LANGUAGE plpgsql
+AS $$ BEGIN END; $$;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

@@ -105,10 +105,11 @@ const BRIEF_SQL: &str = r"
 /// portion can itself contain `@` (e.g. `'foo@bar'@'localhost'`), so the
 /// host is the segment after the **last** `@` and the user is everything
 /// before it (`SUBSTRING_INDEX(..., '@', -1)` for host, `LEFT(...)` for
-/// user). The reconstructed clause is rendered in canonical
-/// `SHOW CREATE TRIGGER` form with each component backtick-quoted.
-/// `events` is always a single-element
-/// array on `MySQL`/`MariaDB` (the engine fires one event per definition);
+/// user). The five comma-separated `CONCAT` chunks rebuild the canonical
+/// `SHOW CREATE TRIGGER` `DEFINER=` `` `<user>`@`<host>` `` opener inline
+/// so identifier escaping and the last-`@` split live next to the rest of
+/// the projection. `events` is always a single-element array on
+/// `MySQL`/`MariaDB` (the engine fires one event per definition);
 /// `activationLevel` is always `ROW`. `ORDER BY TRIGGER_NAME` is sufficient —
 /// `(TRIGGER_SCHEMA, TRIGGER_NAME)` is the table's primary key, and the
 /// `WHERE` clause already pins `TRIGGER_SCHEMA`.

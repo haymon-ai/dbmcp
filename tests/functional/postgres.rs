@@ -9,9 +9,9 @@
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
-use dbmcp_postgres::types::{DropTableRequest, ListTablesRequest, ListTriggersRequest};
+use dbmcp_postgres::types::{DropTableRequest, ListFunctionsRequest, ListTablesRequest, ListTriggersRequest};
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListFunctionsRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest,
     ListMaterializedViewsRequest, ListProceduresRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use indexmap::IndexMap;
@@ -2035,20 +2035,19 @@ async fn test_list_functions_returns_seeded_functions() {
     let response = handler
         .list_functions(ListFunctionsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_functions");
 
+    let names = response.functions.as_brief().expect("brief mode").to_vec();
     assert!(
-        response.functions.contains(&"calc_total".to_string()),
-        "expected seeded calc_total function, got {:?}",
-        response.functions
+        names.contains(&"calc_total".to_string()),
+        "expected calc_total, got {names:?}"
     );
     assert!(
-        response.functions.contains(&"double_it".to_string()),
-        "expected seeded double_it function, got {:?}",
-        response.functions
+        names.contains(&"double_it".to_string()),
+        "expected double_it, got {names:?}"
     );
 }
 
@@ -2058,18 +2057,334 @@ async fn test_list_functions_excludes_procedures() {
     let response = handler
         .list_functions(ListFunctionsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_functions");
 
+    let names = response.functions.as_brief().expect("brief mode").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
-            !response.functions.contains(&proc_name.to_string()),
-            "procedure `{proc_name}` leaked into listFunctions output: {:?}",
-            response.functions
+            !names.contains(&proc_name.to_string()),
+            "procedure `{proc_name}` leaked into listFunctions output: {names:?}",
         );
     }
+}
+
+// -----------------------------------------------------------------------
+// listFunctions search + detailed mode (spec 057)
+// -----------------------------------------------------------------------
+
+async fn list_functions_brief(handler: &PostgresHandler, search: Option<&str>) -> Vec<String> {
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: search.map(str::to_string),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    response.functions.as_brief().expect("brief mode").to_vec()
+}
+
+async fn list_functions_detailed(
+    handler: &PostgresHandler,
+    search: &str,
+) -> indexmap::IndexMap<String, serde_json::Value> {
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some(search.into()),
+            detailed: true,
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions detailed");
+    response.functions.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_functions_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let names = list_functions_brief(&handler, Some("calc_order")).await;
+    assert_eq!(
+        names,
+        vec![
+            "calc_order_subtotal".to_string(),
+            "calc_order_total".to_string(),
+            "calc_order_total".to_string(),
+        ],
+        "expected three calc_order_* matches (overload duplication)"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = list_functions_brief(&handler, Some("calc_order")).await;
+    let upper = list_functions_brief(&handler, Some("CALC_ORDER")).await;
+    assert_eq!(lower, upper);
+}
+
+#[tokio::test]
+async fn test_list_functions_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            search: Some("nonexistent_function_xyz".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    assert!(response.functions.as_brief().expect("brief").is_empty());
+    assert!(response.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_list_functions_search_supports_wildcard_semantics() {
+    // `_` is the ILIKE single-char wildcard. `c_lc` matches any 4-char substring
+    // starting with `c` then any char then `lc` — i.e. matches `calc` in every
+    // calc_* seeded function. A literal-substring contract would match nothing
+    // (no function contains the four characters `c`, `_`, `l`, `c` in order).
+    let handler = handler(true);
+    let names = list_functions_brief(&handler, Some("c_lc")).await;
+    assert!(
+        !names.is_empty(),
+        "expected `_` to be honoured as wildcard; empty result implies literal-substring mode"
+    );
+    assert!(
+        names.iter().all(|n| n.contains("calc")),
+        "all wildcard matches should contain `calc`, got {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\", "%", "_"] {
+        let response = handler
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("list_functions failed for payload {payload:?}: {e:?}"));
+        assert!(
+            response.functions.as_brief().is_some(),
+            "payload {payload:?} returned non-brief shape"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(1);
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("calc_order".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("list_functions paged");
+        all.extend(response.functions.as_brief().expect("brief").to_vec());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let single = list_functions_brief(&handler(true), Some("calc_order")).await;
+    assert_eq!(all, single, "paginated traversal should equal single-page result");
+}
+
+#[tokio::test]
+async fn test_list_functions_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let none_filter = list_functions_brief(&handler, None).await;
+    let empty = list_functions_brief(&handler, Some("")).await;
+    let whitespace = list_functions_brief(&handler, Some("   ")).await;
+    assert_eq!(none_filter, empty);
+    assert_eq!(none_filter, whitespace);
+}
+
+#[tokio::test]
+async fn test_list_functions_excludes_aggregates_and_window_and_procedures() {
+    let handler = handler(true);
+    // Aggregate sum_demo (prokind='a') must not appear.
+    let agg = list_functions_brief(&handler, Some("sum_demo")).await;
+    assert!(agg.is_empty(), "aggregate leaked into listFunctions: {agg:?}");
+    // Procedure noop_proc (prokind='p') must not appear.
+    let proc_match = list_functions_brief(&handler, Some("noop_proc")).await;
+    assert!(
+        proc_match.is_empty(),
+        "procedure leaked into listFunctions: {proc_match:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_returns_full_metadata_for_calc_order_subtotal() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "calc_order_subtotal").await;
+    let key = "calc_order_subtotal(order_id integer)";
+    let entry = detailed
+        .get(key)
+        .unwrap_or_else(|| panic!("missing key {key}; got keys {:?}", detailed.keys().collect::<Vec<_>>()));
+    assert_eq!(entry["schema"], "public");
+    assert_eq!(entry["name"], "calc_order_subtotal");
+    assert_eq!(entry["language"], "sql");
+    assert_eq!(entry["arguments"], "order_id integer");
+    assert_eq!(entry["returnType"], "numeric");
+    assert_eq!(entry["volatility"], "IMMUTABLE");
+    assert_eq!(entry["strict"], true);
+    assert_eq!(entry["security"], "INVOKER");
+    assert_eq!(entry["parallelSafety"], "SAFE");
+    assert_eq!(entry["owner"], "app_user");
+    assert_eq!(entry["description"], "Sums line items minus discounts");
+    let definition = entry["definition"].as_str().expect("definition is string");
+    assert!(
+        definition.contains("calc_order_subtotal"),
+        "definition missing function name: {definition}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_volatile_plpgsql() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "audit_user_login").await;
+    let entry = detailed.values().next().expect("audit_user_login entry");
+    assert_eq!(entry["language"], "plpgsql");
+    assert_eq!(entry["volatility"], "VOLATILE");
+    assert_eq!(entry["strict"], false);
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_security_definer() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "elevate_user").await;
+    let entry = detailed.values().next().expect("elevate_user entry");
+    assert_eq!(entry["security"], "DEFINER");
+    assert_eq!(entry["description"], "Privileged helper - runs as definer.");
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_parallel_safety_safe() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "ratelimit_check").await;
+    let entry = detailed.values().next().expect("ratelimit_check entry");
+    assert_eq!(entry["parallelSafety"], "SAFE");
+    assert_eq!(entry["volatility"], "STABLE");
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_no_comment_yields_null_description() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "tmp_helper").await;
+    let entry = detailed.get("tmp_helper()").expect("no-arg key");
+    assert_eq!(entry["arguments"], "");
+    assert!(
+        entry["description"].is_null(),
+        "description should be null, got {:?}",
+        entry["description"]
+    );
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_multi_arg_signature() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "multi_arg_demo").await;
+    let entry = detailed.values().next().expect("multi_arg_demo entry");
+    let args = entry["arguments"].as_str().expect("arguments string");
+    for substring in ["a integer", "b integer", "OUT total integer", "VARIADIC tags"] {
+        assert!(args.contains(substring), "arguments missing {substring:?}: {args}");
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_overload_disambiguation() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "calc_order_total").await;
+    let keys: Vec<&str> = detailed.keys().map(String::as_str).collect();
+    assert!(
+        keys.contains(&"calc_order_total(order_id integer)"),
+        "missing single-arg overload key, got {keys:?}"
+    );
+    assert!(
+        keys.contains(&"calc_order_total(order_id integer, tax_rate numeric)"),
+        "missing two-arg overload key, got {keys:?}"
+    );
+    assert_eq!(detailed.len(), 2, "expected exactly two overload entries, got {keys:?}");
+}
+
+#[tokio::test]
+async fn test_list_functions_brief_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_functions(ListFunctionsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_functions");
+    let value = serde_json::to_value(&response).expect("serialise");
+    let arr = value["functions"].as_array().expect("functions is array in brief mode");
+    for entry in arr {
+        assert!(entry.is_string(), "expected string entry, got {entry:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_with_search_only_includes_filtered() {
+    let handler = handler(true);
+    let detailed = list_functions_detailed(&handler, "calc_order").await;
+    let keys: Vec<&str> = detailed.keys().map(String::as_str).collect();
+    for excluded in [
+        "audit_user_login",
+        "elevate_user",
+        "ratelimit_check",
+        "tmp_helper",
+        "multi_arg_demo",
+    ] {
+        assert!(
+            !keys.iter().any(|k| k.starts_with(excluded)),
+            "excluded function {excluded} leaked: {keys:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_functions_detailed_paginates() {
+    let paged = handler_with_page_size(1);
+    let mut all_keys = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = paged
+            .list_functions(ListFunctionsRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("calc_order".into()),
+                detailed: true,
+            })
+            .await
+            .expect("list_functions detailed paged");
+        let page = response.functions.as_detailed().expect("detailed").clone();
+        assert!(page.len() <= 1, "page size 1 must not exceed 1 entry");
+        all_keys.extend(page.into_keys());
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        all_keys.len(),
+        3,
+        "expected 3 calc_order entries across pages, got {all_keys:?}"
+    );
 }
 
 #[tokio::test]

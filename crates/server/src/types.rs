@@ -224,11 +224,31 @@ pub struct ListFunctionsRequest {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFunctionsResponse {
-    /// Sorted list of function names for this page.
-    pub functions: Vec<String>,
+    /// Page of matching functions. Shape depends on the request's `detailed` flag.
+    pub functions: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+impl ListFunctionsResponse {
+    /// Builds a brief-mode response from a page of bare function names.
+    #[must_use]
+    pub fn brief(functions: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            functions: ListEntries::Brief(functions),
+            next_cursor,
+        }
+    }
+
+    /// Builds a detailed-mode response from a page of signature → metadata entries.
+    #[must_use]
+    pub fn detailed(functions: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            functions: ListEntries::Detailed(functions),
+            next_cursor,
+        }
+    }
 }
 
 /// Request for the `listProcedures` tool.
@@ -339,7 +359,9 @@ pub struct ExplainQueryRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexMap, ListEntries, ListTablesResponse, ListTriggersRequest, ListTriggersResponse};
+    use super::{
+        IndexMap, ListEntries, ListFunctionsResponse, ListTablesResponse, ListTriggersRequest, ListTriggersResponse,
+    };
     use serde_json::{Value, json};
 
     #[test]
@@ -463,5 +485,28 @@ mod tests {
         let new_len = serde_json::to_vec(&ListEntries::Detailed(new_map)).unwrap().len();
         let old_len = serde_json::to_vec(&old).unwrap().len();
         assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
+    }
+
+    #[test]
+    fn list_functions_response_brief_constructor_wraps_vec() {
+        let response = ListFunctionsResponse::brief(vec!["calc_total".into()], None);
+        assert!(matches!(response.functions, ListEntries::Brief(ref v) if v == &["calc_total"]));
+        assert!(response.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_functions_response_detailed_constructor_wraps_indexmap() {
+        let map = IndexMap::from([("calc_total(integer)".into(), json!({"language": "sql"}))]);
+        let response = ListFunctionsResponse::detailed(map, None);
+        assert!(matches!(response.functions, ListEntries::Detailed(_)));
+    }
+
+    #[test]
+    fn list_functions_response_brief_matches_legacy_wire_shape() {
+        let response = ListFunctionsResponse::brief(vec!["audit_user_login".into()], None);
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({"functions": ["audit_user_login"]})
+        );
     }
 }
