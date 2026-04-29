@@ -2,6 +2,19 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.9.0](https://github.com/haymon-ai/dbmcp/compare/97aac8b4a3356bba8bdaa87d17417ec70660016a..v0.9.0) - 2026-04-29
+#### Features
+- (**list-functions**) search + detailed mode (Postgres, MySQL, MariaDB) (#128) - ([0c1d3d4](https://github.com/haymon-ai/dbmcp/commit/0c1d3d4dfda74ccd7087a411690d71f64497b5a0)) - [@athopen](https://github.com/athopen)
+- (**list-matviews**) search + detailed mode (Postgres) (#131) - ([3e44ea5](https://github.com/haymon-ai/dbmcp/commit/3e44ea565316389e058f866f4d5c49a35e063365)) - [@athopen](https://github.com/athopen)
+- (**list-procedures**) search + detailed mode (Postgres, MySQL, MariaDB) (#129) - ([0e51fdc](https://github.com/haymon-ai/dbmcp/commit/0e51fdce8bb3c24520b586f11650e003f6654351)) - [@athopen](https://github.com/athopen)
+- (**list-triggers**) add search + detailed mode across backends (#127) - ([7389d77](https://github.com/haymon-ai/dbmcp/commit/7389d777c1d2c5525e2e0730f6885678852ee985)) - [@athopen](https://github.com/athopen)
+- (**list-views**) search + detailed mode across backends (#130) - ([6dd4b47](https://github.com/haymon-ai/dbmcp/commit/6dd4b4708d9e81eb9dbcb21c00552f9911c8ebd0)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) enrich listTables with search/detailed, drop getTableSchema (#126) - ([97aac8b](https://github.com/haymon-ai/dbmcp/commit/97aac8b4a3356bba8bdaa87d17417ec70660016a)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- add missing schema-discovery tools, polish README - ([d94278a](https://github.com/haymon-ai/dbmcp/commit/d94278a410b1c8bb5edc37cb18a29579419d0473)) - athopen
+
+- - -
+
 ## [v0.8.0](https://github.com/haymon-ai/dbmcp/compare/52f9bad70438aa19032118b2a8b0368cd62f44a2..v0.8.0) - 2026-04-23
 #### Features
 - (**tools**) default `database` to configured --db-name when omitted (#121) - ([1492f28](https://github.com/haymon-ai/dbmcp/commit/1492f28d718e5780cad576b0ef910a53e3839d5c)) - [@athopen](https://github.com/athopen)
