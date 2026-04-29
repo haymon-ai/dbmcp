@@ -5,12 +5,11 @@ use std::borrow::Cow;
 use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlparser::dialect::PostgreSqlDialect;
 
 use crate::PostgresHandler;
+use crate::connection::quote_ident;
 
 /// Marker type for the `createDatabase` MCP tool.
 pub(crate) struct CreateDatabaseTool;
@@ -32,7 +31,7 @@ Use when:
 </examples>
 
 <important>
-Database names must contain only alphanumeric characters and underscores.
+Database name must be non-empty; backend reserved-character rules apply.
 </important>
 
 <what_it_returns>
@@ -88,9 +87,7 @@ impl PostgresHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database)?;
-
-        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database, &PostgreSqlDialect {}));
+        let create_sql = format!("CREATE DATABASE {}", quote_ident(&database));
         self.connection.execute(create_sql.as_str(), None).await.map_err(|e| {
             let msg = e.to_string();
             if msg.contains("already exists") {

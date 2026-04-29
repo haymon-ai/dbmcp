@@ -8,7 +8,6 @@ use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
-use dbmcp_sql::sanitize::validate_ident;
 use dbmcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -110,12 +109,7 @@ impl PostgresHandler {
         }: ReadQueryRequest,
     ) -> Result<ReadQueryResponse, SqlError> {
         let kind = validate_read_only(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(validate_ident)
-            .transpose()?;
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         match kind {
             StatementKind::Select => {

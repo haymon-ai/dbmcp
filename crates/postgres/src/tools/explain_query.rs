@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::validate_ident;
 use dbmcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -107,12 +106,7 @@ impl PostgresHandler {
             let _ = validate_read_only(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
 
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(validate_ident)
-            .transpose()?;
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let explain_sql = if analyze {
             format!("EXPLAIN (ANALYZE, FORMAT JSON) {query}")

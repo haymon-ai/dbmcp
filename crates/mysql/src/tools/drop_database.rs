@@ -5,12 +5,11 @@ use std::borrow::Cow;
 use dbmcp_server::types::{DropDatabaseRequest, MessageResponse};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlparser::dialect::MySqlDialect;
 
 use crate::MysqlHandler;
+use crate::connection::quote_ident;
 
 /// Marker type for the `dropDatabase` MCP tool.
 pub(crate) struct DropDatabaseTool;
@@ -94,8 +93,6 @@ impl MysqlHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database)?;
-
         // Guard: prevent dropping the currently connected database.
         if self.connection.default_database_name().eq_ignore_ascii_case(&database) {
             return Err(SqlError::Query(format!(
@@ -103,7 +100,7 @@ impl MysqlHandler {
             )));
         }
 
-        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database, &MySqlDialect {}));
+        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
         // Evict the pool for the dropped database so stale connections

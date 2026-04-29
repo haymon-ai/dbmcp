@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use dbmcp_server::types::{QueryRequest, QueryResponse};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -85,12 +84,7 @@ impl PostgresHandler {
     ///
     /// Returns [`SqlError`] if the query fails.
     pub async fn write_query(&self, QueryRequest { query, database }: QueryRequest) -> Result<QueryResponse, SqlError> {
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(validate_ident)
-            .transpose()?;
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let rows = self.connection.fetch_json(query.as_str(), database).await?;
         Ok(QueryResponse { rows })
     }

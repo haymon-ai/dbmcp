@@ -17,7 +17,7 @@ pub use dbmcp_server::types::{ListEntries, ListTablesResponse};
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DropTableRequest {
-    /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
+    /// Name of the table to drop. Must be non-empty.
     pub table: String,
 }
 

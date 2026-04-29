@@ -9,7 +9,6 @@ use std::time::Duration;
 use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::validate_ident;
 use moka::future::Cache;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
 use tracing::info;
@@ -77,7 +76,7 @@ impl MysqlConnection {
     ///
     /// # Errors
     ///
-    /// - [`SqlError::InvalidIdentifier`] — `target` failed identifier validation.
+    /// Returns [`SqlError`] if the underlying pool creation fails.
     pub(crate) async fn pool(&self, target: Option<&str>) -> Result<MySqlPool, SqlError> {
         let database = match target {
             Some(name) if !name.is_empty() => name,
@@ -86,11 +85,6 @@ impl MysqlConnection {
 
         if let Some(pool) = self.pools.get(database).await {
             return Ok(pool);
-        }
-
-        let default = self.default_database_name();
-        if default.is_empty() || !default.eq_ignore_ascii_case(database) {
-            validate_ident(database)?;
         }
 
         let pool = self
@@ -113,7 +107,6 @@ impl Connection for MysqlConnection {
         self.config.query_timeout
     }
 }
-
 /// Creates a lazy `MySQL` pool for `db_name`.
 ///
 /// Combines pool lifecycle options with backend-specific connect
@@ -163,6 +156,12 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
     }
 
     pool_opts.connect_lazy_with(conn_ops)
+}
+
+/// Quotes `value` as a `MySQL` identifier (backtick-wrapped).
+#[must_use]
+pub(crate) fn quote_ident(value: &str) -> String {
+    dbmcp_sql::sanitize::quote_ident(value, '`')
 }
 
 #[cfg(test)]

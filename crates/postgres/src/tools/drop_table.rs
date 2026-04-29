@@ -5,12 +5,11 @@ use std::borrow::Cow;
 use dbmcp_server::types::MessageResponse;
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlparser::dialect::PostgreSqlDialect;
 
 use crate::PostgresHandler;
+use crate::connection::quote_ident;
 use crate::types::DropTableRequest;
 
 /// Marker type for the `dropTable` MCP tool.
@@ -103,15 +102,9 @@ impl PostgresHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        let database = database
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(validate_ident)
-            .transpose()?;
-        validate_ident(&table)?;
+        let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table, &PostgreSqlDialect {}));
+        let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table));
         if cascade {
             drop_sql.push_str(" CASCADE");
         }

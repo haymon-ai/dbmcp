@@ -121,7 +121,7 @@ pub struct ListDatabasesResponse {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDatabaseRequest {
-    /// Name of the database to create. Must contain only alphanumeric characters and underscores.
+    /// Name of the database to create. Must be non-empty.
     pub database: String,
 }
 
@@ -129,7 +129,7 @@ pub struct CreateDatabaseRequest {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DropDatabaseRequest {
-    /// Name of the database to drop. Must contain only alphanumeric characters and underscores.
+    /// Name of the database to drop. Must be non-empty.
     pub database: String,
 }
 

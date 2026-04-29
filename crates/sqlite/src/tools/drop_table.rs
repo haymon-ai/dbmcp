@@ -6,12 +6,11 @@ use dbmcp_server::types::MessageResponse;
 use dbmcp_sql::SqlError;
 
 use dbmcp_sql::Connection as _;
-use dbmcp_sql::sanitize::{quote_ident, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlparser::dialect::SQLiteDialect;
 
 use crate::SqliteHandler;
+use crate::connection::quote_ident;
 use crate::types::DropTableRequest;
 
 /// Marker type for the `dropTable` MCP tool.
@@ -89,9 +88,7 @@ impl SqliteHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&table)?;
-
-        let drop_sql = format!("DROP TABLE {}", quote_ident(&table, &SQLiteDialect {}));
+        let drop_sql = format!("DROP TABLE {}", quote_ident(&table));
         self.connection.execute(drop_sql.as_str(), None).await?;
 
         Ok(MessageResponse {

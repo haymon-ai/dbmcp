@@ -9,7 +9,6 @@ use std::time::Duration;
 use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::validate_ident;
 use moka::future::Cache;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
@@ -81,7 +80,7 @@ impl PostgresConnection {
     ///
     /// # Errors
     ///
-    /// - [`SqlError::InvalidIdentifier`] — `target` failed identifier validation.
+    /// Returns [`SqlError`] if the underlying pool creation fails.
     pub(crate) async fn pool(&self, target: Option<&str>) -> Result<PgPool, SqlError> {
         let database = match target {
             Some(name) if !name.is_empty() => name,
@@ -90,10 +89,6 @@ impl PostgresConnection {
 
         if let Some(pool) = self.pools.get(database).await {
             return Ok(pool);
-        }
-
-        if database != self.default_database_name() {
-            validate_ident(database)?;
         }
 
         let pool = self
@@ -116,7 +111,6 @@ impl Connection for PostgresConnection {
         self.config.query_timeout
     }
 }
-
 /// Creates a lazy `PostgreSQL` pool for `db_name`.
 ///
 /// Uses [`PgConnectOptions::new_without_pgpass`] to avoid unintended
@@ -163,6 +157,12 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
     }
 
     pool_opts.connect_lazy_with(conn_ops)
+}
+
+/// Quotes `value` as a `PostgreSQL` identifier (ANSI double-quote style).
+#[must_use]
+pub(crate) fn quote_ident(value: &str) -> String {
+    dbmcp_sql::sanitize::quote_ident(value, '"')
 }
 
 #[cfg(test)]
@@ -259,31 +259,5 @@ mod tests {
             "cached pools exceeded cap: {} > {POOL_CACHE_CAPACITY}",
             connection.pools.entry_count()
         );
-    }
-
-    #[tokio::test]
-    async fn fetch_scalar_rejects_invalid_database_identifier() {
-        let connection = PostgresConnection::new(&base_config());
-        let result: Result<Vec<String>, SqlError> = connection
-            .fetch_scalar(sqlx::query("SELECT $1::text").bind("x"), Some("bad\0name"))
-            .await;
-        match result {
-            Err(SqlError::InvalidIdentifier(_)) => {}
-            Err(other) => panic!("expected InvalidIdentifier, got: {other}"),
-            Ok(_) => panic!("expected error, got Ok"),
-        }
-    }
-
-    #[tokio::test]
-    async fn fetch_json_rejects_invalid_database_identifier() {
-        let connection = PostgresConnection::new(&base_config());
-        let result = connection
-            .fetch_json(sqlx::query("SELECT $1::int AS n").bind(1_i32), Some("bad\nname"))
-            .await;
-        match result {
-            Err(SqlError::InvalidIdentifier(_)) => {}
-            Err(other) => panic!("expected InvalidIdentifier, got: {other}"),
-            Ok(_) => panic!("expected error, got Ok"),
-        }
     }
 }

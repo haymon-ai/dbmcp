@@ -1097,29 +1097,6 @@ async fn test_drop_table_blocked_in_read_only() {
 }
 
 #[tokio::test]
-async fn test_read_query_control_char_database_name_rejected() {
-    let handler = handler(true);
-    let request = ReadQueryRequest {
-        query: "SELECT 1".into(),
-        database: Some("test\x01db".into()),
-        cursor: None,
-    };
-    let result = handler.read_query(request).await;
-    assert!(result.is_err(), "control char in database name should be rejected");
-}
-
-#[tokio::test]
-async fn test_list_tables_control_char_database_rejected() {
-    let handler = handler(true);
-    let request = ListTablesRequest {
-        database: Some("test\x00db".into()),
-        ..Default::default()
-    };
-    let result = handler.list_tables(request).await;
-    assert!(result.is_err(), "control char in database name should be rejected");
-}
-
-#[tokio::test]
 async fn test_create_drop_database_with_double_quote() {
     let handler = handler(false);
     let db_name = "test_quote_db\"edge".to_string();
@@ -2061,29 +2038,12 @@ async fn test_list_triggers_search_empty_is_same_as_no_filter() {
 }
 
 #[tokio::test]
-async fn test_list_triggers_invalid_database_identifier_is_rejected() {
-    // FR-009: the active-database identifier flows through `validate_ident`
-    // before the SQL runs. `validate_ident`'s contract is "non-empty + no
-    // control characters"; SQL meta-characters (`;`, `'`, `"`, etc.) are not
-    // identifier syntax violations and are safe because the database value
-    // is parameter-bound to `TRIGGER_SCHEMA = ?`, never interpolated into SQL.
-    // This test exercises the negative path of the validator.
+async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() {
+    // The database value is parameter-bound to `TRIGGER_SCHEMA = ?` and never
+    // interpolated into SQL. SQL meta-characters (`;`, `'`, `"`, `` ` ``)
+    // therefore reach the engine as literal schema names and produce empty
+    // results. This test pins the parameter-binding path against injection.
     let handler = handler(true);
-    for bad in ["\0name", "name\x01", "name\nwith_newline"] {
-        let result = handler
-            .list_triggers(ListTriggersRequest {
-                database: Some(bad.into()),
-                ..Default::default()
-            })
-            .await;
-        assert!(
-            result.is_err(),
-            "expected validate_ident to reject {bad:?}, got {result:?}"
-        );
-    }
-
-    // SQL meta-characters are NOT validate_ident violations — they are
-    // bound as literal values and produce empty results (no SQL injection).
     for bound in ["shop;DROP", "shop'", "shop\"", "shop`"] {
         let result = handler
             .list_triggers(ListTriggersRequest {
@@ -2969,10 +2929,9 @@ async fn list_tables_detailed_search_preserves_filter_across_pages() {
 
 #[tokio::test]
 async fn list_tables_detailed_excludes_system_schemas_passes_through_validation() {
-    // Today's MysqlHandler::list_tables runs `validate_ident` on `database`.
-    // `information_schema` passes (alphanumeric + underscore) — so the call
-    // succeeds and returns whatever metadata that schema's TABLE rows expose.
-    // This is a regression test pinning the existing behaviour.
+    // The active-database identifier reaches the SQL via per-backend quoting;
+    // `information_schema` is a normal name and the call succeeds, returning
+    // whatever metadata that schema's TABLE rows expose. Regression pin.
     let handler = handler(true);
     let response = handler
         .list_tables(ListTablesRequest {
@@ -3173,22 +3132,6 @@ async fn test_list_functions_search_paginates_filtered_results() {
         single.functions.as_brief().expect("brief"),
         "paginated traversal should equal single-page result"
     );
-}
-
-#[tokio::test]
-async fn test_list_functions_invalid_database_identifier_is_rejected() {
-    // `validate_ident` rejects empty + whitespace-only + control-character
-    // identifiers; arbitrary user payloads (including `;`, `"`, `--`) are
-    // accepted by the helper and reach the engine via parameter binding (no
-    // injection possible). The control-char case is the regression guard.
-    let handler = handler(true);
-    let result = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("test\x00db".into()),
-            ..Default::default()
-        })
-        .await;
-    assert!(result.is_err(), "control char in database name should be rejected");
 }
 
 #[tokio::test]

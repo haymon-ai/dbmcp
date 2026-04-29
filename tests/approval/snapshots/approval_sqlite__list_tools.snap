@@ -12,7 +12,7 @@ expression: tools
       "description": "Request for the `dropTable` tool.",
       "properties": {
         "table": {
-          "description": "Name of the table to drop. Must contain only alphanumeric characters and underscores.",
+          "description": "Name of the table to drop. Must be non-empty.",
           "type": "string"
         }
       },

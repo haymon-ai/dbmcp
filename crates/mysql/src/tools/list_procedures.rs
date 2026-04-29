@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use dbmcp_server::pagination::Pager;
 use dbmcp_sql::Connection as _;
-use dbmcp_sql::sanitize::validate_ident;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -219,13 +218,11 @@ impl MysqlHandler {
             detailed,
         }: ListProceduresRequest,
     ) -> Result<ListProceduresResponse, ErrorData> {
-        let database = validate_ident(
-            database
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| self.connection.default_database_name()),
-        )?;
+        let database = database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.connection.default_database_name());
 
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);

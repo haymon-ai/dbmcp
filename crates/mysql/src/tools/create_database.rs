@@ -5,12 +5,11 @@ use std::borrow::Cow;
 use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::sanitize::{quote_ident, quote_literal, validate_ident};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
-use sqlparser::dialect::MySqlDialect;
 
 use crate::MysqlHandler;
+use crate::connection::quote_ident;
 
 /// Marker type for the `createDatabase` MCP tool.
 pub(crate) struct CreateDatabaseTool;
@@ -32,7 +31,7 @@ Use when:
 </examples>
 
 <important>
-Database names must contain only alphanumeric characters and underscores.
+Database name must be non-empty; backend reserved-character rules apply.
 If the database already exists, returns a message indicating so without error.
 </important>
 
@@ -89,17 +88,18 @@ impl MysqlHandler {
             return Err(SqlError::ReadOnlyViolation);
         }
 
-        validate_ident(&database)?;
-
-        let check_sql = format!(
-            r"
-            SELECT CAST(SCHEMA_NAME AS CHAR)
-            FROM information_schema.SCHEMATA
-            WHERE SCHEMA_NAME = {}",
-            quote_literal(&database),
-        );
-
-        let exists: Option<String> = self.connection.fetch_optional(check_sql.as_str(), None).await?;
+        let exists: Option<String> = self
+            .connection
+            .fetch_optional(
+                sqlx::query(
+                    "SELECT CAST(SCHEMA_NAME AS CHAR) \
+                     FROM information_schema.SCHEMATA \
+                     WHERE SCHEMA_NAME = ?",
+                )
+                .bind(&database),
+                None,
+            )
+            .await?;
 
         if exists.is_some() {
             return Ok(MessageResponse {
@@ -107,10 +107,7 @@ impl MysqlHandler {
             });
         }
 
-        let create_sql = format!(
-            "CREATE DATABASE IF NOT EXISTS {}",
-            quote_ident(&database, &MySqlDialect {})
-        );
+        let create_sql = format!("CREATE DATABASE IF NOT EXISTS {}", quote_ident(&database));
 
         self.connection.execute(create_sql.as_str(), None).await?;
 

@@ -6,13 +6,13 @@ expression: tools
   {
     "name": "createDatabase",
     "title": "Create Database",
-    "description": "Create a new database on the connected server.\n\n<usecase>\nUse when:\n- Setting up a new database for a project or application\n- The user asks to create a database\n</usecase>\n\n<examples>\n✓ \"Create a database called analytics\" → createDatabase(database=\"analytics\")\n✗ \"Create a table\" → use writeQuery with CREATE TABLE\n</examples>\n\n<important>\nDatabase names must contain only alphanumeric characters and underscores.\n</important>\n\n<what_it_returns>\nA confirmation message with the created database name.\n</what_it_returns>",
+    "description": "Create a new database on the connected server.\n\n<usecase>\nUse when:\n- Setting up a new database for a project or application\n- The user asks to create a database\n</usecase>\n\n<examples>\n✓ \"Create a database called analytics\" → createDatabase(database=\"analytics\")\n✗ \"Create a table\" → use writeQuery with CREATE TABLE\n</examples>\n\n<important>\nDatabase name must be non-empty; backend reserved-character rules apply.\n</important>\n\n<what_it_returns>\nA confirmation message with the created database name.\n</what_it_returns>",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Request for the `createDatabase` tool.",
       "properties": {
         "database": {
-          "description": "Name of the database to create. Must contain only alphanumeric characters and underscores.",
+          "description": "Name of the database to create. Must be non-empty.",
           "type": "string"
         }
       },
@@ -53,7 +53,7 @@ expression: tools
       "description": "Request for the `dropDatabase` tool.",
       "properties": {
         "database": {
-          "description": "Name of the database to drop. Must contain only alphanumeric characters and underscores.",
+          "description": "Name of the database to drop. Must be non-empty.",
           "type": "string"
         }
       },
@@ -107,7 +107,7 @@ expression: tools
           ]
         },
         "table": {
-          "description": "Name of the table to drop. Must contain only alphanumeric characters and underscores.",
+          "description": "Name of the table to drop. Must be non-empty.",
           "type": "string"
         }
       },

@@ -57,7 +57,6 @@ impl Connection for SqliteConnection {
         self.config.query_timeout
     }
 }
-
 /// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].
 ///
 /// Forces `max_connections` to 1 — `SQLite` is a single-writer backend.
@@ -74,6 +73,12 @@ fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
     }
 
     pool_opts.connect_lazy_with(conn_ops)
+}
+
+/// Quotes `value` as a `SQLite` identifier (ANSI double-quote style).
+#[must_use]
+pub(crate) fn quote_ident(value: &str) -> String {
+    dbmcp_sql::sanitize::quote_ident(value, '"')
 }
 
 #[cfg(test)]

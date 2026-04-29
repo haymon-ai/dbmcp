@@ -19,7 +19,7 @@ pub struct DropTableRequest {
     /// Database containing the table. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
-    /// Name of the table to drop. Must contain only alphanumeric characters and underscores.
+    /// Name of the table to drop. Must be non-empty.
     pub table: String,
 }
 
