@@ -299,7 +299,7 @@ impl HttpConfig {
     /// Returns default allowed host names.
     #[must_use]
     pub fn default_allowed_hosts() -> Vec<String> {
-        vec!["localhost".into(), "127.0.0.1".into()]
+        vec!["localhost".into(), "127.0.0.1".into(), "::1".into()]
     }
 
     /// Validates the HTTP configuration and returns all errors found.

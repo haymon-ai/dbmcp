@@ -173,7 +173,7 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 | `--host` | `127.0.0.1` | Bind host |
 | `--port` | `9001` | Bind port |
 | `--allowed-origins` | localhost variants | CORS allowed origins (comma-separated) |
-| `--allowed-hosts` | `localhost,127.0.0.1` | Trusted Host headers (comma-separated) |
+| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Trusted Host headers (comma-separated) |
 
 ## MCP Tools 🧩
 

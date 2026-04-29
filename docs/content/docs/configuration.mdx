@@ -81,7 +81,7 @@ These options are available only when running in HTTP mode (`dbmcp http`):
 | `--host` | `127.0.0.1` | Bind host for the HTTP server |
 | `--port` | `9001` | Bind port for the HTTP server |
 | `--allowed-origins` | `http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1` | Allowed CORS origins (comma-separated) |
-| `--allowed-hosts` | `localhost,127.0.0.1` | Allowed host names (comma-separated) |
+| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated) |
 
 A transport subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
 

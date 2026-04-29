@@ -117,7 +117,8 @@ impl HttpCommand {
             StreamableHttpServerConfig::default()
                 .with_stateful_mode(false)
                 .with_json_response(true)
-                .with_cancellation_token(cancel_token.child_token()),
+                .with_cancellation_token(cancel_token.child_token())
+                .with_allowed_hosts(http_config.allowed_hosts.clone()),
         );
 
         let router = axum::Router::new()
