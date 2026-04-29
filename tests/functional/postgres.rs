@@ -11,10 +11,11 @@ use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_postgres::types::{
     DropTableRequest, ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
+    ListViewsRequest,
 };
 use dbmcp_server::types::{
     CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest,
-    ListMaterializedViewsRequest, ListViewsRequest, QueryRequest, ReadQueryRequest,
+    ListMaterializedViewsRequest, QueryRequest, ReadQueryRequest,
 };
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -1519,20 +1520,19 @@ async fn test_list_views_returns_seeded_views() {
     let response = handler
         .list_views(ListViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_views");
 
+    let names = response.views.as_brief().expect("brief mode");
     assert!(
-        response.views.contains(&"active_users".to_string()),
-        "expected seeded active_users view, got {:?}",
-        response.views
+        names.contains(&"active_users".to_string()),
+        "expected seeded active_users view, got {names:?}"
     );
     assert!(
-        response.views.contains(&"published_posts".to_string()),
-        "expected seeded published_posts view, got {:?}",
-        response.views
+        names.contains(&"published_posts".to_string()),
+        "expected seeded published_posts view, got {names:?}"
     );
 }
 
@@ -1542,16 +1542,16 @@ async fn test_list_views_excludes_base_tables() {
     let response = handler
         .list_views(ListViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_views");
 
+    let names = response.views.as_brief().expect("brief mode");
     for table in ["users", "posts", "tags", "post_tags", "temporal"] {
         assert!(
-            !response.views.contains(&table.to_string()),
-            "base table `{table}` must not appear in listViews, got {:?}",
-            response.views
+            !names.contains(&table.to_string()),
+            "base table `{table}` must not appear in listViews, got {names:?}"
         );
     }
 }
@@ -1562,13 +1562,13 @@ async fn test_list_views_empty_for_view_less_database() {
     let response = handler
         .list_views(ListViewsRequest {
             database: Some("analytics".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_views");
 
     assert!(
-        response.views.is_empty(),
+        response.views.as_brief().expect("brief").is_empty(),
         "analytics has no views, got {:?}",
         response.views
     );
@@ -1585,9 +1585,10 @@ async fn test_list_views_pagination_traverses_pages() {
         let request = ListViewsRequest {
             database: Some("app".into()),
             cursor,
+            ..Default::default()
         };
         let response = handler_paged.list_views(request).await.expect("paged list_views");
-        all.extend(response.views);
+        all.extend(response.views.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1597,12 +1598,13 @@ async fn test_list_views_pagination_traverses_pages() {
     let single = handler_full
         .list_views(ListViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("single-page list_views");
 
-    assert_eq!(all, single.views, "paginated traversal should equal single page");
+    let single_names = single.views.as_brief().expect("brief").to_vec();
+    assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
 #[tokio::test]
@@ -1611,12 +1613,364 @@ async fn test_list_views_works_in_read_only_mode() {
     let response = handler
         .list_views(ListViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_views in read-only mode");
 
-    assert!(!response.views.is_empty(), "read-only mode must still allow listViews");
+    assert!(
+        !response.views.as_brief().expect("brief").is_empty(),
+        "read-only mode must still allow listViews"
+    );
+}
+
+// === spec 063: search + detailed mode tests ===
+
+async fn list_views_brief(handler: &PostgresHandler, search: Option<&str>) -> Vec<String> {
+    let request = ListViewsRequest {
+        database: Some("app".into()),
+        search: search.map(str::to_owned),
+        ..Default::default()
+    };
+    let response = handler.list_views(request).await.expect("list_views");
+    response.views.as_brief().expect("brief mode").to_vec()
+}
+
+async fn list_views_detailed(handler: &PostgresHandler, search: Option<&str>) -> IndexMap<String, Value> {
+    let request = ListViewsRequest {
+        database: Some("app".into()),
+        search: search.map(str::to_owned),
+        detailed: true,
+        ..Default::default()
+    };
+    let response = handler.list_views(request).await.expect("list_views detailed");
+    response.views.as_detailed().expect("detailed mode").clone()
+}
+
+#[tokio::test]
+async fn test_list_views_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let names = list_views_brief(&handler, Some("active")).await;
+    assert_eq!(
+        names,
+        vec!["active_orders".to_string(), "active_users".to_string()],
+        "search=active must return only the two active_* views, got {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = list_views_brief(&handler, Some("active")).await;
+    let upper = list_views_brief(&handler, Some("ACTIVE")).await;
+    assert_eq!(lower, upper, "ILIKE must be case-insensitive");
+}
+
+#[tokio::test]
+async fn test_list_views_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let names = list_views_brief(&handler, Some("nonexistent_view_xyz")).await;
+    assert!(names.is_empty(), "no match must return empty array, got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_views_search_supports_wildcard_semantics() {
+    let handler = handler(true);
+    // `%` matches any sequence — `active%users` matches `active_users` only.
+    let percent = list_views_brief(&handler, Some("active%users")).await;
+    assert_eq!(
+        percent,
+        vec!["active_users".to_string()],
+        "% wildcard must match active_users only"
+    );
+    // `_` matches a single character — `a_chived` matches `archived_orders`.
+    let underscore = list_views_brief(&handler, Some("a_chived")).await;
+    assert!(
+        underscore.contains(&"archived_orders".to_string()),
+        "_ wildcard must match archived_orders, got {underscore:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\"] {
+        let response = handler
+            .list_views(ListViewsRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("search={payload:?} must not raise SQL error: {e:?}"));
+        assert!(
+            response.views.as_brief().is_some(),
+            "search={payload:?} must return brief mode"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_views_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(1);
+    let full = handler(true);
+
+    let mut all = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = paged
+            .list_views(ListViewsRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("active".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("paged list_views");
+        all.extend(response.views.as_brief().expect("brief").to_vec());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    let single = full
+        .list_views(ListViewsRequest {
+            database: Some("app".into()),
+            search: Some("active".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_views");
+    let single_names = single.views.as_brief().expect("brief").to_vec();
+    assert_eq!(all, single_names, "paginated filter must equal single page");
+}
+
+#[tokio::test]
+async fn test_list_views_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let no_filter = list_views_brief(&handler, None).await;
+    let empty = list_views_brief(&handler, Some("")).await;
+    let whitespace = list_views_brief(&handler, Some("   ")).await;
+    assert_eq!(no_filter, empty, "empty search must be treated as no filter");
+    assert_eq!(
+        no_filter, whitespace,
+        "whitespace-only search must be treated as no filter"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_excludes_materialized_views_and_system_schemas() {
+    let handler = handler(true);
+    let all = list_views_brief(&handler, None).await;
+    // Materialized views must not appear.
+    assert!(
+        !all.contains(&"mv_recent_orders".to_string()),
+        "mv_recent_orders is a materialized view; must not appear in listViews, got {all:?}"
+    );
+    assert!(
+        !all.contains(&"mv_user_cohort".to_string()),
+        "mv_user_cohort is a materialized view; must not appear, got {all:?}"
+    );
+    // System-schema views must not match either.
+    let sys = list_views_brief(&handler, Some("pg_indexes")).await;
+    assert!(
+        sys.is_empty(),
+        "pg_catalog views must never appear in listViews, got {sys:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_returns_full_metadata_for_active_users() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("active_users")).await;
+    let entry = map
+        .get("active_users")
+        .expect("active_users must be present under bare-name key");
+    assert_eq!(entry["schema"], Value::String("public".into()));
+    assert_eq!(entry["owner"], Value::String("app_user".into()));
+    assert_eq!(
+        entry["description"],
+        Value::String("Currently-active user accounts".into())
+    );
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("SELECT"),
+        "definition must contain SELECT, got: {definition}"
+    );
+    assert!(
+        definition.contains("users"),
+        "definition must reference users, got: {definition}"
+    );
+    // Bare-name key contract: no `name` field inside the value.
+    assert!(
+        entry.get("name").is_none(),
+        "value must not repeat `name` (it is the map key), got entry: {entry}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_no_comment_yields_null_description() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("active_orders")).await;
+    let entry = map.get("active_orders").expect("active_orders entry");
+    assert_eq!(
+        entry["description"],
+        Value::Null,
+        "no COMMENT ON VIEW → JSON null, not empty string. entry: {entry}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_owner_reflects_alter_view_owner() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("archived_orders")).await;
+    let entry = map.get("archived_orders").expect("archived_orders entry");
+    assert_eq!(
+        entry["owner"],
+        Value::String("reporting_role".into()),
+        "owner must reflect ALTER VIEW OWNER TO reporting_role"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_definition_round_trip_multiline() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("user_order_summary")).await;
+    let entry = map.get("user_order_summary").expect("user_order_summary entry");
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(definition.contains("WITH recent AS"), "must contain CTE: {definition}");
+    assert!(
+        definition.contains("LEFT JOIN recent"),
+        "must contain LEFT JOIN: {definition}"
+    );
+    assert!(
+        definition.contains('\n'),
+        "multi-line definition must preserve newlines: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_definition_round_trip_quote() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("audit_log")).await;
+    let entry = map.get("audit_log").expect("audit_log entry");
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("'admin'"),
+        "single-quote literal must round-trip in definition, got: {definition}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_with_search_only_includes_filtered() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("active")).await;
+    let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        vec!["active_orders", "active_users"],
+        "detailed+search must include only matching views"
+    );
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_paginates() {
+    let paged = handler_with_page_size(2);
+    let mut all = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = paged
+            .list_views(ListViewsRequest {
+                database: Some("app".into()),
+                cursor,
+                detailed: true,
+                ..Default::default()
+            })
+            .await
+            .expect("paged detailed list_views");
+        all.extend(
+            response
+                .views
+                .as_detailed()
+                .expect("detailed")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    // Brief and detailed pagination must traverse the same row sequence.
+    let full = handler(true);
+    let brief = list_views_brief(&full, None).await;
+    assert_eq!(all, brief, "detailed pagination must match brief order/keys");
+}
+
+#[tokio::test]
+async fn test_list_views_brief_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_views(ListViewsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_views brief");
+    let serialized = serde_json::to_value(&response).expect("serialize");
+    let views = serialized.get("views").expect("views field");
+    assert!(views.is_array(), "brief mode views must serialise as bare-string array");
+    for entry in views.as_array().expect("array") {
+        assert!(
+            entry.is_string(),
+            "brief mode entries must be raw strings, got: {entry:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_omits_value_fields() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, Some("active_users")).await;
+    let entry = map.get("active_users").expect("active_users entry");
+    let object = entry.as_object().expect("entry must be object");
+    let keys: std::collections::BTreeSet<&str> = object.keys().map(String::as_str).collect();
+    let expected: std::collections::BTreeSet<&str> =
+        ["schema", "owner", "description", "definition"].into_iter().collect();
+    assert_eq!(
+        keys, expected,
+        "detailed value must contain exactly the four contract fields"
+    );
+    for forbidden in [
+        "name",
+        "columns",
+        "securityBarrier",
+        "securityInvoker",
+        "withCheckOption",
+    ] {
+        assert!(
+            !object.contains_key(forbidden),
+            "detailed value must NOT contain `{forbidden}` field, got entry: {entry}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_views_detailed_excludes_materialized_views() {
+    let handler = handler(true);
+    let map = list_views_detailed(&handler, None).await;
+    assert!(
+        !map.contains_key("mv_recent_orders"),
+        "materialized view must not appear in detailed listViews, got keys: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !map.contains_key("mv_user_cohort"),
+        "materialized view must not appear in detailed listViews, got keys: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -2810,16 +3164,16 @@ async fn test_list_views_excludes_materialized_views() {
     let response = handler
         .list_views(ListViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_views");
 
+    let names = response.views.as_brief().expect("brief mode");
     for matview in ["mv_recent_orders", "mv_user_cohort"] {
         assert!(
-            !response.views.contains(&matview.to_string()),
-            "materialized view `{matview}` leaked into listViews output: {:?}",
-            response.views
+            !names.contains(&matview.to_string()),
+            "materialized view `{matview}` leaked into listViews output: {names:?}"
         );
     }
 }

@@ -257,6 +257,25 @@ expression: tools
       "type": "object"
     },
     "outputSchema": {
+      "$defs": {
+        "ListEntries": {
+          "anyOf": [
+            {
+              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
+              "type": "object"
+            }
+          ],
+          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "Response for the `listViews` tool.",
       "properties": {
@@ -268,11 +287,8 @@ expression: tools
           ]
         },
         "views": {
-          "description": "Sorted list of view names for this page.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "$ref": "#/$defs/ListEntries",
+          "description": "Page of matching views. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [

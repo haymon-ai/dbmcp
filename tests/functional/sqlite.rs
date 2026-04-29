@@ -923,15 +923,14 @@ async fn test_list_views_returns_seeded_views() {
         .await
         .expect("list_views");
 
+    let names = response.views.as_brief().expect("brief mode");
     assert!(
-        response.views.contains(&"active_users".to_string()),
-        "expected seeded active_users view, got {:?}",
-        response.views
+        names.contains(&"active_users".to_string()),
+        "expected seeded active_users view, got {names:?}"
     );
     assert!(
-        response.views.contains(&"published_posts".to_string()),
-        "expected seeded published_posts view, got {:?}",
-        response.views
+        names.contains(&"published_posts".to_string()),
+        "expected seeded published_posts view, got {names:?}"
     );
 }
 
@@ -943,11 +942,11 @@ async fn test_list_views_excludes_base_tables() {
         .await
         .expect("list_views");
 
+    let names = response.views.as_brief().expect("brief mode");
     for table in ["users", "posts", "tags", "post_tags", "temporal"] {
         assert!(
-            !response.views.contains(&table.to_string()),
-            "base table `{table}` must not appear in listViews, got {:?}",
-            response.views
+            !names.contains(&table.to_string()),
+            "base table `{table}` must not appear in listViews, got {names:?}"
         );
     }
 }
@@ -964,7 +963,7 @@ async fn test_list_views_pagination_traverses_pages() {
             .list_views(ListViewsRequest { cursor })
             .await
             .expect("paged list_views");
-        all.extend(response.views);
+        all.extend(response.views.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -976,7 +975,8 @@ async fn test_list_views_pagination_traverses_pages() {
         .await
         .expect("single-page list_views");
 
-    assert_eq!(all, single.views, "paginated traversal should equal single page");
+    let single_names = single.views.as_brief().expect("brief").to_vec();
+    assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
 #[tokio::test]
@@ -987,7 +987,10 @@ async fn test_list_views_works_in_read_only_mode() {
         .await
         .expect("list_views in read-only mode");
 
-    assert!(!response.views.is_empty(), "read-only mode must still allow listViews");
+    assert!(
+        !response.views.as_brief().expect("brief").is_empty(),
+        "read-only mode must still allow listViews"
+    );
 }
 
 #[tokio::test]

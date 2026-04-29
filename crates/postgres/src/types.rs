@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 pub use dbmcp_server::types::{
     ListEntries, ListFunctionsResponse, ListProceduresResponse, ListTablesResponse, ListTriggersRequest,
-    ListTriggersResponse,
+    ListTriggersResponse, ListViewsResponse,
 };
 
 /// Request for the `dropTable` tool.
@@ -71,6 +71,27 @@ pub struct ListFunctionsRequest {
     pub detailed: bool,
 }
 
+/// Request for the Postgres `listViews` tool — extends the shared shape with `search` and `detailed`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListViewsRequest {
+    /// Database to list views from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+    #[serde(default)]
+    pub cursor: Option<Cursor>,
+    /// Optional case-insensitive filter on view names. The input is used within an `ILIKE`
+    /// clause: `%` matches any sequence of characters and `_` matches any single character.
+    #[serde(default)]
+    pub search: Option<String>,
+    /// When `true`, each returned entry is a full metadata object (schema, owner,
+    /// description, definition); when `false` or omitted, each entry is the bare
+    /// view-name string.
+    #[serde(default)]
+    pub detailed: bool,
+}
+
 /// Request for the Postgres `listProcedures` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -94,7 +115,7 @@ pub struct ListProceduresRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{ListFunctionsRequest, ListProceduresRequest, ListTablesRequest};
+    use super::{ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListViewsRequest};
 
     #[test]
     fn list_tables_request_defaults_to_brief_mode_without_search() {
@@ -137,6 +158,20 @@ mod tests {
         let req: ListProceduresRequest =
             serde_json::from_str(r#"{"search": "archive", "detailed": true}"#).expect("parse");
         assert_eq!(req.search.as_deref(), Some("archive"));
+        assert!(req.detailed);
+    }
+
+    #[test]
+    fn list_views_request_defaults_to_brief_mode_without_search() {
+        let req: ListViewsRequest = serde_json::from_str("{}").expect("empty object should parse");
+        assert!(req.search.is_none());
+        assert!(!req.detailed, "detailed must default to false");
+    }
+
+    #[test]
+    fn list_views_request_accepts_search_and_detailed() {
+        let req: ListViewsRequest = serde_json::from_str(r#"{"search": "active", "detailed": true}"#).expect("parse");
+        assert_eq!(req.search.as_deref(), Some("active"));
         assert!(req.detailed);
     }
 }

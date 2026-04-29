@@ -149,11 +149,31 @@ pub struct ListViewsRequest {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListViewsResponse {
-    /// Sorted list of view names for this page.
-    pub views: Vec<String>,
+    /// Page of matching views. Shape depends on the request's `detailed` flag.
+    pub views: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+impl ListViewsResponse {
+    /// Builds a brief-mode response from a page of bare view names.
+    #[must_use]
+    pub fn brief(views: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            views: ListEntries::Brief(views),
+            next_cursor,
+        }
+    }
+
+    /// Builds a detailed-mode response from a page of name → metadata entries.
+    #[must_use]
+    pub fn detailed(views: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        Self {
+            views: ListEntries::Detailed(views),
+            next_cursor,
+        }
+    }
 }
 
 /// Request for the `listTriggers` tool.
@@ -538,6 +558,29 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&response).unwrap(),
             json!({"procedures": ["archive_order"]})
+        );
+    }
+
+    #[test]
+    fn list_views_response_brief_constructor_wraps_vec() {
+        let response = super::ListViewsResponse::brief(vec!["active_users".into()], None);
+        assert!(matches!(response.views, ListEntries::Brief(ref v) if v == &["active_users"]));
+        assert!(response.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_views_response_detailed_constructor_wraps_indexmap() {
+        let map = IndexMap::from([("active_users".into(), json!({"schema": "public"}))]);
+        let response = super::ListViewsResponse::detailed(map, None);
+        assert!(matches!(response.views, ListEntries::Detailed(_)));
+    }
+
+    #[test]
+    fn list_views_response_brief_matches_legacy_wire_shape() {
+        let response = super::ListViewsResponse::brief(vec!["active_users".into()], None);
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({"views": ["active_users"]})
         );
     }
 }

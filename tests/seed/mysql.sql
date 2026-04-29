@@ -115,6 +115,59 @@ CREATE VIEW `app`.`active_users` AS
 CREATE VIEW `app`.`published_posts` AS
     SELECT `id`, `user_id`, `title` FROM `app`.`posts` WHERE `published` = 1;
 
+-- Additional views — exercise FR-001 search semantics and FR-004 detailed-mode
+-- field coverage. Five `*active*` views in total (counting the existing
+-- `active_users` above) so search="active" returns exactly five hits.
+-- Bodies use only standard SQL constructs that work on both MySQL 9 and
+-- MariaDB 12. No `ALGORITHM=` clause (MariaDB-only column not surfaced
+-- per FR-006).
+
+-- Non-updatable due to expression column (UPPER) — exercises updatable=false.
+CREATE VIEW `app`.`active_users_v2` AS
+    SELECT `id`, UPPER(`name`) AS `name` FROM `app`.`users`;
+
+-- Non-updatable due to GROUP BY + aggregate — exercises updatable=false
+-- (Acceptance Scenario 4). MySQL's `IS_UPDATABLE` reports `YES` for many
+-- simple JOINs (any single underlying table is still updatable through
+-- the view), but a `GROUP BY` aggregate view is unconditionally
+-- non-updatable on both MySQL 9 and MariaDB 12.
+CREATE VIEW `app`.`active_orders` AS
+    SELECT `p`.`user_id`, COUNT(*) AS `post_count`
+    FROM `app`.`posts` `p`
+    WHERE `p`.`published` = 1
+    GROUP BY `p`.`user_id`;
+
+-- Updatable view with `WITH CASCADED CHECK OPTION` — exercises checkOption="CASCADED".
+CREATE VIEW `app`.`active_users_with_check_cascaded` AS
+    SELECT `id`, `name`, `email` FROM `app`.`users` WHERE `id` > 0
+    WITH CASCADED CHECK OPTION;
+
+-- Updatable view with `WITH LOCAL CHECK OPTION` — exercises checkOption="LOCAL".
+CREATE VIEW `app`.`active_users_with_check_local` AS
+    SELECT `id`, `name`, `email` FROM `app`.`users` WHERE `id` > 0
+    WITH LOCAL CHECK OPTION;
+
+-- SQL SECURITY DEFINER view — exercises security="DEFINER".
+CREATE SQL SECURITY DEFINER VIEW `app`.`archived_users` AS
+    SELECT `id`, `name`, `email` FROM `app`.`users`;
+
+-- SQL SECURITY INVOKER view — exercises security="INVOKER" (the engine default
+-- is DEFINER, so this requires an explicit clause).
+CREATE SQL SECURITY INVOKER VIEW `app`.`archived_users_invoker` AS
+    SELECT `id`, `name`, `email` FROM `app`.`users`;
+
+-- Multi-line / CTE-style body — exercises the spec Edge Case "view definitions
+-- can be very large; faithful pass-through of VIEW_DEFINITION is required".
+-- MySQL/MariaDB normalise CTE syntax to derived-table form in VIEW_DEFINITION,
+-- so the round-trip assertion checks for the engine-canonicalised body, not
+-- the literal source text.
+CREATE VIEW `app`.`user_metrics_cte` AS
+    SELECT `u`.`id`,
+           `u`.`name`,
+           (SELECT COUNT(*) FROM `app`.`posts` `p`
+            WHERE `p`.`user_id` = `u`.`id`) AS `post_count`
+    FROM `app`.`users` `u`;
+
 -- Triggers
 
 CREATE TRIGGER `app`.`users_before_insert` BEFORE INSERT ON `app`.`users`

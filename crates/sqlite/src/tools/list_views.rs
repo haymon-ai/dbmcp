@@ -107,6 +107,6 @@ impl SqliteHandler {
         let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
         let (views, next_cursor) = pager.paginate(rows);
 
-        Ok(ListViewsResponse { views, next_cursor })
+        Ok(ListViewsResponse::brief(views, next_cursor))
     }
 }

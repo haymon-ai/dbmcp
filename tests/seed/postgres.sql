@@ -335,6 +335,50 @@ LANGUAGE plpgsql
 AS $$ BEGIN total := 0; END; $$;
 ALTER PROCEDURE summarise_orders(integer, integer, text, text[]) OWNER TO app_user;
 
+-- Additional fixtures for listViews search + detailed mode (spec 063):
+-- exercises owner, comment-vs-no-comment, multi-line definition, single-quote
+-- pass-through, and the materialized-view exclusion contract.
+-- `app_user` role already created above by spec 057's block.
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reporting_role') THEN
+        CREATE ROLE reporting_role;
+    END IF;
+END $$;
+
+-- Comment + non-default owner on the existing `active_users` view (defined
+-- earlier in this file). The view itself is reused; this just attaches the
+-- COMMENT ON VIEW that the detailed-mode tests expect.
+COMMENT ON VIEW active_users IS 'Currently-active user accounts';
+ALTER VIEW active_users OWNER TO app_user;
+
+-- Plain view, no comment, app_user owner. Lets us exercise
+-- `description: null` in detailed mode.
+CREATE VIEW active_orders AS
+    SELECT id, user_id, title FROM posts WHERE published = TRUE;
+ALTER VIEW active_orders OWNER TO app_user;
+
+-- View owned by a non-default role to verify per-view owner reporting.
+CREATE VIEW archived_orders AS
+    SELECT id, user_id, title FROM posts WHERE published = FALSE;
+ALTER VIEW archived_orders OWNER TO reporting_role;
+
+-- Multi-line / JOIN / CTE view to verify verbatim pg_views.definition pass-through.
+CREATE VIEW user_order_summary AS
+    WITH recent AS (
+        SELECT user_id, count(*) AS n FROM posts GROUP BY user_id
+    )
+    SELECT u.id, u.name, COALESCE(r.n, 0) AS recent_orders
+    FROM users u LEFT JOIN recent r ON r.user_id = u.id;
+COMMENT ON VIEW user_order_summary IS 'Per-user aggregate of recent orders';
+ALTER VIEW user_order_summary OWNER TO app_user;
+
+-- View with a single-quote literal in its body to exercise the JSON
+-- round-trip of pg_views.definition (no SQL escaping at the JSON layer).
+CREATE VIEW audit_log AS
+    SELECT id, name FROM users WHERE name = 'admin';
+ALTER VIEW audit_log OWNER TO app_user;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

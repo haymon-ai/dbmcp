@@ -102,7 +102,9 @@ Field availability follows what the backend exposes — `owner` is null on SQLit
 
 ### `listViews`
 
-List the views defined in a database. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. The response is a sorted JSON array of view-name strings:
+List the views defined in a database. Materialized views are not returned — they are exposed via [`listMaterializedViews`](#listmaterializedviews). Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+
+In **brief mode** (default) the response is a sorted JSON array of view-name strings. View names are unique per schema, so no duplicates appear:
 
 ```json
 {
@@ -111,7 +113,55 @@ List the views defined in a database. Results are paginated — see [Cursor Pagi
 }
 ```
 
-On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+MySQL/MariaDB and PostgreSQL accept these optional parameters; SQLite returns the brief shape only:
+
+- `search` — a case-insensitive `LIKE`/`ILIKE` pattern filtering on view name. `%` matches any sequence of characters, `_` matches a single character. Pass `active%` for a prefix match, `%active%` for a substring match. A bare word with no wildcards matches only an exact view name. The `search` value must remain identical across paginated calls for cursor continuity.
+- `detailed` — when `true`, the response includes per-view metadata (definer/owner, comment where supported, full SELECT body, plus backend-specific extras) so a single call enumerates views and inspects them. Defaults to `false`.
+
+In **detailed mode** the response is keyed by **bare view name** — views cannot overload, so no signature suffix is needed. The view name is the map key only; it is **not** repeated inside the value. Brief and detailed pages share the same `viewname` row order, so a client can switch `detailed` mid-pagination without losing position.
+
+The PostgreSQL payload carries owner and comment plus the SELECT body:
+
+```json
+{
+  "views": {
+    "active_users": {
+      "schema": "public",
+      "owner": "app_user",
+      "description": "Currently-active user accounts",
+      "definition": " SELECT id,\n    name,\n    email\n   FROM users\n  WHERE active = true;"
+    }
+  },
+  "nextCursor": null
+}
+```
+
+The MySQL/MariaDB payload carries definer / security / check-option / updatability / session-context fields plus the SELECT body:
+
+```json
+{
+  "views": {
+    "active_users": {
+      "schema": "app",
+      "definer": "root@%",
+      "security": "DEFINER",
+      "checkOption": "NONE",
+      "updatable": true,
+      "characterSetClient": "utf8mb4",
+      "collationConnection": "utf8mb4_general_ci",
+      "definition": "select `app`.`users`.`id` AS `id`,`app`.`users`.`name` AS `name`,`app`.`users`.`email` AS `email` from `app`.`users`"
+    }
+  },
+  "nextCursor": null
+}
+```
+
+The detailed-mode field set diverges per backend:
+
+- **PostgreSQL** — `schema` (always `"public"`), `owner` (from `pg_views.viewowner`), `description` (from `pg_catalog.obj_description(c.oid, 'pg_class')`, or `null` when no `COMMENT ON VIEW`), and `definition` (the SELECT body verbatim from `pg_views.definition` — no `CREATE VIEW` wrapper, no truncation). Column metadata, the redundant `name` field, and view-level options (`security_barrier`, `security_invoker`, `WITH CHECK OPTION`) are deliberately omitted. Column shape is recoverable from the `definition` text or via [`listTables(detailed=true)`](#listtables) — Postgres exposes views in `pg_class`, so they appear in table-style introspection too. View options are recoverable from `pg_class.reloptions` via `readQuery`.
+- **MySQL / MariaDB** — `schema` (`information_schema.VIEWS.TABLE_SCHEMA`), `definer` (`information_schema.VIEWS.DEFINER`, in `user@host` form), `security` (`information_schema.VIEWS.SECURITY_TYPE`, one of `INVOKER` / `DEFINER`), `checkOption` (`information_schema.VIEWS.CHECK_OPTION`, one of `NONE` / `CASCADED` / `LOCAL`), `updatable` (boolean derived from `information_schema.VIEWS.IS_UPDATABLE = 'YES'`), `characterSetClient` (`information_schema.VIEWS.CHARACTER_SET_CLIENT`, the session character set captured at view creation), `collationConnection` (`information_schema.VIEWS.COLLATION_CONNECTION`, the session connection collation captured at view creation), and `definition` (the SELECT body verbatim from `information_schema.VIEWS.VIEW_DEFINITION` — no `CREATE VIEW` wrapper; if the connected role lacks the `SHOW VIEW` privilege the engine redacts this column to the empty string but the row still appears in the response). `description` is intentionally absent — neither MySQL nor MariaDB exposes a user-comment column for views (`CREATE VIEW` syntax has no `COMMENT` clause). `algorithm` is intentionally absent — it is a MariaDB-only column on `information_schema.VIEWS`, so reading it would fail on MySQL 9. `owner` is renamed to `definer` to match the engine's terminology.
+
+SQLite returns the brief shape only — `search` and `detailed` are not accepted there.
 
 ### `listTriggers`
 

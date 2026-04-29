@@ -196,7 +196,16 @@ Parameters: `database` (defaults to the active database; SQLite has no `database
 
 ### listViews
 
-Lists views in a database, paginated via `cursor` / `nextCursor`. Returns a sorted JSON array of view names. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists views in a database, paginated via `cursor` / `nextCursor`. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`. SQLite returns the brief shape only — `search` and `detailed` are not accepted there.
+
+`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
+
+`detailed` (default `false`) switches the response shape:
+
+- **Brief** (default) — `views` is a sorted JSON array of bare view-name strings. View names are unique per schema, so no duplicates appear.
+- **Detailed** (`detailed: true`) — `views` is a JSON object keyed by bare view name; each value carries the per-backend metadata payload. PostgreSQL exposes `schema`, `owner`, `description`, `definition`. MySQL/MariaDB exposes `schema`, `definer`, `security`, `checkOption`, `updatable`, `characterSetClient`, `collationConnection`, `definition`. See the [`listViews` reference](https://dbmcp.haymon.ai/docs/features#listviews) for source columns, enumerated value sets, and intentional omissions per backend.
+
+See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### listTriggers
 
