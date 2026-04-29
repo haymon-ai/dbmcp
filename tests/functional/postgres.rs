@@ -10,12 +10,12 @@
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_postgres::types::{
-    DropTableRequest, ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListTriggersRequest,
-    ListViewsRequest,
+    DropTableRequest, ListFunctionsRequest, ListMaterializedViewsRequest, ListProceduresRequest, ListTablesRequest,
+    ListTriggersRequest, ListViewsRequest,
 };
 use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest,
-    ListMaterializedViewsRequest, QueryRequest, ReadQueryRequest,
+    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, QueryRequest,
+    ReadQueryRequest,
 };
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -3141,20 +3141,19 @@ async fn test_list_materialized_views_returns_seeded_matviews() {
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_materialized_views");
 
+    let names = response.materialized_views.as_brief().expect("brief mode");
     assert!(
-        response.materialized_views.contains(&"mv_recent_orders".to_string()),
-        "expected seeded mv_recent_orders matview, got {:?}",
-        response.materialized_views
+        names.contains(&"mv_recent_orders".to_string()),
+        "expected seeded mv_recent_orders matview, got {names:?}"
     );
     assert!(
-        response.materialized_views.contains(&"mv_user_cohort".to_string()),
-        "expected seeded mv_user_cohort matview, got {:?}",
-        response.materialized_views
+        names.contains(&"mv_user_cohort".to_string()),
+        "expected seeded mv_user_cohort matview, got {names:?}"
     );
 }
 
@@ -3184,16 +3183,16 @@ async fn test_list_materialized_views_excludes_regular_views() {
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
             database: Some("app".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_materialized_views");
 
+    let names = response.materialized_views.as_brief().expect("brief mode");
     for view in ["active_users", "published_posts"] {
         assert!(
-            !response.materialized_views.contains(&view.to_string()),
-            "regular view `{view}` leaked into listMaterializedViews output: {:?}",
-            response.materialized_views
+            !names.contains(&view.to_string()),
+            "regular view `{view}` leaked into listMaterializedViews output: {names:?}"
         );
     }
 }
@@ -3204,16 +3203,434 @@ async fn test_list_materialized_views_empty_for_empty_database() {
     let response = handler
         .list_materialized_views(ListMaterializedViewsRequest {
             database: Some("analytics".into()),
-            cursor: None,
+            ..Default::default()
         })
         .await
         .expect("list_materialized_views");
 
     assert!(
         response.materialized_views.is_empty(),
-        "analytics has no matviews, got {:?}",
-        response.materialized_views
+        "analytics has no matviews, got len={}",
+        response.materialized_views.len()
     );
+}
+
+// === spec 067: search + detailed mode tests for listMaterializedViews ===
+
+async fn list_matviews_brief(handler: &PostgresHandler, search: Option<&str>) -> Vec<String> {
+    let request = ListMaterializedViewsRequest {
+        database: Some("app".into()),
+        search: search.map(str::to_owned),
+        ..Default::default()
+    };
+    let response = handler
+        .list_materialized_views(request)
+        .await
+        .expect("list_materialized_views");
+    response.materialized_views.as_brief().expect("brief mode").to_vec()
+}
+
+async fn list_matviews_detailed(handler: &PostgresHandler, search: Option<&str>) -> IndexMap<String, Value> {
+    let request = ListMaterializedViewsRequest {
+        database: Some("app".into()),
+        search: search.map(str::to_owned),
+        detailed: true,
+        ..Default::default()
+    };
+    let response = handler
+        .list_materialized_views(request)
+        .await
+        .expect("list_materialized_views detailed");
+    response
+        .materialized_views
+        .as_detailed()
+        .expect("detailed mode")
+        .clone()
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_filter_returns_only_matches() {
+    let handler = handler(true);
+    let names = list_matviews_brief(&handler, Some("orders")).await;
+    assert_eq!(
+        names,
+        vec![
+            "mv_archived_orders".to_string(),
+            "mv_orders_by_region".to_string(),
+            "mv_recent_orders".to_string(),
+        ],
+        "search=orders must return the three *orders* matviews alphabetically, got {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_is_case_insensitive() {
+    let handler = handler(true);
+    let lower = list_matviews_brief(&handler, Some("orders")).await;
+    let upper = list_matviews_brief(&handler, Some("ORDERS")).await;
+    assert_eq!(lower, upper, "ILIKE must be case-insensitive");
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_no_match_returns_empty() {
+    let handler = handler(true);
+    let names = list_matviews_brief(&handler, Some("zzznomatchxyz")).await;
+    assert!(names.is_empty(), "no match must return empty array, got {names:?}");
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_supports_wildcard_semantics() {
+    let handler = handler(true);
+    // `%` wildcard — `mv_orders%region` matches only `mv_orders_by_region`.
+    let percent = list_matviews_brief(&handler, Some("mv_orders%region")).await;
+    assert_eq!(
+        percent,
+        vec!["mv_orders_by_region".to_string()],
+        "% wildcard must match mv_orders_by_region only"
+    );
+    // `_` matches a single character — `mv_or_ers_by_region` matches `mv_orders_by_region`.
+    let underscore = list_matviews_brief(&handler, Some("mv_or_ers_by_region")).await;
+    assert!(
+        underscore.contains(&"mv_orders_by_region".to_string()),
+        "_ wildcard must match mv_orders_by_region, got {underscore:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_sql_meta_payloads_are_safe() {
+    let handler = handler(true);
+    for payload in ["'", ";", "--", "\\"] {
+        let response = handler
+            .list_materialized_views(ListMaterializedViewsRequest {
+                database: Some("app".into()),
+                search: Some(payload.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|e| panic!("search={payload:?} must not raise SQL error: {e:?}"));
+        assert!(
+            response.materialized_views.as_brief().is_some(),
+            "search={payload:?} must return brief mode"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_paginates_filtered_results() {
+    let paged = handler_with_page_size(1);
+    let full = handler(true);
+
+    let mut all = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = paged
+            .list_materialized_views(ListMaterializedViewsRequest {
+                database: Some("app".into()),
+                cursor,
+                search: Some("orders".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("paged list_materialized_views");
+        all.extend(response.materialized_views.as_brief().expect("brief").to_vec());
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    let single = full
+        .list_materialized_views(ListMaterializedViewsRequest {
+            database: Some("app".into()),
+            search: Some("orders".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("single-page list_materialized_views");
+    let single_names = single.materialized_views.as_brief().expect("brief").to_vec();
+    assert_eq!(all, single_names, "paginated filter must equal single page");
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_search_empty_is_same_as_no_filter() {
+    let handler = handler(true);
+    let no_filter = list_matviews_brief(&handler, None).await;
+    let empty = list_matviews_brief(&handler, Some("")).await;
+    let whitespace = list_matviews_brief(&handler, Some("   ")).await;
+    assert_eq!(no_filter, empty, "empty search must be treated as no filter");
+    assert_eq!(
+        no_filter, whitespace,
+        "whitespace-only search must be treated as no filter"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_excludes_regular_views_and_system_schemas() {
+    let handler = handler(true);
+    let all = list_matviews_brief(&handler, None).await;
+    for view in [
+        "active_users",
+        "active_orders",
+        "archived_orders",
+        "audit_log",
+        "published_posts",
+    ] {
+        assert!(
+            !all.contains(&view.to_string()),
+            "regular view `{view}` must not appear in listMaterializedViews, got {all:?}"
+        );
+    }
+    let sys = list_matviews_brief(&handler, Some("pg_stat")).await;
+    assert!(
+        sys.is_empty(),
+        "pg_catalog matviews must never appear in listMaterializedViews, got {sys:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_returns_full_metadata_for_orders_by_region() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("mv_orders_by_region")).await;
+    let entry = map
+        .get("mv_orders_by_region")
+        .expect("mv_orders_by_region must be present under bare-name key");
+    assert_eq!(entry["schema"], Value::String("public".into()));
+    assert_eq!(entry["owner"], Value::String("app_user".into()));
+    assert_eq!(
+        entry["description"],
+        Value::String("Orders rolled up by region for the BI dashboard.".into())
+    );
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("SELECT"),
+        "definition must contain SELECT: {definition}"
+    );
+    assert!(
+        definition.contains("paid_orders"),
+        "definition must contain CTE name: {definition}"
+    );
+    assert!(
+        definition.contains("'paid'"),
+        "single-quote literal must round-trip: {definition}"
+    );
+    assert_eq!(entry["populated"], Value::Bool(true), "matview should be populated");
+    assert_eq!(
+        entry["indexed"],
+        Value::Bool(true),
+        "matview has a unique index, indexed must be true"
+    );
+    // Bare-name key contract: no `name` field inside the value.
+    assert!(
+        entry.get("name").is_none(),
+        "value must not repeat `name` (it is the map key), got entry: {entry}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_no_comment_yields_null_description() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("mv_archived_orders")).await;
+    let entry = map.get("mv_archived_orders").expect("mv_archived_orders entry");
+    assert_eq!(
+        entry["description"],
+        Value::Null,
+        "no COMMENT ON MATERIALIZED VIEW → JSON null, not empty string. entry: {entry}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_owner_reflects_alter_owner() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("mv_archived_orders")).await;
+    let entry = map.get("mv_archived_orders").expect("mv_archived_orders entry");
+    assert_eq!(
+        entry["owner"],
+        Value::String("reporting_role".into()),
+        "owner must reflect ALTER MATERIALIZED VIEW OWNER TO reporting_role"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_definition_round_trip_multiline() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("mv_orders_by_region")).await;
+    let entry = map.get("mv_orders_by_region").expect("entry");
+    let definition = entry["definition"].as_str().expect("definition string");
+    assert!(
+        definition.contains("WITH paid_orders AS"),
+        "must contain CTE: {definition}"
+    );
+    assert!(definition.contains("GROUP BY"), "must contain GROUP BY: {definition}");
+    assert!(
+        definition.contains('\n'),
+        "multi-line definition must preserve newlines: {definition:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_reports_populated_false_for_with_no_data() {
+    let handler = handler(true);
+
+    let map = list_matviews_detailed(&handler, Some("mv_pending_data")).await;
+    let entry = map.get("mv_pending_data").expect("mv_pending_data entry");
+    assert_eq!(
+        entry["populated"],
+        Value::Bool(false),
+        "WITH NO DATA matview must report populated=false until refreshed"
+    );
+
+    // Refresh and re-check — populated flips to true. Use a non-read-only handler
+    // so writeQuery is allowed.
+    let writer = handler_with_page_size(50);
+    writer
+        .write_query(QueryRequest {
+            database: Some("app".into()),
+            query: "REFRESH MATERIALIZED VIEW mv_pending_data".into(),
+        })
+        .await
+        .expect("refresh mv_pending_data");
+
+    let map = list_matviews_detailed(&handler, Some("mv_pending_data")).await;
+    let entry = map.get("mv_pending_data").expect("mv_pending_data entry after refresh");
+    assert_eq!(
+        entry["populated"],
+        Value::Bool(true),
+        "after REFRESH MATERIALIZED VIEW, populated must be true"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_reports_indexed_per_index_existence() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, None).await;
+
+    let with_idx = map.get("mv_orders_by_region").expect("mv_orders_by_region entry");
+    assert_eq!(
+        with_idx["indexed"],
+        Value::Bool(true),
+        "matview with a unique index must report indexed=true"
+    );
+
+    let no_idx = map.get("mv_archived_orders").expect("mv_archived_orders entry");
+    assert_eq!(
+        no_idx["indexed"],
+        Value::Bool(false),
+        "matview without any index must report indexed=false"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_with_search_only_includes_filtered() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("orders")).await;
+    let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        vec!["mv_archived_orders", "mv_orders_by_region", "mv_recent_orders"],
+        "detailed+search must include only matching matviews"
+    );
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_paginates() {
+    let paged = handler_with_page_size(2);
+    let mut all = Vec::new();
+    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    loop {
+        let response = paged
+            .list_materialized_views(ListMaterializedViewsRequest {
+                database: Some("app".into()),
+                cursor,
+                detailed: true,
+                ..Default::default()
+            })
+            .await
+            .expect("paged detailed list_materialized_views");
+        all.extend(
+            response
+                .materialized_views
+                .as_detailed()
+                .expect("detailed")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    let full = handler(true);
+    let brief = list_matviews_brief(&full, None).await;
+    assert_eq!(all, brief, "detailed pagination must match brief order/keys");
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_brief_returns_bare_strings() {
+    let handler = handler(true);
+    let response = handler
+        .list_materialized_views(ListMaterializedViewsRequest {
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("list_materialized_views brief");
+    let serialized = serde_json::to_value(&response).expect("serialize");
+    let entries = serialized.get("materializedViews").expect("materializedViews field");
+    assert!(
+        entries.is_array(),
+        "brief mode materializedViews must serialise as bare-string array"
+    );
+    for entry in entries.as_array().expect("array") {
+        assert!(
+            entry.is_string(),
+            "brief mode entries must be raw strings, got: {entry:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_value_has_exactly_six_fields() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, Some("mv_orders_by_region")).await;
+    let entry = map.get("mv_orders_by_region").expect("entry");
+    let object = entry.as_object().expect("entry must be object");
+    let keys: std::collections::BTreeSet<&str> = object.keys().map(String::as_str).collect();
+    let expected: std::collections::BTreeSet<&str> =
+        ["schema", "owner", "description", "definition", "populated", "indexed"]
+            .into_iter()
+            .collect();
+    assert_eq!(
+        keys, expected,
+        "detailed value must contain exactly the six contract fields"
+    );
+    for forbidden in [
+        "name",
+        "columns",
+        "tablespace",
+        "isPopulated",
+        "hasIndexes",
+        "is_populated",
+        "has_indexes",
+    ] {
+        assert!(
+            !object.contains_key(forbidden),
+            "detailed value must NOT contain `{forbidden}` field, got entry: {entry}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_list_materialized_views_detailed_excludes_regular_views() {
+    let handler = handler(true);
+    let map = list_matviews_detailed(&handler, None).await;
+    for view in ["active_users", "active_orders", "archived_orders", "audit_log"] {
+        assert!(
+            !map.contains_key(view),
+            "regular view `{view}` must not appear in detailed listMaterializedViews, got keys: {:?}",
+            map.keys().collect::<Vec<_>>()
+        );
+    }
 }
 
 /// Returns a cloned Vec<String> of matched table names for a given search term.

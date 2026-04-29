@@ -379,6 +379,36 @@ CREATE VIEW audit_log AS
     SELECT id, name FROM users WHERE name = 'admin';
 ALTER VIEW audit_log OWNER TO app_user;
 
+-- Additional fixtures for listMaterializedViews search + detailed mode (spec 067):
+-- exercises owner, comment-vs-no-comment, multi-line / CTE / single-quote
+-- definition, populated-vs-WITH-NO-DATA, indexed-vs-no-index, regular-view
+-- exclusion contract, and the *orders* search-filter set.
+
+CREATE MATERIALIZED VIEW mv_orders_by_region AS
+    WITH paid_orders AS (
+        SELECT id, customer_id, total FROM orders WHERE status = 'paid'
+    )
+    SELECT customer_id AS region,
+           count(*) AS order_count,
+           sum(total) AS gross
+    FROM paid_orders
+    GROUP BY customer_id;
+COMMENT ON MATERIALIZED VIEW mv_orders_by_region IS 'Orders rolled up by region for the BI dashboard.';
+ALTER MATERIALIZED VIEW mv_orders_by_region OWNER TO app_user;
+CREATE UNIQUE INDEX mv_orders_by_region_region_uniq ON mv_orders_by_region (region);
+
+-- No comment, no index, owned by a distinct role.
+CREATE MATERIALIZED VIEW mv_archived_orders AS
+    SELECT id, customer_id, total FROM orders WHERE status = 'shipped';
+ALTER MATERIALIZED VIEW mv_archived_orders OWNER TO reporting_role;
+
+-- Created `WITH NO DATA` so detailed mode reports populated=false until
+-- REFRESH MATERIALIZED VIEW runs. Owner stays as the seed-loading role so the
+-- subsequent REFRESH the test issues has SELECT privilege on `orders`.
+CREATE MATERIALIZED VIEW mv_pending_data AS
+    SELECT id, customer_id, total FROM orders WHERE status = 'new'
+WITH NO DATA;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

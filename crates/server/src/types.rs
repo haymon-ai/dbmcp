@@ -302,29 +302,6 @@ impl ListProceduresResponse {
     }
 }
 
-/// Request for the `listMaterializedViews` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListMaterializedViewsRequest {
-    /// Database to list materialized views from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-}
-
-/// Response for the `listMaterializedViews` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListMaterializedViewsResponse {
-    /// Sorted list of materialized-view names for this page.
-    pub materialized_views: Vec<String>,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

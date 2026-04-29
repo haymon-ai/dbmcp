@@ -248,7 +248,16 @@ See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination)
 
 ### listMaterializedViews
 
-Lists materialized views in the `public` schema, paginated via `cursor` / `nextCursor`. PostgreSQL only — not available for MySQL/MariaDB or SQLite. Parameters: `database`, `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists materialized views in the `public` schema, paginated via `cursor` / `nextCursor`. PostgreSQL only — not available for MySQL/MariaDB or SQLite. Parameters: `database` (defaults to the active database), `cursor`, `search`, `detailed`.
+
+`search` is an optional case-insensitive `ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. SQL meta-characters (`'`, `;`, `--`) are bound as parameter values and never interpolated. The `search` value must remain identical across paginated calls for cursor continuity.
+
+`detailed` (default `false`) switches the response shape:
+
+- **Brief** (default) — `materializedViews` is a sorted JSON array of bare matview-name strings. Matview names are unique per schema, so no duplicates appear.
+- **Detailed** (`detailed: true`) — `materializedViews` is a JSON object keyed by bare matview name; each value carries `schema`, `owner`, `description` (or `null` when no `COMMENT ON MATERIALIZED VIEW`), `definition` (the SELECT body verbatim from `pg_matviews.definition`), `populated` (`false` for matviews created `WITH NO DATA` and never refreshed), and `indexed` (`true` when at least one index exists; `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index). Detailed mode deliberately omits column metadata, `tablespace`, storage parameters, and unique-index detection — recoverable via `definition`, `listTables(detailed=true)`, or `readQuery` against `pg_indexes`. See the [`listMaterializedViews` reference](https://dbmcp.haymon.ai/docs/features#listmaterializedviews) for source columns and operational semantics.
+
+See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### readQuery
 

@@ -11,6 +11,7 @@ repository.workspace = true
 dbmcp-config = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
+indexmap = { workspace = true }
 moka = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
