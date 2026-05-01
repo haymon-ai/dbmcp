@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.9.1](https://github.com/haymon-ai/dbmcp/compare/38acda7cc765a844607dbc81fe17288c42954351..v0.9.1) - 2026-04-29
+#### Bug Fixes
+- (**http**) wire --allowed-hosts into rmcp config (#133) - ([38acda7](https://github.com/haymon-ai/dbmcp/commit/38acda7cc765a844607dbc81fe17288c42954351)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**sanitize**) replace ident validation with quote-only path (#134) - ([838ce68](https://github.com/haymon-ai/dbmcp/commit/838ce68549a6eb0ac71fc03c71c0407296141bb7)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.9.0](https://github.com/haymon-ai/dbmcp/compare/97aac8b4a3356bba8bdaa87d17417ec70660016a..v0.9.0) - 2026-04-29
 #### Features
 - (**list-functions**) search + detailed mode (Postgres, MySQL, MariaDB) (#128) - ([0c1d3d4](https://github.com/haymon-ai/dbmcp/commit/0c1d3d4dfda74ccd7087a411690d71f64497b5a0)) - [@athopen](https://github.com/athopen)
