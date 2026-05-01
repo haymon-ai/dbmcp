@@ -272,7 +272,7 @@ pub struct HttpConfig {
     /// Bind port for HTTP transport.
     pub port: u16,
 
-    /// Allowed CORS origins.
+    /// Allowed browser origins for both CORS preflight and rmcp server-side validation.
     pub allowed_origins: Vec<String>,
 
     /// Allowed host names.

@@ -51,6 +51,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -103,6 +104,7 @@ indexmap = { workspace = true }
 insta = { workspace = true }
 rmcp = { workspace = true, features = ["client"] }
 serde_json = { workspace = true }
+tower = { workspace = true }
 
 [[test]]
 name = "functional_mysql"

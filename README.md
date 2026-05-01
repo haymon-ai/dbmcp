@@ -172,8 +172,8 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Bind host |
 | `--port` | `9001` | Bind port |
-| `--allowed-origins` | localhost variants | CORS allowed origins (comma-separated) |
-| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Trusted Host headers (comma-separated) |
+| `--allowed-origins` | localhost variants | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side Origin rejection. |
+| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Trusted Host headers (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
 
 ## MCP Tools 🧩
 
@@ -289,7 +289,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings
-- **CORS + trusted hosts** — configurable for HTTP transport
+- **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport
 - **SSL/TLS** — configured via individual `DB_SSL_*` variables
 - **Credential redaction** — database password is never shown in logs or debug output
 

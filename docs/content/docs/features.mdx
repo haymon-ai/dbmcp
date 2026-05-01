@@ -378,7 +378,7 @@ The server communicates over standard input/output. This mode works with local M
 
 ### HTTP
 
-The server runs as an HTTP service with Streamable HTTP transport and CORS support. This mode is useful for remote access or shared environments where multiple clients connect to the same server.
+The server runs as an HTTP service with Streamable HTTP transport, CORS preflight, and server-side `Origin`/`Host` header allowlists. This mode is useful for remote access or shared environments where multiple clients connect to the same server.
 
 **Best for**: Remote servers, shared team databases, environments where the MCP client cannot launch local processes.
 
