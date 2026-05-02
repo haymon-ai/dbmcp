@@ -1,0 +1,8 @@
+# positive
+https://example.com
+http://localhost:8080/path?q=1
+https://sub.domain.co.uk/very/deep/path
+# negative
+not a url
+ftp://legacy.example.com
+just-text

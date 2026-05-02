@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use dbmcp_server::types::QueryResponse;
 
 use dbmcp_sql::Connection as _;
-use dbmcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -74,7 +73,7 @@ impl ToolBase for WriteQueryTool {
 
 impl AsyncTool<SqliteHandler> for WriteQueryTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.write_query(params).await?)
+        handler.write_query(params).await
     }
 }
 
@@ -84,8 +83,11 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if the query fails.
-    pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<QueryResponse, SqlError> {
-        let rows = self.connection.fetch_json(query.as_str(), None).await?;
+    pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<QueryResponse, ErrorData> {
+        let mut rows = self.connection.fetch_json(query.as_str(), None).await?;
+        if let Some(r) = &self.redactor {
+            r.apply(&mut rows)?;
+        }
         Ok(QueryResponse { rows })
     }
 }

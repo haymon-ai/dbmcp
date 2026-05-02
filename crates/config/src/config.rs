@@ -133,6 +133,9 @@ pub struct DatabaseConfig {
     /// Whether the server runs in read-only mode.
     pub read_only: bool,
 
+    /// Whether the server redacts PII from query tool response payloads.
+    pub redact_pii: bool,
+
     /// Maximum database connection pool size.
     pub max_pool_size: u32,
 
@@ -168,6 +171,7 @@ impl std::fmt::Debug for DatabaseConfig {
             .field("ssl_key", &self.ssl_key)
             .field("ssl_verify_cert", &self.ssl_verify_cert)
             .field("read_only", &self.read_only)
+            .field("redact_pii", &self.redact_pii)
             .field("max_pool_size", &self.max_pool_size)
             .field("connection_timeout", &self.connection_timeout)
             .field("query_timeout", &self.query_timeout)
@@ -187,6 +191,8 @@ impl DatabaseConfig {
     pub const DEFAULT_SSL_VERIFY_CERT: bool = true;
     /// Default read-only mode.
     pub const DEFAULT_READ_ONLY: bool = true;
+    /// Default PII redaction mode (off — opt-in only).
+    pub const DEFAULT_REDACT_PII: bool = false;
     /// Default connection pool size.
     pub const DEFAULT_MAX_POOL_SIZE: u32 = 5;
     /// Default idle timeout in seconds (10 minutes).
@@ -255,6 +261,7 @@ impl Default for DatabaseConfig {
             ssl_key: None,
             ssl_verify_cert: Self::DEFAULT_SSL_VERIFY_CERT,
             read_only: Self::DEFAULT_READ_ONLY,
+            redact_pii: Self::DEFAULT_REDACT_PII,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
             query_timeout: None,
@@ -624,6 +631,25 @@ mod tests {
         };
         let errors = config.validate().expect_err("whitespace host must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+    }
+
+    #[test]
+    fn redact_pii_default_is_false() {
+        let config = DatabaseConfig::default();
+        assert!(!config.redact_pii, "redact_pii must default to false");
+    }
+
+    #[test]
+    fn debug_includes_redact_pii() {
+        let config = DatabaseConfig {
+            redact_pii: true,
+            ..mysql_config().database
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            debug.contains("redact_pii: true"),
+            "expected redact_pii in debug output: {debug}"
+        );
     }
 
     #[test]

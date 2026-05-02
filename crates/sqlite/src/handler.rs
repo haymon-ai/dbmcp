@@ -6,6 +6,7 @@
 //! per-tool implementations call.
 
 use dbmcp_config::DatabaseConfig;
+use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -46,6 +47,7 @@ const INSTRUCTIONS: &str = r"## Workflow
 pub struct SqliteHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: SqliteConnection,
+    pub(crate) redactor: Option<Redactor>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -53,6 +55,7 @@ impl std::fmt::Debug for SqliteHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteHandler")
             .field("read_only", &self.config.read_only)
+            .field("redact_pii", &self.redactor.is_some())
             .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
@@ -68,8 +71,15 @@ impl SqliteHandler {
         Self {
             config: config.clone(),
             connection: SqliteConnection::new(config),
+            redactor: config.redact_pii.then(Redactor::with_defaults),
             tool_router: build_tool_router(config.read_only),
         }
+    }
+
+    /// Replaces the active redactor — test-only helper for fault injection.
+    #[doc(hidden)]
+    pub fn set_redactor_for_test(&mut self, redactor: Option<Redactor>) {
+        self.redactor = redactor;
     }
 }
 

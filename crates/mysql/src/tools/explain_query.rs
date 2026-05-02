@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::Connection as _;
-use dbmcp_sql::SqlError;
 use dbmcp_sql::validation::validate_read_only;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
@@ -79,7 +78,7 @@ impl ToolBase for ExplainQueryTool {
 
 impl AsyncTool<MysqlHandler> for ExplainQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.explain_query(params).await?)
+        handler.explain_query(params).await
     }
 }
 
@@ -101,7 +100,7 @@ impl MysqlHandler {
             query,
             analyze,
         }: ExplainQueryRequest,
-    ) -> Result<QueryResponse, SqlError> {
+    ) -> Result<QueryResponse, ErrorData> {
         if analyze && self.config.read_only {
             let _ = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
         }
@@ -114,7 +113,10 @@ impl MysqlHandler {
             format!("EXPLAIN FORMAT=JSON {query}")
         };
 
-        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
+        let mut rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
+        if let Some(r) = &self.redactor {
+            r.apply(&mut rows)?;
+        }
         Ok(QueryResponse { rows })
     }
 }

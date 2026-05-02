@@ -70,7 +70,7 @@ impl ToolBase for DropDatabaseTool {
 
 impl AsyncTool<MysqlHandler> for DropDatabaseTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.drop_database(params).await?)
+        handler.drop_database(params).await
     }
 }
 
@@ -88,16 +88,14 @@ impl MysqlHandler {
     pub async fn drop_database(
         &self,
         DropDatabaseRequest { database }: DropDatabaseRequest,
-    ) -> Result<MessageResponse, SqlError> {
+    ) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation.into());
         }
 
         // Guard: prevent dropping the currently connected database.
         if self.connection.default_database_name().eq_ignore_ascii_case(&database) {
-            return Err(SqlError::Query(format!(
-                "Cannot drop the currently connected database '{database}'."
-            )));
+            return Err(SqlError::Query(format!("Cannot drop the currently connected database '{database}'.")).into());
         }
 
         let drop_sql = format!("DROP DATABASE {}", quote_ident(&database));

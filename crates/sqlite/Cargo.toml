@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 dbmcp-config = { workspace = true }
+dbmcp-pii = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
 rmcp = { workspace = true }

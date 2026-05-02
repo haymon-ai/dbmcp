@@ -4401,3 +4401,76 @@ async fn test_list_views_detailed_session_context_fields_populated() {
         );
     }
 }
+
+fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
+    let config = DatabaseConfig {
+        redact_pii,
+        ..base_db_config(false)
+    };
+    MysqlHandler::new(&config)
+}
+
+#[tokio::test]
+async fn read_query_redacts_email_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let select = ReadQueryRequest {
+        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows.len(), 1);
+    assert_eq!(rows.rows[0]["msg"], "ping me at <EMAIL_ADDRESS>");
+}
+
+#[tokio::test]
+async fn read_query_unchanged_when_disabled() {
+    let handler = handler_with_redaction(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
+}
+
+#[tokio::test]
+async fn write_query_redacts_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let insert = QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
+        database: None,
+    };
+    handler.write_query(insert).await.unwrap();
+
+    let select = ReadQueryRequest {
+        query: "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
+
+    let cleanup = QueryRequest {
+        query: "DELETE FROM users WHERE name = 'PIIWrite'".into(),
+        database: None,
+    };
+    handler_with_redaction(false).write_query(cleanup).await.unwrap();
+}
+
+#[tokio::test]
+async fn explain_query_redacts_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let explain = ExplainQueryRequest {
+        database: None,
+        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+        analyze: false,
+    };
+    let rows = handler.explain_query(explain).await.unwrap();
+    let serialized = serde_json::to_string(&rows.rows).unwrap();
+    assert!(
+        !serialized.contains("jane.doe@example.com"),
+        "raw email leaked into EXPLAIN plan: {serialized}"
+    );
+}

@@ -6,6 +6,7 @@
 //! delegator methods that the per-tool implementations call.
 
 use dbmcp_config::DatabaseConfig;
+use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -58,6 +59,7 @@ Per-database tools default to the active database; pass `database` to target ano
 pub struct PostgresHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: PostgresConnection,
+    pub(crate) redactor: Option<Redactor>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -65,6 +67,7 @@ impl std::fmt::Debug for PostgresHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresHandler")
             .field("read_only", &self.config.read_only)
+            .field("redact_pii", &self.redactor.is_some())
             .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
@@ -81,6 +84,7 @@ impl PostgresHandler {
         Self {
             config: config.clone(),
             connection: PostgresConnection::new(config),
+            redactor: config.redact_pii.then(Redactor::with_defaults),
             tool_router: build_tool_router(config.read_only),
         }
     }

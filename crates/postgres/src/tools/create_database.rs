@@ -69,7 +69,7 @@ impl ToolBase for CreateDatabaseTool {
 
 impl AsyncTool<PostgresHandler> for CreateDatabaseTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.create_database(params).await?)
+        handler.create_database(params).await
     }
 }
 
@@ -82,9 +82,9 @@ impl PostgresHandler {
     pub async fn create_database(
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
-    ) -> Result<MessageResponse, SqlError> {
+    ) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation.into());
         }
 
         let create_sql = format!("CREATE DATABASE {}", quote_ident(&database));

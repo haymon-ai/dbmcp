@@ -71,7 +71,7 @@ impl ToolBase for DropTableTool {
 
 impl AsyncTool<SqliteHandler> for DropTableTool {
     async fn invoke(handler: &SqliteHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.drop_table(params).await?)
+        handler.drop_table(params).await
     }
 }
 
@@ -83,9 +83,9 @@ impl SqliteHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
-    pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, SqlError> {
+    pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation.into());
         }
 
         let drop_sql = format!("DROP TABLE {}", quote_ident(&table));

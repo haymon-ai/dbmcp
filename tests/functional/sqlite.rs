@@ -1793,3 +1793,134 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
         .await
         .expect("writable_schema off");
 }
+
+fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
+    let config = DatabaseConfig {
+        redact_pii,
+        ..base_db_config(false)
+    };
+    SqliteHandler::new(&config)
+}
+
+#[tokio::test]
+async fn read_query_redacts_email_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let select = ReadQueryRequest {
+        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows.len(), 1);
+    assert_eq!(rows.rows[0]["msg"], "ping me at <EMAIL_ADDRESS>");
+}
+
+#[tokio::test]
+async fn read_query_unchanged_when_disabled() {
+    let handler = handler_with_redaction(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
+}
+
+#[tokio::test]
+async fn read_query_does_not_redact_non_string_values() {
+    let handler = handler_with_redaction(true);
+    let select = ReadQueryRequest {
+        query: "SELECT 42 AS n, 1 AS flag, NULL AS missing".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["n"], 42);
+    assert_eq!(rows.rows[0]["flag"], 1);
+    assert!(rows.rows[0]["missing"].is_null());
+}
+
+#[tokio::test]
+async fn read_query_does_not_redact_column_names() {
+    let handler = handler_with_redaction(true);
+    let select = ReadQueryRequest {
+        query: "SELECT 1 AS \"user@example.com\"".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let obj = rows.rows[0].as_object().expect("row object");
+    assert!(
+        obj.contains_key("user@example.com"),
+        "column name preserved verbatim: {obj:?}"
+    );
+}
+
+#[tokio::test]
+async fn write_query_redacts_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let insert = QueryRequest {
+        query: "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
+    };
+    handler.write_query(insert).await.unwrap();
+
+    let select = ReadQueryRequest {
+        query: "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
+
+    let cleanup = QueryRequest {
+        query: "DELETE FROM users WHERE name = 'PIIWrite'".into(),
+    };
+    handler_with_redaction(false).write_query(cleanup).await.unwrap();
+}
+
+#[tokio::test]
+async fn explain_query_redacts_when_enabled() {
+    let handler = handler_with_redaction(true);
+    let explain = ExplainQueryRequest {
+        query: "SELECT 'ping me at jane.doe@example.com'".into(),
+    };
+    let rows = handler.explain_query(explain).await.unwrap();
+    // SQLite EXPLAIN QUERY PLAN may not embed the literal — assert it is at
+    // least not leaked when the analyzer would have caught it.
+    let serialized = serde_json::to_string(&rows.rows).unwrap();
+    assert!(
+        !serialized.contains("jane.doe@example.com"),
+        "raw email leaked into EXPLAIN output: {serialized}"
+    );
+}
+
+#[tokio::test]
+async fn redaction_failure_returns_no_rows() {
+    use dbmcp_pii::{AnalyzeOptions, Analyzer, EntityType, Recognizer, RecognizerResult, Redactor};
+
+    #[derive(Debug)]
+    struct PanickingRecognizer;
+    impl Recognizer for PanickingRecognizer {
+        fn name(&self) -> &'static str {
+            "panicking_test_recognizer"
+        }
+        fn supported_entities(&self) -> &[EntityType] {
+            &[]
+        }
+        fn analyze(&self, _text: &str, _opts: &AnalyzeOptions) -> Vec<RecognizerResult> {
+            panic!("intentional fault-injection panic");
+        }
+    }
+
+    let mut handler = handler_with_redaction(false);
+    let mut analyzer = Analyzer::empty();
+    analyzer.register(Box::new(PanickingRecognizer));
+    handler.set_redactor_for_test(Some(Redactor::with_analyzer(analyzer)));
+
+    let select = ReadQueryRequest {
+        query: "SELECT 'anything' AS msg".into(),
+        cursor: None,
+    };
+    let err = handler.read_query(select).await.expect_err("must fail-closed");
+    assert!(
+        err.message.contains("panicked"),
+        "expected ErrorData message to mention panic, got: {}",
+        err.message
+    );
+}

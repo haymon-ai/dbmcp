@@ -70,7 +70,7 @@ impl ToolBase for CreateDatabaseTool {
 
 impl AsyncTool<MysqlHandler> for CreateDatabaseTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.create_database(params).await?)
+        handler.create_database(params).await
     }
 }
 
@@ -83,9 +83,9 @@ impl MysqlHandler {
     pub async fn create_database(
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
-    ) -> Result<MessageResponse, SqlError> {
+    ) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation.into());
         }
 
         let exists: Option<String> = self

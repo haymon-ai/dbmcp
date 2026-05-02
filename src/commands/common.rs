@@ -83,6 +83,16 @@ pub(crate) struct DatabaseArguments {
     )]
     pub(crate) read_only: bool,
 
+    /// Enable PII redaction of query tool output
+    #[arg(
+        long = "db-redact-pii",
+        env = "DB_REDACT_PII",
+        default_value_t = DatabaseConfig::DEFAULT_REDACT_PII,
+        action = clap::ArgAction::Set,
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub(crate) redact_pii: bool,
+
     /// Maximum connection pool size
     #[arg(
         long = "db-max-pool-size",
@@ -138,6 +148,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
             ssl_key: db.ssl_key.clone(),
             ssl_verify_cert: db.ssl_verify_cert,
             read_only: db.read_only,
+            redact_pii: db.redact_pii,
             max_pool_size: db.max_pool_size,
             connection_timeout: db.connection_timeout,
             query_timeout: Some(db.query_timeout),
@@ -219,6 +230,24 @@ mod tests {
     #[test]
     fn clap_accepts_page_size_at_max() {
         assert_eq!(try_parse_with_page_size("500").unwrap(), 500);
+    }
+
+    #[test]
+    fn clap_default_redact_pii_is_false() {
+        unsafe {
+            std::env::remove_var("DB_REDACT_PII");
+        }
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
+        assert!(!cli.db.redact_pii);
+    }
+
+    #[test]
+    fn clap_accepts_redact_pii_flag() {
+        unsafe {
+            std::env::remove_var("DB_REDACT_PII");
+        }
+        let cli = TestCli::try_parse_from(["--db-redact-pii=true"]).unwrap();
+        assert!(cli.db.redact_pii);
     }
 
     #[test]

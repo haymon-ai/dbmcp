@@ -72,7 +72,7 @@ impl ToolBase for DropTableTool {
 
 impl AsyncTool<MysqlHandler> for DropTableTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.drop_table(params).await?)
+        handler.drop_table(params).await
     }
 }
 
@@ -90,9 +90,9 @@ impl MysqlHandler {
     pub async fn drop_table(
         &self,
         DropTableRequest { database, table }: DropTableRequest,
-    ) -> Result<MessageResponse, SqlError> {
+    ) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation);
+            return Err(SqlError::ReadOnlyViolation.into());
         }
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());

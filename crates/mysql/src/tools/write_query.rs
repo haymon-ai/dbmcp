@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use dbmcp_server::types::{QueryRequest, QueryResponse};
 use dbmcp_sql::Connection as _;
-use dbmcp_sql::SqlError;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
@@ -73,7 +72,7 @@ impl ToolBase for WriteQueryTool {
 
 impl AsyncTool<MysqlHandler> for WriteQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        Ok(handler.write_query(params).await?)
+        handler.write_query(params).await
     }
 }
 
@@ -83,10 +82,16 @@ impl MysqlHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if the query fails.
-    pub async fn write_query(&self, QueryRequest { query, database }: QueryRequest) -> Result<QueryResponse, SqlError> {
+    pub async fn write_query(
+        &self,
+        QueryRequest { query, database }: QueryRequest,
+    ) -> Result<QueryResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let rows = self.connection.fetch_json(query.as_str(), database).await?;
+        let mut rows = self.connection.fetch_json(query.as_str(), database).await?;
+        if let Some(r) = &self.redactor {
+            r.apply(&mut rows)?;
+        }
 
         Ok(QueryResponse { rows })
     }
