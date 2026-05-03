@@ -131,6 +131,8 @@ docker run -i --rm \
   -e DB_BACKEND=postgres \
   -e DB_HOST=host.docker.internal \
   -e DB_USER=postgres \
+  # -e PII_ENABLE=true \
+  # -e PII_OPERATOR=replace \
   ghcr.io/haymon-ai/dbmcp
 ```
 
@@ -141,6 +143,8 @@ docker run --rm \
   -e DB_BACKEND=postgres \
   -e DB_HOST=host.docker.internal \
   -e DB_USER=postgres \
+  # -e PII_ENABLE=true \
+  # -e PII_OPERATOR=replace \
   -p 9001:9001 \
   ghcr.io/haymon-ai/dbmcp http --host 0.0.0.0
 ```
@@ -151,6 +155,8 @@ docker run --rm \
 docker run -i --rm \
   -e DB_BACKEND=sqlite \
   -e DB_NAME=/data/my.db \
+  # -e PII_ENABLE=true \
+  # -e PII_OPERATOR=replace \
   -v /path/to/local/db:/data \
   ghcr.io/haymon-ai/dbmcp
 ```

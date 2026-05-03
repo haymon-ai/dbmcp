@@ -384,6 +384,38 @@ The server runs as an HTTP service with Streamable HTTP transport, CORS prefligh
 
 See [Configuration](/docs/configuration#http-transport) for HTTP-specific options like bind host, port, and allowed origins.
 
+## PII Redaction
+
+Database MCP ships an optional PII redactor that rewrites detected sensitive spans inside query tool output before the result reaches the AI assistant. The feature is **off by default**; enable it per-server via `--pii` / `PII_ENABLE`, and select how spans are rewritten via `--pii-operator` / `PII_OPERATOR`. See [PII configuration](/docs/configuration#pii) for the full flag reference.
+
+### What gets detected
+
+Eight built-in regex recognisers ship in v1. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder:
+
+- `EMAIL_ADDRESS` — email addresses
+- `CREDIT_CARD` — credit card numbers (Luhn-validated)
+- `IBAN_CODE` — International Bank Account Numbers
+- `IP_ADDRESS` — IPv4 and IPv6 addresses
+- `URL` — http / https URLs
+- `PHONE_NUMBER` — international phone numbers
+- `CRYPTO` — Bitcoin and similar wallet addresses
+- `US_SSN` — United States Social Security Numbers
+
+### What gets filtered
+
+Redaction applies only to **query tool output payloads** — `readQuery` results today, and any future query tools that route through the same redactor. Logs, error messages, schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
+
+### How spans are rewritten
+
+The configured operator decides how each detected span is replaced:
+
+- `replace` (default) — entity-aware placeholder. For example, `jane.doe@example.com` becomes `<EMAIL_ADDRESS>`. Plan for this when downstream code parses query output: a column that previously held a plain email now holds the placeholder string for matching rows.
+- `mask` — length-preserving `*` characters.
+- `redact` — span removed (replaced with empty string).
+- `hash` — stable hex digest derived via SHA-256.
+
+See [PII configuration](/docs/configuration#pii) for the toggle, env var, and operator-selection details.
+
 ## Single Binary
 
 Database MCP ships as a single compiled binary with no runtime dependencies. There is no language runtime to install, no package manager to configure, and no dependency tree to manage. Download the binary for your platform and it is ready to use.

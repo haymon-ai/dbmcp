@@ -85,6 +85,26 @@ These options are available only when running in HTTP mode (`dbmcp http`):
 
 A transport subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
 
+## PII
+
+Database MCP can rewrite detected PII spans inside query tool output. The feature is **opt-in and off by default** — applies to query tool response payloads (`readQuery` and any future query tools that route through the redactor) and is **not** applied to logs, errors, schema-discovery responses, or tool arguments. See [Features](/docs/features#pii-redaction) for the supported entity list.
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
+| `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
+
+### Operator Values
+
+`--pii-operator` accepts one of the following values:
+
+- `replace` — replace each detected span with an entity-aware placeholder (for example, an `EMAIL_ADDRESS` match becomes `<EMAIL_ADDRESS>`)
+- `mask` — mask each detected span with `*` (length-preserving)
+- `redact` — remove each detected span (replace with empty string)
+- `hash` — replace each detected span with a stable hex digest (SHA-256)
+
+> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR` alone has no effect.
+
 ## Client Configuration Examples
 
 MCP clients configure servers through JSON files. Each tool uses a slightly different file path, but the format is nearly identical. The examples below connect to a local MySQL database.
@@ -110,6 +130,8 @@ Create a `.mcp.json` file in your project root:
   }
 }
 ```
+
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
 
 Claude Code also supports HTTP transport for remote servers:
 
@@ -151,6 +173,8 @@ Using Docker:
 }
 ```
 
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+
 ### Claude Desktop
 
 Edit the config file at:
@@ -173,6 +197,8 @@ Edit the config file at:
   }
 }
 ```
+
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
 
 Using Docker:
 
@@ -197,6 +223,8 @@ Using Docker:
   }
 }
 ```
+
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
 
 > Claude Desktop only supports stdio transport. For HTTP mode, use the Connectors UI under **Settings > Connectors > Add custom connector**.
 
@@ -223,6 +251,8 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
 }
 ```
 
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+
 Using Docker:
 
 ```json
@@ -247,6 +277,8 @@ Using Docker:
   }
 }
 ```
+
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
 
 Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DB_PASSWORD` can be kept there instead of in the JSON config.
 
@@ -273,6 +305,8 @@ Edit the config file at:
 }
 ```
 
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+
 Using Docker:
 
 ```json
@@ -296,6 +330,8 @@ Using Docker:
   }
 }
 ```
+
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
 
 Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from your shell environment instead of hardcoding them.
 

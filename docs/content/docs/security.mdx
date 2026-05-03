@@ -52,6 +52,23 @@ User-provided values are never interpolated into SQL strings. All values are pas
 
 Database and table names are validated to contain only alphanumeric characters and underscores. Names are then properly quoted using each database backend's native quoting mechanism, preventing injection through crafted identifiers.
 
+## PII Redaction
+
+Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `--pii` / `PII_ENABLE`.
+
+### Scope
+
+Redaction applies **only to query tool output payloads** — `readQuery` results, plus any future query tools that route through the same redactor. The following are **not** redacted:
+
+- Server logs and structured tracing output
+- Error messages returned to the client
+- Schema-discovery tool responses (`listTables`, `listViews`, `listTriggers`, etc.)
+- Tool arguments supplied by the assistant
+
+Treat PII redaction as a layer that reduces what an enabled assistant sees in result rows; it is not a blanket guarantee that no sensitive string ever leaves the server. Pair it with database-level controls (least-privilege roles, column masking views) for sensitive datasets.
+
+See [Features](/docs/features#pii-redaction) for the supported entity list and operator semantics, and [Configuration](/docs/configuration#pii) for the toggle and operator-selection flags.
+
 ## Disabling Read-Only Mode
 
 Read-only mode can be explicitly disabled if you need write access. Set the `DB_READ_ONLY` environment variable to `false` or pass the `--db-read-only false` flag. This makes `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.

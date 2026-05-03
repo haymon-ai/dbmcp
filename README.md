@@ -291,6 +291,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **Identifier validation** — database/table names validated against control characters and empty strings
 - **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport
 - **SSL/TLS** — configured via individual `DB_SSL_*` variables
+- **PII redaction** *(opt-in, off by default)* — when enabled, query tool output passes through a regex-based redactor that rewrites detected PII spans (email, credit card, IBAN, IP, URL, phone, crypto address, US SSN). Toggle: `--pii` / `PII_ENABLE`. Operator: `--pii-operator` / `PII_OPERATOR` — one of `replace` (default, entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop), `hash` (SHA-256 hex). Scope: query tool output payloads only. See [PII configuration](https://dbmcp.haymon.ai/docs/configuration#pii) for the full surface.
 - **Credential redaction** — database password is never shown in logs or debug output
 
 ## Testing 🧪
