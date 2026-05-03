@@ -1,13 +1,13 @@
 //! Common building blocks reused across transport subcommands.
 //!
-//! Hosts [`DatabaseArguments`] — a clap argument group bundling every
-//! `--db-*` flag so each is defined exactly once and embedded via
-//! `#[command(flatten)]` wherever a database connection is needed — and
+//! Hosts [`DatabaseArguments`] and [`PiiArguments`] — clap argument groups
+//! bundling every `--db-*` and `--pii-*` flag so each is defined exactly
+//! once and embedded via `#[command(flatten)]` wherever needed — and
 //! [`create_server`], the backend-selection factory that maps a
 //! configured [`DatabaseBackend`] onto the matching concrete adapter.
 
 use clap::Args;
-use dbmcp_config::{ConfigError, DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{Config, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_sqlite::SqliteHandler;
@@ -83,16 +83,6 @@ pub(crate) struct DatabaseArguments {
     )]
     pub(crate) read_only: bool,
 
-    /// Enable PII redaction of query tool output
-    #[arg(
-        long = "db-redact-pii",
-        env = "DB_REDACT_PII",
-        default_value_t = DatabaseConfig::DEFAULT_REDACT_PII,
-        action = clap::ArgAction::Set,
-        value_parser = clap::value_parser!(bool),
-    )]
-    pub(crate) redact_pii: bool,
-
     /// Maximum connection pool size
     #[arg(
         long = "db-max-pool-size",
@@ -130,11 +120,11 @@ pub(crate) struct DatabaseArguments {
 }
 
 impl TryFrom<&DatabaseArguments> for DatabaseConfig {
-    type Error = Vec<ConfigError>;
+    type Error = ConfigErrors;
 
     fn try_from(db: &DatabaseArguments) -> Result<Self, Self::Error> {
         let backend = db.backend;
-        let config = Self {
+        let candidate = Self {
             backend,
             host: db.host.clone(),
             port: db.port.unwrap_or_else(|| backend.default_port()),
@@ -148,49 +138,86 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
             ssl_key: db.ssl_key.clone(),
             ssl_verify_cert: db.ssl_verify_cert,
             read_only: db.read_only,
-            redact_pii: db.redact_pii,
             max_pool_size: db.max_pool_size,
             connection_timeout: db.connection_timeout,
             query_timeout: Some(db.query_timeout),
             page_size: db.page_size,
         };
-        config.validate()?;
-        Ok(config)
+        candidate.validate()?;
+        Ok(candidate)
     }
 }
 
-/// Logs the read-only banner and builds a [`Server`] for `db_config`.
+/// Shared PII flags embedded in transport subcommands.
+#[derive(Debug, Args)]
+#[command(next_help_heading = "PII")]
+pub(crate) struct PiiArguments {
+    /// Enable PII redaction of query tool output
+    #[arg(
+        long = "pii",
+        env = "PII_ENABLE",
+        default_value_t = PiiConfig::DEFAULT_ENABLED,
+        action = clap::ArgAction::Set,
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub(crate) enabled: bool,
+
+    /// Operator applied to detected PII spans
+    #[arg(
+        long = "pii-operator",
+        env = "PII_OPERATOR",
+        default_value_t = PiiConfig::DEFAULT_OPERATOR,
+    )]
+    pub(crate) operator: PiiOperator,
+}
+
+impl TryFrom<&PiiArguments> for PiiConfig {
+    type Error = ConfigErrors;
+
+    fn try_from(args: &PiiArguments) -> Result<Self, Self::Error> {
+        let candidate = Self {
+            enabled: args.enabled,
+            operator: args.operator,
+        };
+        candidate.validate()?;
+        Ok(candidate)
+    }
+}
+
+/// Logs the read-only banner and builds a [`Server`] for `config`.
 ///
 /// Does **not** establish a database connection. Each adapter defers
 /// pool creation until the first tool invocation, allowing the MCP
 /// server to start and respond to protocol messages even when the
-/// database is unreachable. The caller is expected to pass a
-/// `db_config` that has already been validated, typically by
-/// constructing it via [`DatabaseConfig::try_from`].
+/// database is unreachable. The caller is expected to pass a fully
+/// validated [`Config`].
 #[must_use]
-pub(crate) fn create_server(db_config: &DatabaseConfig) -> Server {
-    if db_config.read_only {
+pub(crate) fn create_server(config: &Config) -> Server {
+    if config.database.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
-    match db_config.backend {
-        DatabaseBackend::Sqlite => SqliteHandler::new(db_config).into(),
-        DatabaseBackend::Postgres => PostgresHandler::new(db_config).into(),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(db_config).into(),
+    match config.database.backend {
+        DatabaseBackend::Sqlite => SqliteHandler::new(config).into(),
+        DatabaseBackend::Postgres => PostgresHandler::new(config).into(),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(config).into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
-    use super::DatabaseArguments;
+    use super::{DatabaseArguments, PiiArguments};
+    use dbmcp_config::{ConfigError, DatabaseConfig, PiiConfig, PiiOperator};
 
-    #[derive(Parser)]
+    #[derive(Debug, Parser)]
     #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
         db: DatabaseArguments,
+        #[command(flatten)]
+        pii: PiiArguments,
     }
 
     fn try_parse_with_page_size(value: &str) -> Result<u16, clap::Error> {
@@ -233,29 +260,137 @@ mod tests {
     }
 
     #[test]
-    fn clap_default_redact_pii_is_false() {
-        unsafe {
-            std::env::remove_var("DB_REDACT_PII");
-        }
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
-        assert!(!cli.db.redact_pii);
-    }
-
-    #[test]
-    fn clap_accepts_redact_pii_flag() {
-        unsafe {
-            std::env::remove_var("DB_REDACT_PII");
-        }
-        let cli = TestCli::try_parse_from(["--db-redact-pii=true"]).unwrap();
-        assert!(cli.db.redact_pii);
-    }
-
-    #[test]
     fn clap_default_page_size_is_100() {
         unsafe {
             std::env::remove_var("DB_PAGE_SIZE");
         }
         let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
         assert_eq!(cli.db.page_size, 100);
+    }
+
+    fn clear_pii_env() {
+        // SAFETY: tests in this file do not write PII_* env vars concurrently.
+        unsafe {
+            std::env::remove_var("PII_ENABLE");
+            std::env::remove_var("PII_OPERATOR");
+        }
+    }
+
+    #[test]
+    fn clap_pii_operator_default_is_replace() {
+        clear_pii_env();
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
+        assert!(!cli.pii.enabled);
+        assert_eq!(cli.pii.operator, PiiOperator::Replace);
+    }
+
+    #[test]
+    fn clap_pii_operator_accepts_each_variant() {
+        for (raw, expected) in [
+            ("replace", PiiOperator::Replace),
+            ("mask", PiiOperator::Mask),
+            ("redact", PiiOperator::Redact),
+            ("hash", PiiOperator::Hash),
+        ] {
+            clear_pii_env();
+            let cli = TestCli::try_parse_from(["--pii-operator", raw]).expect("valid operator parses");
+            assert_eq!(cli.pii.operator, expected, "operator {raw} must parse");
+        }
+    }
+
+    #[test]
+    fn clap_rejects_unknown_pii_operator() {
+        clear_pii_env();
+        let err = TestCli::try_parse_from(["--pii-operator", "xyz"]).expect_err("unknown operator must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("xyz"), "error must name the offending value: {msg}");
+        for accepted in ["replace", "mask", "redact", "hash"] {
+            assert!(
+                msg.contains(accepted),
+                "error must list accepted value '{accepted}': {msg}"
+            );
+        }
+    }
+
+    fn clear_db_env() {
+        // SAFETY: tests in this file do not write DB_* env vars concurrently.
+        unsafe {
+            std::env::remove_var("DB_BACKEND");
+            std::env::remove_var("DB_NAME");
+            std::env::remove_var("DB_SSL");
+            std::env::remove_var("DB_SSL_CA");
+            std::env::remove_var("DB_SSL_CERT");
+            std::env::remove_var("DB_SSL_KEY");
+        }
+    }
+
+    #[test]
+    fn try_from_database_arguments_rejects_sqlite_without_db_name() {
+        clear_db_env();
+        let cli = TestCli::try_parse_from(["--db-backend", "sqlite"]).expect("clap parse");
+        let errors = DatabaseConfig::try_from(&cli.db).expect_err("sqlite without name must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+    }
+
+    #[test]
+    fn try_from_database_arguments_rejects_missing_ssl_cert_files() {
+        clear_db_env();
+        let cli = TestCli::try_parse_from([
+            "--db-ssl",
+            "--db-ssl-ca",
+            "/nonexistent/ca.pem",
+            "--db-ssl-cert",
+            "/nonexistent/cert.pem",
+            "--db-ssl-key",
+            "/nonexistent/key.pem",
+        ])
+        .expect("clap parse");
+        let errors = DatabaseConfig::try_from(&cli.db).expect_err("missing ssl cert files must fail");
+        let cert_errors = errors
+            .iter()
+            .filter(|e| matches!(e, ConfigError::SslCertNotFound(_, _)))
+            .count();
+        assert_eq!(cert_errors, 3, "expected three SslCertNotFound errors, got {errors:?}");
+    }
+
+    #[test]
+    fn try_from_database_arguments_accumulates_sqlite_name_and_ssl_errors() {
+        clear_db_env();
+        let cli = TestCli::try_parse_from([
+            "--db-backend",
+            "sqlite",
+            "--db-ssl",
+            "--db-ssl-ca",
+            "/nonexistent/ca.pem",
+        ])
+        .expect("clap parse");
+        let errors = DatabaseConfig::try_from(&cli.db).expect_err("multiple errors must accumulate");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::SslCertNotFound(name, path) if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"))
+        );
+    }
+
+    #[test]
+    fn pii_config_validate_is_called_from_try_from_path() {
+        // Structural-presence guard: ensures PiiConfig::try_from invokes
+        // PiiConfig::validate. When a future rule fires on default args,
+        // this test deliberately fails — flagging the contributor.
+        clear_pii_env();
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).expect("clap parse");
+        PiiConfig::try_from(&cli.pii).expect("default pii args must validate");
+    }
+
+    #[test]
+    fn clap_pii_flags_grouped_under_pii_heading() {
+        let help = TestCli::command().render_help().to_string();
+        let pii_pos = help.find("PII:").expect("PII heading must be present in --help");
+        let flag_pos = help.find("--pii ").expect("--pii must be present in --help");
+        assert!(
+            pii_pos < flag_pos,
+            "PII heading must precede --pii in help output:\n{help}"
+        );
     }
 }

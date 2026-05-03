@@ -3,6 +3,8 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use dbmcp_config::PiiOperator;
+
 use crate::operator::Operator;
 use crate::overlap;
 use crate::recognizer::EntityType;
@@ -30,6 +32,22 @@ impl OperatorConfig {
             return Cow::Borrowed(default);
         }
         Cow::Owned(Operator::default_for(entity_type))
+    }
+}
+
+impl From<PiiOperator> for OperatorConfig {
+    fn from(op: PiiOperator) -> Self {
+        use crate::operator::HashAlgorithm;
+        let default = match op {
+            PiiOperator::Replace => None,
+            PiiOperator::Mask => Some(Operator::default_mask()),
+            PiiOperator::Redact => Some(Operator::Redact),
+            PiiOperator::Hash => Some(Operator::hash(HashAlgorithm::Sha256, None).expect("None hash_key never errors")),
+        };
+        Self {
+            per_entity: HashMap::new(),
+            default,
+        }
     }
 }
 
@@ -100,5 +118,42 @@ pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorCo
     AnonymizedText {
         text: new_text,
         operations,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::operator::HashAlgorithm;
+
+    #[test]
+    fn pii_operator_replace_maps_to_default_none() {
+        let cfg: OperatorConfig = PiiOperator::Replace.into();
+        assert!(cfg.default.is_none(), "Replace must defer to entity-aware placeholder");
+        assert!(cfg.per_entity.is_empty());
+    }
+
+    #[test]
+    fn pii_operator_mask_maps_to_default_mask() {
+        let cfg: OperatorConfig = PiiOperator::Mask.into();
+        assert!(matches!(cfg.default, Some(Operator::Mask { .. })));
+    }
+
+    #[test]
+    fn pii_operator_redact_maps_to_redact_variant() {
+        let cfg: OperatorConfig = PiiOperator::Redact.into();
+        assert!(matches!(cfg.default, Some(Operator::Redact)));
+    }
+
+    #[test]
+    fn pii_operator_hash_maps_to_sha256_no_key() {
+        let cfg: OperatorConfig = PiiOperator::Hash.into();
+        assert!(matches!(
+            cfg.default,
+            Some(Operator::Hash {
+                algorithm: HashAlgorithm::Sha256,
+                hash_key: None,
+            })
+        ));
     }
 }

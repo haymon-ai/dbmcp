@@ -4,23 +4,27 @@
 
 mod common;
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::Server;
 
 /// Creates a `PostgreSQL`-backed [`Server`] from `DB_HOST` and `DB_PORT` environment variables.
 fn server(read_only: bool) -> Server {
-    let config = DatabaseConfig {
-        backend: DatabaseBackend::Postgres,
-        host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
-        port: std::env::var("DB_PORT")
-            .expect("DB_PORT must be set")
-            .parse()
-            .expect("DB_PORT must be a valid port number"),
-        user: "postgres".into(),
-        name: Some("app".into()),
-        read_only,
-        ..DatabaseConfig::default()
+    let config = Config {
+        database: DatabaseConfig {
+            backend: DatabaseBackend::Postgres,
+            host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
+            port: std::env::var("DB_PORT")
+                .expect("DB_PORT must be set")
+                .parse()
+                .expect("DB_PORT must be a valid port number"),
+            user: "postgres".into(),
+            name: Some("app".into()),
+            read_only,
+            ..DatabaseConfig::default()
+        },
+        http: None,
+        pii: PiiConfig::default(),
     };
     PostgresHandler::new(&config).into()
 }

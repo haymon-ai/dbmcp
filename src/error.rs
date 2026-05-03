@@ -3,7 +3,7 @@
 //! Defines the top-level [`Error`] enum used for server startup and
 //! transport failures in the binary crate.
 
-use dbmcp_config::ConfigError;
+use dbmcp_config::ConfigErrors;
 
 /// Application-level errors for server startup and transport.
 ///
@@ -20,41 +20,45 @@ pub(crate) enum Error {
     Io(#[from] std::io::Error),
 
     /// Configuration validation failed with one or more errors.
-    #[error("{}", format_config_errors(.0))]
-    Config(Vec<ConfigError>),
+    #[error("{}", BulletList(.0))]
+    Config(#[from] ConfigErrors),
 }
 
-impl From<Vec<ConfigError>> for Error {
-    fn from(errors: Vec<ConfigError>) -> Self {
-        Self::Config(errors)
-    }
-}
+struct BulletList<'a>(&'a ConfigErrors);
 
-fn format_config_errors(errors: &[ConfigError]) -> String {
-    let mut s = String::from("configuration validation failed:");
-    for error in errors {
-        s.push_str("\n  - ");
-        s.push_str(&error.to_string());
+impl std::fmt::Display for BulletList<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "configuration validation failed:")?;
+        for error in self.0.iter() {
+            write!(f, "\n  - {error}")?;
+        }
+        Ok(())
     }
-    s
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbmcp_config::ConfigError;
 
     #[test]
     fn config_error_display_bullets_each_error() {
-        let error = Error::Config(vec![ConfigError::MissingSqliteDbName, ConfigError::EmptyHttpHost]);
+        let errors = ConfigErrors::from_vec(vec![
+            ConfigError::MissingSqliteDbName,
+            ConfigError::SslCertNotFound("DB_SSL_CA".into(), "/nope".into()),
+        ])
+        .expect("non-empty");
+        let error = Error::Config(errors);
         let rendered = error.to_string();
         assert!(rendered.starts_with("configuration validation failed:"));
         assert!(rendered.contains("\n  - DB_NAME (file path) is required for SQLite"));
-        assert!(rendered.contains("\n  - HTTP_HOST must not be empty"));
+        assert!(rendered.contains("\n  - DB_SSL_CA file not found: /nope"));
     }
 
     #[test]
-    fn config_error_from_vec() {
-        let error: Error = vec![ConfigError::EmptyHttpHost].into();
+    fn config_error_from_config_errors() {
+        let errors: ConfigErrors = ConfigError::MissingSqliteDbName.into();
+        let error: Error = errors.into();
         assert!(matches!(error, Error::Config(_)));
     }
 }

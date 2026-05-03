@@ -73,6 +73,15 @@ impl Redactor {
         }
     }
 
+    /// Builds a redactor with default analyzer and a caller-chosen operator config.
+    #[must_use]
+    pub fn with_operator_config(operator: OperatorConfig) -> Self {
+        Self {
+            analyzer: Arc::new(Analyzer::with_defaults()),
+            operator,
+        }
+    }
+
     /// Walks every row's top-level string values through the analyzer pipeline.
     ///
     /// Mutates `rows` in place. Object keys are never touched; non-string

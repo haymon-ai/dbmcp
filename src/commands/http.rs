@@ -5,7 +5,7 @@
 //! the underlying connection pools.
 
 use clap::{Args, Parser};
-use dbmcp_config::{ConfigError, DatabaseConfig, HttpConfig};
+use dbmcp_config::{Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
-use crate::commands::common::{self, DatabaseArguments};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments};
 use crate::error::Error;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -31,7 +31,7 @@ struct HttpArguments {
         long = "host",
         env = "HTTP_HOST",
         value_name = "HOST",
-        default_value = HttpConfig::DEFAULT_HOST
+        default_value = HttpConfig::DEFAULT_HOST,
     )]
     host: String,
 
@@ -69,17 +69,17 @@ struct HttpArguments {
 }
 
 impl TryFrom<&HttpArguments> for HttpConfig {
-    type Error = Vec<ConfigError>;
+    type Error = ConfigErrors;
 
     fn try_from(http: &HttpArguments) -> Result<Self, Self::Error> {
-        let config = Self {
+        let candidate = Self {
             host: http.host.clone(),
             port: http.port,
             allowed_origins: http.allowed_origins.clone(),
             allowed_hosts: http.allowed_hosts.clone(),
         };
-        config.validate()?;
-        Ok(config)
+        candidate.validate()?;
+        Ok(candidate)
     }
 }
 
@@ -88,11 +88,46 @@ impl TryFrom<&HttpArguments> for HttpConfig {
 pub(crate) struct HttpCommand {
     /// Shared database connection flags.
     #[command(flatten)]
-    db_arguments: DatabaseArguments,
+    database: DatabaseArguments,
 
     /// HTTP transport flags.
     #[command(flatten)]
-    http_arguments: HttpArguments,
+    http: HttpArguments,
+
+    /// Shared PII flags.
+    #[command(flatten)]
+    pii: PiiArguments,
+}
+
+impl TryFrom<&HttpCommand> for Config {
+    type Error = ConfigErrors;
+
+    fn try_from(cmd: &HttpCommand) -> Result<Self, Self::Error> {
+        match (
+            DatabaseConfig::try_from(&cmd.database),
+            HttpConfig::try_from(&cmd.http),
+            PiiConfig::try_from(&cmd.pii),
+        ) {
+            (Ok(database), Ok(http), Ok(pii)) => Ok(Self {
+                database,
+                http: Some(http),
+                pii,
+            }),
+            (database, http, pii) => {
+                let mut errors: Vec<ConfigError> = Vec::new();
+                if let Err(e) = database {
+                    errors.extend(e);
+                }
+                if let Err(e) = http {
+                    errors.extend(e);
+                }
+                if let Err(e) = pii {
+                    errors.extend(e);
+                }
+                Err(ConfigErrors::from_vec(errors).expect("non-Ok branch implies at least one Err"))
+            }
+        }
+    }
 }
 
 impl HttpCommand {
@@ -109,13 +144,13 @@ impl HttpCommand {
     /// fails (port in use, permission denied), or the HTTP service
     /// fails to serve.
     pub(crate) async fn execute(&self) -> Result<(), Error> {
-        let db_config = DatabaseConfig::try_from(&self.db_arguments)?;
-        let http_config = HttpConfig::try_from(&self.http_arguments)?;
+        let config = Config::try_from(self)?;
+        let http_config = config.http.as_ref().expect("http config set by TryFrom impl");
 
-        let server = common::create_server(&db_config);
+        let server = common::create_server(&config);
         let cancel_token = CancellationToken::new();
 
-        let router = build_http_router(&http_config, server, &cancel_token);
+        let router = build_http_router(http_config, server, &cancel_token);
 
         let bind_addr = format!("{}:{}", http_config.host, http_config.port);
         info!("Starting MCP server via HTTP transport on {bind_addr}...");
@@ -216,7 +251,7 @@ mod tests {
     use dbmcp_config::DatabaseBackend;
     use tower::ServiceExt;
 
-    #[derive(Parser)]
+    #[derive(Debug, Parser)]
     #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
@@ -247,7 +282,12 @@ mod tests {
             allowed_origins: origins,
             allowed_hosts: HttpConfig::default_allowed_hosts(),
         };
-        let server = common::create_server(&sqlite_memory_db_config());
+        let config = Config {
+            database: sqlite_memory_db_config(),
+            http: Some(http_config.clone()),
+            pii: PiiConfig::default(),
+        };
+        let server = common::create_server(&config);
         let cancel = CancellationToken::new();
         build_http_router(&http_config, server, &cancel)
     }
@@ -268,11 +308,66 @@ mod tests {
             .header(header::ACCEPT, "application/json, text/event-stream")
     }
 
+    fn clear_http_env() {
+        // SAFETY: tests in this file do not write HTTP_* env vars concurrently.
+        unsafe {
+            std::env::remove_var("HTTP_HOST");
+            std::env::remove_var("HTTP_PORT");
+            std::env::remove_var("HTTP_ALLOWED_ORIGINS");
+            std::env::remove_var("HTTP_ALLOWED_HOSTS");
+        }
+    }
+
+    #[test]
+    fn http_config_validate_is_called_from_try_from_path() {
+        // Structural-presence guard: ensures HttpConfig::try_from invokes
+        // HttpConfig::validate. When a future rule fires on default args,
+        // this test deliberately fails — flagging the contributor.
+        let args = parse_http_args(&[]);
+        HttpConfig::try_from(&args).expect("default http args must validate");
+    }
+
+    #[test]
+    fn top_level_try_from_http_accumulates_only_database_errors_today() {
+        // HttpConfig::validate and PiiConfig::validate are no-ops today, so
+        // only DatabaseConfig errors propagate. When http or pii gain a rule
+        // that fires on default args, widen the assertion to verify
+        // db→http→pii ordering (FR-006).
+        clear_http_env();
+        let cmd = HttpCommand::try_parse_from(["_", "--db-backend", "sqlite"]).expect("clap parse");
+        let errors = Config::try_from(&cmd).expect_err("sqlite without name must fail");
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
+    }
+
     #[test]
     fn clap_default_yields_four_loopback_origins() {
         let args = parse_http_args(&[]);
-        let config = HttpConfig::try_from(&args).expect("default config valid");
+        let config = HttpConfig::try_from(&args).expect("default args are valid");
         assert_eq!(config.allowed_origins, HttpConfig::default_allowed_origins());
+    }
+
+    #[test]
+    fn try_from_rejects_empty_host() {
+        clear_http_env();
+        let cli = TestCli::try_parse_from(["--host", ""]).expect("clap must accept empty host");
+        let errors = HttpConfig::try_from(&cli.http).expect_err("empty host must be rejected by validate");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+    }
+
+    #[test]
+    fn try_from_rejects_whitespace_host() {
+        clear_http_env();
+        let cli = TestCli::try_parse_from(["--host", "   "]).expect("clap must accept whitespace host");
+        let errors = HttpConfig::try_from(&cli.http).expect_err("whitespace host must be rejected by validate");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+    }
+
+    #[test]
+    fn clap_accepts_default_host() {
+        clear_http_env();
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).expect("clap parse");
+        assert_eq!(cli.http.host, HttpConfig::DEFAULT_HOST);
     }
 
     #[tokio::test]

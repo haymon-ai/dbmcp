@@ -4,17 +4,21 @@
 
 mod common;
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
 use dbmcp_server::Server;
 use dbmcp_sqlite::SqliteHandler;
 
 /// Creates a `SQLite`-backed [`Server`] from the `DB_PATH` environment variable.
 fn server(read_only: bool) -> Server {
-    let config = DatabaseConfig {
-        backend: DatabaseBackend::Sqlite,
-        name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
-        read_only,
-        ..DatabaseConfig::default()
+    let config = Config {
+        database: DatabaseConfig {
+            backend: DatabaseBackend::Sqlite,
+            name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
+            read_only,
+            ..DatabaseConfig::default()
+        },
+        http: None,
+        pii: PiiConfig::default(),
     };
     SqliteHandler::new(&config).into()
 }

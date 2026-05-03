@@ -9,7 +9,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
@@ -28,7 +28,11 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
 
 fn handler(read_only: bool) -> SqliteHandler {
     let config = base_db_config(read_only);
-    SqliteHandler::new(&config)
+    SqliteHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    })
 }
 
 fn handler_with_page_size(page_size: u16) -> SqliteHandler {
@@ -36,7 +40,11 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         page_size,
         ..base_db_config(false)
     };
-    SqliteHandler::new(&config)
+    SqliteHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    })
 }
 
 #[tokio::test]
@@ -163,7 +171,11 @@ async fn test_query_timeout_fast_query_succeeds() {
         query_timeout: Some(5),
         ..base_db_config(false)
     };
-    let handler = SqliteHandler::new(&config);
+    let handler = SqliteHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    });
     let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
@@ -179,7 +191,11 @@ async fn test_query_timeout_disabled_with_none() {
         query_timeout: None,
         ..base_db_config(false)
     };
-    let handler = SqliteHandler::new(&config);
+    let handler = SqliteHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    });
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
@@ -1795,11 +1811,25 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
 }
 
 fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
-    let config = DatabaseConfig {
-        redact_pii,
-        ..base_db_config(false)
-    };
-    SqliteHandler::new(&config)
+    SqliteHandler::new(&Config {
+        database: base_db_config(false),
+        http: None,
+        pii: PiiConfig {
+            enabled: redact_pii,
+            operator: PiiOperator::Replace,
+        },
+    })
+}
+
+fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
+    SqliteHandler::new(&Config {
+        database: base_db_config(false),
+        http: None,
+        pii: PiiConfig {
+            enabled: true,
+            operator,
+        },
+    })
 }
 
 #[tokio::test]
@@ -1923,4 +1953,44 @@ async fn redaction_failure_returns_no_rows() {
         "expected ErrorData message to mention panic, got: {}",
         err.message
     );
+}
+
+#[tokio::test]
+async fn read_query_mask_operator_replaces_with_asterisks() {
+    let handler = handler_with_operator(PiiOperator::Mask);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS msg".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let out = rows.rows[0]["msg"].as_str().unwrap();
+    assert_eq!(out.len(), "jane.doe@example.com".len(), "mask preserves length");
+    assert!(out.chars().all(|c| c == '*'), "mask must use '*': {out}");
+}
+
+#[tokio::test]
+async fn read_query_redact_operator_returns_empty_span() {
+    let handler = handler_with_operator(PiiOperator::Redact);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS msg".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["msg"], "");
+}
+
+#[tokio::test]
+async fn read_query_hash_operator_emits_stable_digest() {
+    let handler = handler_with_operator(PiiOperator::Hash);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let a = rows.rows[0]["a"].as_str().unwrap();
+    let b = rows.rows[0]["b"].as_str().unwrap();
+    assert_eq!(a, b, "same input must hash to same digest");
+    assert_ne!(a, "jane.doe@example.com");
+    assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
+    assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }

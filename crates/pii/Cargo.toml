@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dbmcp-config = { workspace = true }
 hmac = { workspace = true }
 regex = { workspace = true }
 rmcp = { workspace = true }

@@ -5,7 +5,7 @@
 //! surface and a small set of thin delegators that per-tool
 //! implementations call.
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
@@ -75,12 +75,15 @@ impl MysqlHandler {
     /// Constructs the [`MysqlConnection`] (which builds the
     /// lazy pool) and the MCP tool router. No network I/O happens here.
     #[must_use]
-    pub fn new(config: &DatabaseConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
-            config: config.clone(),
-            connection: MysqlConnection::new(config),
-            redactor: config.redact_pii.then(Redactor::with_defaults),
-            tool_router: build_tool_router(config.read_only),
+            config: config.database.clone(),
+            connection: MysqlConnection::new(&config.database),
+            redactor: config
+                .pii
+                .enabled
+                .then(|| Redactor::with_operator_config(config.pii.operator.into())),
+            tool_router: build_tool_router(config.database.read_only),
         }
     }
 }
@@ -166,9 +169,13 @@ mod tests {
     }
 
     fn handler(read_only: bool) -> MysqlHandler {
-        MysqlHandler::new(&DatabaseConfig {
-            read_only,
-            ..base_config()
+        MysqlHandler::new(&Config {
+            database: DatabaseConfig {
+                read_only,
+                ..base_config()
+            },
+            http: None,
+            pii: dbmcp_config::PiiConfig::default(),
         })
     }
 

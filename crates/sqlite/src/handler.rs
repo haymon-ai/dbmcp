@@ -5,7 +5,7 @@
 //! `ServerHandler` surface and one thin delegator method that the
 //! per-tool implementations call.
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
@@ -67,12 +67,15 @@ impl SqliteHandler {
     /// Constructs the [`SqliteConnection`] (which builds the
     /// lazy pool) and the MCP tool router. No file I/O happens here.
     #[must_use]
-    pub fn new(config: &DatabaseConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
-            config: config.clone(),
-            connection: SqliteConnection::new(config),
-            redactor: config.redact_pii.then(Redactor::with_defaults),
-            tool_router: build_tool_router(config.read_only),
+            config: config.database.clone(),
+            connection: SqliteConnection::new(&config.database),
+            redactor: config
+                .pii
+                .enabled
+                .then(|| Redactor::with_operator_config(config.pii.operator.into())),
+            tool_router: build_tool_router(config.database.read_only),
         }
     }
 
@@ -147,11 +150,15 @@ mod tests {
     use dbmcp_config::DatabaseBackend;
 
     fn handler(read_only: bool) -> SqliteHandler {
-        SqliteHandler::new(&DatabaseConfig {
-            backend: DatabaseBackend::Sqlite,
-            name: Some(":memory:".into()),
-            read_only,
-            ..DatabaseConfig::default()
+        SqliteHandler::new(&Config {
+            database: DatabaseConfig {
+                backend: DatabaseBackend::Sqlite,
+                name: Some(":memory:".into()),
+                read_only,
+                ..DatabaseConfig::default()
+            },
+            http: None,
+            pii: dbmcp_config::PiiConfig::default(),
         })
     }
 

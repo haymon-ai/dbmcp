@@ -536,6 +536,7 @@ dependencies = [
 name = "dbmcp-pii"
 version = "0.9.1"
 dependencies = [
+ "dbmcp-config",
  "hmac",
  "proptest",
  "regex",

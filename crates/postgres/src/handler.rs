@@ -5,7 +5,7 @@
 //! the MCP `ServerHandler` surface and exposes a small set of thin
 //! delegator methods that the per-tool implementations call.
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
@@ -80,12 +80,15 @@ impl PostgresHandler {
     /// lazy default pool and the per-database pool cache) and the MCP
     /// tool router. No network I/O happens here.
     #[must_use]
-    pub fn new(config: &DatabaseConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
-            config: config.clone(),
-            connection: PostgresConnection::new(config),
-            redactor: config.redact_pii.then(Redactor::with_defaults),
-            tool_router: build_tool_router(config.read_only),
+            config: config.database.clone(),
+            connection: PostgresConnection::new(&config.database),
+            redactor: config
+                .pii
+                .enabled
+                .then(|| Redactor::with_operator_config(config.pii.operator.into())),
+            tool_router: build_tool_router(config.database.read_only),
         }
     }
 }
@@ -172,15 +175,23 @@ mod tests {
     }
 
     fn handler(read_only: bool) -> PostgresHandler {
-        PostgresHandler::new(&DatabaseConfig {
-            read_only,
-            ..base_config()
+        PostgresHandler::new(&Config {
+            database: DatabaseConfig {
+                read_only,
+                ..base_config()
+            },
+            http: None,
+            pii: dbmcp_config::PiiConfig::default(),
         })
     }
 
     #[tokio::test]
     async fn handler_exposes_connection_default_db() {
-        let handler = PostgresHandler::new(&base_config());
+        let handler = PostgresHandler::new(&Config {
+            database: base_config(),
+            http: None,
+            pii: dbmcp_config::PiiConfig::default(),
+        });
         assert_eq!(handler.connection.default_database_name(), "mydb");
     }
 

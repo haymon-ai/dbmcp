@@ -7,7 +7,7 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_postgres::types::{
     DropTableRequest, ListFunctionsRequest, ListMaterializedViewsRequest, ListProceduresRequest, ListTablesRequest,
@@ -41,12 +41,20 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
         page_size,
         ..base_db_config(false)
     };
-    PostgresHandler::new(&config)
+    PostgresHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    })
 }
 
 fn handler(read_only: bool) -> PostgresHandler {
     let config = base_db_config(read_only);
-    PostgresHandler::new(&config)
+    PostgresHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    })
 }
 
 #[tokio::test]
@@ -375,7 +383,11 @@ async fn test_query_timeout_cancels_slow_query() {
         query_timeout: Some(2),
         ..base_db_config(false)
     };
-    let handler = PostgresHandler::new(&config);
+    let handler = PostgresHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    });
     let request = ReadQueryRequest {
         query: "SELECT pg_sleep(30)".into(),
         database: Some("app".into()),
@@ -405,7 +417,11 @@ async fn test_query_timeout_disabled_with_none() {
         query_timeout: None,
         ..base_db_config(false)
     };
-    let handler = PostgresHandler::new(&config);
+    let handler = PostgresHandler::new(&Config {
+        database: config,
+        http: None,
+        pii: PiiConfig::default(),
+    });
     let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
         database: Some("app".into()),
@@ -3942,11 +3958,25 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
 }
 
 fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
-    let config = DatabaseConfig {
-        redact_pii,
-        ..base_db_config(false)
-    };
-    PostgresHandler::new(&config)
+    PostgresHandler::new(&Config {
+        database: base_db_config(false),
+        http: None,
+        pii: PiiConfig {
+            enabled: redact_pii,
+            operator: PiiOperator::Replace,
+        },
+    })
+}
+
+fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
+    PostgresHandler::new(&Config {
+        database: base_db_config(false),
+        http: None,
+        pii: PiiConfig {
+            enabled: true,
+            operator,
+        },
+    })
 }
 
 #[tokio::test]
@@ -4006,4 +4036,47 @@ async fn explain_analyze_redacts_plan_text() {
         !serialized.contains("jane.doe@example.com"),
         "raw email leaked into EXPLAIN plan: {serialized}"
     );
+}
+
+#[tokio::test]
+async fn read_query_mask_operator_replaces_with_asterisks() {
+    let handler = handler_with_operator(PiiOperator::Mask);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS msg".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let out = rows.rows[0]["msg"].as_str().unwrap();
+    assert_eq!(out.len(), "jane.doe@example.com".len(), "mask preserves length");
+    assert!(out.chars().all(|c| c == '*'), "mask must use '*': {out}");
+}
+
+#[tokio::test]
+async fn read_query_redact_operator_returns_empty_span() {
+    let handler = handler_with_operator(PiiOperator::Redact);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS msg".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["msg"], "");
+}
+
+#[tokio::test]
+async fn read_query_hash_operator_emits_stable_digest() {
+    let handler = handler_with_operator(PiiOperator::Hash);
+    let select = ReadQueryRequest {
+        query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
+        database: None,
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let a = rows.rows[0]["a"].as_str().unwrap();
+    let b = rows.rows[0]["b"].as_str().unwrap();
+    assert_eq!(a, b, "same input must hash to same digest");
+    assert_ne!(a, "jane.doe@example.com");
+    assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
+    assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }
