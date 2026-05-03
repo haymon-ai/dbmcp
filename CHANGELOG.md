@@ -2,6 +2,16 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.10.0](https://github.com/haymon-ai/dbmcp/compare/70372acfdf79cda250594f7448476ca22bae3fbd..v0.10.0) - 2026-05-03
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**http**) enforce Origin header server-side via rmcp 1.6.0 (#137) - ([1b93f2f](https://github.com/haymon-ai/dbmcp/commit/1b93f2f43b70f70980db5d0705217f89134da86a)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) dedicated PII config section with operator selection (#139) - ([247e4b1](https://github.com/haymon-ai/dbmcp/commit/247e4b1a483d62fcf30446c2073a2ffec74263fd)) - [@athopen](https://github.com/athopen)
+- (**pii**) regex-based PII redaction crate with opt-in query output filter (#138) - ([8fed895](https://github.com/haymon-ai/dbmcp/commit/8fed89593ee5f2f5990ee4faf79e2eceab6166ac)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- (**pii**) document PII redaction across user-facing surfaces (#140) - ([7d924e6](https://github.com/haymon-ai/dbmcp/commit/7d924e646b6696eb2a4113f155d75c65a4585e1d)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.9.1](https://github.com/haymon-ai/dbmcp/compare/38acda7cc765a844607dbc81fe17288c42954351..v0.9.1) - 2026-04-29
 #### Bug Fixes
 - (**http**) wire --allowed-hosts into rmcp config (#133) - ([38acda7](https://github.com/haymon-ai/dbmcp/commit/38acda7cc765a844607dbc81fe17288c42954351)) - [@athopen](https://github.com/athopen)
