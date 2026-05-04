@@ -65,6 +65,8 @@ Redaction applies **only to query tool output payloads** — `readQuery` results
 - Schema-discovery tool responses (`listTables`, `listViews`, `listTriggers`, etc.)
 - Tool arguments supplied by the assistant
 
+Redaction recurses into `json` and `jsonb` columns: every string leaf at any depth is rewritten with the same operator a flat `text` column would use. JSON object keys are preserved verbatim — only values are inspected. Non-string scalars (numbers, booleans, `null`) and the surrounding JSON shape (key names, array indexes, container ordering) are unchanged.
+
 Treat PII redaction as a layer that reduces what an enabled assistant sees in result rows; it is not a blanket guarantee that no sensitive string ever leaves the server. Pair it with database-level controls (least-privilege roles, column masking views) for sensitive datasets.
 
 See [Features](/docs/features#pii-redaction) for the supported entity list and operator semantics, and [Configuration](/docs/configuration#pii) for the toggle and operator-selection flags.

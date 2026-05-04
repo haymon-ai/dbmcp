@@ -414,6 +414,12 @@ The configured operator decides how each detected span is replaced:
 - `redact` — span removed (replaced with empty string).
 - `hash` — stable hex digest derived via SHA-256.
 
+### Nested JSON values
+
+Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A PII string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (key names, array indexes, container ordering) are preserved.
+
+JSON object **keys** are never inspected or modified — only values are redacted. A row like `{"jane.doe@example.com": "value"}` returns with the key intact. If you need key redaction, please open an issue; today's contract is values-only.
+
 See [PII configuration](/docs/configuration#pii) for the toggle, env var, and operator-selection details.
 
 ## Single Binary

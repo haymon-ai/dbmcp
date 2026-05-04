@@ -65,7 +65,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and d
 - **MULTI_STATEMENTS**: **NEVER** enable the MULTI_STATEMENTS client flag. The connection MUST clear it to prevent multi-statement SQL injection.
 - **Parameterized queries**: **NEVER** interpolate user values into SQL strings. Use parameterized queries exclusively.
 - **Identifier validation**: **ALWAYS** validate database/table names (alphanumeric and underscore). Never use string interpolation for identifiers — use proper quoting per backend.
-- **PII redaction**: opt-in defense-in-depth applied to query tool output payloads (`readQuery` and any future query tools that route through the redactor). **MUST NOT** be removed or bypassed without an explicit user request. Off by default; operators enable via `--pii` / `PII_ENABLE`.
+- **PII redaction**: opt-in defense-in-depth applied to query tool output payloads (`readQuery` and any future query tools that route through the redactor). **MUST NOT** be removed or bypassed without an explicit user request. Off by default; operators enable via `--pii` / `PII_ENABLE`. The redactor walks every string leaf at any depth inside `json`/`jsonb` columns; JSON object keys are preserved verbatim (only values are inspected).
 
 ## Never Do
 
