@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.10.1](https://github.com/haymon-ai/dbmcp/compare/04eb76107b79d16be34c6e25feb43e09804af470..v0.10.1) - 2026-05-04
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) walk nested json/jsonb leaves during redaction (#142) - ([04eb761](https://github.com/haymon-ai/dbmcp/commit/04eb76107b79d16be34c6e25feb43e09804af470)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**sqlx-json**) numeric precision + null serialization (#141) (#143) - ([fbee0b6](https://github.com/haymon-ai/dbmcp/commit/fbee0b67320732a0175e32d77c7eb30fd1e30bb2)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.10.0](https://github.com/haymon-ai/dbmcp/compare/70372acfdf79cda250594f7448476ca22bae3fbd..v0.10.0) - 2026-05-03
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**http**) enforce Origin header server-side via rmcp 1.6.0 (#137) - ([1b93f2f](https://github.com/haymon-ai/dbmcp/commit/1b93f2f43b70f70980db5d0705217f89134da86a)) - [@athopen](https://github.com/athopen)
