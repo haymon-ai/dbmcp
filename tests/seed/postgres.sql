@@ -110,6 +110,30 @@ CREATE TRIGGER posts_before_update
     BEFORE UPDATE ON posts
     FOR EACH ROW EXECUTE FUNCTION posts_before_update_fn();
 
+-- Numeric round-trip fixtures — exercises spec 092 (issue #141). NUMERIC and
+-- MONEY columns must come back through readQuery as real values with exact
+-- precision. Includes a value beyond f64 precision to verify the
+-- value-driven JSON shape rule (number when safe, string when out of range),
+-- a MONEY value at i64::MAX cents (always string), and an explicit-NULL row.
+CREATE TABLE numeric_samples (
+    id         SERIAL PRIMARY KEY,
+    label      TEXT NOT NULL,
+    n_small    NUMERIC(12, 2),
+    n_int      NUMERIC(10, 0),
+    n_overflow NUMERIC(38, 10),
+    f4         REAL,
+    f8         DOUBLE PRECISION,
+    m_small    MONEY,
+    m_overflow MONEY
+);
+
+INSERT INTO numeric_samples (label, n_small, n_int, n_overflow, f4, f8, m_small, m_overflow) VALUES
+    ('basic',         123.45,  42,  1.5,                              1.5::real,  2.5,     '$123.45',                  '$92233720368547758.07'),
+    ('trailing_zero', 1.20,    10,  0.1,                              0.5::real,  1.0,     '$0.10',                    '$92233720368547758.07'),
+    ('negative',     -99.99,  -7,  -123.45,                          -1.5::real, -2.5,     '-$99.99',                  '-$92233720368547758.08'),
+    ('overflow',      0.01,    1,   12345678901234567890.1234567890,  1.5::real,  1e100,   '$1.00',                    '$92233720368547758.07'),
+    ('all_null',      NULL,    NULL, NULL,                             NULL,       NULL,    NULL,                       NULL);
+
 -- Stored functions (prokind='f') — distinct from trigger functions above, though
 -- listFunctions enumerates all user-defined functions in `public` including the
 -- trigger functions (which is fine — they are, in fact, user-defined functions).

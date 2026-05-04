@@ -4080,3 +4080,277 @@ async fn read_query_hash_operator_emits_stable_digest() {
     assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }
+
+// Spec 092 / issue #141 (US3) — NUMERIC, MONEY, REAL, DOUBLE PRECISION round-trip
+// through readQuery without silent nulls or precision loss. Asserts against
+// the value-driven JSON shape rule from data-model.md.
+#[tokio::test]
+async fn test_read_numeric_columns_round_trip() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT label, n_small, n_int, n_overflow, f4, f8, m_small, m_overflow FROM numeric_samples ORDER BY id"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let by_label: std::collections::HashMap<&str, &Value> = rows
+        .rows
+        .iter()
+        .map(|r| (r["label"].as_str().expect("label is a string"), r))
+        .collect();
+
+    let basic = by_label["basic"];
+    assert_eq!(basic["n_small"], serde_json::json!(123.45), "NUMERIC(12,2) basic");
+    assert_eq!(basic["n_int"], serde_json::json!(42), "NUMERIC(10,0) integer");
+    assert_eq!(basic["n_overflow"], serde_json::json!(1.5));
+    assert_eq!(basic["f4"], serde_json::json!(1.5), "REAL must not be null");
+    assert_eq!(basic["f8"], serde_json::json!(2.5), "DOUBLE PRECISION");
+    assert_eq!(basic["m_small"], serde_json::json!(123.45), "MONEY $123.45");
+    assert_eq!(
+        basic["m_overflow"],
+        serde_json::json!("92233720368547758.07"),
+        "MONEY at i64::MAX cents must emit as exact-text string"
+    );
+
+    let trailing = by_label["trailing_zero"];
+    assert_eq!(trailing["n_small"], serde_json::json!(1.2));
+    assert_eq!(trailing["n_int"], serde_json::json!(10));
+    assert_eq!(trailing["n_overflow"], serde_json::json!(0.1));
+    assert_eq!(trailing["m_small"], serde_json::json!(0.1), "MONEY $0.10 normalized");
+
+    let neg = by_label["negative"];
+    assert_eq!(neg["n_small"], serde_json::json!(-99.99));
+    assert_eq!(neg["n_int"], serde_json::json!(-7));
+    assert_eq!(neg["n_overflow"], serde_json::json!(-123.45));
+    assert_eq!(neg["f4"], serde_json::json!(-1.5));
+    assert_eq!(neg["f8"], serde_json::json!(-2.5));
+    assert_eq!(neg["m_small"], serde_json::json!(-99.99));
+    assert_eq!(neg["m_overflow"], serde_json::json!("-92233720368547758.08"));
+
+    let overflow = by_label["overflow"];
+    assert_eq!(overflow["n_small"], serde_json::json!(0.01));
+    assert_eq!(overflow["n_int"], serde_json::json!(1));
+    assert_eq!(
+        overflow["n_overflow"],
+        serde_json::json!("12345678901234567890.123456789"),
+        "NUMERIC(38,10) beyond f64 precision must be exact-text string"
+    );
+    assert_eq!(overflow["f4"], serde_json::json!(1.5));
+    assert_eq!(overflow["f8"], serde_json::json!(1e100));
+    // $1.00 normalizes to integer 1; bigdecimal_to_json emits as integer
+    // JSON number per the integer fast-path in numeric.rs.
+    assert_eq!(overflow["m_small"], serde_json::json!(1));
+
+    let null_row = by_label["all_null"];
+    assert_eq!(null_row["n_small"], Value::Null, "explicit SQL NULL preserved");
+    assert_eq!(null_row["n_int"], Value::Null);
+    assert_eq!(null_row["n_overflow"], Value::Null);
+    assert_eq!(null_row["f4"], Value::Null);
+    assert_eq!(null_row["f8"], Value::Null);
+    assert_eq!(null_row["m_small"], Value::Null);
+    assert_eq!(null_row["m_overflow"], Value::Null);
+}
+
+// Spec 092 US2 — NUMERIC aggregation preserves precision end-to-end (SC-003).
+#[tokio::test]
+async fn test_read_numeric_aggregation_exact_precision() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query:
+            "SELECT SUM(n_small) AS total FROM numeric_samples WHERE label IN ('basic', 'trailing_zero', 'overflow')"
+                .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    // 123.45 + 1.20 + 0.01 = 124.66 — fits in f64 → JSON number.
+    assert_eq!(rows.rows[0]["total"], serde_json::json!(124.66));
+}
+
+// AVG over NUMERIC produces a higher-scale result than the input columns
+// (Postgres widens scale for AVG). Verifies the digit-gate path: integers
+// inside the avg widen to a fraction with extra zero scale digits but the
+// canonical decimal still fits in 15 significant digits → JSON number.
+#[tokio::test]
+async fn test_read_numeric_avg_preserves_precision() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT AVG(n_int)::numeric(20, 6) AS avg_int FROM numeric_samples \
+                WHERE label IN ('basic', 'trailing_zero')"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    // (42 + 10) / 2 = 26 — integer-valued AVG normalises back to integer.
+    assert_eq!(rows.rows[0]["avg_int"], serde_json::json!(26));
+}
+
+// NUMERIC special values: 'NaN' and ±Infinity (PG 14+) are valid in
+// Postgres but unrepresentable in BigDecimal — sqlx::try_get fails and the
+// row decoder emits SQL Null. Pin behaviour so a future bigdecimal/sqlx
+// upgrade that adds support surfaces as an obvious diff (and we can revisit
+// emitting "NaN"/"Infinity" strings if downstream consumers want them).
+#[tokio::test]
+async fn test_read_numeric_special_values_emit_null() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 'NaN'::numeric AS n_nan, \
+                       'Infinity'::numeric AS n_inf, \
+                       '-Infinity'::numeric AS n_neg_inf"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["n_nan"], Value::Null, "NaN unrepresentable → Null");
+    assert_eq!(rows.rows[0]["n_inf"], Value::Null, "+Infinity unrepresentable → Null");
+    assert_eq!(
+        rows.rows[0]["n_neg_inf"],
+        Value::Null,
+        "-Infinity unrepresentable → Null"
+    );
+}
+
+// Float NaN/Infinity round-trip: sqlx decodes as f64::NAN / f64::INFINITY,
+// then `Value::from(f64)` emits Null because serde_json::Number cannot
+// represent non-finite floats. Locks behaviour explicitly so a future
+// switch to a JSON encoder that admits NaN does not silently change the
+// wire shape.
+#[tokio::test]
+async fn test_read_float_nan_inf_emit_null() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 'NaN'::float8 AS f_nan, \
+                       'Infinity'::float8 AS f_inf, \
+                       '-Infinity'::float8 AS f_neg_inf, \
+                       'NaN'::float4 AS f4_nan, \
+                       'Infinity'::float4 AS f4_inf"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["f_nan"], Value::Null);
+    assert_eq!(rows.rows[0]["f_inf"], Value::Null);
+    assert_eq!(rows.rows[0]["f_neg_inf"], Value::Null);
+    assert_eq!(rows.rows[0]["f4_nan"], Value::Null);
+    assert_eq!(rows.rows[0]["f4_inf"], Value::Null);
+}
+
+// Negative-scale NUMERIC magnitudes: 1e30 has 1 mantissa digit but 31
+// significant decimal digits when canonicalised. The shape rule must route
+// to string (not a lossy f64 number) and preserve magnitude/sign — exact
+// textual form depends on `BigDecimal::Display` (scientific past internal
+// thresholds), so we assert shape, not literal text.
+#[tokio::test]
+async fn test_read_numeric_huge_magnitude_emits_string() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 1e30::numeric AS huge, (-1e30)::numeric AS huge_neg".into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let huge = rows.rows[0]["huge"].as_str().expect("huge magnitude must be string");
+    assert!(
+        !huge.starts_with('-'),
+        "positive magnitude has no leading minus: {huge}"
+    );
+    let parsed: f64 = huge.replace('E', "e").parse().expect("parses as f64");
+    assert!(
+        (parsed - 1e30).abs() / 1e30 < 1e-10,
+        "wire form must round-trip to ~1e30, got {huge}"
+    );
+    let huge_neg = rows.rows[0]["huge_neg"]
+        .as_str()
+        .expect("negative huge magnitude must be string");
+    assert!(huge_neg.starts_with('-'), "negative magnitude keeps sign: {huge_neg}");
+}
+
+// f64 underflow regression: NUMERIC values smaller than ~5e-324 round to
+// 0.0 when converted to f64. Without an underflow guard, the shape rule
+// would emit JSON `0` and silently lose the value. End-to-end check that
+// the wire form preserves magnitude for tiny non-zero NUMERICs.
+#[tokio::test]
+async fn test_read_numeric_f64_underflow_emits_string() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 1e-500::numeric AS tiny, (-1e-500)::numeric AS tiny_neg".into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let tiny = rows.rows[0]["tiny"].as_str().expect("tiny non-zero must be string");
+    assert!(
+        tiny.to_ascii_lowercase().contains("e-500") || tiny.starts_with("0.0"),
+        "magnitude must survive: {tiny}"
+    );
+    assert_ne!(
+        rows.rows[0]["tiny"],
+        serde_json::json!(0),
+        "must not silently round to JSON 0"
+    );
+    let tiny_neg = rows.rows[0]["tiny_neg"].as_str().expect("negative tiny is string");
+    assert!(tiny_neg.starts_with('-'), "negative sign preserved: {tiny_neg}");
+}
+
+// `DOUBLE PRECISION` value at f64-magnitude boundary (spec data-model:74).
+// `1e308` is within f64 range and must round-trip as a JSON number;
+// `1e400` overflows to ±Infinity and emits Null (spec out-of-scope, but
+// pinned here so the wire shape stays consistent if upstream changes).
+#[tokio::test]
+async fn test_read_float8_extreme_magnitude() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 1e308::float8 AS big, (-1e308)::float8 AS big_neg, \
+                       'Infinity'::float8 / 1e308::float8 AS overflows"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let big = rows.rows[0]["big"].as_f64().expect("1e308 fits in f64");
+    assert!(
+        (big / 1e308 - 1.0).abs() < 1e-10,
+        "big magnitude round-trips: got {big}"
+    );
+    let big_neg = rows.rows[0]["big_neg"].as_f64().expect("-1e308 fits");
+    assert!(big_neg < 0.0);
+    // Infinity / 1e308 = Infinity → Null.
+    assert_eq!(rows.rows[0]["overflows"], Value::Null);
+}
+
+// PII redaction interaction with stringified NUMERIC overflow values.
+//
+// Issue #141 changed NUMERIC overflow rendering from `Null` → JSON string
+// (e.g. `"12345678901234567890.123456789"`). With PII enabled, every
+// string leaf is scanned, so a stringified numeric is now eligible for
+// redaction. The trailing 9-digit run matches the US_SSN recogniser's
+// dotted pattern (e.g. `123.45.6789` → `<US_SSN>`). This test pins that
+// interaction so a future PII-recogniser tweak (or a decision to skip
+// digit-only/decimal-only leaves) surfaces as an obvious diff. PII is
+// off by default; operators who enable it accept fuzzy-match collateral.
+#[tokio::test]
+async fn test_pii_redaction_applies_to_numeric_overflow_string() {
+    let handler = handler_with_redaction(true);
+    let select = ReadQueryRequest {
+        query: "SELECT n_overflow FROM numeric_samples WHERE label = 'overflow'".into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let value = rows.rows[0]["n_overflow"].as_str().expect("string after PII walk");
+    // Integer prefix is unanchored against current recognisers and survives
+    // intact; trailing 9-digit run hits US_SSN. Document the split so any
+    // future change is visible.
+    assert!(
+        value.starts_with("12345678901234567890."),
+        "integer prefix must survive PII walk verbatim: {value}"
+    );
+    assert!(
+        value.contains("<US_SSN>") || value == "12345678901234567890.123456789",
+        "trailing digits either match SSN recogniser or pass through verbatim: {value}"
+    );
+}

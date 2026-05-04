@@ -4,16 +4,20 @@
 //! `MySQL` 9 reports `information_schema` text columns as `VARBINARY`; these
 //! are decoded as UTF-8 strings rather than base64. Temporal types (`DATE`,
 //! `TIME`, `DATETIME`, `TIMESTAMP`) are decoded via sqlx's `chrono` integration
-//! and serialized as naive ISO 8601 strings (no timezone offset).
+//! and serialized as naive ISO 8601 strings (no timezone offset). `DECIMAL`
+//! is decoded via `BigDecimal` to preserve precision; `FLOAT` is decoded as
+//! `f32` (sqlx-mysql strict-checks the column type), `DOUBLE` as `f64`.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use bigdecimal::BigDecimal;
 use serde_json::{Map, Value};
 use sqlx::mysql::MySqlRow;
 use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::RowExt;
+use crate::numeric::bigdecimal_to_json;
 
 impl RowExt for MySqlRow {
     fn to_json(&self) -> Value {
@@ -40,11 +44,13 @@ impl RowExt for MySqlRow {
                             .map_or_else(|_| Value::String(v.to_string()), |signed| Value::Number(signed.into()))
                     }),
 
-                    "FLOAT" | "DOUBLE" | "DECIMAL" => self
-                        .try_get::<f64, _>(idx)
-                        .ok()
-                        .and_then(serde_json::Number::from_f64)
-                        .map_or(Value::Null, Value::Number),
+                    "DECIMAL" => self
+                        .try_get::<BigDecimal, _>(idx)
+                        .map_or(Value::Null, |v| bigdecimal_to_json(&v)),
+
+                    "FLOAT" => self.try_get::<f32, _>(idx).map_or(Value::Null, Value::from),
+
+                    "DOUBLE" => self.try_get::<f64, _>(idx).map_or(Value::Null, Value::from),
 
                     "JSON" => self.try_get::<Value, _>(idx).unwrap_or(Value::Null),
 

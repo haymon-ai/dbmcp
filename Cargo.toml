@@ -34,6 +34,7 @@ sqlx-json = { path = "crates/sqlx-json", version = "0.10.0" }
 # External dependencies
 axum = "0.8"
 base64 = "0.22"
+bigdecimal = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 hmac = "0.12"
 indexmap = { version = "2", features = ["serde"] }

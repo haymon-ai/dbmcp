@@ -89,6 +89,28 @@ CREATE TABLE `app`.`posts_audit` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- Numeric round-trip fixtures — exercises spec 092 (issue #141). DECIMAL,
+-- FLOAT, and DOUBLE columns must come back through readQuery as real values
+-- with exact precision, not silent nulls. Includes a value beyond f64
+-- precision to verify the value-driven JSON shape rule (number when safe,
+-- string when out of range) and an explicit-NULL row.
+CREATE TABLE `app`.`numeric_samples` (
+    `id`         INT AUTO_INCREMENT PRIMARY KEY,
+    `label`      VARCHAR(64) NOT NULL,
+    `d_small`    DECIMAL(10, 2) NULL,
+    `d_int`      DECIMAL(10, 0) NULL,
+    `d_overflow` DECIMAL(38, 10) NULL,
+    `f`          FLOAT NULL,
+    `dbl`        DOUBLE NULL
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, `f`, `dbl`) VALUES
+    ('basic',         123.45, 42, 1.5,                                1.5,    2.5),
+    ('trailing_zero', 1.20,   10, 0.1,                                0.5,    1.0),
+    ('negative',     -99.99, -7,  -123.45,                           -1.5,   -2.5),
+    ('overflow',      0.01,   1,  12345678901234567890.1234567890,    1.5,    1e100),
+    ('all_null',      NULL,   NULL, NULL,                             NULL,   NULL);
+
 -- Partitioned table — exercises the kind: "PARTITIONED_TABLE" detection path.
 -- The primary key includes `year` because MySQL requires every UNIQUE key to
 -- include the partitioning column.

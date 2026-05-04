@@ -9,8 +9,9 @@ repository.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+bigdecimal = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true, features = ["mysql", "postgres", "sqlite", "chrono"] }
+sqlx = { workspace = true, features = ["mysql", "postgres", "sqlite", "chrono", "bigdecimal"] }
 
 [lints]
 workspace = true

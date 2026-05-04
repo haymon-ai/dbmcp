@@ -1574,17 +1574,18 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 7 seeded base tables (users, posts, tags,
-    // post_tags, temporal, posts_audit, events_by_year) plus 9 seeded views
-    // (active_users, active_users_v2, active_orders, active_users_with_check_cascaded,
-    // active_users_with_check_local, archived_users, archived_users_invoker,
-    // user_metrics_cte, published_posts); MySQL's SHOW TABLES lists both. Must
-    // not be paginated even with page_size=2.
+    // SHOW TABLES in `app` returns 8 seeded base tables (users, posts, tags,
+    // post_tags, temporal, posts_audit, events_by_year, numeric_samples) plus
+    // 9 seeded views (active_users, active_users_v2, active_orders,
+    // active_users_with_check_cascaded, active_users_with_check_local,
+    // archived_users, archived_users_invoker, user_metrics_cte,
+    // published_posts); MySQL's SHOW TABLES lists both. Must not be paginated
+    // even with page_size=2.
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        16,
-        "SHOW TABLES must not be paginated: expected all 16 seeded tables+views, got {}",
+        17,
+        "SHOW TABLES must not be paginated: expected all 17 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -4550,4 +4551,142 @@ async fn read_query_hash_operator_emits_stable_digest() {
     assert_ne!(a, "jane.doe@example.com");
     assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
+}
+
+// Spec 092 / issue #141 — DECIMAL/FLOAT/DOUBLE round-trip through readQuery
+// without silent nulls or precision loss. Asserts against the value-driven
+// JSON shape rule from data-model.md.
+#[tokio::test]
+async fn test_read_numeric_columns_round_trip() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT label, d_small, d_int, d_overflow, f, dbl FROM numeric_samples ORDER BY id".into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let by_label: std::collections::HashMap<&str, &Value> = rows
+        .rows
+        .iter()
+        .map(|r| (r["label"].as_str().expect("label is a string"), r))
+        .collect();
+
+    let basic = by_label["basic"];
+    assert_eq!(basic["d_small"], serde_json::json!(123.45), "DECIMAL(10,2) basic");
+    assert_eq!(basic["d_int"], serde_json::json!(42), "DECIMAL(10,0) integer");
+    assert_eq!(basic["d_overflow"], serde_json::json!(1.5), "DECIMAL(38,10) small fits");
+    assert_eq!(basic["f"], serde_json::json!(1.5), "FLOAT must not be null");
+    assert_eq!(basic["dbl"], serde_json::json!(2.5), "DOUBLE round-trip");
+
+    let trailing = by_label["trailing_zero"];
+    assert_eq!(trailing["d_small"], serde_json::json!(1.2), "trailing zero normalized");
+    assert_eq!(trailing["d_int"], serde_json::json!(10));
+    assert_eq!(trailing["d_overflow"], serde_json::json!(0.1));
+    assert_eq!(trailing["f"], serde_json::json!(0.5));
+    assert_eq!(trailing["dbl"], serde_json::json!(1.0));
+
+    let neg = by_label["negative"];
+    assert_eq!(neg["d_small"], serde_json::json!(-99.99));
+    assert_eq!(neg["d_int"], serde_json::json!(-7));
+    assert_eq!(neg["d_overflow"], serde_json::json!(-123.45));
+    assert_eq!(neg["f"], serde_json::json!(-1.5));
+    assert_eq!(neg["dbl"], serde_json::json!(-2.5));
+
+    let overflow = by_label["overflow"];
+    assert_eq!(overflow["d_small"], serde_json::json!(0.01));
+    assert_eq!(overflow["d_int"], serde_json::json!(1));
+    assert_eq!(
+        overflow["d_overflow"],
+        serde_json::json!("12345678901234567890.123456789"),
+        "DECIMAL(38,10) beyond f64 precision must be exact-text string"
+    );
+    assert_eq!(overflow["f"], serde_json::json!(1.5));
+    assert_eq!(overflow["dbl"], serde_json::json!(1e100));
+
+    let null_row = by_label["all_null"];
+    assert_eq!(null_row["d_small"], Value::Null, "explicit SQL NULL preserved");
+    assert_eq!(null_row["d_int"], Value::Null);
+    assert_eq!(null_row["d_overflow"], Value::Null);
+    assert_eq!(null_row["f"], Value::Null);
+    assert_eq!(null_row["dbl"], Value::Null);
+}
+
+// Spec 092 US2 — DECIMAL aggregation preserves precision end-to-end (SC-003).
+#[tokio::test]
+async fn test_read_decimal_aggregation_exact_precision() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query:
+            "SELECT SUM(d_small) AS total FROM numeric_samples WHERE label IN ('basic', 'trailing_zero', 'overflow')"
+                .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    // 123.45 + 1.20 + 0.01 = 124.66 — fits in f64 → JSON number.
+    assert_eq!(rows.rows[0]["total"], serde_json::json!(124.66));
+}
+
+// AVG over DECIMAL widens scale per MySQL rules (DECIMAL(M+4, D+4)).
+// Verifies the digit-gate handles the resulting higher-precision result
+// correctly and integer-valued averages still take the integer fast-path.
+#[tokio::test]
+async fn test_read_decimal_avg_preserves_precision() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT AVG(d_int) AS avg_int FROM numeric_samples \
+                WHERE label IN ('basic', 'trailing_zero')"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    // (42 + 10) / 2 = 26 — integer-valued → integer fast-path.
+    assert_eq!(rows.rows[0]["avg_int"], serde_json::json!(26));
+}
+
+// MySQL rejects NaN/Inf for FLOAT/DOUBLE storage and produces NULL (not
+// NaN) for invalid math like 0/0. Verifies the wire shape is consistent
+// regardless of how the engine arrives at the missing value.
+#[tokio::test]
+async fn test_read_float_invalid_math_emits_null() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT 0.0 / 0.0 AS div_zero, \
+                       LOG(-1) AS log_neg, \
+                       SQRT(-1) AS sqrt_neg"
+            .into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["div_zero"], Value::Null);
+    assert_eq!(rows.rows[0]["log_neg"], Value::Null);
+    assert_eq!(rows.rows[0]["sqrt_neg"], Value::Null);
+}
+
+// FLOAT (sqlx-mysql strict-checks the column type) was previously decoded
+// as f64 and silently emitted Null for every row. Asserts the FLOAT path
+// works for negative, zero, and large magnitudes — a regression test for
+// issue #141.
+#[tokio::test]
+async fn test_read_float_column_full_range() {
+    let handler = handler(false);
+    let select = ReadQueryRequest {
+        query: "SELECT label, f FROM numeric_samples ORDER BY id".into(),
+        database: Some("app".into()),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    let by_label: std::collections::HashMap<&str, &Value> = rows
+        .rows
+        .iter()
+        .map(|r| (r["label"].as_str().expect("label"), r))
+        .collect();
+    assert!(
+        matches!(by_label["basic"]["f"], Value::Number(_)),
+        "FLOAT must not be Null"
+    );
+    assert!(matches!(by_label["negative"]["f"], Value::Number(_)));
+    assert!(matches!(by_label["overflow"]["f"], Value::Number(_)));
 }

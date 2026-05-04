@@ -64,7 +64,3 @@ fn dynamic_probe(row: &SqliteRow, idx: usize) -> Value {
     }
     row.try_get::<String, _>(idx).map_or(Value::Null, Value::String)
 }
-
-// Unit tests for row conversion are not possible without a database connection
-// because sqlx row types have no public constructors. All conversion tests
-// are covered by the integration test suite (./tests/run.sh).

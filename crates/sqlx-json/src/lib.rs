@@ -8,6 +8,7 @@
 //! [`MySqlRow`](sqlx::mysql::MySqlRow).
 
 mod mysql;
+mod numeric;
 mod postgres;
 mod sqlite;
 mod traits;
