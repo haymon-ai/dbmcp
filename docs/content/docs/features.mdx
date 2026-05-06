@@ -390,7 +390,7 @@ Database MCP ships an optional PII redactor that rewrites detected sensitive spa
 
 ### What gets detected
 
-Eight built-in regex recognisers ship in v1. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder:
+Eight built-in regex recognisers ship by default. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder, and is tagged with a category for opt-in subsetting via `--pii-categories` / `PII_CATEGORIES`:
 
 - `EMAIL_ADDRESS` — email addresses
 - `CREDIT_CARD` — credit card numbers (Luhn-validated)
@@ -400,6 +400,20 @@ Eight built-in regex recognisers ship in v1. Each recogniser is identified by an
 - `PHONE_NUMBER` — international phone numbers
 - `CRYPTO` — Bitcoin and similar wallet addresses
 - `US_SSN` — United States Social Security Numbers
+
+### Categories
+
+Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories on `--pii-categories` / `PII_CATEGORIES`; leaving the flag unset enables every built-in.
+
+- `personal` — `EMAIL_ADDRESS`
+- `financial` — `CREDIT_CARD`, `IBAN_CODE`
+- `government` — `US_SSN`
+- `contact` — `PHONE_NUMBER`
+- `network` — `IP_ADDRESS`, `URL`
+- `crypto` — `CRYPTO`
+- `digital-identity` — reserved; no built-in recogniser tags this category today
+
+See [PII configuration](/docs/configuration#pii) for the flag, env var, and the empty-registry fallback rules.
 
 ### What gets filtered
 

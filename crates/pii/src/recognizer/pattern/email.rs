@@ -2,8 +2,8 @@
 //!
 //! Pattern adapted from Presidio's `EmailRecognizer.PATTERNS["Email (Medium)"]`.
 
-use crate::pattern::Pattern;
-use crate::recognizer::{PatternRecognizer, entity};
+use crate::recognizer::{Category, Pattern, entity};
+use crate::regex::Regex;
 use crate::score::Score;
 
 /// Build the `EMAIL_ADDRESS` recognizer.
@@ -13,14 +13,15 @@ use crate::score::Score;
 /// Panics only if the bundled regex source or score literal is rejected at construction;
 /// both are unit-tested.
 #[must_use]
-pub fn email() -> PatternRecognizer {
-    let pattern = Pattern::new(
+pub fn email() -> Pattern {
+    let pattern = Regex::new(
         "Email (Medium)",
         r"\b[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~]+(?:\.[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\b",
         Score::from_static(0.5),
     )
     .expect("static email pattern compiles");
-    PatternRecognizer::new(entity::EMAIL_ADDRESS, vec![pattern])
+    Pattern::new(entity::EMAIL_ADDRESS, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("EmailRecognizer")
+        .with_category(Category::Personal)
 }

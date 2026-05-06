@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Errors that surface when constructing a [`crate::Pattern`] or [`crate::Score`].
+/// Errors that surface when constructing a [`crate::Regex`] or [`crate::Score`].
 #[derive(Debug, Error)]
 pub enum PatternError {
     /// `regex`-engine compile error.
@@ -16,11 +16,11 @@ pub enum PatternError {
     },
 }
 
-/// Errors that surface when constructing a [`crate::PatternRecognizer`] or a deny-list helper.
+/// Errors that surface when constructing a [`crate::Pattern`].
 #[derive(Debug, Error)]
 pub enum RecognizerError {
-    /// Caller supplied no patterns and no deny-list terms.
-    #[error("recognizer requires at least one pattern or deny-list term")]
+    /// Caller supplied no patterns.
+    #[error("recognizer requires at least one pattern")]
     EmptyPatternList,
 }
 
@@ -30,4 +30,15 @@ pub enum OperatorError {
     /// `hash_key` was provided but empty; reject up front rather than silently downgrade to bare digest.
     #[error("hash_key must be non-empty when provided")]
     EmptyHashKey,
+}
+
+/// Errors that surface from [`crate::analyzer::Builder::build`].
+#[derive(Debug, Error)]
+pub enum AnalyzerBuildError {
+    /// A requested category resolved to zero recognizers in the merged registry.
+    ///
+    /// Callers can opt out of this check via
+    /// [`crate::analyzer::Builder::allow_empty_categories`].
+    #[error("category {0:?} requested but no recognizer in registry tags it")]
+    EmptyCategory(crate::recognizer::Category),
 }

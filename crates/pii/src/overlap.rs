@@ -1,6 +1,6 @@
 //! Overlap resolution for analyzer and anonymizer results.
 //!
-//! Algorithm per FR-011 / research §R6:
+//! Algorithm:
 //!
 //! 1. Stable-sort by `(start, -score)`. Stable sort preserves the input order on
 //!    ties, which is the registration order the analyzer feeds in.

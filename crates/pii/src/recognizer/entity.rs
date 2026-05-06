@@ -1,4 +1,4 @@
-//! Built-in [`crate::EntityType`] constants for the v1 default registry.
+//! Built-in [`crate::EntityType`] constants for the default registry.
 
 use std::borrow::Cow;
 

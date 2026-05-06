@@ -1,12 +1,12 @@
-//! Aggregate registry of the v1 built-in recognizers.
+//! Aggregate registry of the built-in recognizers.
 
-use crate::recognizer::PatternRecognizer;
+use crate::recognizer::Pattern;
 
 use super::{credit_card, crypto, email, iban, ip_address, phone_number, url, us_ssn};
 
-/// Return the eight v1 recognizers in registration order.
+/// Return the eight built-in recognizers in registration order.
 #[must_use]
-pub fn all() -> Vec<PatternRecognizer> {
+pub fn all() -> Vec<Pattern> {
     vec![
         email(),
         credit_card(),

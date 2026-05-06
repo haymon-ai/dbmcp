@@ -6,7 +6,7 @@
 //! delegator methods that the per-tool implementations call.
 
 use dbmcp_config::{Config, DatabaseConfig};
-use dbmcp_pii::Redactor;
+use dbmcp_pii::{Analyzer, Redactor};
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -87,7 +87,7 @@ impl PostgresHandler {
             redactor: config
                 .pii
                 .enabled
-                .then(|| Redactor::with_operator_config(config.pii.operator.into())),
+                .then(|| Redactor::new(Analyzer::from_pii_config(&config.pii), config.pii.operator.into())),
             tool_router: build_tool_router(config.database.read_only),
         }
     }

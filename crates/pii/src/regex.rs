@@ -11,15 +11,15 @@ use crate::score::Score;
 /// Backed by the linear-time `regex` crate (RE2 semantics). Compiled eagerly
 /// so a bad pattern is rejected at construction, not at match time.
 #[derive(Clone)]
-pub struct Pattern {
+pub struct Regex {
     name: Cow<'static, str>,
     score: Score,
     pub(crate) compiled: regex::Regex,
 }
 
-impl fmt::Debug for Pattern {
+impl fmt::Debug for Regex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Pattern")
+        f.debug_struct("Regex")
             .field("name", &self.name)
             .field("regex", &self.compiled.as_str())
             .field("score", &self.score)
@@ -27,7 +27,7 @@ impl fmt::Debug for Pattern {
     }
 }
 
-impl Pattern {
+impl Regex {
     /// Build a pattern.
     ///
     /// # Errors
@@ -46,13 +46,13 @@ impl Pattern {
         })
     }
 
-    /// Pattern's human-readable name; surfaced in [`crate::AnalysisExplanation`].
+    /// Regex's human-readable name; surfaced in [`crate::AnalysisExplanation`].
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Pattern name as a cheap-to-clone [`Cow`]; static literals stay borrowed.
+    /// Regex name as a cheap-to-clone [`Cow`]; static literals stay borrowed.
     pub(crate) fn name_cow(&self) -> Cow<'static, str> {
         self.name.clone()
     }
@@ -73,7 +73,7 @@ impl Pattern {
 mod serde_impl {
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-    use super::Pattern;
+    use super::Regex;
     use crate::score::Score;
 
     #[derive(Serialize, Deserialize)]
@@ -83,7 +83,7 @@ mod serde_impl {
         score: Score,
     }
 
-    impl Serialize for Pattern {
+    impl Serialize for Regex {
         fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
             Wire {
                 name: self.name.as_ref().to_owned(),
@@ -94,17 +94,17 @@ mod serde_impl {
         }
     }
 
-    impl<'de> Deserialize<'de> for Pattern {
+    impl<'de> Deserialize<'de> for Regex {
         fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
             let w = Wire::deserialize(de)?;
-            Pattern::new(w.name, w.regex, w.score).map_err(D::Error::custom)
+            Regex::new(w.name, w.regex, w.score).map_err(D::Error::custom)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Pattern;
+    use super::Regex;
     use crate::error::PatternError;
     use crate::score::Score;
 
@@ -114,21 +114,21 @@ mod tests {
 
     #[test]
     fn rejects_invalid_regex() {
-        let err = Pattern::new("bad", "(unclosed", s(0.5)).unwrap_err();
+        let err = Regex::new("bad", "(unclosed", s(0.5)).unwrap_err();
         assert!(matches!(err, PatternError::InvalidRegex(_)));
     }
 
     #[test]
     #[allow(clippy::float_cmp)]
     fn accepts_valid_regex() {
-        let p = Pattern::new("digits", r"\b\d+\b", s(0.5)).unwrap();
+        let p = Regex::new("digits", r"\b\d+\b", s(0.5)).unwrap();
         assert_eq!(p.score().as_f32(), 0.5);
     }
 
     #[test]
     fn rejects_lookbehind() {
         // The `regex` crate does not support lookbehind; the pattern is rejected.
-        let err = Pattern::new("bad_lb", r"(?<!a)b", s(0.5)).unwrap_err();
+        let err = Regex::new("bad_lb", r"(?<!a)b", s(0.5)).unwrap_err();
         assert!(matches!(err, PatternError::InvalidRegex(_)));
     }
 }

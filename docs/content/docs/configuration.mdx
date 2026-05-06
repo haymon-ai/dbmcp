@@ -93,6 +93,7 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 |----------|---------------------|---------|-------------|
 | `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
 | `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
+| `--pii-categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
 
 ### Operator Values
 
@@ -103,7 +104,21 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 - `redact` — remove each detected span (replace with empty string)
 - `hash` — replace each detected span with a stable hex digest (SHA-256)
 
-> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR` alone has no effect.
+### Category Values
+
+`--pii-categories` accepts a comma-separated list of kebab-case category names. Leaving the flag unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
+
+- `personal` — `EMAIL_ADDRESS`
+- `financial` — `CREDIT_CARD`, `IBAN_CODE`
+- `government` — `US_SSN`
+- `contact` — `PHONE_NUMBER`
+- `network` — `IP_ADDRESS`, `URL`
+- `crypto` — `CRYPTO`
+- `digital-identity` — *(no built-in recogniser tags this category today; reserved for future additions)*
+
+An empty list is rejected at startup. If the selected categories produce an empty registry (for example `digital-identity` alone), the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
+
+> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR` and `PII_CATEGORIES` alone have no effect.
 
 ## Client Configuration Examples
 
@@ -131,7 +146,7 @@ Create a `.mcp.json` file in your project root:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Claude Code also supports HTTP transport for remote servers:
 
@@ -173,7 +188,7 @@ Using Docker:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 ### Claude Desktop
 
@@ -198,7 +213,7 @@ Edit the config file at:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -224,7 +239,7 @@ Using Docker:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 > Claude Desktop only supports stdio transport. For HTTP mode, use the Connectors UI under **Settings > Connectors > Add custom connector**.
 
@@ -251,7 +266,7 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -278,7 +293,7 @@ Using Docker:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DB_PASSWORD` can be kept there instead of in the JSON config.
 
@@ -305,7 +320,7 @@ Edit the config file at:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -331,7 +346,7 @@ Using Docker:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` to the `env` map.*
+*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from your shell environment instead of hardcoding them.
 

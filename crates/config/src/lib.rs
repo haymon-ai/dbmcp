@@ -30,4 +30,4 @@ pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
 pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
-pub use pii::{PiiConfig, PiiOperator};
+pub use pii::{PiiCategory, PiiConfig, PiiOperator};

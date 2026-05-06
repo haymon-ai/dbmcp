@@ -54,7 +54,7 @@ Database and table names are validated to contain only alphanumeric characters a
 
 ## PII Redaction
 
-Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `--pii` / `PII_ENABLE`.
+Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `--pii` / `PII_ENABLE`. Detection can be scoped to a subset of categories via `--pii-categories` / `PII_CATEGORIES`.
 
 ### Scope
 

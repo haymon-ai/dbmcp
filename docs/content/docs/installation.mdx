@@ -133,6 +133,7 @@ docker run -i --rm \
   -e DB_USER=postgres \
   # -e PII_ENABLE=true \
   # -e PII_OPERATOR=replace \
+  # -e PII_CATEGORIES=financial,government \
   ghcr.io/haymon-ai/dbmcp
 ```
 
@@ -145,6 +146,7 @@ docker run --rm \
   -e DB_USER=postgres \
   # -e PII_ENABLE=true \
   # -e PII_OPERATOR=replace \
+  # -e PII_CATEGORIES=financial,government \
   -p 9001:9001 \
   ghcr.io/haymon-ai/dbmcp http --host 0.0.0.0
 ```
@@ -157,6 +159,7 @@ docker run -i --rm \
   -e DB_NAME=/data/my.db \
   # -e PII_ENABLE=true \
   # -e PII_OPERATOR=replace \
+  # -e PII_CATEGORIES=financial,government \
   -v /path/to/local/db:/data \
   ghcr.io/haymon-ai/dbmcp
 ```

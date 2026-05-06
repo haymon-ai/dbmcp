@@ -1,11 +1,12 @@
 //! PII redaction settings and operator enum.
 
-use crate::error::ConfigErrors;
+use crate::error::{ConfigError, ConfigErrors};
 
 /// Supported PII redaction operators exposed on the CLI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum PiiOperator {
     /// Replace each detected span with an entity-aware placeholder (default).
+    #[default]
     Replace,
     /// Mask each detected span with `'*'` (length-preserving).
     Mask,
@@ -26,13 +27,54 @@ impl std::fmt::Display for PiiOperator {
     }
 }
 
+/// PII categories exposed on the CLI as `--pii-categories <comma-separated>`.
+///
+/// Mirror enum of [`dbmcp_pii::Category`]; the binary layer converts. The
+/// wire format (kebab-case) lives in `dbmcp-config` so `dbmcp-pii` stays
+/// `clap`-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+pub enum PiiCategory {
+    /// Personal identifiers: names, emails, DOB.
+    Personal,
+    /// Financial identifiers: cards, IBANs, bank accounts.
+    Financial,
+    /// Government IDs: SSN, passport, NHS, NINO, tax IDs.
+    Government,
+    /// Contact: phone, postal address, postcode.
+    Contact,
+    /// Network identifiers: IP, URL, MAC.
+    Network,
+    /// Digital identity: API keys, JWTs, private keys, social handles.
+    DigitalIdentity,
+    /// Cryptocurrency wallet addresses.
+    Crypto,
+}
+
+impl std::fmt::Display for PiiCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Personal => "personal",
+            Self::Financial => "financial",
+            Self::Government => "government",
+            Self::Contact => "contact",
+            Self::Network => "network",
+            Self::DigitalIdentity => "digital-identity",
+            Self::Crypto => "crypto",
+        };
+        f.write_str(s)
+    }
+}
+
 /// PII redaction settings for query tool responses.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PiiConfig {
     /// Whether the server redacts PII from query tool response payloads.
     pub enabled: bool,
     /// Which built-in operator rewrites detected spans.
     pub operator: PiiOperator,
+    /// Optional explicit category set; routes the analyzer through
+    /// `dbmcp_pii::Analyzer::builder().categories(...)`.
+    pub categories: Option<Vec<PiiCategory>>,
 }
 
 impl PiiConfig {
@@ -41,27 +83,21 @@ impl PiiConfig {
     /// Default PII operator when no override is supplied.
     pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
 
-    /// Validates this configuration. Reserved for future per-operator rules.
+    /// Validates this configuration.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when a future rule fails. Currently never returns `Err`.
-    #[allow(
-        clippy::unused_self,
-        clippy::unnecessary_wraps,
-        reason = "structural placeholder — every section's validate method shares this signature so future per-operator rules slot in without touching call sites"
-    )]
+    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)`. clap
+    /// already rejects unknown values for `--pii-categories`, so that check
+    /// lives there.
     pub fn validate(&self) -> Result<(), ConfigErrors> {
-        Ok(())
-    }
-}
-
-impl Default for PiiConfig {
-    fn default() -> Self {
-        Self {
-            enabled: Self::DEFAULT_ENABLED,
-            operator: Self::DEFAULT_OPERATOR,
+        let mut errors = Vec::new();
+        if let Some(cats) = &self.categories
+            && cats.is_empty()
+        {
+            errors.push(ConfigError::PiiCategoriesEmpty);
         }
+        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
     }
 }
 

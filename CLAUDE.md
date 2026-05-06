@@ -31,7 +31,7 @@ Cargo workspace: root binary (`dbmcp`) + 7 library crates under `crates/`. Works
 - **`crates/config/`** (`dbmcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`.
 - **`crates/backend/`** (`dbmcp-sql`) — Shared `AppError` type, SQL read-only validation (`validation` module), identifier quoting/validation (`identifier` module), and request/response types (`types` module).
 - **`crates/server/`** (`dbmcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
-- **`crates/pii/`** (`dbmcp-pii`) — Regex-based PII detection (eight v1 recognisers: email, credit card, IBAN, IP, URL, phone, crypto, US SSN) and four anonymisation operators (`replace`, `mask`, `redact`, `hash`). Wired into query tool output behind `PiiConfig`.
+- **`crates/pii/`** (`dbmcp-pii`) — Regex-based PII detection (built-in recognisers: email, credit card, IBAN, IP, URL, phone, crypto, US SSN) tagged by category (`Personal`, `Financial`, `Government`, `Contact`, `Network`, `DigitalIdentity`, `Crypto`), four anonymisation operators (`replace`, `mask`, `redact`, `hash`), and an `Analyzer::builder()` entry point for category-filtered registries. Wired into query tool output behind `PiiConfig`.
 - **`crates/mysql/`** (`dbmcp-mysql`) — MySQL/MariaDB backend: connection pooling, query operations, schema introspection, MCP handler via `rmcp::tool_router`.
 - **`crates/postgres/`** (`dbmcp-postgres`) — PostgreSQL backend: per-database connection pool cache (moka), query operations, schema introspection, MCP handler.
 - **`crates/sqlite/`** (`dbmcp-sqlite`) — SQLite backend: single-file connection, query operations, schema introspection, MCP handler.
@@ -45,7 +45,7 @@ Cargo workspace: root binary (`dbmcp`) + 7 library crates under `crates/`. Works
 - Env vars are set by the MCP client (via `env` or `envFile` in server config)
 - Run `cargo run -- --help` for the full list of flags and env var mappings
 - `DB_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
-- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`. The toggle (`--pii` / `PII_ENABLE`) defaults to **off**; the operator (`--pii-operator` / `PII_OPERATOR`) defaults to `replace`.
+- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`. The toggle (`--pii` / `PII_ENABLE`) defaults to **off**; the operator (`--pii-operator` / `PII_OPERATOR`) defaults to `replace`. Optional category subset via `--pii-categories` / `PII_CATEGORIES` (comma-separated kebab values; unset = all built-ins).
 
 ## Code Style
 

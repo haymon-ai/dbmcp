@@ -28,6 +28,10 @@ pub enum ConfigError {
     /// HTTP bind host is empty or whitespace.
     #[error("HTTP_HOST must not be empty")]
     EmptyHttpHost,
+
+    /// `PII_CATEGORIES` was supplied but the resolved list is empty.
+    #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
+    PiiCategoriesEmpty,
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.

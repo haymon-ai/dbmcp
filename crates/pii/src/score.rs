@@ -2,7 +2,7 @@
 
 use crate::error::PatternError;
 
-/// Highest score the engine emits; assigned by a passing validator (FR-004).
+/// Highest score the engine emits; assigned by a passing validator.
 pub const MAX_SCORE: Score = Score(1.0);
 
 /// Lowest score the engine recognises; results at this score never surface.

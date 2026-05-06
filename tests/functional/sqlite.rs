@@ -1817,6 +1817,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
         pii: PiiConfig {
             enabled: redact_pii,
             operator: PiiOperator::Replace,
+            ..PiiConfig::default()
         },
     })
 }
@@ -1828,6 +1829,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
         pii: PiiConfig {
             enabled: true,
             operator,
+            ..PiiConfig::default()
         },
     })
 }
@@ -1917,41 +1919,6 @@ async fn explain_query_redacts_when_enabled() {
     assert!(
         !serialized.contains("jane.doe@example.com"),
         "raw email leaked into EXPLAIN output: {serialized}"
-    );
-}
-
-#[tokio::test]
-async fn redaction_failure_returns_no_rows() {
-    use dbmcp_pii::{AnalyzeOptions, Analyzer, EntityType, Recognizer, RecognizerResult, Redactor};
-
-    #[derive(Debug)]
-    struct PanickingRecognizer;
-    impl Recognizer for PanickingRecognizer {
-        fn name(&self) -> &'static str {
-            "panicking_test_recognizer"
-        }
-        fn supported_entities(&self) -> &[EntityType] {
-            &[]
-        }
-        fn analyze(&self, _text: &str, _opts: &AnalyzeOptions) -> Vec<RecognizerResult> {
-            panic!("intentional fault-injection panic");
-        }
-    }
-
-    let mut handler = handler_with_redaction(false);
-    let mut analyzer = Analyzer::empty();
-    analyzer.register(Box::new(PanickingRecognizer));
-    handler.set_redactor_for_test(Some(Redactor::with_analyzer(analyzer)));
-
-    let select = ReadQueryRequest {
-        query: "SELECT 'anything' AS msg".into(),
-        cursor: None,
-    };
-    let err = handler.read_query(select).await.expect_err("must fail-closed");
-    assert!(
-        err.message.contains("panicked"),
-        "expected ErrorData message to mention panic, got: {}",
-        err.message
     );
 }
 

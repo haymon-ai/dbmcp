@@ -73,20 +73,19 @@ impl Redactor {
         }
     }
 
-    /// Builds a redactor wrapping the supplied analyzer (test-only constructor).
-    #[must_use]
-    pub fn with_analyzer(analyzer: Analyzer) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
         Self {
             analyzer: Arc::new(analyzer),
             operator: OperatorConfig::default(),
         }
     }
 
-    /// Builds a redactor with default analyzer and a caller-chosen operator config.
+    /// Builds a redactor wrapping a caller-supplied analyzer and operator config.
     #[must_use]
-    pub fn with_operator_config(operator: OperatorConfig) -> Self {
+    pub fn new(analyzer: Analyzer, operator: OperatorConfig) -> Self {
         Self {
-            analyzer: Arc::new(Analyzer::with_defaults()),
+            analyzer: Arc::new(analyzer),
             operator,
         }
     }
@@ -409,7 +408,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::with_operator_config(OperatorConfig::from(PiiOperator::Redact));
+        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Redact));
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -420,7 +419,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::with_operator_config(OperatorConfig::from(PiiOperator::Mask));
+        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Mask));
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -430,7 +429,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = Redactor::with_operator_config(OperatorConfig::from(PiiOperator::Hash));
+        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Hash));
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");

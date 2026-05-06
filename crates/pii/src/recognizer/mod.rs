@@ -1,14 +1,15 @@
 //! Recognizer abstraction, entity-type newtype, validator hook, and built-in registry.
 
-mod deny_list;
-mod pattern_recognizer;
+mod category;
 mod types;
-mod validators;
+mod validator;
 
-pub mod builtin;
 pub mod entity;
+pub mod pattern;
 
-pub use deny_list::deny_list_recognizer;
-pub use pattern_recognizer::PatternRecognizer;
+pub use category::{Category, ParseCategoryError};
+pub use pattern::Pattern;
 pub use types::{EntityType, Recognizer, ValidationOutcome, Validator};
-pub use validators::{IbanValidator, IpAddressValidator, LuhnValidator, NoopValidator, UsSsnValidator};
+pub use validator::{
+    AndValidator, IbanValidator, IpAddressValidator, KeywordValidator, LuhnValidator, NoopValidator, UsSsnValidator,
+};
