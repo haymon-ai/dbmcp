@@ -12,6 +12,7 @@ mod luhn;
 mod luhn_sin;
 mod mod11_nhs;
 mod nino_blocklist;
+mod phone_national;
 mod private_key_type;
 mod us_ssn;
 mod vat_country_length;
@@ -52,6 +53,8 @@ pub enum Validator {
     Mod11Nhs,
     /// UK NINO prefix blocklist.
     NinoBlocklist,
+    /// Phone-number national-format grammar (E.164/US/UK/DE).
+    PhoneNational,
     /// PEM private-key block type.
     PrivateKeyType,
     /// US SSN reserved-value filter.
@@ -92,6 +95,7 @@ impl Validator {
             Self::LuhnSin => luhn_sin::validate(candidate),
             Self::Mod11Nhs => mod11_nhs::validate(candidate),
             Self::NinoBlocklist => nino_blocklist::validate(candidate),
+            Self::PhoneNational => phone_national::validate(candidate),
             Self::PrivateKeyType => private_key_type::validate(candidate),
             Self::UsSsn => us_ssn::validate(candidate),
             Self::VatCountryLength => vat_country_length::validate(candidate),
