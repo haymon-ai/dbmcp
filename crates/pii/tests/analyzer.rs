@@ -2,11 +2,10 @@
 //! promotion, `AnalyzeOptions` filters, overlap rules), and the
 //! catalog-expansion builder contract.
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-use dbmcp_pii::{AnalyzeOptions, Analyzer, AnalyzerBuildError, Category, EntityType, MAX_SCORE, Score, entity};
+use dbmcp_pii::{AnalyzeOptions, Analyzer, Category, EntityType, MAX_SCORE, Score, entity};
 
 const DEFAULT_NAMES: &[&str] = &[
     "EMAIL_ADDRESS",
@@ -17,6 +16,23 @@ const DEFAULT_NAMES: &[&str] = &[
     "PHONE_NUMBER",
     "CRYPTO",
     "US_SSN",
+    "MAC_ADDRESS",
+    "BANK_ACCOUNT_UK",
+    "SORT_CODE_UK",
+    "ROUTING_NUMBER_US",
+    "CVV",
+    "ITIN",
+    "TAX_ID_EIN",
+    "NHS_NUMBER",
+    "NINO_UK",
+    "PASSPORT_UK",
+    "PASSPORT_US",
+    "SIN_CA",
+    "VAT_NUMBER",
+    "API_KEY",
+    "API_KEY",
+    "JWT_TOKEN",
+    "PRIVATE_KEY",
 ];
 
 fn entity_names(a: &Analyzer) -> Vec<String> {
@@ -66,7 +82,18 @@ fn read_corpus(name: &str) -> Corpus {
 }
 
 fn assert_corpus(file: &str, expected: &EntityType) {
-    let analyzer = Analyzer::with_defaults();
+    assert_corpus_with(&Analyzer::with_defaults(), file, expected);
+}
+
+fn assert_corpus_full(file: &str, expected: &EntityType) {
+    let analyzer = Analyzer::builder()
+        .categories(Category::ALL.iter().copied())
+        .build()
+        .expect("build full registry");
+    assert_corpus_with(&analyzer, file, expected);
+}
+
+fn assert_corpus_with(analyzer: &Analyzer, file: &str, expected: &EntityType) {
     let opts = AnalyzeOptions::default();
     let corpus = read_corpus(file);
     assert!(!corpus.positives.is_empty(), "{file}: no positives");
@@ -130,6 +157,86 @@ fn us_ssn_corpus() {
 }
 
 #[test]
+fn mac_address_corpus() {
+    assert_corpus_full("mac_address.txt", &entity::MAC_ADDRESS);
+}
+
+#[test]
+fn bank_account_uk_corpus() {
+    assert_corpus_full("bank_account_uk.txt", &entity::BANK_ACCOUNT_UK);
+}
+
+#[test]
+fn sort_code_uk_corpus() {
+    assert_corpus_full("sort_code_uk.txt", &entity::SORT_CODE_UK);
+}
+
+#[test]
+fn routing_number_us_corpus() {
+    assert_corpus_full("routing_number_us.txt", &entity::ROUTING_NUMBER_US);
+}
+
+#[test]
+fn cvv_corpus() {
+    assert_corpus_full("cvv.txt", &entity::CVV);
+}
+
+#[test]
+fn itin_corpus() {
+    assert_corpus_full("itin.txt", &entity::ITIN);
+}
+
+#[test]
+fn tax_id_ein_corpus() {
+    assert_corpus_full("tax_id_ein.txt", &entity::TAX_ID_EIN);
+}
+
+#[test]
+fn nhs_number_corpus() {
+    assert_corpus_full("nhs_number.txt", &entity::NHS_NUMBER);
+}
+
+#[test]
+fn nino_uk_corpus() {
+    assert_corpus_full("nino_uk.txt", &entity::NINO_UK);
+}
+
+#[test]
+fn passport_uk_corpus() {
+    assert_corpus_full("passport_uk.txt", &entity::PASSPORT_UK);
+}
+
+#[test]
+fn passport_us_corpus() {
+    assert_corpus_full("passport_us.txt", &entity::PASSPORT_US);
+}
+
+#[test]
+fn sin_ca_corpus() {
+    assert_corpus_full("sin_ca.txt", &entity::SIN_CA);
+}
+
+#[test]
+fn vat_number_corpus() {
+    assert_corpus_full("vat_number.txt", &entity::VAT_NUMBER);
+}
+
+#[test]
+fn api_key_corpus() {
+    assert_corpus_full("api_key.txt", &entity::API_KEY);
+}
+
+#[test]
+fn jwt_token_corpus() {
+    assert_corpus_full("jwt_token.txt", &entity::JWT_TOKEN);
+}
+
+#[test]
+fn private_key_corpus() {
+    assert_corpus_full("private_key.txt", &entity::PRIVATE_KEY);
+}
+
+#[test]
 fn multi_entity_input() {
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
@@ -176,28 +283,11 @@ fn ct_005_min_score_filters_before_overlap() {
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions {
         min_score: Score::new(0.95).unwrap(),
-        ..AnalyzeOptions::default()
     };
     // Phone numbers ship at 0.4 → must be filtered out.
     let results = analyzer.analyze("call +14155552671", &opts);
     assert!(
         results.iter().all(|r| r.entity_type != entity::PHONE_NUMBER),
-        "got {results:?}"
-    );
-}
-
-#[test]
-fn ct_005_allow_list_filters_recognizers() {
-    let analyzer = Analyzer::with_defaults();
-    let mut allow = HashSet::new();
-    allow.insert(entity::EMAIL_ADDRESS);
-    let opts = AnalyzeOptions {
-        entity_allow_list: Some(allow),
-        ..AnalyzeOptions::default()
-    };
-    let results = analyzer.analyze("email a@b.com phone +14155552671 url https://x.io", &opts);
-    assert!(
-        results.iter().all(|r| r.entity_type == entity::EMAIL_ADDRESS),
         "got {results:?}"
     );
 }
@@ -227,20 +317,20 @@ fn ct_006_overlap_higher_score_wins_cross_type() {
 }
 
 #[test]
-fn with_defaults_is_eight() {
+fn with_defaults_registers_full_catalog() {
     let a = Analyzer::with_defaults();
     let got = entity_names(&a);
     let want: Vec<String> = DEFAULT_NAMES.iter().map(|s| (*s).to_string()).collect();
-    assert_eq!(got, want, "with_defaults() must stay at the original 8 recognizers");
+    assert_eq!(
+        got, want,
+        "with_defaults() must ship the full v1 + catalog-expansion registry"
+    );
 }
 
 #[test]
 fn tag_table_is_frozen() {
-    // Build via the builder so we exercise the merged registry; with `allow_empty_categories`
-    // we tolerate categories without recognizers in this MVP slice (e.g. DigitalIdentity).
     let analyzer = Analyzer::builder()
         .categories(Category::ALL.iter().copied())
-        .allow_empty_categories(true)
         .build()
         .expect("build");
 
@@ -255,16 +345,32 @@ fn tag_table_is_frozen() {
         .collect();
     tags.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Frozen 8-row tag table for the built-in recognizers.
     let expected = vec![
+        ("API_KEY".to_string(), Category::DigitalIdentity),
+        ("API_KEY".to_string(), Category::DigitalIdentity),
+        ("BANK_ACCOUNT_UK".to_string(), Category::Financial),
         ("CREDIT_CARD".to_string(), Category::Financial),
         ("CRYPTO".to_string(), Category::Crypto),
+        ("CVV".to_string(), Category::Financial),
         ("EMAIL_ADDRESS".to_string(), Category::Personal),
         ("IBAN_CODE".to_string(), Category::Financial),
         ("IP_ADDRESS".to_string(), Category::Network),
+        ("ITIN".to_string(), Category::Government),
+        ("JWT_TOKEN".to_string(), Category::DigitalIdentity),
+        ("MAC_ADDRESS".to_string(), Category::Network),
+        ("NHS_NUMBER".to_string(), Category::Government),
+        ("NINO_UK".to_string(), Category::Government),
+        ("PASSPORT_UK".to_string(), Category::Government),
+        ("PASSPORT_US".to_string(), Category::Government),
         ("PHONE_NUMBER".to_string(), Category::Contact),
+        ("PRIVATE_KEY".to_string(), Category::DigitalIdentity),
+        ("ROUTING_NUMBER_US".to_string(), Category::Financial),
+        ("SIN_CA".to_string(), Category::Government),
+        ("SORT_CODE_UK".to_string(), Category::Financial),
+        ("TAX_ID_EIN".to_string(), Category::Government),
         ("URL".to_string(), Category::Network),
         ("US_SSN".to_string(), Category::Government),
+        ("VAT_NUMBER".to_string(), Category::Government),
     ];
 
     assert_eq!(tags, expected, "tag table drifted");
@@ -301,26 +407,4 @@ fn categories_filter_registry() {
         !names.contains(&"IBAN_CODE".to_string()),
         "Financial recognizers must drop when categories=[Network]"
     );
-}
-
-#[test]
-fn empty_category_errors_without_opt_out() {
-    // No built-in recognizer tags Category::DigitalIdentity, so requesting it
-    // alone trips the empty-category guard.
-    let err = Analyzer::builder()
-        .categories([Category::DigitalIdentity])
-        .build()
-        .unwrap_err();
-    let AnalyzerBuildError::EmptyCategory(cat) = err;
-    assert_eq!(cat, Category::DigitalIdentity);
-}
-
-#[test]
-fn empty_category_allowed_when_opt_in() {
-    let a = Analyzer::builder()
-        .categories([Category::DigitalIdentity])
-        .allow_empty_categories(true)
-        .build()
-        .expect("build");
-    assert!(entity_names(&a).is_empty());
 }

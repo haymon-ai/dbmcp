@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use crate::recognizer::{ValidationOutcome, Validator};
+use crate::recognizer::ValidationOutcome;
 
 /// Default character window either side of the candidate span.
 pub const DEFAULT_WINDOW: usize = 64;
@@ -65,15 +65,8 @@ impl KeywordValidator {
         self.window = chars;
         self
     }
-}
 
-impl Validator for KeywordValidator {
-    fn validate(&self, _candidate: &str) -> ValidationOutcome {
-        // No surrounding text available — strict mode rejects.
-        ValidationOutcome::Invalid
-    }
-
-    fn validate_with_context(&self, _candidate: &str, full_text: &str, span: Range<usize>) -> ValidationOutcome {
+    pub(super) fn validate_with_context(&self, full_text: &str, span: Range<usize>) -> ValidationOutcome {
         if !full_text.is_char_boundary(span.start) || !full_text.is_char_boundary(span.end) {
             return ValidationOutcome::Invalid;
         }
@@ -108,17 +101,11 @@ mod tests {
     const KEYWORDS: &[&str] = &["cvv", "cvc"];
 
     #[test]
-    fn invalid_without_context() {
-        let v = KeywordValidator::new(KEYWORDS);
-        assert_eq!(v.validate("123"), ValidationOutcome::Invalid);
-    }
-
-    #[test]
     fn valid_with_keyword_before() {
         let v = KeywordValidator::new(KEYWORDS);
         let text = "cvv: 123";
         let span = 5..8; // "123"
-        assert_eq!(v.validate_with_context("123", text, span), ValidationOutcome::Valid);
+        assert_eq!(v.validate_with_context(text, span), ValidationOutcome::Valid);
     }
 
     #[test]
@@ -126,7 +113,7 @@ mod tests {
         let v = KeywordValidator::new(KEYWORDS);
         let text = "code 123 (cvc)";
         let span = 5..8;
-        assert_eq!(v.validate_with_context("123", text, span), ValidationOutcome::Valid);
+        assert_eq!(v.validate_with_context(text, span), ValidationOutcome::Valid);
     }
 
     #[test]
@@ -134,7 +121,7 @@ mod tests {
         let v = KeywordValidator::new(KEYWORDS).with_window(2);
         let text = "cvv:                 123";
         let span = 21..24;
-        assert_eq!(v.validate_with_context("123", text, span), ValidationOutcome::Invalid);
+        assert_eq!(v.validate_with_context(text, span), ValidationOutcome::Invalid);
     }
 
     #[test]
@@ -142,6 +129,6 @@ mod tests {
         let v = KeywordValidator::new(KEYWORDS);
         let text = "CVV: 123";
         let span = 5..8;
-        assert_eq!(v.validate_with_context("123", text, span), ValidationOutcome::Valid);
+        assert_eq!(v.validate_with_context(text, span), ValidationOutcome::Valid);
     }
 }

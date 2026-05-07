@@ -1,37 +1,32 @@
 //! Luhn checksum validator for credit-card numbers.
 
-use crate::recognizer::{ValidationOutcome, Validator};
+use crate::recognizer::ValidationOutcome;
 
 /// Luhn checksum validator for credit-card numbers.
 ///
 /// Strips spaces and dashes before checking, matching Presidio's
 /// `replacement_pairs = [("-", ""), (" ", "")]`.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LuhnValidator;
-
-impl Validator for LuhnValidator {
-    fn validate(&self, candidate: &str) -> ValidationOutcome {
-        // Buffer fits the longest valid card (19 digits); avoids a heap allocation.
-        // Iterates bytes — credit-card candidates are ASCII-only after the regex match,
-        // so the `chars()` decode is unnecessary work.
-        let mut digits = [0u32; 19];
-        let mut len = 0usize;
-        for &b in candidate.as_bytes() {
-            if !b.is_ascii_digit() {
-                continue;
-            }
-            if len == digits.len() {
-                return ValidationOutcome::Invalid;
-            }
-            digits[len] = u32::from(b - b'0');
-            len += 1;
+pub(super) fn validate(candidate: &str) -> ValidationOutcome {
+    // Buffer fits the longest valid card (19 digits); avoids a heap allocation.
+    // Iterates bytes — credit-card candidates are ASCII-only after the regex match,
+    // so the `chars()` decode is unnecessary work.
+    let mut digits = [0u32; 19];
+    let mut len = 0usize;
+    for &b in candidate.as_bytes() {
+        if !b.is_ascii_digit() {
+            continue;
         }
-        ValidationOutcome::from_bool((12..=19).contains(&len) && luhn_passes(digits[..len].iter().copied()))
+        if len == digits.len() {
+            return ValidationOutcome::Invalid;
+        }
+        digits[len] = u32::from(b - b'0');
+        len += 1;
     }
+    ValidationOutcome::from_bool((12..=19).contains(&len) && luhn_passes(digits[..len].iter().copied()))
 }
 
 /// Returns true iff the right-to-left Luhn weighted sum over `digits` is divisible by 10.
-fn luhn_passes<I: IntoIterator<Item = u32>>(digits: I) -> bool
+pub(super) fn luhn_passes<I: IntoIterator<Item = u32>>(digits: I) -> bool
 where
     I::IntoIter: DoubleEndedIterator,
 {
@@ -53,24 +48,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::LuhnValidator;
-    use crate::recognizer::{ValidationOutcome, Validator};
+    use super::validate;
+    use crate::recognizer::ValidationOutcome;
 
     #[test]
     fn luhn_valid_visa() {
-        assert_eq!(LuhnValidator.validate("4111-1111-1111-1111"), ValidationOutcome::Valid);
+        assert_eq!(validate("4111-1111-1111-1111"), ValidationOutcome::Valid);
     }
 
     #[test]
     fn luhn_invalid_visa() {
-        assert_eq!(
-            LuhnValidator.validate("4111-1111-1111-1112"),
-            ValidationOutcome::Invalid
-        );
+        assert_eq!(validate("4111-1111-1111-1112"), ValidationOutcome::Invalid);
     }
 
     #[test]
     fn luhn_rejects_short() {
-        assert_eq!(LuhnValidator.validate("4111111"), ValidationOutcome::Invalid);
+        assert_eq!(validate("4111111"), ValidationOutcome::Invalid);
     }
 }

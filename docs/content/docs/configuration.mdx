@@ -109,14 +109,14 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 `--pii-categories` accepts a comma-separated list of kebab-case category names. Leaving the flag unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
 
 - `personal` — `EMAIL_ADDRESS`
-- `financial` — `CREDIT_CARD`, `IBAN_CODE`
-- `government` — `US_SSN`
+- `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
+- `government` — `ITIN`, `NHS_NUMBER`, `NINO_UK`, `PASSPORT_UK`, `PASSPORT_US`, `SIN_CA`, `TAX_ID_EIN`, `US_SSN`, `VAT_NUMBER`
 - `contact` — `PHONE_NUMBER`
-- `network` — `IP_ADDRESS`, `URL`
+- `network` — `IP_ADDRESS`, `MAC_ADDRESS`, `URL`
+- `digital-identity` — `API_KEY`, `JWT_TOKEN`, `PRIVATE_KEY`
 - `crypto` — `CRYPTO`
-- `digital-identity` — *(no built-in recogniser tags this category today; reserved for future additions)*
 
-An empty list is rejected at startup. If the selected categories produce an empty registry (for example `digital-identity` alone), the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
+An empty list is rejected at startup. If the selected categories produce an empty registry, the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
 
 > **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR` and `PII_CATEGORIES` alone have no effect.
 

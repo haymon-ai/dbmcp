@@ -104,12 +104,6 @@ impl Redactor {
     /// Returns [`RedactionError::Internal`] when the analyzer pipeline
     /// panics at any depth; the request must be failed without
     /// returning any row.
-    ///
-    /// # Panics
-    ///
-    /// Does not panic in practice: the only `expect` call is on
-    /// `serde_json::to_string` of a `BTreeMap<String, u64>`, which is
-    /// infallible.
     pub fn apply(&self, rows: &mut [Value]) -> Result<RedactionStats, RedactionError> {
         let mut stats = RedactionStats::default();
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -128,7 +122,11 @@ impl Redactor {
                         }
                         for op in &anon.operations {
                             stats.total += 1;
-                            *stats.by_entity.entry(op.entity_type.as_str().to_owned()).or_default() += 1;
+                            if let Some(v) = stats.by_entity.get_mut(op.entity_type.as_str()) {
+                                *v += 1;
+                            } else {
+                                stats.by_entity.insert(op.entity_type.as_str().to_owned(), 1);
+                            }
                         }
                         *s = anon.text;
                     }
@@ -142,11 +140,10 @@ impl Redactor {
         result.map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
 
         if stats.total > 0 {
-            let by_entity = serde_json::to_string(&stats.by_entity).expect("BTreeMap of String/u64 always serialises");
             tracing::info!(
                 target: "dbmcp::pii",
                 redactions = stats.total,
-                by_entity = %by_entity,
+                by_entity = ?stats.by_entity,
                 rows = rows.len(),
                 string_leaves_scanned = stats.string_leaves_scanned,
                 "pii.redacted"
@@ -160,7 +157,10 @@ impl Redactor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EntityType, Recognizer, RecognizerResult};
+    use crate::EntityType;
+    use crate::recognizer::{Rule, Validator};
+    use crate::regex::Regex;
+    use crate::score::Score;
     use dbmcp_config::PiiOperator;
     use serde_json::json;
 
@@ -449,27 +449,19 @@ mod tests {
         assert_eq!(rows[0]["text_col"], "<EMAIL_ADDRESS>");
     }
 
-    /// Custom recognizer that panics on first analyze call — used to exercise
-    /// the fail-closed `catch_unwind` branch.
-    #[derive(Debug)]
-    struct PanickingRecognizer;
-
-    impl Recognizer for PanickingRecognizer {
-        fn name(&self) -> &'static str {
-            "panicking_test_recognizer"
-        }
-        fn supported_entities(&self) -> &[EntityType] {
-            &[]
-        }
-        fn analyze(&self, _text: &str, _opts: &AnalyzeOptions) -> Vec<RecognizerResult> {
-            panic!("intentional test panic");
-        }
+    /// Build a rule whose validator panics on first invocation — used to
+    /// exercise the fail-closed `catch_unwind` branch.
+    fn panicking_rule() -> Rule {
+        let regex = Regex::new("anything", r".+", Score::from_static(0.9)).expect("static panic-rule regex compiles");
+        Rule::new(EntityType::new("PANIC"), vec![regex])
+            .expect("non-empty pattern list")
+            .with_validator(Validator::Panic)
     }
 
     #[test]
     fn panicking_recognizer_surfaces_internal_error() {
         let mut analyzer = Analyzer::empty();
-        analyzer.register(Box::new(PanickingRecognizer));
+        analyzer.register(panicking_rule());
         let r = Redactor::with_analyzer(analyzer);
         let mut rows = vec![json!({"msg": "anything"})];
         let err = r.apply(&mut rows).expect_err("must fail-closed");
@@ -481,7 +473,7 @@ mod tests {
     #[test]
     fn panic_at_depth_propagates_internal_error() {
         let mut analyzer = Analyzer::empty();
-        analyzer.register(Box::new(PanickingRecognizer));
+        analyzer.register(panicking_rule());
         let r = Redactor::with_analyzer(analyzer);
         // PII-bearing string lives 4 levels deep.
         let mut rows = vec![json!({"a": {"b": {"c": {"d": "anything"}}}})];

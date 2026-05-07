@@ -390,28 +390,57 @@ Database MCP ships an optional PII redactor that rewrites detected sensitive spa
 
 ### What gets detected
 
-Eight built-in regex recognisers ship by default. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder, and is tagged with a category for opt-in subsetting via `--pii-categories` / `PII_CATEGORIES`:
+Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `--pii-categories` / `PII_CATEGORIES`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
 
+**personal**
 - `EMAIL_ADDRESS` — email addresses
+
+**financial**
+- `BANK_ACCOUNT_UK` — UK bank account numbers (8–10 digits, keyword-gated)
 - `CREDIT_CARD` — credit card numbers (Luhn-validated)
+- `CVV` — card verification values (3–4 digits, keyword-gated)
 - `IBAN_CODE` — International Bank Account Numbers
-- `IP_ADDRESS` — IPv4 and IPv6 addresses
-- `URL` — http / https URLs
-- `PHONE_NUMBER` — international phone numbers
-- `CRYPTO` — Bitcoin and similar wallet addresses
+- `ROUTING_NUMBER_US` — US ABA routing transit numbers (checksum + keyword-gated)
+- `SORT_CODE_UK` — UK sort codes (keyword-gated)
+
+**government**
+- `ITIN` — US Individual Taxpayer Identification Numbers (IRS range-validated)
+- `NHS_NUMBER` — UK NHS patient identifiers (mod-11 checksum)
+- `NINO_UK` — UK National Insurance Numbers (HMRC prefix blocklist)
+- `PASSPORT_UK` — UK passport numbers (9 digits, keyword-gated)
+- `PASSPORT_US` — US passport numbers (keyword-gated)
+- `SIN_CA` — Canadian Social Insurance Numbers (Luhn-validated)
+- `TAX_ID_EIN` — US Employer Identification Numbers (IRS prefix-validated)
 - `US_SSN` — United States Social Security Numbers
+- `VAT_NUMBER` — EU / UK / NI VAT identifiers (per-country length validation)
+
+**contact**
+- `PHONE_NUMBER` — international phone numbers
+
+**network**
+- `IP_ADDRESS` — IPv4 and IPv6 addresses
+- `MAC_ADDRESS` — MAC addresses (colon or dash separated)
+- `URL` — http / https URLs
+
+**digital-identity**
+- `API_KEY` — five named provider tokens (AWS access, GitHub PAT, Stripe live, Google API, OpenAI) plus keyword-gated AWS secret access keys
+- `JWT_TOKEN` — JSON Web Tokens (header `alg` field validated; signature **not** verified)
+- `PRIVATE_KEY` — PEM-fenced private key blocks (BEGIN / END type must match)
+
+**crypto**
+- `CRYPTO` — Bitcoin and similar wallet addresses
 
 ### Categories
 
 Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories on `--pii-categories` / `PII_CATEGORIES`; leaving the flag unset enables every built-in.
 
 - `personal` — `EMAIL_ADDRESS`
-- `financial` — `CREDIT_CARD`, `IBAN_CODE`
-- `government` — `US_SSN`
+- `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
+- `government` — `ITIN`, `NHS_NUMBER`, `NINO_UK`, `PASSPORT_UK`, `PASSPORT_US`, `SIN_CA`, `TAX_ID_EIN`, `US_SSN`, `VAT_NUMBER`
 - `contact` — `PHONE_NUMBER`
-- `network` — `IP_ADDRESS`, `URL`
+- `network` — `IP_ADDRESS`, `MAC_ADDRESS`, `URL`
+- `digital-identity` — `API_KEY`, `JWT_TOKEN`, `PRIVATE_KEY`
 - `crypto` — `CRYPTO`
-- `digital-identity` — reserved; no built-in recogniser tags this category today
 
 See [PII configuration](/docs/configuration#pii) for the flag, env var, and the empty-registry fallback rules.
 

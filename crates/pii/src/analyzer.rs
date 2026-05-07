@@ -1,12 +1,10 @@
 //! Analyzer engine: registry + entry point + analyze-time options.
 
-use std::collections::HashSet;
-
 use dbmcp_config::{PiiCategory, PiiConfig};
 
 use crate::error::AnalyzerBuildError;
 use crate::overlap;
-use crate::recognizer::{Category, EntityType, Recognizer};
+use crate::recognizer::{Category, Rule};
 use crate::result::RecognizerResult;
 use crate::score::Score;
 
@@ -16,27 +14,14 @@ use crate::score::Score;
 /// drop low-confidence matches before overlap resolution.
 #[derive(Debug, Clone, Default)]
 pub struct AnalyzeOptions {
-    /// Restrict the engine to recognizers whose `supported_entities` intersect this set.
-    pub entity_allow_list: Option<HashSet<EntityType>>,
     /// Drop results whose score is below this floor before overlap resolution.
     pub min_score: Score,
 }
 
 /// Registry of recognizers and the public entry point for PII analysis.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Analyzer {
-    recognizers: Vec<Box<dyn Recognizer>>,
-}
-
-impl std::fmt::Debug for Analyzer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Analyzer")
-            .field(
-                "recognizers",
-                &self.recognizers.iter().map(|r| r.name()).collect::<Vec<_>>(),
-            )
-            .finish()
-    }
+    recognizers: Vec<Rule>,
 }
 
 impl Analyzer {
@@ -45,19 +30,17 @@ impl Analyzer {
         Self::default()
     }
 
-    /// Build an analyzer pre-loaded with the eight default recognizers.
+    /// Build an analyzer pre-loaded with the default recognizer registry.
     #[must_use]
     pub fn with_defaults() -> Self {
-        let recognizers = crate::recognizer::pattern::all()
-            .into_iter()
-            .map(|r| Box::new(r) as Box<dyn Recognizer>)
-            .collect();
-        Self { recognizers }
+        Self {
+            recognizers: crate::recognizer::rule::all(),
+        }
     }
 
     #[cfg(test)]
-    pub(crate) fn register(&mut self, recognizer: Box<dyn Recognizer>) -> &mut Self {
-        self.recognizers.push(recognizer);
+    pub(crate) fn register(&mut self, rule: Rule) -> &mut Self {
+        self.recognizers.push(rule);
         self
     }
 
@@ -67,11 +50,7 @@ impl Analyzer {
         let results = self
             .recognizers
             .iter()
-            .filter(|r| match &opts.entity_allow_list {
-                Some(allow) => r.supported_entities().iter().any(|e| allow.contains(e)),
-                None => true,
-            })
-            .flat_map(|r| r.analyze(text, opts))
+            .flat_map(|r| r.analyze(text))
             .filter(|r| r.score >= opts.min_score)
             .collect();
         overlap::resolve(results)
@@ -83,9 +62,9 @@ impl Analyzer {
         Builder::default()
     }
 
-    /// Iterate the registry's recognizers in registration order.
-    pub fn recognizers(&self) -> impl Iterator<Item = &dyn Recognizer> + '_ {
-        self.recognizers.iter().map(std::convert::AsRef::as_ref)
+    /// Iterate the registry's rules in registration order.
+    pub fn recognizers(&self) -> impl Iterator<Item = &Rule> + '_ {
+        self.recognizers.iter()
     }
 
     /// Resolve a [`PiiConfig`] to an [`Analyzer`].
@@ -125,15 +104,10 @@ fn map_category(c: PiiCategory) -> Category {
     }
 }
 
-/// Typed builder that filters the merged `all() ∪ all_extended()` registry by
-/// category.
-///
-/// `Analyzer::with_defaults()` stays frozen at the original 8 recognizers
-/// regardless of this builder.
+/// Typed builder that filters the `all()` registry by category.
 #[derive(Default, Debug)]
 pub struct Builder {
     categories: Option<Vec<Category>>,
-    allow_empty_categories: bool,
 }
 
 impl Builder {
@@ -150,44 +124,25 @@ impl Builder {
         self
     }
 
-    /// When `true`, [`Builder::build`] does not error if a requested category
-    /// resolves to zero recognizers in the current registry.
-    #[must_use]
-    pub fn allow_empty_categories(mut self, allow: bool) -> Self {
-        self.allow_empty_categories = allow;
-        self
-    }
-
     /// Build the [`Analyzer`] applying the resolved filters.
     ///
     /// # Errors
     ///
     /// Returns [`AnalyzerBuildError::EmptyCategory`] if a requested category
-    /// has zero recognizers tagging it (and `allow_empty_categories(true)` was
-    /// not set).
+    /// has zero recognizers tagging it.
     pub fn build(self) -> Result<Analyzer, AnalyzerBuildError> {
-        let effective_cats = self.categories;
-
-        // If categories is unset, fall through to with_defaults() — the 8
-        // default recognizers, no filter.
-        if effective_cats.is_none() {
+        let Some(cats) = self.categories else {
             return Ok(Analyzer::with_defaults());
-        }
+        };
 
-        let cat_ok = |c: Category| effective_cats.as_ref().is_none_or(|cats| cats.contains(&c));
-        let kept: Vec<Box<dyn Recognizer>> = crate::recognizer::pattern::all()
+        let kept: Vec<Rule> = crate::recognizer::rule::all()
             .into_iter()
-            .filter(|r| cat_ok(r.category()))
-            .map(|r| Box::new(r) as Box<dyn Recognizer>)
+            .filter(|r| cats.contains(&r.category()))
             .collect();
 
-        if !self.allow_empty_categories
-            && let Some(cats) = &effective_cats
-        {
-            for &cat in cats {
-                if !kept.iter().any(|r| r.category() == cat) {
-                    return Err(AnalyzerBuildError::EmptyCategory(cat));
-                }
+        for &cat in &cats {
+            if !kept.iter().any(|r| r.category() == cat) {
+                return Err(AnalyzerBuildError::EmptyCategory(cat));
             }
         }
 

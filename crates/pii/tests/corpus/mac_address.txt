@@ -1,0 +1,7 @@
+# positive
+interface 01:23:45:AB:CD:EF
+nic 01-23-45-ab-cd-ef present
+MAC FF:FF:FF:FF:FF:FF
+# negative
+01:23:45:AB:CD
+not-a-mac-address

@@ -4,7 +4,7 @@
 //! are rejected by [`UsSsnValidator`] (replaces Presidio's negative-lookahead
 //! constructs).
 
-use crate::recognizer::{Category, Pattern, UsSsnValidator, entity};
+use crate::recognizer::{Category, Rule, Validator, entity};
 use crate::regex::Regex;
 use crate::score::Score;
 
@@ -14,12 +14,12 @@ use crate::score::Score;
 ///
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
-pub fn us_ssn() -> Pattern {
+pub fn us_ssn() -> Rule {
     let pattern = Regex::new("US SSN", r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b", Score::from_static(0.6))
         .expect("static SSN pattern compiles");
-    Pattern::new(entity::US_SSN, vec![pattern])
+    Rule::new(entity::US_SSN, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("UsSsnRecognizer")
-        .with_validator(UsSsnValidator)
+        .with_validator(Validator::UsSsn)
         .with_category(Category::Government)
 }

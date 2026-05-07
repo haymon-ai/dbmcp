@@ -25,9 +25,9 @@ pub struct RecognizerResult {
 pub struct AnalysisExplanation {
     /// Recognizer that emitted the result.
     pub recognizer_name: Cow<'static, str>,
-    /// Pattern name that matched (`None` for non-pattern recognizers, future use).
+    /// Regex name that matched (`None` for non-regex recognizers, future use).
     pub pattern_name: Option<Cow<'static, str>>,
-    /// Pattern's base score, before validator adjustment.
+    /// Regex's base score, before validator adjustment.
     pub original_score: Score,
     /// Validator outcome applied to the candidate.
     pub validation: ValidationOutcome,

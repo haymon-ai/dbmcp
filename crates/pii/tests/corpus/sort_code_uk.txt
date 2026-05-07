@@ -1,0 +1,7 @@
+# positive
+sort 12-34-56
+sort code 12 34 56
+sortcode 11-22-33
+# negative
+transaction 12-34-56
+sort 12-34

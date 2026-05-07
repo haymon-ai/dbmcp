@@ -1,11 +1,6 @@
-//! Recognizer abstraction, entity-type newtype, and validator hook.
+//! Entity-type newtype and validator outcome enum.
 
 use std::borrow::Cow;
-use std::ops::Range;
-
-use super::category::Category;
-use crate::analyzer::AnalyzeOptions;
-use crate::result::RecognizerResult;
 
 /// Tag identifying the kind of PII a recognizer emits.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -31,7 +26,7 @@ impl std::fmt::Display for EntityType {
     }
 }
 
-/// Outcome of running a [`Validator`] on a candidate match.
+/// Outcome of running a [`super::Validator`] on a candidate match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValidationOutcome {
     /// Validator confirmed the candidate; promote to `MAX_SCORE`.
@@ -50,42 +45,5 @@ impl ValidationOutcome {
     #[must_use]
     pub const fn from_bool(valid: bool) -> Self {
         if valid { Self::Valid } else { Self::Invalid }
-    }
-}
-
-/// Optional checksum/parser hook attached to a [`super::Pattern`].
-pub trait Validator: Send + Sync {
-    /// Validate the matched text and return the corresponding [`ValidationOutcome`].
-    fn validate(&self, candidate: &str) -> ValidationOutcome;
-
-    /// Validate using surrounding text (for keyword-context aware validators).
-    ///
-    /// Default impl delegates to [`Validator::validate`], so existing impls keep
-    /// working unchanged. Validators that depend on surrounding text — e.g.
-    /// [`super::KeywordValidator`] — override this method.
-    fn validate_with_context(&self, candidate: &str, full_text: &str, span: Range<usize>) -> ValidationOutcome {
-        let _ = (full_text, span);
-        self.validate(candidate)
-    }
-}
-
-/// Abstraction the analyzer engine talks to; future LLM/NER recognizers plug in here.
-pub trait Recognizer: Send + Sync {
-    /// Recognizer's display name; surfaced in [`crate::AnalysisExplanation`].
-    fn name(&self) -> &str;
-
-    /// Entity types this recognizer is capable of emitting.
-    fn supported_entities(&self) -> &[EntityType];
-
-    /// Analyze `text` and return the recognizer's own results, pre-overlap.
-    fn analyze(&self, text: &str, opts: &AnalyzeOptions) -> Vec<RecognizerResult>;
-
-    /// Top-level PII category this recognizer covers.
-    ///
-    /// Default impl returns [`Category::Personal`] so external `Recognizer`
-    /// impls keep compiling. Built-in recognizers override via
-    /// [`super::Pattern::with_category`].
-    fn category(&self) -> Category {
-        Category::Personal
     }
 }

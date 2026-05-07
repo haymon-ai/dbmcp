@@ -1,0 +1,7 @@
+# positive
+-----BEGIN RSA PRIVATE KEY-----MIIEowIBAAKCAQEAfake==-----END RSA PRIVATE KEY-----
+-----BEGIN EC PRIVATE KEY-----MHcCAQEEIfake==-----END EC PRIVATE KEY-----
+-----BEGIN OPENSSH PRIVATE KEY-----base64data-----END OPENSSH PRIVATE KEY-----
+# negative
+-----BEGIN CERTIFICATE-----base64-----END CERTIFICATE-----
+-----BEGIN RSA PRIVATE KEY-----base64-----END EC PRIVATE KEY-----

@@ -6,7 +6,7 @@
 //! mixed-notation rule). False positives the regex lets through are dropped
 //! by the parser.
 
-use crate::recognizer::{Category, IpAddressValidator, Pattern, entity};
+use crate::recognizer::{Category, Rule, Validator, entity};
 use crate::regex::Regex;
 use crate::score::Score;
 
@@ -16,7 +16,7 @@ use crate::score::Score;
 ///
 /// Panics only if any bundled regex source or score literal is rejected at construction.
 #[must_use]
-pub fn ip_address() -> Pattern {
+pub fn ip_address() -> Rule {
     let s06 = Score::from_static(0.6);
 
     // Four dotted decimal triplets (1–3 digits each), optional CIDR /N.
@@ -30,9 +30,9 @@ pub fn ip_address() -> Pattern {
     let ipv6 = Regex::new("IPv6", r"(?:[0-9A-Fa-f]{0,4}:){1,7}[0-9A-Fa-f]{0,4}(?:/\d{1,3})?", s06)
         .expect("static IPv6 pattern compiles");
 
-    Pattern::new(entity::IP_ADDRESS, vec![ipv4, ipv6])
+    Rule::new(entity::IP_ADDRESS, vec![ipv4, ipv6])
         .expect("non-empty pattern list")
         .with_name("IpRecognizer")
-        .with_validator(IpAddressValidator)
+        .with_validator(Validator::IpAddress)
         .with_category(Category::Network)
 }

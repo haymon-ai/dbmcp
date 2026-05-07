@@ -3,11 +3,13 @@
 use super::ChunkCount;
 
 pub(crate) fn apply(candidate: &str, masking_char: char, chars_to_mask: ChunkCount, from_end: bool) -> String {
-    let total = candidate.chars().count();
-    let to_mask = match chars_to_mask {
-        ChunkCount::All => total,
-        ChunkCount::N(n) => n.min(total),
+    let n = match chars_to_mask {
+        // Single-pass fast path for the common "mask everything" case.
+        ChunkCount::All => return candidate.chars().map(|_| masking_char).collect(),
+        ChunkCount::N(n) => n,
     };
+    let total = candidate.chars().count();
+    let to_mask = n.min(total);
     if to_mask == 0 {
         return candidate.to_owned();
     }

@@ -1,0 +1,8 @@
+# positive
+Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature
+Authorization eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.sig
+token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWxpY2UifQ.signaturedata
+# negative
+version 1.2.3
+eyJhbGciOiJIUzI1NiJ9.payload
+eyJ0eXAiOiJKV1QifQ.payload.sig

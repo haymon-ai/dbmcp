@@ -1,4 +1,4 @@
-//! Operators that rewrite a single matched span and the opserator-config map.
+//! Operators that rewrite a single matched span and the operator-config map.
 
 mod hash;
 mod mask;

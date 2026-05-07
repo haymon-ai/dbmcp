@@ -42,7 +42,7 @@ impl From<PiiOperator> for OperatorConfig {
             PiiOperator::Replace => None,
             PiiOperator::Mask => Some(Operator::default_mask()),
             PiiOperator::Redact => Some(Operator::Redact),
-            PiiOperator::Hash => Some(Operator::hash(HashAlgorithm::Sha256, None).expect("None hash_key never errors")),
+            PiiOperator::Hash => Some(Operator::hash(HashAlgorithm::Sha256)),
         };
         Self {
             per_entity: HashMap::new(),
@@ -146,13 +146,12 @@ mod tests {
     }
 
     #[test]
-    fn pii_operator_hash_maps_to_sha256_no_key() {
+    fn pii_operator_hash_maps_to_sha256() {
         let cfg: OperatorConfig = PiiOperator::Hash.into();
         assert!(matches!(
             cfg.default,
             Some(Operator::Hash {
                 algorithm: HashAlgorithm::Sha256,
-                hash_key: None,
             })
         ));
     }

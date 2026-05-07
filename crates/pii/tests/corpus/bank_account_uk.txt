@@ -1,0 +1,7 @@
+# positive
+acct 12345678
+account 87654321
+IBAN account 12345678
+# negative
+build 12345678
+account 1234567

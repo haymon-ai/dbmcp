@@ -1,4 +1,4 @@
-//! `anonymize` integration tests: US2 acceptance scenarios (#1..#4),
+//! `anonymize` integration tests: US2 acceptance scenarios (#1..#3),
 //! CT-007 / SC-003 round-trip safety, and CT-008 hash-operator determinism.
 
 use std::borrow::Cow;
@@ -101,9 +101,7 @@ fn us2_3_overlap_collapses_to_single_op() {
 }
 
 #[test]
-fn us2_4_hash_deterministic_per_key_tuple() {
-    // Acceptance scenario US2-#4 covered by anonymizer integration: the same input yields
-    // the same digest across two runs.
+fn us2_4_hash_deterministic_per_input() {
     let text = "user@example.com";
 
     let results_call = || {
@@ -112,10 +110,7 @@ fn us2_4_hash_deterministic_per_key_tuple() {
     };
 
     let mut per_entity = HashMap::new();
-    per_entity.insert(
-        entity::EMAIL_ADDRESS,
-        Operator::hash(HashAlgorithm::Sha256, Some(b"k".to_vec())).unwrap(),
-    );
+    per_entity.insert(entity::EMAIL_ADDRESS, Operator::hash(HashAlgorithm::Sha256));
     let config = OperatorConfig {
         per_entity,
         ..OperatorConfig::default()
@@ -178,10 +173,7 @@ fn multiple_non_overlapping_spans_rewrite_in_position_order() {
 fn sha256_deterministic_bare() {
     let text = "hello world";
     let mut per_entity = HashMap::new();
-    per_entity.insert(
-        EntityType::new("X".to_owned()),
-        Operator::hash(HashAlgorithm::Sha256, None).unwrap(),
-    );
+    per_entity.insert(EntityType::new("X".to_owned()), Operator::hash(HashAlgorithm::Sha256));
     let config = OperatorConfig {
         per_entity,
         ..OperatorConfig::default()
@@ -195,10 +187,7 @@ fn sha256_deterministic_bare() {
 fn sha512_deterministic_bare() {
     let text = "hello world";
     let mut per_entity = HashMap::new();
-    per_entity.insert(
-        EntityType::new("X".to_owned()),
-        Operator::hash(HashAlgorithm::Sha512, None).unwrap(),
-    );
+    per_entity.insert(EntityType::new("X".to_owned()), Operator::hash(HashAlgorithm::Sha512));
     let config = OperatorConfig {
         per_entity,
         ..OperatorConfig::default()
@@ -209,39 +198,19 @@ fn sha512_deterministic_bare() {
 }
 
 #[test]
-fn keyed_differs_from_bare() {
+fn sha256_differs_from_sha512() {
     let text = "hello world";
 
-    let bare_cfg = {
+    let cfg = |alg| {
         let mut per = HashMap::new();
-        per.insert(
-            EntityType::new("X".to_owned()),
-            Operator::hash(HashAlgorithm::Sha256, None).unwrap(),
-        );
-        OperatorConfig {
-            per_entity: per,
-            ..OperatorConfig::default()
-        }
-    };
-    let keyed_cfg = {
-        let mut per = HashMap::new();
-        per.insert(
-            EntityType::new("X".to_owned()),
-            Operator::hash(HashAlgorithm::Sha256, Some(b"secret".to_vec())).unwrap(),
-        );
+        per.insert(EntityType::new("X".to_owned()), Operator::hash(alg));
         OperatorConfig {
             per_entity: per,
             ..OperatorConfig::default()
         }
     };
 
-    let bare = anonymize(text, vec![make_result("X", 0, 5)], &bare_cfg);
-    let keyed = anonymize(text, vec![make_result("X", 0, 5)], &keyed_cfg);
-    assert_ne!(bare.text, keyed.text);
-}
-
-#[test]
-fn empty_hash_key_rejected() {
-    let err = Operator::hash(HashAlgorithm::Sha256, Some(Vec::new()));
-    assert!(err.is_err());
+    let s256 = anonymize(text, vec![make_result("X", 0, 5)], &cfg(HashAlgorithm::Sha256));
+    let s512 = anonymize(text, vec![make_result("X", 0, 5)], &cfg(HashAlgorithm::Sha512));
+    assert_ne!(s256.text, s512.text);
 }

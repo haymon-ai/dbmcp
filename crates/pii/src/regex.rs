@@ -70,38 +70,6 @@ impl Regex {
     }
 }
 
-mod serde_impl {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-
-    use super::Regex;
-    use crate::score::Score;
-
-    #[derive(Serialize, Deserialize)]
-    struct Wire {
-        name: String,
-        regex: String,
-        score: Score,
-    }
-
-    impl Serialize for Regex {
-        fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-            Wire {
-                name: self.name.as_ref().to_owned(),
-                regex: self.compiled.as_str().to_owned(),
-                score: self.score,
-            }
-            .serialize(ser)
-        }
-    }
-
-    impl<'de> Deserialize<'de> for Regex {
-        fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
-            let w = Wire::deserialize(de)?;
-            Regex::new(w.name, w.regex, w.score).map_err(D::Error::custom)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::Regex;

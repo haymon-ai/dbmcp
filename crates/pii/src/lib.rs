@@ -3,8 +3,8 @@
 //! Library-only crate. Ports Presidio's language-agnostic recognizer and
 //! anonymizer pipeline to Rust: regex/pattern recognition with optional
 //! checksum validation, plus four built-in operators (`Replace`, `Mask`,
-//! `Redact`, `Hash`). No NLP, no LLM, no network. Not wired into the MCP
-//! server in this iteration.
+//! `Redact`, `Hash`). No NLP, no LLM, no network. Wired into the MCP
+//! server's query tool output via [`Redactor`] behind `PiiConfig`.
 //!
 //! # Quickstart
 //!
@@ -32,16 +32,9 @@ pub mod result;
 pub mod score;
 
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
-pub use crate::anonymizer::{AnonymizedText, OperatorConfig, anonymize};
-pub use crate::error::{AnalyzerBuildError, OperatorError, PatternError, RecognizerError};
-pub use crate::operator::{ChunkCount, HashAlgorithm, Operator, OperatorKind};
-pub use crate::recognizer::{
-    AndValidator, Category, EntityType, KeywordValidator, ParseCategoryError, Pattern, Recognizer, ValidationOutcome,
-    Validator,
-};
+pub use crate::anonymizer::{OperatorConfig, anonymize};
+pub use crate::operator::{ChunkCount, HashAlgorithm, Operator};
+pub use crate::recognizer::{Category, EntityType, ValidationOutcome, entity};
 pub use crate::redact::{RedactionError, RedactionStats, Redactor};
-pub use crate::regex::Regex;
-pub use crate::result::{AnalysisExplanation, OperatorResult, RecognizerResult};
-pub use crate::score::{MAX_SCORE, MIN_SCORE, Score};
-
-pub use crate::recognizer::entity;
+pub use crate::result::{AnalysisExplanation, RecognizerResult};
+pub use crate::score::{MAX_SCORE, Score};
