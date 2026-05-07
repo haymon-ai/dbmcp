@@ -2,6 +2,13 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.10.2](https://github.com/haymon-ai/dbmcp/compare/c090cbc7dcddaa7a1bcfe283316a82c55dd35ae8..v0.10.2) - 2026-05-07
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) expand entity catalog + collapse traits to enums (#145) - ([f73cbd5](https://github.com/haymon-ai/dbmcp/commit/f73cbd5ead8bcce80c8660bd8712c24a86af077a)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) rename recognizer module + wire category routing through CLI (#144) - ([c090cbc](https://github.com/haymon-ai/dbmcp/commit/c090cbc7dcddaa7a1bcfe283316a82c55dd35ae8)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.10.1](https://github.com/haymon-ai/dbmcp/compare/04eb76107b79d16be34c6e25feb43e09804af470..v0.10.1) - 2026-05-04
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) walk nested json/jsonb leaves during redaction (#142) - ([04eb761](https://github.com/haymon-ai/dbmcp/commit/04eb76107b79d16be34c6e25feb43e09804af470)) - [@athopen](https://github.com/athopen)
