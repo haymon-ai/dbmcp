@@ -1,0 +1,10 @@
+positives = [
+    "cvv: 123",
+    "cvc 4567",
+    "CSC=789",
+]
+
+negatives = [
+    "port 4567",
+    "cvv 12",
+]

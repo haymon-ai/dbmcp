@@ -1,0 +1,10 @@
+positives = [
+    "sort 12-34-56",
+    "sort code 12 34 56",
+    "sortcode 11-22-33",
+]
+
+negatives = [
+    "transaction 12-34-56",
+    "sort 12-34",
+]

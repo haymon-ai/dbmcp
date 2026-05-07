@@ -1,0 +1,11 @@
+positives = [
+    "ABA: 021000021",
+    "routing 011000015",
+    "RTN 091000019",
+]
+
+negatives = [
+    "version 021000021",
+    "routing 021000020",
+    "ABA: 021000022",
+]

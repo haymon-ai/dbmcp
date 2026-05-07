@@ -6,6 +6,10 @@ edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+autobenches = false
+
+[features]
+test-support = ["dep:toml"]
 
 [dependencies]
 base64 = { workspace = true }
@@ -16,10 +20,24 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+toml = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-proptest = { workspace = true }
+criterion = { workspace = true }
+dbmcp-pii = { path = ".", features = ["test-support"] }
+
+[[bench]]
+name = "analyze"
+harness = false
+
+[[bench]]
+name = "anonymize"
+harness = false
+
+[[bench]]
+name = "redact"
+harness = false
 
 [lints]
 workspace = true

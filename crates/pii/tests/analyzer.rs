@@ -2,9 +2,7 @@
 //! promotion, `AnalyzeOptions` filters, overlap rules), and the
 //! catalog-expansion builder contract.
 
-use std::fs;
-use std::path::PathBuf;
-
+use dbmcp_pii::corpus::Corpus;
 use dbmcp_pii::{AnalyzeOptions, Analyzer, Category, EntityType, MAX_SCORE, Score, entity};
 
 const DEFAULT_NAMES: &[&str] = &[
@@ -41,68 +39,17 @@ fn entity_names(a: &Analyzer) -> Vec<String> {
         .collect()
 }
 
-fn corpus_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("corpus")
-        .join(name)
-}
-
-#[derive(Debug, Default)]
-struct Corpus {
-    positives: Vec<String>,
-    negatives: Vec<String>,
-}
-
-fn read_corpus(name: &str) -> Corpus {
-    let raw = fs::read_to_string(corpus_path(name)).expect("corpus exists");
-    let mut c = Corpus::default();
-    let mut bucket: Option<&mut Vec<String>> = None;
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.eq_ignore_ascii_case("# positive") {
-            bucket = Some(&mut c.positives);
-            continue;
-        }
-        if trimmed.eq_ignore_ascii_case("# negative") {
-            bucket = Some(&mut c.negatives);
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(b) = bucket.as_deref_mut() {
-            b.push(trimmed.to_owned());
-        }
-    }
-    c
-}
-
-fn assert_corpus(file: &str, expected: &EntityType) {
-    assert_corpus_with(&Analyzer::with_defaults(), file, expected);
-}
-
-fn assert_corpus_full(file: &str, expected: &EntityType) {
-    let analyzer = Analyzer::builder()
-        .categories(Category::ALL.iter().copied())
-        .build()
-        .expect("build full registry");
-    assert_corpus_with(&analyzer, file, expected);
-}
-
-fn assert_corpus_with(analyzer: &Analyzer, file: &str, expected: &EntityType) {
+fn assert_corpus(stem: &str, expected: &EntityType) {
+    let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
-    let corpus = read_corpus(file);
-    assert!(!corpus.positives.is_empty(), "{file}: no positives");
+    let corpus = Corpus::load(stem);
+    assert!(!corpus.positives.is_empty(), "{stem}: no positives");
 
     for sample in &corpus.positives {
         let results = analyzer.analyze(sample, &opts);
         assert!(
             results.iter().any(|r| r.entity_type == *expected),
-            "{file}: positive sample {sample:?} did not surface {expected:?}; got {:?}",
+            "{stem}: positive sample {sample:?} did not surface {expected:?}; got {:?}",
             results.iter().map(|r| r.entity_type.as_str()).collect::<Vec<_>>()
         );
     }
@@ -111,129 +58,129 @@ fn assert_corpus_with(analyzer: &Analyzer, file: &str, expected: &EntityType) {
         let results = analyzer.analyze(sample, &opts);
         assert!(
             !results.iter().any(|r| r.entity_type == *expected),
-            "{file}: negative sample {sample:?} surfaced {expected:?}: {results:?}"
+            "{stem}: negative sample {sample:?} surfaced {expected:?}: {results:?}"
         );
     }
 }
 
 #[test]
 fn email_corpus() {
-    assert_corpus("email.txt", &entity::EMAIL_ADDRESS);
+    assert_corpus("email", &entity::EMAIL_ADDRESS);
 }
 
 #[test]
 fn credit_card_corpus() {
-    assert_corpus("credit_card.txt", &entity::CREDIT_CARD);
+    assert_corpus("credit_card", &entity::CREDIT_CARD);
 }
 
 #[test]
 fn iban_corpus() {
-    assert_corpus("iban.txt", &entity::IBAN_CODE);
+    assert_corpus("iban", &entity::IBAN_CODE);
 }
 
 #[test]
 fn ip_corpus() {
-    assert_corpus("ip.txt", &entity::IP_ADDRESS);
+    assert_corpus("ip", &entity::IP_ADDRESS);
 }
 
 #[test]
 fn url_corpus() {
-    assert_corpus("url.txt", &entity::URL);
+    assert_corpus("url", &entity::URL);
 }
 
 #[test]
 fn phone_corpus() {
-    assert_corpus("phone.txt", &entity::PHONE_NUMBER);
+    assert_corpus("phone", &entity::PHONE_NUMBER);
 }
 
 #[test]
 fn crypto_corpus() {
-    assert_corpus("crypto.txt", &entity::CRYPTO);
+    assert_corpus("crypto", &entity::CRYPTO);
 }
 
 #[test]
 fn us_ssn_corpus() {
-    assert_corpus("us_ssn.txt", &entity::US_SSN);
+    assert_corpus("us_ssn", &entity::US_SSN);
 }
 
 #[test]
 fn mac_address_corpus() {
-    assert_corpus_full("mac_address.txt", &entity::MAC_ADDRESS);
+    assert_corpus("mac_address", &entity::MAC_ADDRESS);
 }
 
 #[test]
 fn bank_account_uk_corpus() {
-    assert_corpus_full("bank_account_uk.txt", &entity::BANK_ACCOUNT_UK);
+    assert_corpus("bank_account_uk", &entity::BANK_ACCOUNT_UK);
 }
 
 #[test]
 fn sort_code_uk_corpus() {
-    assert_corpus_full("sort_code_uk.txt", &entity::SORT_CODE_UK);
+    assert_corpus("sort_code_uk", &entity::SORT_CODE_UK);
 }
 
 #[test]
 fn routing_number_us_corpus() {
-    assert_corpus_full("routing_number_us.txt", &entity::ROUTING_NUMBER_US);
+    assert_corpus("routing_number_us", &entity::ROUTING_NUMBER_US);
 }
 
 #[test]
 fn cvv_corpus() {
-    assert_corpus_full("cvv.txt", &entity::CVV);
+    assert_corpus("cvv", &entity::CVV);
 }
 
 #[test]
 fn itin_corpus() {
-    assert_corpus_full("itin.txt", &entity::ITIN);
+    assert_corpus("itin", &entity::ITIN);
 }
 
 #[test]
 fn tax_id_ein_corpus() {
-    assert_corpus_full("tax_id_ein.txt", &entity::TAX_ID_EIN);
+    assert_corpus("tax_id_ein", &entity::TAX_ID_EIN);
 }
 
 #[test]
 fn nhs_number_corpus() {
-    assert_corpus_full("nhs_number.txt", &entity::NHS_NUMBER);
+    assert_corpus("nhs_number", &entity::NHS_NUMBER);
 }
 
 #[test]
 fn nino_uk_corpus() {
-    assert_corpus_full("nino_uk.txt", &entity::NINO_UK);
+    assert_corpus("nino_uk", &entity::NINO_UK);
 }
 
 #[test]
 fn passport_uk_corpus() {
-    assert_corpus_full("passport_uk.txt", &entity::PASSPORT_UK);
+    assert_corpus("passport_uk", &entity::PASSPORT_UK);
 }
 
 #[test]
 fn passport_us_corpus() {
-    assert_corpus_full("passport_us.txt", &entity::PASSPORT_US);
+    assert_corpus("passport_us", &entity::PASSPORT_US);
 }
 
 #[test]
 fn sin_ca_corpus() {
-    assert_corpus_full("sin_ca.txt", &entity::SIN_CA);
+    assert_corpus("sin_ca", &entity::SIN_CA);
 }
 
 #[test]
 fn vat_number_corpus() {
-    assert_corpus_full("vat_number.txt", &entity::VAT_NUMBER);
+    assert_corpus("vat_number", &entity::VAT_NUMBER);
 }
 
 #[test]
 fn api_key_corpus() {
-    assert_corpus_full("api_key.txt", &entity::API_KEY);
+    assert_corpus("api_key", &entity::API_KEY);
 }
 
 #[test]
 fn jwt_token_corpus() {
-    assert_corpus_full("jwt_token.txt", &entity::JWT_TOKEN);
+    assert_corpus("jwt_token", &entity::JWT_TOKEN);
 }
 
 #[test]
 fn private_key_corpus() {
-    assert_corpus_full("private_key.txt", &entity::PRIVATE_KEY);
+    assert_corpus("private_key", &entity::PRIVATE_KEY);
 }
 
 #[test]

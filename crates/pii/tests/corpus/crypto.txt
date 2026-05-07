@@ -1,7 +1,0 @@
-# positive
-1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy
-0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe
-# negative
-notacryptoaddress
-0xZZ

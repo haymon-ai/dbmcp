@@ -1,0 +1,11 @@
+positives = [
+    "jane.doe@example.com",
+    "support+tickets@haymon.ai",
+    "foo_bar.baz@sub.domain.co",
+]
+
+negatives = [
+    "not-an-email",
+    "@nope.com",
+    "me@.com",
+]

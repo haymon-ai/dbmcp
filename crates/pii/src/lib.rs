@@ -22,6 +22,8 @@
 
 pub mod analyzer;
 pub mod anonymizer;
+#[cfg(feature = "test-support")]
+pub mod corpus;
 pub mod error;
 pub mod operator;
 pub mod overlap;
