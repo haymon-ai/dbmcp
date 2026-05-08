@@ -2,6 +2,15 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.10.3](https://github.com/haymon-ai/dbmcp/compare/e2b54c2abcf8b770e3fd259f8be282a10d2a5ac5..v0.10.3) - 2026-05-08
+#### Bug Fixes
+- (**pii**) gate SIN_CA on keyword context (#150) (#154) - ([f47bdba](https://github.com/haymon-ai/dbmcp/commit/f47bdbabf31698b0ae27983b52d9f168afd10570)) - [@athopen](https://github.com/athopen)
+- (**pii**) reject IPv6 false positives on Postgres ::cast operators (#153) - ([e907021](https://github.com/haymon-ai/dbmcp/commit/e90702129fab352db47d5307440dca7324b91772)) - [@athopen](https://github.com/athopen)
+- (**pii**) reject VAT false positives on uppercase English words (#152) - ([3b72745](https://github.com/haymon-ai/dbmcp/commit/3b72745ca403c3b57022412d8617738b8ba64b15)) - [@athopen](https://github.com/athopen)
+- (**pii**) reject leading-zero phone false positives (#147) (#151) - ([e2b54c2](https://github.com/haymon-ai/dbmcp/commit/e2b54c2abcf8b770e3fd259f8be282a10d2a5ac5)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.10.2](https://github.com/haymon-ai/dbmcp/compare/c090cbc7dcddaa7a1bcfe283316a82c55dd35ae8..v0.10.2) - 2026-05-07
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) expand entity catalog + collapse traits to enums (#145) - ([f73cbd5](https://github.com/haymon-ai/dbmcp/commit/f73cbd5ead8bcce80c8660bd8712c24a86af077a)) - [@athopen](https://github.com/athopen)
