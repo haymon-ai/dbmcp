@@ -1,14 +1,21 @@
-//! `SIN_CA` recognizer (Canadian Social Insurance Number, Luhn-validated).
+//! `SIN_CA` recognizer (Luhn-validated, keyword-context required).
 
-use crate::recognizer::{Category, Rule, Validator, entity};
+use crate::recognizer::{Category, KeywordValidator, Rule, Validator, entity};
 use crate::regex::Regex;
 use crate::score::Score;
+
+const KEYWORDS: &[&str] = &[
+    "sin",
+    "social insurance",
+    "numéro d'assurance sociale",
+    "assurance sociale",
+];
 
 /// Build the `SIN_CA` recognizer.
 ///
 /// # Panics
 ///
-/// Panics only if the bundled regex source or score literal is rejected at construction.
+/// Panics only if the bundled regex source, score literal, or keyword set is rejected at construction.
 #[must_use]
 pub fn sin_ca() -> Rule {
     let pattern = Regex::new(
@@ -17,10 +24,14 @@ pub fn sin_ca() -> Rule {
         Score::from_static(0.4),
     )
     .expect("static SIN_CA pattern compiles");
+    let validator = Validator::And(
+        Box::new(Validator::LuhnSin),
+        Box::new(Validator::Keyword(KeywordValidator::new(KEYWORDS))),
+    );
     Rule::new(entity::SIN_CA, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("SinCaRecognizer")
-        .with_validator(Validator::LuhnSin)
+        .with_validator(validator)
         .with_category(Category::Government)
 }
 
@@ -40,6 +51,11 @@ mod tests {
     fn positive_valid_luhn() {
         // 046 454 286 — known-valid Canadian SIN test number.
         assert_eq!(matches("SIN 046 454 286"), vec!["046 454 286"]);
+    }
+
+    #[test]
+    fn negative_no_keyword() {
+        assert!(matches("046 454 286").is_empty());
     }
 
     #[test]
