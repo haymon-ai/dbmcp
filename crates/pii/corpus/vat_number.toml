@@ -1,10 +1,15 @@
 positives = [
     "DE123456789",
     "GB123456789",
-    "XX123456789",
 ]
 
 negatives = [
     "DE12345",
     "GB12345",
+    "CERTIFICATE",
+    "INFRASTRUCTURE",
+    "IMPLEMENTATION",
+    "ARCHITECTURE",
+    "PERMISSIONS",
+    "DEMOGRAPHIC",
 ]

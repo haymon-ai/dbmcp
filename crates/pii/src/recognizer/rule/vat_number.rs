@@ -47,10 +47,9 @@ mod tests {
     }
 
     #[test]
-    fn unknown_prefix_preserved_at_regex_score() {
-        // Unknown prefix → validator returns Unknown → regex score preserved.
-        // The recogniser still emits the span (documented behaviour).
-        assert_eq!(matches("VAT XX123456789"), vec!["XX123456789"]);
+    fn unknown_prefix_rejected() {
+        // Stops uppercase-word false positives like CERTIFICATE, DEMOGRAPHIC.
+        assert!(matches("VAT XX123456789").is_empty());
     }
 
     #[test]
