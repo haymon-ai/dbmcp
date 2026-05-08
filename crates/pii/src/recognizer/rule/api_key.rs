@@ -24,9 +24,7 @@ const AWS_SECRET_KEYWORDS: &[&str] = &["secret", "aws_secret_access_key", "aws_s
 pub fn api_key_strong() -> Rule {
     let s = Score::from_static(0.6);
     let patterns = vec![
-        // AWS access keys are 20 chars: 4-char prefix + 16-char base32 body (A–Z, 2–7).
         Regex::new("AWS access", r"\bAKIA[A-Z2-7]{16}\b", s).expect("AWS access compiles"),
-        // GitHub legacy tokens are exactly 36 alnum chars; an unbounded `{36,}` is a known FP source.
         Regex::new("GitHub PAT", r"\bgh[pousr]_[A-Za-z0-9]{36}\b", s).expect("GitHub PAT compiles"),
         Regex::new("Stripe live", r"\b(?:sk|pk)_live_[A-Za-z0-9]{24,}\b", s).expect("Stripe compiles"),
         Regex::new("Google API", r"\bAIza[0-9A-Za-z_\-]{35}\b", s).expect("Google API compiles"),
