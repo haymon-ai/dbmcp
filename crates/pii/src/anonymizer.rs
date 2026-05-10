@@ -5,39 +5,39 @@ use std::collections::HashMap;
 
 use dbmcp_config::PiiOperator;
 
-use crate::operator::Operator;
+use crate::Entity;
+use crate::operators::Operator;
 use crate::overlap;
-use crate::recognizer::EntityType;
 use crate::result::{OperatorResult, RecognizerResult};
 
 /// Per-entity-type operator map handed to [`anonymize`].
 #[derive(Debug, Clone, Default)]
 pub struct OperatorConfig {
     /// Explicit overrides looked up by entity type.
-    pub per_entity: HashMap<EntityType, Operator>,
+    pub per_entity: HashMap<Entity, Operator>,
     /// Optional fallback when an entity type has no per-entity override.
     /// `None` means "use the entity-aware [`Operator::default_for`] placeholder".
     pub default: Option<Operator>,
 }
 
 impl OperatorConfig {
-    /// Pick the operator for `entity_type`. Borrows from the config when possible;
+    /// Pick the operator for `entity`. Borrows from the config when possible;
     /// only allocates a fresh placeholder when neither a per-entity override nor
     /// `default` is set.
-    fn select(&self, entity_type: &EntityType) -> Cow<'_, Operator> {
-        if let Some(op) = self.per_entity.get(entity_type) {
+    fn select(&self, entity: Entity) -> Cow<'_, Operator> {
+        if let Some(op) = self.per_entity.get(&entity) {
             return Cow::Borrowed(op);
         }
         if let Some(default) = &self.default {
             return Cow::Borrowed(default);
         }
-        Cow::Owned(Operator::default_for(entity_type))
+        Cow::Owned(Operator::default_for(entity))
     }
 }
 
 impl From<PiiOperator> for OperatorConfig {
     fn from(op: PiiOperator) -> Self {
-        use crate::operator::HashAlgorithm;
+        use crate::operators::HashAlgorithm;
         let default = match op {
             PiiOperator::Replace => None,
             PiiOperator::Mask => Some(Operator::default_mask()),
@@ -98,7 +98,7 @@ pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorCo
         new_text.push_str(&text[cursor..start]);
         let new_start = new_text.len();
 
-        let operator = config.select(&entity_type);
+        let operator = config.select(entity_type);
         let rewritten = operator.apply(&text[start..end]);
         new_text.push_str(&rewritten);
         let new_end = new_text.len();
@@ -124,7 +124,7 @@ pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorCo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operator::HashAlgorithm;
+    use crate::operators::HashAlgorithm;
 
     #[test]
     fn pii_operator_replace_maps_to_default_none() {

@@ -2,9 +2,10 @@
 
 use dbmcp_config::{PiiCategory, PiiConfig};
 
+use crate::Category;
 use crate::error::AnalyzerBuildError;
 use crate::overlap;
-use crate::recognizer::{Category, Rule};
+use crate::recognizers::Recognizer;
 use crate::result::RecognizerResult;
 use crate::score::Score;
 
@@ -21,7 +22,7 @@ pub struct AnalyzeOptions {
 /// Registry of recognizers and the public entry point for PII analysis.
 #[derive(Debug, Default)]
 pub struct Analyzer {
-    recognizers: Vec<Rule>,
+    recognizers: Vec<Recognizer>,
 }
 
 impl Analyzer {
@@ -34,13 +35,13 @@ impl Analyzer {
     #[must_use]
     pub fn with_defaults() -> Self {
         Self {
-            recognizers: crate::recognizer::rule::all(),
+            recognizers: crate::recognizers::all(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn register(&mut self, rule: Rule) -> &mut Self {
-        self.recognizers.push(rule);
+    pub(crate) fn register(&mut self, recognizer: Recognizer) -> &mut Self {
+        self.recognizers.push(recognizer);
         self
     }
 
@@ -62,8 +63,8 @@ impl Analyzer {
         Builder::default()
     }
 
-    /// Iterate the registry's rules in registration order.
-    pub fn recognizers(&self) -> impl Iterator<Item = &Rule> + '_ {
+    /// Iterate the registry's recognizers in registration order.
+    pub fn recognizers(&self) -> impl Iterator<Item = &Recognizer> + '_ {
         self.recognizers.iter()
     }
 
@@ -135,7 +136,7 @@ impl Builder {
             return Ok(Analyzer::with_defaults());
         };
 
-        let kept: Vec<Rule> = crate::recognizer::rule::all()
+        let kept: Vec<Recognizer> = crate::recognizers::all()
             .into_iter()
             .filter(|r| cats.contains(&r.category()))
             .collect();

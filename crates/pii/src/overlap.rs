@@ -98,19 +98,19 @@ mod tests {
     use std::borrow::Cow;
 
     use super::resolve;
-    use crate::recognizer::{EntityType, ValidationOutcome};
     use crate::result::{AnalysisExplanation, RecognizerResult};
     use crate::score::Score;
+    use crate::{Entity, ValidationOutcome};
 
-    fn rr(et: &str, start: usize, end: usize, score: f32) -> RecognizerResult {
+    fn rr(et: Entity, start: usize, end: usize, score: f32) -> RecognizerResult {
         let s = Score::new(score).unwrap();
         RecognizerResult {
-            entity_type: EntityType::new(et.to_owned()),
+            entity_type: et,
             start,
             end,
             score: s,
             explanation: AnalysisExplanation {
-                recognizer_name: Cow::Owned(et.to_owned()),
+                recognizer_name: Cow::Borrowed(et.as_str()),
                 pattern_name: None,
                 original_score: s,
                 validation: ValidationOutcome::Unknown,
@@ -121,36 +121,51 @@ mod tests {
 
     #[test]
     fn drops_strictly_contained_same_type() {
-        let r = resolve(vec![rr("E", 0, 10, 0.5), rr("E", 2, 5, 0.5)]);
+        let r = resolve(vec![
+            rr(Entity::EmailAddress, 0, 10, 0.5),
+            rr(Entity::EmailAddress, 2, 5, 0.5),
+        ]);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].start, 0);
     }
 
     #[test]
     fn higher_score_wins_cross_type() {
-        let r = resolve(vec![rr("A", 0, 5, 0.3), rr("B", 0, 5, 0.9)]);
+        let r = resolve(vec![
+            rr(Entity::EmailAddress, 0, 5, 0.3),
+            rr(Entity::CreditCard, 0, 5, 0.9),
+        ]);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].entity_type.as_str(), "B");
+        assert_eq!(r[0].entity_type, Entity::CreditCard);
     }
 
     #[test]
     fn longer_span_wins_on_score_tie() {
-        let r = resolve(vec![rr("A", 0, 8, 0.5), rr("B", 0, 5, 0.5)]);
+        let r = resolve(vec![
+            rr(Entity::EmailAddress, 0, 8, 0.5),
+            rr(Entity::CreditCard, 0, 5, 0.5),
+        ]);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].entity_type.as_str(), "A");
+        assert_eq!(r[0].entity_type, Entity::EmailAddress);
     }
 
     #[test]
     fn registration_order_breaks_full_tie() {
         // Same start, same end, same score → first registered wins.
-        let r = resolve(vec![rr("A", 0, 5, 0.5), rr("B", 0, 5, 0.5)]);
+        let r = resolve(vec![
+            rr(Entity::EmailAddress, 0, 5, 0.5),
+            rr(Entity::CreditCard, 0, 5, 0.5),
+        ]);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].entity_type.as_str(), "A");
+        assert_eq!(r[0].entity_type, Entity::EmailAddress);
     }
 
     #[test]
     fn non_overlapping_kept() {
-        let r = resolve(vec![rr("A", 0, 5, 0.5), rr("B", 10, 15, 0.5)]);
+        let r = resolve(vec![
+            rr(Entity::EmailAddress, 0, 5, 0.5),
+            rr(Entity::CreditCard, 10, 15, 0.5),
+        ]);
         assert_eq!(r.len(), 2);
     }
 }

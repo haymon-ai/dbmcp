@@ -3,7 +3,7 @@
 //! catalog-expansion builder contract.
 
 use dbmcp_pii::corpus::Corpus;
-use dbmcp_pii::{AnalyzeOptions, Analyzer, Category, EntityType, MAX_SCORE, Score, entity};
+use dbmcp_pii::{AnalyzeOptions, Analyzer, Category, Entity, MAX_SCORE, Score};
 
 const DEFAULT_NAMES: &[&str] = &[
     "EMAIL_ADDRESS",
@@ -39,7 +39,7 @@ fn entity_names(a: &Analyzer) -> Vec<String> {
         .collect()
 }
 
-fn assert_corpus(stem: &str, expected: &EntityType) {
+fn assert_corpus(stem: &str, expected: Entity) {
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
     let corpus = Corpus::load(stem);
@@ -48,7 +48,7 @@ fn assert_corpus(stem: &str, expected: &EntityType) {
     for sample in &corpus.positives {
         let results = analyzer.analyze(sample, &opts);
         assert!(
-            results.iter().any(|r| r.entity_type == *expected),
+            results.iter().any(|r| r.entity_type == expected),
             "{stem}: positive sample {sample:?} did not surface {expected:?}; got {:?}",
             results.iter().map(|r| r.entity_type.as_str()).collect::<Vec<_>>()
         );
@@ -57,7 +57,7 @@ fn assert_corpus(stem: &str, expected: &EntityType) {
     for sample in &corpus.negatives {
         let results = analyzer.analyze(sample, &opts);
         assert!(
-            !results.iter().any(|r| r.entity_type == *expected),
+            !results.iter().any(|r| r.entity_type == expected),
             "{stem}: negative sample {sample:?} surfaced {expected:?}: {results:?}"
         );
     }
@@ -65,122 +65,122 @@ fn assert_corpus(stem: &str, expected: &EntityType) {
 
 #[test]
 fn email_corpus() {
-    assert_corpus("email", &entity::EMAIL_ADDRESS);
+    assert_corpus("email", Entity::EmailAddress);
 }
 
 #[test]
 fn credit_card_corpus() {
-    assert_corpus("credit_card", &entity::CREDIT_CARD);
+    assert_corpus("credit_card", Entity::CreditCard);
 }
 
 #[test]
 fn iban_corpus() {
-    assert_corpus("iban", &entity::IBAN_CODE);
+    assert_corpus("iban", Entity::IbanCode);
 }
 
 #[test]
 fn ip_corpus() {
-    assert_corpus("ip", &entity::IP_ADDRESS);
+    assert_corpus("ip", Entity::IpAddress);
 }
 
 #[test]
 fn url_corpus() {
-    assert_corpus("url", &entity::URL);
+    assert_corpus("url", Entity::Url);
 }
 
 #[test]
 fn phone_corpus() {
-    assert_corpus("phone", &entity::PHONE_NUMBER);
+    assert_corpus("phone", Entity::PhoneNumber);
 }
 
 #[test]
 fn crypto_corpus() {
-    assert_corpus("crypto", &entity::CRYPTO);
+    assert_corpus("crypto", Entity::Crypto);
 }
 
 #[test]
 fn us_ssn_corpus() {
-    assert_corpus("us_ssn", &entity::US_SSN);
+    assert_corpus("us_ssn", Entity::UsSsn);
 }
 
 #[test]
 fn mac_address_corpus() {
-    assert_corpus("mac_address", &entity::MAC_ADDRESS);
+    assert_corpus("mac_address", Entity::MacAddress);
 }
 
 #[test]
 fn bank_account_uk_corpus() {
-    assert_corpus("bank_account_uk", &entity::BANK_ACCOUNT_UK);
+    assert_corpus("bank_account_uk", Entity::BankAccountUk);
 }
 
 #[test]
 fn sort_code_uk_corpus() {
-    assert_corpus("sort_code_uk", &entity::SORT_CODE_UK);
+    assert_corpus("sort_code_uk", Entity::SortCodeUk);
 }
 
 #[test]
 fn routing_number_us_corpus() {
-    assert_corpus("routing_number_us", &entity::ROUTING_NUMBER_US);
+    assert_corpus("routing_number_us", Entity::RoutingNumberUs);
 }
 
 #[test]
 fn cvv_corpus() {
-    assert_corpus("cvv", &entity::CVV);
+    assert_corpus("cvv", Entity::Cvv);
 }
 
 #[test]
 fn itin_corpus() {
-    assert_corpus("itin", &entity::ITIN);
+    assert_corpus("itin", Entity::Itin);
 }
 
 #[test]
 fn tax_id_ein_corpus() {
-    assert_corpus("tax_id_ein", &entity::TAX_ID_EIN);
+    assert_corpus("tax_id_ein", Entity::TaxIdEin);
 }
 
 #[test]
 fn nhs_number_corpus() {
-    assert_corpus("nhs_number", &entity::NHS_NUMBER);
+    assert_corpus("nhs_number", Entity::NhsNumber);
 }
 
 #[test]
 fn nino_uk_corpus() {
-    assert_corpus("nino_uk", &entity::NINO_UK);
+    assert_corpus("nino_uk", Entity::NinoUk);
 }
 
 #[test]
 fn passport_uk_corpus() {
-    assert_corpus("passport_uk", &entity::PASSPORT_UK);
+    assert_corpus("passport_uk", Entity::PassportUk);
 }
 
 #[test]
 fn passport_us_corpus() {
-    assert_corpus("passport_us", &entity::PASSPORT_US);
+    assert_corpus("passport_us", Entity::PassportUs);
 }
 
 #[test]
 fn sin_ca_corpus() {
-    assert_corpus("sin_ca", &entity::SIN_CA);
+    assert_corpus("sin_ca", Entity::SinCa);
 }
 
 #[test]
 fn vat_number_corpus() {
-    assert_corpus("vat_number", &entity::VAT_NUMBER);
+    assert_corpus("vat_number", Entity::VatNumber);
 }
 
 #[test]
 fn api_key_corpus() {
-    assert_corpus("api_key", &entity::API_KEY);
+    assert_corpus("api_key", Entity::ApiKey);
 }
 
 #[test]
 fn jwt_token_corpus() {
-    assert_corpus("jwt_token", &entity::JWT_TOKEN);
+    assert_corpus("jwt_token", Entity::JwtToken);
 }
 
 #[test]
 fn private_key_corpus() {
-    assert_corpus("private_key", &entity::PRIVATE_KEY);
+    assert_corpus("private_key", Entity::PrivateKey);
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn ct_003_luhn_promotes_to_max_score() {
     let results = analyzer.analyze("card 4111-1111-1111-1111 here", &opts);
     let cc = results
         .iter()
-        .find(|r| r.entity_type == entity::CREDIT_CARD)
+        .find(|r| r.entity_type == Entity::CreditCard)
         .expect("CC detected");
     assert_eq!(cc.score, MAX_SCORE);
 }
@@ -211,7 +211,7 @@ fn ct_003_invalid_luhn_dropped() {
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
     let results = analyzer.analyze("card 4111-1111-1111-1112 here", &opts);
-    assert!(results.iter().all(|r| r.entity_type != entity::CREDIT_CARD));
+    assert!(results.iter().all(|r| r.entity_type != Entity::CreditCard));
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn ct_004_ip_validator_rejects_octet_overflow() {
     let opts = AnalyzeOptions::default();
     let results = analyzer.analyze("server 192.168.1.999 unreachable", &opts);
     assert!(
-        results.iter().all(|r| r.entity_type != entity::IP_ADDRESS),
+        results.iter().all(|r| r.entity_type != Entity::IpAddress),
         "got {results:?}"
     );
 }
@@ -234,7 +234,7 @@ fn ct_005_min_score_filters_before_overlap() {
     // Phone numbers ship at 0.4 → must be filtered out.
     let results = analyzer.analyze("call +14155552671", &opts);
     assert!(
-        results.iter().all(|r| r.entity_type != entity::PHONE_NUMBER),
+        results.iter().all(|r| r.entity_type != Entity::PhoneNumber),
         "got {results:?}"
     );
 }
@@ -252,10 +252,10 @@ fn ct_006_overlap_higher_score_wins_cross_type() {
     let mut found_cc = false;
     let mut overlapping_phone = false;
     for r in &results {
-        if r.entity_type == entity::CREDIT_CARD {
+        if r.entity_type == Entity::CreditCard {
             found_cc = true;
         }
-        if r.entity_type == entity::PHONE_NUMBER && r.start < 19 {
+        if r.entity_type == Entity::PhoneNumber && r.start < 19 {
             overlapping_phone = true;
         }
     }

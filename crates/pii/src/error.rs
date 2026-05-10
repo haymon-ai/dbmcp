@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Errors that surface when constructing a [`crate::Regex`] or [`crate::Score`].
+/// Errors that surface when constructing a [`crate::Pattern`] or [`crate::Score`].
 #[derive(Debug, Error)]
 pub enum PatternError {
     /// `regex`-engine compile error.
@@ -16,7 +16,7 @@ pub enum PatternError {
     },
 }
 
-/// Errors that surface when constructing a [`crate::Rule`].
+/// Errors that surface when constructing a [`crate::recognizers::Recognizer`].
 #[derive(Debug, Error)]
 pub enum RecognizerError {
     /// Caller supplied no regexes.
@@ -29,5 +29,5 @@ pub enum RecognizerError {
 pub enum AnalyzerBuildError {
     /// A requested category resolved to zero recognizers in the merged registry.
     #[error("category {0:?} requested but no recognizer in registry tags it")]
-    EmptyCategory(crate::recognizer::Category),
+    EmptyCategory(crate::Category),
 }

@@ -2,14 +2,14 @@
 
 use std::borrow::Cow;
 
-use crate::recognizer::{EntityType, ValidationOutcome};
 use crate::score::Score;
+use crate::{Entity, ValidationOutcome};
 
 /// One detected PII span with audit trail.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RecognizerResult {
     /// Entity type emitted by the recognizer.
-    pub entity_type: EntityType,
+    pub entity_type: Entity,
     /// Inclusive start byte offset into the original input.
     pub start: usize,
     /// Exclusive end byte offset into the original input.
@@ -39,9 +39,9 @@ pub struct AnalysisExplanation {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OperatorResult {
     /// Entity type from the source [`RecognizerResult`].
-    pub entity_type: EntityType,
+    pub entity_type: Entity,
     /// Operator variant that was applied.
-    pub operator: crate::operator::OperatorKind,
+    pub operator: crate::operators::OperatorKind,
     /// Inclusive start byte offset in the *original* text.
     pub original_start: usize,
     /// Exclusive end byte offset in the *original* text.
