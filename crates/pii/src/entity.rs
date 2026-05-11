@@ -79,6 +79,30 @@ pub enum Entity {
     PostcodeUk,
     /// `VEHICLE_REGISTRATION_UK` — UK vehicle registration plate.
     VehicleRegistrationUk,
+    /// `MEDICAL_PRACTICE_ID_DE` — German medical practice ID (Betriebsstättennummer / BSNR).
+    MedicalPracticeIdDe,
+    /// `DRIVING_LICENCE_DE` — German driving licence number (Führerschein).
+    DrivingLicenceDe,
+    /// `COMMERCIAL_REGISTER_DE` — German commercial register number (Handelsregister, HRA/HRB).
+    CommercialRegisterDe,
+    /// `HEALTH_INSURANCE_DE` — German Krankenversicherungsnummer (KVNR).
+    HealthInsuranceDe,
+    /// `ID_CARD_DE` — German Personalausweis number.
+    IdCardDe,
+    /// `LICENSE_PLATE_DE` — German vehicle registration plate (KFZ-Kennzeichen).
+    LicensePlateDe,
+    /// `LIFETIME_PHYSICIAN_NUMBER_DE` — German lifetime physician number (Lebenslange Arztnummer / LANR).
+    LifetimePhysicianNumberDe,
+    /// `PASSPORT_DE` — German passport number.
+    PassportDe,
+    /// `POSTCODE_DE` — German postal code (Postleitzahl / PLZ).
+    PostcodeDe,
+    /// `SOCIAL_SECURITY_DE` — German Rentenversicherungsnummer (RVNR).
+    SocialSecurityDe,
+    /// `TAX_ID_DE` — German Steueridentifikationsnummer.
+    TaxIdDe,
+    /// `TAX_NUMBER_DE` — German Steuernummer.
+    TaxNumberDe,
 }
 
 impl Entity {
@@ -116,6 +140,18 @@ impl Entity {
         Entity::DrivingLicenceUk,
         Entity::PostcodeUk,
         Entity::VehicleRegistrationUk,
+        Entity::MedicalPracticeIdDe,
+        Entity::DrivingLicenceDe,
+        Entity::CommercialRegisterDe,
+        Entity::HealthInsuranceDe,
+        Entity::IdCardDe,
+        Entity::LicensePlateDe,
+        Entity::LifetimePhysicianNumberDe,
+        Entity::PassportDe,
+        Entity::PostcodeDe,
+        Entity::SocialSecurityDe,
+        Entity::TaxIdDe,
+        Entity::TaxNumberDe,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -154,6 +190,18 @@ impl Entity {
             Entity::DrivingLicenceUk => "DRIVING_LICENCE_UK",
             Entity::PostcodeUk => "POSTCODE_UK",
             Entity::VehicleRegistrationUk => "VEHICLE_REGISTRATION_UK",
+            Entity::MedicalPracticeIdDe => "MEDICAL_PRACTICE_ID_DE",
+            Entity::DrivingLicenceDe => "DRIVING_LICENCE_DE",
+            Entity::CommercialRegisterDe => "COMMERCIAL_REGISTER_DE",
+            Entity::HealthInsuranceDe => "HEALTH_INSURANCE_DE",
+            Entity::IdCardDe => "ID_CARD_DE",
+            Entity::LicensePlateDe => "LICENSE_PLATE_DE",
+            Entity::LifetimePhysicianNumberDe => "LIFETIME_PHYSICIAN_NUMBER_DE",
+            Entity::PassportDe => "PASSPORT_DE",
+            Entity::PostcodeDe => "POSTCODE_DE",
+            Entity::SocialSecurityDe => "SOCIAL_SECURITY_DE",
+            Entity::TaxIdDe => "TAX_ID_DE",
+            Entity::TaxNumberDe => "TAX_NUMBER_DE",
         }
     }
 
@@ -193,6 +241,18 @@ impl Entity {
             Entity::DrivingLicenceUk => "<DRIVING_LICENCE_UK>",
             Entity::PostcodeUk => "<POSTCODE_UK>",
             Entity::VehicleRegistrationUk => "<VEHICLE_REGISTRATION_UK>",
+            Entity::MedicalPracticeIdDe => "<MEDICAL_PRACTICE_ID_DE>",
+            Entity::DrivingLicenceDe => "<DRIVING_LICENCE_DE>",
+            Entity::CommercialRegisterDe => "<COMMERCIAL_REGISTER_DE>",
+            Entity::HealthInsuranceDe => "<HEALTH_INSURANCE_DE>",
+            Entity::IdCardDe => "<ID_CARD_DE>",
+            Entity::LicensePlateDe => "<LICENSE_PLATE_DE>",
+            Entity::LifetimePhysicianNumberDe => "<LIFETIME_PHYSICIAN_NUMBER_DE>",
+            Entity::PassportDe => "<PASSPORT_DE>",
+            Entity::PostcodeDe => "<POSTCODE_DE>",
+            Entity::SocialSecurityDe => "<SOCIAL_SECURITY_DE>",
+            Entity::TaxIdDe => "<TAX_ID_DE>",
+            Entity::TaxNumberDe => "<TAX_NUMBER_DE>",
         }
     }
 }
@@ -239,6 +299,18 @@ impl FromStr for Entity {
             "DRIVING_LICENCE_UK" => Ok(Entity::DrivingLicenceUk),
             "POSTCODE_UK" => Ok(Entity::PostcodeUk),
             "VEHICLE_REGISTRATION_UK" => Ok(Entity::VehicleRegistrationUk),
+            "MEDICAL_PRACTICE_ID_DE" => Ok(Entity::MedicalPracticeIdDe),
+            "DRIVING_LICENCE_DE" => Ok(Entity::DrivingLicenceDe),
+            "COMMERCIAL_REGISTER_DE" => Ok(Entity::CommercialRegisterDe),
+            "HEALTH_INSURANCE_DE" => Ok(Entity::HealthInsuranceDe),
+            "ID_CARD_DE" => Ok(Entity::IdCardDe),
+            "LICENSE_PLATE_DE" => Ok(Entity::LicensePlateDe),
+            "LIFETIME_PHYSICIAN_NUMBER_DE" => Ok(Entity::LifetimePhysicianNumberDe),
+            "PASSPORT_DE" => Ok(Entity::PassportDe),
+            "POSTCODE_DE" => Ok(Entity::PostcodeDe),
+            "SOCIAL_SECURITY_DE" => Ok(Entity::SocialSecurityDe),
+            "TAX_ID_DE" => Ok(Entity::TaxIdDe),
+            "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -281,8 +353,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_32_variants() {
-        assert_eq!(Entity::ALL.len(), 32);
+    fn all_has_44_variants() {
+        assert_eq!(Entity::ALL.len(), 44);
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::validators::Validator;
 use crate::{Category, Entity, ValidationOutcome};
 
 pub mod ca;
+pub mod de;
 pub mod eu;
 pub mod generic;
 pub mod uk;
@@ -21,6 +22,11 @@ pub mod us;
 
 // Flat re-exports preserve the `dbmcp_pii::recognizers::<name>` public API.
 pub use ca::sin_ca;
+pub use de::{
+    commercial_register_de, driving_licence_de, health_insurance_de, id_card_de, license_plate_de,
+    lifetime_physician_number_de, medical_practice_id_de, passport_de, postcode_de, social_security_de, tax_id_de,
+    tax_number_de,
+};
 pub use eu::vat_number;
 pub use generic::{
     api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, email, iban, ip_address, jwt_token, mac_address,
@@ -198,5 +204,17 @@ pub fn all() -> Vec<Recognizer> {
         driving_licence_uk(),
         postcode_uk(),
         vehicle_registration_uk(),
+        medical_practice_id_de(),
+        commercial_register_de(),
+        driving_licence_de(),
+        health_insurance_de(),
+        id_card_de(),
+        license_plate_de(),
+        lifetime_physician_number_de(),
+        passport_de(),
+        postcode_de(),
+        social_security_de(),
+        tax_id_de(),
+        tax_number_de(),
     ]
 }

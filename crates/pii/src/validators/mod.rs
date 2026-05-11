@@ -2,15 +2,22 @@
 
 mod aba_routing;
 mod crypto;
+mod de_health_insurance;
+mod de_id_card;
+mod de_social_security;
+mod de_tax_id;
 mod digits;
 mod ein_prefix;
 mod iban;
+mod icao_mrz9;
 mod ip;
 mod jwt_header;
 mod keyword;
+mod lifetime_physician_number_de;
 mod luhn;
 mod luhn_sin;
 mod medical_license_us;
+mod medical_practice_id_de;
 mod mod11_nhs;
 mod npi_us;
 mod phone_national;
@@ -64,6 +71,20 @@ pub enum Validator {
     UsSsn,
     /// EU/UK VAT-number country-length.
     VatCountryLength,
+    /// German medical practice ID (Betriebsstättennummer / BSNR) structural check.
+    MedicalPracticeIdDe,
+    /// German Krankenversicherungsnummer (KVNR) checksum.
+    DeHealthInsurance,
+    /// German Personalausweis ICAO check (legacy T-format passes through).
+    DeIdCard,
+    /// German lifetime physician number (Lebenslange Arztnummer / LANR) checksum.
+    LifetimePhysicianNumberDe,
+    /// German Rentenversicherungsnummer (RVNR) checksum.
+    DeSocialSecurity,
+    /// German Steueridentifikationsnummer ISO 7064 Mod 11, 10 checksum.
+    DeTaxId,
+    /// ICAO Doc 9303 9-character MRZ check digit (German passport).
+    IcaoMrz9,
     /// AND combinator over two validators.
     And(Box<Validator>, Box<Validator>),
     /// Test-only: panics when invoked. Used to verify the redactor's
@@ -103,6 +124,13 @@ impl Validator {
             Self::PrivateKeyType => private_key_type::validate(candidate),
             Self::UsSsn => us_ssn::validate(candidate),
             Self::VatCountryLength => vat_country_length::validate(candidate),
+            Self::MedicalPracticeIdDe => medical_practice_id_de::validate(candidate),
+            Self::DeHealthInsurance => de_health_insurance::validate(candidate),
+            Self::DeIdCard => de_id_card::validate(candidate),
+            Self::LifetimePhysicianNumberDe => lifetime_physician_number_de::validate(candidate),
+            Self::DeSocialSecurity => de_social_security::validate(candidate),
+            Self::DeTaxId => de_tax_id::validate(candidate),
+            Self::IcaoMrz9 => icao_mrz9::validate(candidate),
             Self::And(left, right) => and_combine(left.validate(candidate), right.validate(candidate)),
             #[cfg(test)]
             Self::Panic => panic!("intentional test panic"),
