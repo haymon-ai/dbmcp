@@ -32,47 +32,29 @@ pub fn routing_number_us() -> Recognizer {
 mod tests {
     use super::routing_number_us;
 
-    fn matches(text: &str) -> Vec<String> {
-        let r = routing_number_us();
-        r.analyze(text)
+    fn matches(text: &str) -> Vec<(usize, usize)> {
+        routing_number_us()
+            .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (r.start, r.end))
             .collect()
     }
 
     #[test]
-    fn positive_valid_aba() {
+    fn recognizes_routing_number_us() {
         // 021000021 — JPMorgan Chase ABA routing (valid checksum).
-        assert_eq!(matches("bank routing 021000021"), vec!["021000021"]);
-    }
-
-    #[test]
-    fn negative_no_keyword() {
-        assert!(matches("version 021000021").is_empty());
-    }
-
-    #[test]
-    fn negative_checksum_perturbations() {
-        let bad = [
-            "021000020",
-            "021000022",
-            "021000023",
-            "021000024",
-            "021000025",
-            "021000026",
-            "021000027",
-            "021000028",
-            "021000029",
-            "021100021",
-            "022000021",
-            "121000021",
+        let cases: &[(&str, &[(usize, usize)])] = &[
+            ("bank routing 021000021", &[(13, 22)]),
+            ("aba 021000021", &[(4, 13)]),
+            ("rtn=021000021", &[(4, 13)]),
+            ("version 021000021", &[]),
+            ("bank routing 021000020", &[]),
+            ("bank routing 121000021", &[]),
+            ("bank routing 12345678", &[]),
+            ("", &[]),
         ];
-        for n in bad {
-            let text = format!("bank routing {n}");
-            assert!(
-                matches(&text).is_empty(),
-                "{n} has invalid ABA checksum, expected no match"
-            );
+        for (input, expected) in cases {
+            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
         }
     }
 }

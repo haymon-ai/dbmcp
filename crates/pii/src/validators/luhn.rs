@@ -4,8 +4,7 @@ use crate::ValidationOutcome;
 
 /// Luhn checksum validator for credit-card numbers.
 ///
-/// Strips spaces and dashes before checking, matching Presidio's
-/// `replacement_pairs = [("-", ""), (" ", "")]`.
+/// Strips spaces and dashes before checking.
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     // Buffer fits the longest valid card (19 digits); avoids a heap allocation.
     // Iterates bytes — credit-card candidates are ASCII-only after the regex match,

@@ -30,33 +30,27 @@ pub fn vat_number() -> Recognizer {
 mod tests {
     use super::vat_number;
 
-    fn matches(text: &str) -> Vec<String> {
-        let r = vat_number();
-        r.analyze(text)
+    fn matches(text: &str) -> Vec<(usize, usize)> {
+        vat_number()
+            .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (r.start, r.end))
             .collect()
     }
 
     #[test]
-    fn positive_de_length_9() {
-        assert_eq!(matches("VAT DE123456789"), vec!["DE123456789"]);
-    }
-
-    #[test]
-    fn positive_gb_length_9() {
-        assert_eq!(matches("VAT GB123456789"), vec!["GB123456789"]);
-    }
-
-    #[test]
-    fn unknown_prefix_rejected() {
-        // Stops uppercase-word false positives like CERTIFICATE, DEMOGRAPHIC.
-        assert!(matches("VAT XX123456789").is_empty());
-    }
-
-    #[test]
-    fn negative_de_too_short() {
-        // DE is exactly 9 — fewer body digits → invalid.
-        assert!(matches("DE12345").is_empty());
+    fn recognizes_vat_number() {
+        let cases: &[(&str, &[(usize, usize)])] = &[
+            ("VAT DE123456789", &[(4, 15)]),
+            ("VAT GB123456789", &[(4, 15)]),
+            ("billing DE123456789 and GB987654321", &[(8, 19), (24, 35)]),
+            ("VAT XX123456789", &[]),
+            ("DE12345", &[]),
+            ("VAT de123456789", &[]),
+            ("", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+        }
     }
 }

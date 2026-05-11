@@ -3,8 +3,7 @@
 use super::digits::collect_digits;
 use crate::ValidationOutcome;
 
-/// US Social Security Number validator. Rejects reserved area / group / serial values
-/// — replaces the negative-lookahead constructs Presidio's regex used.
+/// US Social Security Number validator. Rejects reserved area / group / serial values.
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let Some(digits) = collect_digits::<9>(candidate) else {
         return ValidationOutcome::Invalid;

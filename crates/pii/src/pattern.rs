@@ -8,13 +8,14 @@ use crate::score::Score;
 
 /// Named regex pattern with a base confidence score.
 ///
-/// Backed by the linear-time `regex` crate (RE2 semantics). Compiled eagerly
-/// so a bad pattern is rejected at construction, not at match time.
+/// Backed by the `fancy-regex` hybrid engine (lookaround supported). Compiled
+/// eagerly so a syntactically bad pattern is rejected at construction;
+/// catastrophic-backtracking errors still surface at match time.
 #[derive(Clone)]
 pub struct Pattern {
     name: Cow<'static, str>,
     score: Score,
-    pub(crate) compiled: regex::Regex,
+    pub(crate) compiled: fancy_regex::Regex,
 }
 
 impl fmt::Debug for Pattern {
@@ -38,7 +39,8 @@ impl Pattern {
         regex_src: impl AsRef<str>,
         score: Score,
     ) -> Result<Self, PatternError> {
-        let compiled = regex::Regex::new(regex_src.as_ref()).map_err(|e| PatternError::InvalidRegex(Box::new(e)))?;
+        let compiled =
+            fancy_regex::Regex::new(regex_src.as_ref()).map_err(|e| PatternError::InvalidRegex(Box::new(e)))?;
         Ok(Self {
             name: name.into(),
             score,
@@ -94,9 +96,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lookbehind() {
-        // The `regex` crate does not support lookbehind; the pattern is rejected.
-        let err = Pattern::new("bad_lb", r"(?<!a)b", s(0.5)).unwrap_err();
-        assert!(matches!(err, PatternError::InvalidRegex(_)));
+    fn accepts_lookbehind() {
+        let p = Pattern::new("lb", r"(?<!a)b", s(0.5)).expect("lookbehind compiles under fancy-regex");
+        let hit = p
+            .compiled
+            .find("xb")
+            .expect("find call succeeds")
+            .expect("match present");
+        assert_eq!(&"xb"[hit.start()..hit.end()], "b");
+        assert!(p.compiled.find("ab").expect("find call succeeds").is_none());
     }
 }

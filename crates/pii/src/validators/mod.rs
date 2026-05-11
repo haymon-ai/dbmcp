@@ -1,17 +1,16 @@
 //! Built-in validators as a tagged enum, plus the [`KeywordValidator`] data carrier.
 
 mod aba_routing;
+mod crypto;
 mod digits;
 mod ein_prefix;
 mod iban;
 mod ip;
-mod itin_range;
 mod jwt_header;
 mod keyword;
 mod luhn;
 mod luhn_sin;
 mod mod11_nhs;
-mod nino_blocklist;
 mod phone_national;
 mod private_key_type;
 mod us_ssn;
@@ -33,14 +32,14 @@ pub enum Validator {
     Noop,
     /// US ABA routing-number checksum.
     AbaRouting,
+    /// Bitcoin `Base58Check` (P2PKH/P2SH) and Bech32/Bech32m (segwit) checksum.
+    Crypto,
     /// US EIN (employer ID) prefix.
     EinPrefix,
     /// IBAN mod-97.
     Iban,
     /// IP-address parse.
     IpAddress,
-    /// US ITIN middle-block range.
-    ItinRange,
     /// JWT header structural.
     JwtHeader,
     /// Keyword-context proximity.
@@ -51,8 +50,6 @@ pub enum Validator {
     LuhnSin,
     /// UK NHS-number mod-11.
     Mod11Nhs,
-    /// UK NINO prefix blocklist.
-    NinoBlocklist,
     /// Phone-number national-format grammar (E.164/US/UK/DE).
     PhoneNational,
     /// PEM private-key block type.
@@ -85,16 +82,15 @@ impl Validator {
         match self {
             Self::Noop => ValidationOutcome::Unknown,
             Self::AbaRouting => aba_routing::validate(candidate),
+            Self::Crypto => crypto::validate(candidate),
             Self::EinPrefix => ein_prefix::validate(candidate),
             Self::Iban => iban::validate(candidate),
             Self::IpAddress => ip::validate(candidate),
-            Self::ItinRange => itin_range::validate(candidate),
             Self::JwtHeader => jwt_header::validate(candidate),
             Self::Keyword(_) => ValidationOutcome::Invalid,
             Self::Luhn => luhn::validate(candidate),
             Self::LuhnSin => luhn_sin::validate(candidate),
             Self::Mod11Nhs => mod11_nhs::validate(candidate),
-            Self::NinoBlocklist => nino_blocklist::validate(candidate),
             Self::PhoneNational => phone_national::validate(candidate),
             Self::PrivateKeyType => private_key_type::validate(candidate),
             Self::UsSsn => us_ssn::validate(candidate),

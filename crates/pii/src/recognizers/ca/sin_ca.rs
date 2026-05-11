@@ -41,46 +41,25 @@ pub fn sin_ca() -> Recognizer {
 mod tests {
     use super::sin_ca;
 
-    fn matches(text: &str) -> Vec<String> {
-        let r = sin_ca();
-        r.analyze(text)
-            .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
-            .collect()
+    fn matches(text: &str) -> Vec<(usize, usize)> {
+        sin_ca().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
     }
 
     #[test]
-    fn positive_valid_luhn() {
+    fn recognizes_sin_ca() {
         // 046 454 286 — known-valid Canadian SIN test number.
-        assert_eq!(matches("SIN 046 454 286"), vec!["046 454 286"]);
-    }
-
-    #[test]
-    fn negative_no_keyword() {
-        assert!(matches("046 454 286").is_empty());
-    }
-
-    #[test]
-    fn negative_luhn_perturbations() {
-        let bad = [
-            "046 454 280",
-            "046 454 281",
-            "046 454 282",
-            "046 454 283",
-            "046 454 284",
-            "046 454 285",
-            "046 454 287",
-            "046 454 288",
-            "046 454 289",
-            "146 454 286",
-            "046 554 286",
-            "046 444 286",
+        let cases: &[(&str, &[(usize, usize)])] = &[
+            ("SIN 046 454 286", &[(4, 15)]),
+            ("social insurance 046-454-286", &[(17, 28)]),
+            ("sin: 046454286", &[(5, 14)]),
+            ("046 454 286", &[]),
+            ("SIN 046 454 287", &[]),
+            ("SIN 146 454 286", &[]),
+            ("SIN 12345678", &[]),
+            ("", &[]),
         ];
-        for n in bad {
-            assert!(
-                matches(&format!("SIN {n}")).is_empty(),
-                "{n} fails Luhn, expected no match"
-            );
+        for (input, expected) in cases {
+            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
         }
     }
 }

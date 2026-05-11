@@ -1,9 +1,7 @@
-//! Recognizer struct plus the built-in catalog shipped by default.
+//! Recognizer catalog: region-based grouping (`generic/`, `{us,uk,ca,eu}/`).
 //!
-//! [`Recognizer`] is the generic regex/checksum recognizer used by every built-in
-//! entity type. The submodules expose pre-configured constructors —
-//! eight v1 entries plus the catalog-expansion set — registered in
-//! deterministic order so overlap-resolution tie-breaks stay stable.
+//! [`Recognizer`] is the generic regex/checksum recognizer used by every
+//! built-in entity type. [`all`] returns the deterministic registration order.
 
 use std::borrow::Cow;
 use std::slice;
@@ -15,57 +13,21 @@ use crate::score::{MAX_SCORE, MIN_SCORE};
 use crate::validators::Validator;
 use crate::{Category, Entity, ValidationOutcome};
 
-mod all;
-mod api_key;
-mod bank_account_uk;
-mod credit_card;
-mod crypto;
-mod cvv;
-mod email;
-mod iban;
-mod ip;
-mod itin;
-mod jwt_token;
-mod mac_address;
-mod nhs_number;
-mod nino_uk;
-mod passport_uk;
-mod passport_us;
-mod phone;
-mod private_key;
-mod routing_number_us;
-mod sin_ca;
-mod sort_code_uk;
-mod tax_id_ein;
-mod url;
-mod us_ssn;
-mod vat_number;
+pub mod ca;
+pub mod eu;
+pub mod generic;
+pub mod uk;
+pub mod us;
 
-pub use all::all;
-pub use api_key::{api_key_aws_secret, api_key_strong};
-pub use bank_account_uk::bank_account_uk;
-pub use credit_card::credit_card;
-pub use crypto::crypto;
-pub use cvv::cvv;
-pub use email::email;
-pub use iban::iban;
-pub use ip::ip_address;
-pub use itin::itin;
-pub use jwt_token::jwt_token;
-pub use mac_address::mac_address;
-pub use nhs_number::nhs_number;
-pub use nino_uk::nino_uk;
-pub use passport_uk::passport_uk;
-pub use passport_us::passport_us;
-pub use phone::phone_number;
-pub use private_key::private_key;
-pub use routing_number_us::routing_number_us;
-pub use sin_ca::sin_ca;
-pub use sort_code_uk::sort_code_uk;
-pub use tax_id_ein::tax_id_ein;
-pub use url::url;
-pub use us_ssn::us_ssn;
-pub use vat_number::vat_number;
+// Flat re-exports preserve the `dbmcp_pii::recognizers::<name>` public API.
+pub use ca::sin_ca;
+pub use eu::vat_number;
+pub use generic::{
+    api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, email, iban, ip_address, jwt_token, mac_address,
+    phone_number, private_key, url,
+};
+pub use uk::{bank_account_uk, nhs_number, nino_uk, passport_uk, sort_code_uk};
+pub use us::{itin, passport_us, routing_number_us, tax_id_ein, us_ssn};
 
 /// Generic regex/checksum recognizer used by every built-in entity type.
 #[derive(Debug)]
@@ -142,10 +104,18 @@ impl Recognizer {
         self.regexes
             .iter()
             .flat_map(|regex| {
-                regex
-                    .compiled
-                    .find_iter(text)
-                    .filter_map(move |m| self.build_result(regex, m.start(), m.end(), text))
+                regex.compiled.find_iter(text).filter_map(move |m| match m {
+                    Ok(m) => self.build_result(regex, m.start(), m.end(), text),
+                    Err(e) => {
+                        tracing::warn!(
+                            pattern = %regex.name(),
+                            text_len = text.len(),
+                            error = %e,
+                            "fancy-regex match-time error; skipping pattern",
+                        );
+                        None
+                    }
+                })
             })
             .collect()
     }
@@ -179,4 +149,42 @@ impl Recognizer {
             },
         })
     }
+}
+
+/// Return all built-in recognizers in registration order.
+///
+/// 25 entries: the 8 v1 recognizers first (preserving tie-break order for
+/// existing deployments), followed by 17 catalog-expansion entries (16 entity
+/// types plus the AWS-secret leg of `API_KEY` shipped as a separate
+/// keyword-context recognizer that shares the `API_KEY` entity type but has a
+/// different validator profile).
+#[must_use]
+pub fn all() -> Vec<Recognizer> {
+    vec![
+        email(),
+        credit_card(),
+        iban(),
+        ip_address(),
+        url(),
+        phone_number(),
+        crypto(),
+        us_ssn(),
+        mac_address(),
+        bank_account_uk(),
+        sort_code_uk(),
+        routing_number_us(),
+        cvv(),
+        itin(),
+        tax_id_ein(),
+        nhs_number(),
+        nino_uk(),
+        passport_uk(),
+        passport_us(),
+        sin_ca(),
+        vat_number(),
+        api_key_strong(),
+        api_key_aws_secret(),
+        jwt_token(),
+        private_key(),
+    ]
 }

@@ -1,10 +1,9 @@
 //! PII analyzer and anonymizer for `dbmcp`.
 //!
-//! Library-only crate. Ports Presidio's language-agnostic recognizer and
-//! anonymizer pipeline to Rust: regex/pattern recognition with optional
-//! checksum validation, plus four built-in operators (`Replace`, `Mask`,
-//! `Redact`, `Hash`). No NLP, no LLM, no network. Wired into the MCP
-//! server's query tool output via [`Redactor`] behind `PiiConfig`.
+//! Library-only crate. Regex/pattern recognition with optional checksum
+//! validation, plus four built-in operators (`Replace`, `Mask`, `Redact`,
+//! `Hash`). No NLP, no LLM, no network. Wired into the MCP server's query
+//! tool output via [`Redactor`] behind `PiiConfig`.
 //!
 //! # Quickstart
 //!
@@ -23,8 +22,6 @@
 pub mod analyzer;
 pub mod anonymizer;
 pub mod category;
-#[cfg(feature = "test-support")]
-pub mod corpus;
 pub mod entity;
 pub mod error;
 pub mod operators;

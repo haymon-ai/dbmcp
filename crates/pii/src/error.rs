@@ -5,9 +5,9 @@ use thiserror::Error;
 /// Errors that surface when constructing a [`crate::Pattern`] or [`crate::Score`].
 #[derive(Debug, Error)]
 pub enum PatternError {
-    /// `regex`-engine compile error.
+    /// `fancy-regex`-engine compile error.
     #[error("invalid regex: {0}")]
-    InvalidRegex(Box<regex::Error>),
+    InvalidRegex(Box<fancy_regex::Error>),
     /// Score was non-finite or outside `[0.0, 1.0]`.
     #[error("invalid score: {value} (must be a finite value in [0.0, 1.0])")]
     InvalidScore {

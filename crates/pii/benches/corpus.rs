@@ -1,9 +1,9 @@
-//! Test/bench-only fixture loader. Gated behind the `test-support` feature.
+//! Bench-only fixture loader for `crates/pii/benches/corpus/*.toml`.
 
 use std::fs;
 use std::path::PathBuf;
 
-/// Two-bucket recognizer fixture loaded from `corpus/{name}.toml`.
+/// Two-bucket recognizer fixture loaded from `benches/corpus/{name}.toml`.
 #[derive(Debug, serde::Deserialize)]
 pub struct Corpus {
     /// Examples that MUST surface the recognizer's entity type.
@@ -15,7 +15,7 @@ pub struct Corpus {
 }
 
 impl Corpus {
-    /// Load `crates/pii/corpus/{stem}.toml`.
+    /// Load `crates/pii/benches/corpus/{stem}.toml`.
     ///
     /// `stem` is the bare entity stem (`"email"`, `"credit_card"`, …) — the
     /// `.toml` extension is appended.
@@ -27,6 +27,7 @@ impl Corpus {
     #[must_use]
     pub fn load(stem: &str) -> Self {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("benches")
             .join("corpus")
             .join(stem)
             .with_extension("toml");

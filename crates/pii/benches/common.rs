@@ -1,9 +1,12 @@
 //! Shared helpers for the PII benches: payload synthesis on top of the
-//! `dbmcp_pii::corpus::Corpus` loader.
+//! `Corpus` loader.
 
 #![allow(dead_code)]
 
-use dbmcp_pii::corpus::Corpus;
+#[path = "corpus.rs"]
+mod corpus;
+
+use corpus::Corpus;
 use dbmcp_pii::{AnalyzeOptions, Analyzer, RecognizerResult};
 
 /// Input sizes (bytes) swept by the throughput benches.
