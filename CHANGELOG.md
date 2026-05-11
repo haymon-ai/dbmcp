@@ -2,6 +2,18 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.11.0](https://github.com/haymon-ai/dbmcp/compare/3a93a73bb537c7935dda065298d8d067b33261e7..v0.11.0) - 2026-05-11
+#### Features
+- (**pii**) add 12 German recognizers (#159) - ([b9365ce](https://github.com/haymon-ai/dbmcp/commit/b9365ce0bb7283dcca016bf3a44371f61313bf02)) - [@athopen](https://github.com/athopen)
+- (**pii**) add 3 UK recognizers (#158) - ([324d0ea](https://github.com/haymon-ai/dbmcp/commit/324d0eae988e84afbafef2434c6aed41e4be700d)) - [@athopen](https://github.com/athopen)
+- (**pii**) add 5 US recognizers (#157) - ([3a93a73](https://github.com/haymon-ai/dbmcp/commit/3a93a73bb537c7935dda065298d8d067b33261e7)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- (**crates**) add per-crate READMEs for crates.io (#161) - ([d3b30d6](https://github.com/haymon-ai/dbmcp/commit/d3b30d6129888f95ae1c50e2e8e7472a0d7c1a10)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) rename recognizer folders + suffixes to ISO 3166-1 alpha-3 (#160) - ([235f25a](https://github.com/haymon-ai/dbmcp/commit/235f25a74a2381713d49fbb767f512c4890d955d)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.10.4](https://github.com/haymon-ai/dbmcp/compare/63c6f488f8fd6e8dd28706e0489a614a9e0d0f66..v0.10.4) - 2026-05-11
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) fancy-regex + crypto checksums + recognizer reorg (#156) - ([4ab5b1f](https://github.com/haymon-ai/dbmcp/commit/4ab5b1f970bc087196833caa64c8be83de99c519)) - [@athopen](https://github.com/athopen)
