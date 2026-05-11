@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.10.4](https://github.com/haymon-ai/dbmcp/compare/63c6f488f8fd6e8dd28706e0489a614a9e0d0f66..v0.10.4) - 2026-05-11
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) fancy-regex + crypto checksums + recognizer reorg (#156) - ([4ab5b1f](https://github.com/haymon-ai/dbmcp/commit/4ab5b1f970bc087196833caa64c8be83de99c519)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) restructure module layout and Entity enum (#155) - ([63c6f48](https://github.com/haymon-ai/dbmcp/commit/63c6f488f8fd6e8dd28706e0489a614a9e0d0f66)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.10.3](https://github.com/haymon-ai/dbmcp/compare/e2b54c2abcf8b770e3fd259f8be282a10d2a5ac5..v0.10.3) - 2026-05-08
 #### Bug Fixes
 - (**pii**) gate SIN_CA on keyword context (#150) (#154) - ([f47bdba](https://github.com/haymon-ai/dbmcp/commit/f47bdbabf31698b0ae27983b52d9f168afd10570)) - [@athopen](https://github.com/athopen)
