@@ -10,7 +10,9 @@ mod jwt_header;
 mod keyword;
 mod luhn;
 mod luhn_sin;
+mod medical_license_us;
 mod mod11_nhs;
+mod npi_us;
 mod phone_national;
 mod private_key_type;
 mod us_ssn;
@@ -48,8 +50,12 @@ pub enum Validator {
     Luhn,
     /// Luhn checksum gated to 9 digits (Canadian SIN).
     LuhnSin,
+    /// US DEA Certificate Number Luhn-variant checksum.
+    MedicalLicenseUsDea,
     /// UK NHS-number mod-11.
     Mod11Nhs,
+    /// US NPI Luhn checksum with `"80840"` prefix and degenerate-body filter.
+    NpiUs,
     /// Phone-number national-format grammar (E.164/US/UK/DE).
     PhoneNational,
     /// PEM private-key block type.
@@ -90,7 +96,9 @@ impl Validator {
             Self::Keyword(_) => ValidationOutcome::Invalid,
             Self::Luhn => luhn::validate(candidate),
             Self::LuhnSin => luhn_sin::validate(candidate),
+            Self::MedicalLicenseUsDea => medical_license_us::validate(candidate),
             Self::Mod11Nhs => mod11_nhs::validate(candidate),
+            Self::NpiUs => npi_us::validate(candidate),
             Self::PhoneNational => phone_national::validate(candidate),
             Self::PrivateKeyType => private_key_type::validate(candidate),
             Self::UsSsn => us_ssn::validate(candidate),

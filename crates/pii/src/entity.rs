@@ -63,6 +63,16 @@ pub enum Entity {
     TaxIdEin,
     /// `VAT_NUMBER` — EU/UK VAT number.
     VatNumber,
+    /// `MEDICAL_LICENSE_US` — US DEA Certificate Number.
+    MedicalLicenseUs,
+    /// `BANK_ACCOUNT_US` — US bank account number.
+    BankAccountUs,
+    /// `DRIVER_LICENSE_US` — US driver licence number (per-state formats).
+    DriverLicenseUs,
+    /// `MBI_US` — US Medicare Beneficiary Identifier.
+    MbiUs,
+    /// `NPI_US` — US National Provider Identifier.
+    NpiUs,
 }
 
 impl Entity {
@@ -92,6 +102,11 @@ impl Entity {
         Entity::SortCodeUk,
         Entity::TaxIdEin,
         Entity::VatNumber,
+        Entity::MedicalLicenseUs,
+        Entity::BankAccountUs,
+        Entity::DriverLicenseUs,
+        Entity::MbiUs,
+        Entity::NpiUs,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -122,6 +137,11 @@ impl Entity {
             Entity::SortCodeUk => "SORT_CODE_UK",
             Entity::TaxIdEin => "TAX_ID_EIN",
             Entity::VatNumber => "VAT_NUMBER",
+            Entity::MedicalLicenseUs => "MEDICAL_LICENSE_US",
+            Entity::BankAccountUs => "BANK_ACCOUNT_US",
+            Entity::DriverLicenseUs => "DRIVER_LICENSE_US",
+            Entity::MbiUs => "MBI_US",
+            Entity::NpiUs => "NPI_US",
         }
     }
 
@@ -153,6 +173,11 @@ impl Entity {
             Entity::SortCodeUk => "<SORT_CODE_UK>",
             Entity::TaxIdEin => "<TAX_ID_EIN>",
             Entity::VatNumber => "<VAT_NUMBER>",
+            Entity::MedicalLicenseUs => "<MEDICAL_LICENSE_US>",
+            Entity::BankAccountUs => "<BANK_ACCOUNT_US>",
+            Entity::DriverLicenseUs => "<DRIVER_LICENSE_US>",
+            Entity::MbiUs => "<MBI_US>",
+            Entity::NpiUs => "<NPI_US>",
         }
     }
 }
@@ -191,6 +216,11 @@ impl FromStr for Entity {
             "SORT_CODE_UK" => Ok(Entity::SortCodeUk),
             "TAX_ID_EIN" => Ok(Entity::TaxIdEin),
             "VAT_NUMBER" => Ok(Entity::VatNumber),
+            "MEDICAL_LICENSE_US" => Ok(Entity::MedicalLicenseUs),
+            "BANK_ACCOUNT_US" => Ok(Entity::BankAccountUs),
+            "DRIVER_LICENSE_US" => Ok(Entity::DriverLicenseUs),
+            "MBI_US" => Ok(Entity::MbiUs),
+            "NPI_US" => Ok(Entity::NpiUs),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -233,8 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_24_variants() {
-        assert_eq!(Entity::ALL.len(), 24);
+    fn all_has_29_variants() {
+        assert_eq!(Entity::ALL.len(), 29);
     }
 
     #[test]

@@ -27,7 +27,10 @@ pub use generic::{
     phone_number, private_key, url,
 };
 pub use uk::{bank_account_uk, nhs_number, nino_uk, passport_uk, sort_code_uk};
-pub use us::{itin, passport_us, routing_number_us, tax_id_ein, us_ssn};
+pub use us::{
+    bank_account_us, driver_license_us, itin, mbi_us, medical_license_us, npi_us, passport_us, routing_number_us,
+    tax_id_ein, us_ssn,
+};
 
 /// Generic regex/checksum recognizer used by every built-in entity type.
 #[derive(Debug)]
@@ -153,11 +156,9 @@ impl Recognizer {
 
 /// Return all built-in recognizers in registration order.
 ///
-/// 25 entries: the 8 v1 recognizers first (preserving tie-break order for
-/// existing deployments), followed by 17 catalog-expansion entries (16 entity
-/// types plus the AWS-secret leg of `API_KEY` shipped as a separate
-/// keyword-context recognizer that shares the `API_KEY` entity type but has a
-/// different validator profile).
+/// Order is load-bearing for overlap tie-breaks. The AWS-secret leg of
+/// `API_KEY` ships as a separate keyword-context recognizer that shares the
+/// `API_KEY` entity type but has a different validator profile.
 #[must_use]
 pub fn all() -> Vec<Recognizer> {
     vec![
@@ -186,5 +187,10 @@ pub fn all() -> Vec<Recognizer> {
         api_key_aws_secret(),
         jwt_token(),
         private_key(),
+        medical_license_us(),
+        bank_account_us(),
+        driver_license_us(),
+        mbi_us(),
+        npi_us(),
     ]
 }

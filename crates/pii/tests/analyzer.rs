@@ -1,6 +1,5 @@
 //! `Analyzer` integration tests: behaviour (validator promotion,
-//! `AnalyzeOptions` filters, overlap rules) and the catalog-expansion
-//! builder contract.
+//! `AnalyzeOptions` filters, overlap rules) and the builder contract.
 
 use dbmcp_pii::{AnalyzeOptions, Analyzer, Category, Entity, MAX_SCORE, Score};
 
@@ -30,6 +29,11 @@ const DEFAULT_NAMES: &[&str] = &[
     "API_KEY",
     "JWT_TOKEN",
     "PRIVATE_KEY",
+    "MEDICAL_LICENSE_US",
+    "BANK_ACCOUNT_US",
+    "DRIVER_LICENSE_US",
+    "MBI_US",
+    "NPI_US",
 ];
 
 fn entity_names(a: &Analyzer) -> Vec<String> {
@@ -123,10 +127,7 @@ fn with_defaults_registers_full_catalog() {
     let a = Analyzer::with_defaults();
     let got = entity_names(&a);
     let want: Vec<String> = DEFAULT_NAMES.iter().map(|s| (*s).to_string()).collect();
-    assert_eq!(
-        got, want,
-        "with_defaults() must ship the full v1 + catalog-expansion registry"
-    );
+    assert_eq!(got, want, "with_defaults() must ship the full built-in registry");
 }
 
 #[test]
@@ -151,17 +152,22 @@ fn tag_table_is_frozen() {
         ("API_KEY".to_string(), Category::DigitalIdentity),
         ("API_KEY".to_string(), Category::DigitalIdentity),
         ("BANK_ACCOUNT_UK".to_string(), Category::Financial),
+        ("BANK_ACCOUNT_US".to_string(), Category::Financial),
         ("CREDIT_CARD".to_string(), Category::Financial),
         ("CRYPTO".to_string(), Category::Crypto),
         ("CVV".to_string(), Category::Financial),
+        ("DRIVER_LICENSE_US".to_string(), Category::Government),
         ("EMAIL_ADDRESS".to_string(), Category::Personal),
         ("IBAN_CODE".to_string(), Category::Financial),
         ("IP_ADDRESS".to_string(), Category::Network),
         ("ITIN".to_string(), Category::Government),
         ("JWT_TOKEN".to_string(), Category::DigitalIdentity),
         ("MAC_ADDRESS".to_string(), Category::Network),
+        ("MBI_US".to_string(), Category::Government),
+        ("MEDICAL_LICENSE_US".to_string(), Category::Government),
         ("NHS_NUMBER".to_string(), Category::Government),
         ("NINO_UK".to_string(), Category::Government),
+        ("NPI_US".to_string(), Category::Government),
         ("PASSPORT_UK".to_string(), Category::Government),
         ("PASSPORT_US".to_string(), Category::Government),
         ("PHONE_NUMBER".to_string(), Category::Contact),
