@@ -34,6 +34,9 @@ const DEFAULT_NAMES: &[&str] = &[
     "DRIVER_LICENSE_US",
     "MBI_US",
     "NPI_US",
+    "DRIVING_LICENCE_UK",
+    "POSTCODE_UK",
+    "VEHICLE_REGISTRATION_UK",
 ];
 
 fn entity_names(a: &Analyzer) -> Vec<String> {
@@ -157,6 +160,7 @@ fn tag_table_is_frozen() {
         ("CRYPTO".to_string(), Category::Crypto),
         ("CVV".to_string(), Category::Financial),
         ("DRIVER_LICENSE_US".to_string(), Category::Government),
+        ("DRIVING_LICENCE_UK".to_string(), Category::Government),
         ("EMAIL_ADDRESS".to_string(), Category::Personal),
         ("IBAN_CODE".to_string(), Category::Financial),
         ("IP_ADDRESS".to_string(), Category::Network),
@@ -171,6 +175,7 @@ fn tag_table_is_frozen() {
         ("PASSPORT_UK".to_string(), Category::Government),
         ("PASSPORT_US".to_string(), Category::Government),
         ("PHONE_NUMBER".to_string(), Category::Contact),
+        ("POSTCODE_UK".to_string(), Category::Contact),
         ("PRIVATE_KEY".to_string(), Category::DigitalIdentity),
         ("ROUTING_NUMBER_US".to_string(), Category::Financial),
         ("SIN_CA".to_string(), Category::Government),
@@ -179,6 +184,7 @@ fn tag_table_is_frozen() {
         ("URL".to_string(), Category::Network),
         ("US_SSN".to_string(), Category::Government),
         ("VAT_NUMBER".to_string(), Category::Government),
+        ("VEHICLE_REGISTRATION_UK".to_string(), Category::Government),
     ];
 
     assert_eq!(tags, expected, "tag table drifted");

@@ -26,7 +26,10 @@ pub use generic::{
     api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, email, iban, ip_address, jwt_token, mac_address,
     phone_number, private_key, url,
 };
-pub use uk::{bank_account_uk, nhs_number, nino_uk, passport_uk, sort_code_uk};
+pub use uk::{
+    bank_account_uk, driving_licence_uk, nhs_number, nino_uk, passport_uk, postcode_uk, sort_code_uk,
+    vehicle_registration_uk,
+};
 pub use us::{
     bank_account_us, driver_license_us, itin, mbi_us, medical_license_us, npi_us, passport_us, routing_number_us,
     tax_id_ein, us_ssn,
@@ -192,5 +195,8 @@ pub fn all() -> Vec<Recognizer> {
         driver_license_us(),
         mbi_us(),
         npi_us(),
+        driving_licence_uk(),
+        postcode_uk(),
+        vehicle_registration_uk(),
     ]
 }

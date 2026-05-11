@@ -73,6 +73,12 @@ pub enum Entity {
     MbiUs,
     /// `NPI_US` — US National Provider Identifier.
     NpiUs,
+    /// `DRIVING_LICENCE_UK` — UK DVLA driving licence number.
+    DrivingLicenceUk,
+    /// `POSTCODE_UK` — UK postcode.
+    PostcodeUk,
+    /// `VEHICLE_REGISTRATION_UK` — UK vehicle registration plate.
+    VehicleRegistrationUk,
 }
 
 impl Entity {
@@ -107,6 +113,9 @@ impl Entity {
         Entity::DriverLicenseUs,
         Entity::MbiUs,
         Entity::NpiUs,
+        Entity::DrivingLicenceUk,
+        Entity::PostcodeUk,
+        Entity::VehicleRegistrationUk,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -142,6 +151,9 @@ impl Entity {
             Entity::DriverLicenseUs => "DRIVER_LICENSE_US",
             Entity::MbiUs => "MBI_US",
             Entity::NpiUs => "NPI_US",
+            Entity::DrivingLicenceUk => "DRIVING_LICENCE_UK",
+            Entity::PostcodeUk => "POSTCODE_UK",
+            Entity::VehicleRegistrationUk => "VEHICLE_REGISTRATION_UK",
         }
     }
 
@@ -178,6 +190,9 @@ impl Entity {
             Entity::DriverLicenseUs => "<DRIVER_LICENSE_US>",
             Entity::MbiUs => "<MBI_US>",
             Entity::NpiUs => "<NPI_US>",
+            Entity::DrivingLicenceUk => "<DRIVING_LICENCE_UK>",
+            Entity::PostcodeUk => "<POSTCODE_UK>",
+            Entity::VehicleRegistrationUk => "<VEHICLE_REGISTRATION_UK>",
         }
     }
 }
@@ -221,6 +236,9 @@ impl FromStr for Entity {
             "DRIVER_LICENSE_US" => Ok(Entity::DriverLicenseUs),
             "MBI_US" => Ok(Entity::MbiUs),
             "NPI_US" => Ok(Entity::NpiUs),
+            "DRIVING_LICENCE_UK" => Ok(Entity::DrivingLicenceUk),
+            "POSTCODE_UK" => Ok(Entity::PostcodeUk),
+            "VEHICLE_REGISTRATION_UK" => Ok(Entity::VehicleRegistrationUk),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -263,8 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_29_variants() {
-        assert_eq!(Entity::ALL.len(), 29);
+    fn all_has_32_variants() {
+        assert_eq!(Entity::ALL.len(), 32);
     }
 
     #[test]
