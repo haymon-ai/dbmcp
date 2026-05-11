@@ -1,29 +1,29 @@
 //! Built-in validators as a tagged enum, plus the [`KeywordValidator`] data carrier.
 
-mod aba_routing;
+mod aba_routing_usa;
 mod crypto;
-mod de_health_insurance;
-mod de_id_card;
-mod de_social_security;
-mod de_tax_id;
 mod digits;
-mod ein_prefix;
+mod ein_prefix_usa;
+mod health_insurance_deu;
 mod iban;
 mod icao_mrz9;
+mod id_card_deu;
 mod ip;
 mod jwt_header;
 mod keyword;
-mod lifetime_physician_number_de;
+mod lifetime_physician_number_deu;
 mod luhn;
-mod luhn_sin;
-mod medical_license_us;
-mod medical_practice_id_de;
-mod mod11_nhs;
-mod npi_us;
+mod luhn_sin_can;
+mod medical_license_usa;
+mod medical_practice_id_deu;
+mod mod11_nhs_gbr;
+mod npi_usa;
 mod phone_national;
 mod private_key_type;
-mod us_ssn;
-mod vat_country_length;
+mod social_security_deu;
+mod ssn_usa;
+mod tax_id_deu;
+mod vat_country_length_eur;
 
 use std::ops::Range;
 
@@ -40,11 +40,11 @@ pub enum Validator {
     /// Default: abstain on every candidate.
     Noop,
     /// US ABA routing-number checksum.
-    AbaRouting,
+    AbaRoutingUsa,
     /// Bitcoin `Base58Check` (P2PKH/P2SH) and Bech32/Bech32m (segwit) checksum.
     Crypto,
     /// US EIN (employer ID) prefix.
-    EinPrefix,
+    EinPrefixUsa,
     /// IBAN mod-97.
     Iban,
     /// IP-address parse.
@@ -56,33 +56,33 @@ pub enum Validator {
     /// Luhn checksum (12–19 digits).
     Luhn,
     /// Luhn checksum gated to 9 digits (Canadian SIN).
-    LuhnSin,
+    LuhnSinCan,
     /// US DEA Certificate Number Luhn-variant checksum.
-    MedicalLicenseUsDea,
+    MedicalLicenseUsaDea,
     /// UK NHS-number mod-11.
-    Mod11Nhs,
+    Mod11NhsGbr,
     /// US NPI Luhn checksum with `"80840"` prefix and degenerate-body filter.
-    NpiUs,
+    NpiUsa,
     /// Phone-number national-format grammar (E.164/US/UK/DE).
     PhoneNational,
     /// PEM private-key block type.
     PrivateKeyType,
     /// US SSN reserved-value filter.
-    UsSsn,
+    SsnUsa,
     /// EU/UK VAT-number country-length.
-    VatCountryLength,
+    VatCountryLengthEur,
     /// German medical practice ID (Betriebsstättennummer / BSNR) structural check.
-    MedicalPracticeIdDe,
+    MedicalPracticeIdDeu,
     /// German Krankenversicherungsnummer (KVNR) checksum.
-    DeHealthInsurance,
+    HealthInsuranceDeu,
     /// German Personalausweis ICAO check (legacy T-format passes through).
-    DeIdCard,
+    IdCardDeu,
     /// German lifetime physician number (Lebenslange Arztnummer / LANR) checksum.
-    LifetimePhysicianNumberDe,
+    LifetimePhysicianNumberDeu,
     /// German Rentenversicherungsnummer (RVNR) checksum.
-    DeSocialSecurity,
+    SocialSecurityDeu,
     /// German Steueridentifikationsnummer ISO 7064 Mod 11, 10 checksum.
-    DeTaxId,
+    TaxIdDeu,
     /// ICAO Doc 9303 9-character MRZ check digit (German passport).
     IcaoMrz9,
     /// AND combinator over two validators.
@@ -108,28 +108,28 @@ impl Validator {
     pub fn validate(&self, candidate: &str) -> ValidationOutcome {
         match self {
             Self::Noop => ValidationOutcome::Unknown,
-            Self::AbaRouting => aba_routing::validate(candidate),
+            Self::AbaRoutingUsa => aba_routing_usa::validate(candidate),
             Self::Crypto => crypto::validate(candidate),
-            Self::EinPrefix => ein_prefix::validate(candidate),
+            Self::EinPrefixUsa => ein_prefix_usa::validate(candidate),
             Self::Iban => iban::validate(candidate),
             Self::IpAddress => ip::validate(candidate),
             Self::JwtHeader => jwt_header::validate(candidate),
             Self::Keyword(_) => ValidationOutcome::Invalid,
             Self::Luhn => luhn::validate(candidate),
-            Self::LuhnSin => luhn_sin::validate(candidate),
-            Self::MedicalLicenseUsDea => medical_license_us::validate(candidate),
-            Self::Mod11Nhs => mod11_nhs::validate(candidate),
-            Self::NpiUs => npi_us::validate(candidate),
+            Self::LuhnSinCan => luhn_sin_can::validate(candidate),
+            Self::MedicalLicenseUsaDea => medical_license_usa::validate(candidate),
+            Self::Mod11NhsGbr => mod11_nhs_gbr::validate(candidate),
+            Self::NpiUsa => npi_usa::validate(candidate),
             Self::PhoneNational => phone_national::validate(candidate),
             Self::PrivateKeyType => private_key_type::validate(candidate),
-            Self::UsSsn => us_ssn::validate(candidate),
-            Self::VatCountryLength => vat_country_length::validate(candidate),
-            Self::MedicalPracticeIdDe => medical_practice_id_de::validate(candidate),
-            Self::DeHealthInsurance => de_health_insurance::validate(candidate),
-            Self::DeIdCard => de_id_card::validate(candidate),
-            Self::LifetimePhysicianNumberDe => lifetime_physician_number_de::validate(candidate),
-            Self::DeSocialSecurity => de_social_security::validate(candidate),
-            Self::DeTaxId => de_tax_id::validate(candidate),
+            Self::SsnUsa => ssn_usa::validate(candidate),
+            Self::VatCountryLengthEur => vat_country_length_eur::validate(candidate),
+            Self::MedicalPracticeIdDeu => medical_practice_id_deu::validate(candidate),
+            Self::HealthInsuranceDeu => health_insurance_deu::validate(candidate),
+            Self::IdCardDeu => id_card_deu::validate(candidate),
+            Self::LifetimePhysicianNumberDeu => lifetime_physician_number_deu::validate(candidate),
+            Self::SocialSecurityDeu => social_security_deu::validate(candidate),
+            Self::TaxIdDeu => tax_id_deu::validate(candidate),
             Self::IcaoMrz9 => icao_mrz9::validate(candidate),
             Self::And(left, right) => and_combine(left.validate(candidate), right.validate(candidate)),
             #[cfg(test)]

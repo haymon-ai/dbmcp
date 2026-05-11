@@ -1,4 +1,4 @@
-//! Recognizer catalog: region-based grouping (`generic/`, `{us,uk,ca,eu}/`).
+//! Recognizer catalog: region-based grouping (`generic/`, `{usa,gbr,can,eur,deu}/`).
 //!
 //! [`Recognizer`] is the generic regex/checksum recognizer used by every
 //! built-in entity type. [`all`] returns the deterministic registration order.
@@ -13,32 +13,32 @@ use crate::score::{MAX_SCORE, MIN_SCORE};
 use crate::validators::Validator;
 use crate::{Category, Entity, ValidationOutcome};
 
-pub mod ca;
-pub mod de;
-pub mod eu;
+pub mod can;
+pub mod deu;
+pub mod eur;
+pub mod gbr;
 pub mod generic;
-pub mod uk;
-pub mod us;
+pub mod usa;
 
 // Flat re-exports preserve the `dbmcp_pii::recognizers::<name>` public API.
-pub use ca::sin_ca;
-pub use de::{
-    commercial_register_de, driving_licence_de, health_insurance_de, id_card_de, license_plate_de,
-    lifetime_physician_number_de, medical_practice_id_de, passport_de, postcode_de, social_security_de, tax_id_de,
-    tax_number_de,
+pub use can::sin_can;
+pub use deu::{
+    commercial_register_deu, driving_licence_deu, health_insurance_deu, id_card_deu, license_plate_deu,
+    lifetime_physician_number_deu, medical_practice_id_deu, passport_deu, postcode_deu, social_security_deu,
+    tax_id_deu, tax_number_deu,
 };
-pub use eu::vat_number;
+pub use eur::vat_number_eur;
+pub use gbr::{
+    bank_account_gbr, driving_licence_gbr, nhs_number_gbr, nino_gbr, passport_gbr, postcode_gbr, sort_code_gbr,
+    vehicle_registration_gbr,
+};
 pub use generic::{
     api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, email, iban, ip_address, jwt_token, mac_address,
     phone_number, private_key, url,
 };
-pub use uk::{
-    bank_account_uk, driving_licence_uk, nhs_number, nino_uk, passport_uk, postcode_uk, sort_code_uk,
-    vehicle_registration_uk,
-};
-pub use us::{
-    bank_account_us, driver_license_us, itin, mbi_us, medical_license_us, npi_us, passport_us, routing_number_us,
-    tax_id_ein, us_ssn,
+pub use usa::{
+    bank_account_usa, driver_license_usa, itin_usa, mbi_usa, medical_license_usa, npi_usa, passport_usa,
+    routing_number_usa, ssn_usa, tax_id_ein_usa,
 };
 
 /// Generic regex/checksum recognizer used by every built-in entity type.
@@ -178,43 +178,43 @@ pub fn all() -> Vec<Recognizer> {
         url(),
         phone_number(),
         crypto(),
-        us_ssn(),
+        ssn_usa(),
         mac_address(),
-        bank_account_uk(),
-        sort_code_uk(),
-        routing_number_us(),
+        bank_account_gbr(),
+        sort_code_gbr(),
+        routing_number_usa(),
         cvv(),
-        itin(),
-        tax_id_ein(),
-        nhs_number(),
-        nino_uk(),
-        passport_uk(),
-        passport_us(),
-        sin_ca(),
-        vat_number(),
+        itin_usa(),
+        tax_id_ein_usa(),
+        nhs_number_gbr(),
+        nino_gbr(),
+        passport_gbr(),
+        passport_usa(),
+        sin_can(),
+        vat_number_eur(),
         api_key_strong(),
         api_key_aws_secret(),
         jwt_token(),
         private_key(),
-        medical_license_us(),
-        bank_account_us(),
-        driver_license_us(),
-        mbi_us(),
-        npi_us(),
-        driving_licence_uk(),
-        postcode_uk(),
-        vehicle_registration_uk(),
-        medical_practice_id_de(),
-        commercial_register_de(),
-        driving_licence_de(),
-        health_insurance_de(),
-        id_card_de(),
-        license_plate_de(),
-        lifetime_physician_number_de(),
-        passport_de(),
-        postcode_de(),
-        social_security_de(),
-        tax_id_de(),
-        tax_number_de(),
+        medical_license_usa(),
+        bank_account_usa(),
+        driver_license_usa(),
+        mbi_usa(),
+        npi_usa(),
+        driving_licence_gbr(),
+        postcode_gbr(),
+        vehicle_registration_gbr(),
+        medical_practice_id_deu(),
+        commercial_register_deu(),
+        driving_licence_deu(),
+        health_insurance_deu(),
+        id_card_deu(),
+        license_plate_deu(),
+        lifetime_physician_number_deu(),
+        passport_deu(),
+        postcode_deu(),
+        social_security_deu(),
+        tax_id_deu(),
+        tax_number_deu(),
     ]
 }
