@@ -13,6 +13,9 @@ use crate::{Category, Entity};
 const ALPHA: &str = "ACDEFGHJKMNPQRTUVWXY";
 const ALNUM: &str = "0-9ACDEFGHJKMNPQRTUVWXY";
 
+/// Context keywords for US MBI.
+const CONTEXT: &[&str] = &["medicare", "mbi", "beneficiary", "cms", "medicaid", "hic", "hicn"];
+
 /// Build the `MBI_US` recognizer.
 ///
 /// # Panics
@@ -30,6 +33,7 @@ pub fn mbi_usa() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("MbiUsaRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

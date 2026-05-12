@@ -5,6 +5,9 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for US ITIN.
+const CONTEXT: &[&str] = &["individual", "taxpayer", "itin", "tax", "payer", "taxid", "tin"];
+
 /// Build the `ITIN` recognizer.
 ///
 /// # Panics
@@ -22,6 +25,7 @@ pub fn itin_usa() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("ItinUsaRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

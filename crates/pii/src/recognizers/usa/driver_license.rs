@@ -8,20 +8,18 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
 
-const KEYWORDS: &[&str] = &[
+/// Context keywords for US driver licence.
+const CONTEXT: &[&str] = &[
     "driver",
     "license",
-    "licence",
     "permit",
-    "driving",
     "lic",
-    "cdl",
     "identification",
     "dls",
-    "dl",
+    "cdls",
+    "driving",
 ];
 
 const ALPHANUMERIC_PATTERN: &str = concat!(
@@ -72,8 +70,8 @@ pub fn driver_license_usa() -> Recognizer {
     Recognizer::new(Entity::DriverLicenseUs, vec![alphanumeric, digits])
         .expect("non-empty pattern list")
         .with_name("DriverLicenseUsaRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(KEYWORDS)))
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
@@ -96,7 +94,7 @@ mod tests {
             ("driving permit 1234567", &[(15, 22)]),
             ("cdl 12345678901234", &[(4, 18)]),
             ("driving licence 1234567890123456", &[(16, 32)]),
-            ("order A1234567", &[]),
+            ("order A1234567", &[(6, 14)]),
             ("", &[]),
         ];
         for (input, expected) in cases {

@@ -22,6 +22,7 @@
 pub mod analyzer;
 pub mod anonymizer;
 pub mod category;
+pub mod context;
 pub mod entity;
 pub mod error;
 pub mod operators;
@@ -33,10 +34,12 @@ pub mod result;
 pub mod score;
 pub mod validation;
 pub mod validators;
+mod words;
 
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
 pub use crate::anonymizer::{OperatorConfig, anonymize};
 pub use crate::category::{Category, ParseCategoryError};
+pub use crate::context::{ContextMatchingMode, ContextSettings};
 pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::operators::{ChunkCount, HashAlgorithm, Operator};
 pub use crate::redact::{RedactionError, RedactionStats, Redactor};

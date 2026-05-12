@@ -25,6 +25,7 @@ fn make_result_scored(et: Entity, start: usize, end: usize, score: Score) -> Rec
             original_score: score,
             validation: ValidationOutcome::Unknown,
             final_score: score,
+            supportive_keyword: None,
         },
     }
 }

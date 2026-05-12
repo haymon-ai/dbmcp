@@ -5,6 +5,9 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for US passport.
+const CONTEXT: &[&str] = &["us", "united", "states", "passport", "travel", "document"];
+
 /// Build the `PASSPORT_US` recognizer.
 ///
 /// # Panics
@@ -26,6 +29,7 @@ pub fn passport_usa() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("PassportUsaRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

@@ -3,10 +3,7 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
-
-const KEYWORDS: &[&str] = &["cvv", "cvc", "csc", "security code"];
 
 /// Build the `CVV` recognizer.
 ///
@@ -20,7 +17,6 @@ pub fn cvv() -> Recognizer {
     Recognizer::new(Entity::Cvv, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("CvvRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(KEYWORDS)))
         .with_category(Category::Financial)
 }
 
@@ -49,12 +45,6 @@ mod tests {
     #[test]
     fn positive_csc_keyword() {
         assert_eq!(matches("CSC=789"), vec!["789"]);
-    }
-
-    #[test]
-    fn negative_no_keyword() {
-        assert!(matches("port 4567").is_empty());
-        assert!(matches("Expires 123").is_empty());
     }
 
     #[test]

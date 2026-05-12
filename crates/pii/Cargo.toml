@@ -14,7 +14,6 @@ bech32 = { workspace = true }
 bs58 = { workspace = true }
 dbmcp-config = { workspace = true }
 fancy-regex = { workspace = true }
-regex = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

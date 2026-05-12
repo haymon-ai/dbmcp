@@ -9,6 +9,9 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for US SSN.
+const CONTEXT: &[&str] = &["social", "security", "ssn", "ssns", "ssid"];
+
 /// Build the `US_SSN` recognizer.
 ///
 /// # Panics
@@ -23,6 +26,7 @@ pub fn ssn_usa() -> Recognizer {
         .with_name("SsnUsaRecognizer")
         .with_validator(Validator::SsnUsa)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

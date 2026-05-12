@@ -1,4 +1,4 @@
-//! Built-in validators as a tagged enum, plus the [`KeywordValidator`] data carrier.
+//! Built-in validators as a tagged enum.
 
 mod aba_routing_usa;
 mod crypto;
@@ -10,7 +10,6 @@ mod icao_mrz9;
 mod id_card_deu;
 mod ip;
 mod jwt_header;
-mod keyword;
 mod lifetime_physician_number_deu;
 mod luhn;
 mod luhn_sin_can;
@@ -25,16 +24,9 @@ mod ssn_usa;
 mod tax_id_deu;
 mod vat_country_length_eur;
 
-use std::ops::Range;
-
 use crate::ValidationOutcome;
 
-pub use keyword::KeywordValidator;
-
 /// Validator dispatched by [`crate::recognizers::Recognizer`] against every regex match.
-///
-/// Variants tag-dispatch into the per-validator implementations; only
-/// [`Self::Keyword`] carries state.
 #[derive(Debug)]
 pub enum Validator {
     /// Default: abstain on every candidate.
@@ -51,8 +43,6 @@ pub enum Validator {
     IpAddress,
     /// JWT header structural.
     JwtHeader,
-    /// Keyword-context proximity.
-    Keyword(KeywordValidator),
     /// Luhn checksum (12–19 digits).
     Luhn,
     /// Luhn checksum gated to 9 digits (Canadian SIN).
@@ -85,8 +75,6 @@ pub enum Validator {
     TaxIdDeu,
     /// ICAO Doc 9303 9-character MRZ check digit (German passport).
     IcaoMrz9,
-    /// AND combinator over two validators.
-    And(Box<Validator>, Box<Validator>),
     /// Test-only: panics when invoked. Used to verify the redactor's
     /// fail-closed `catch_unwind` branch.
     #[cfg(test)]
@@ -95,9 +83,6 @@ pub enum Validator {
 
 impl Validator {
     /// Validate `candidate` without surrounding-text context.
-    ///
-    /// Returns [`ValidationOutcome::Invalid`] for [`Self::Keyword`] — keyword
-    /// proximity is undecidable without a `full_text` reference.
     ///
     /// # Panics
     ///
@@ -114,7 +99,6 @@ impl Validator {
             Self::Iban => iban::validate(candidate),
             Self::IpAddress => ip::validate(candidate),
             Self::JwtHeader => jwt_header::validate(candidate),
-            Self::Keyword(_) => ValidationOutcome::Invalid,
             Self::Luhn => luhn::validate(candidate),
             Self::LuhnSinCan => luhn_sin_can::validate(candidate),
             Self::MedicalLicenseUsaDea => medical_license_usa::validate(candidate),
@@ -131,36 +115,8 @@ impl Validator {
             Self::SocialSecurityDeu => social_security_deu::validate(candidate),
             Self::TaxIdDeu => tax_id_deu::validate(candidate),
             Self::IcaoMrz9 => icao_mrz9::validate(candidate),
-            Self::And(left, right) => and_combine(left.validate(candidate), right.validate(candidate)),
             #[cfg(test)]
             Self::Panic => panic!("intentional test panic"),
         }
-    }
-
-    /// Validate using surrounding text. Only [`Self::Keyword`] and
-    /// [`Self::And`] consult `full_text` / `span`; other variants delegate
-    /// to [`Self::validate`].
-    #[must_use]
-    pub fn validate_with_context(&self, candidate: &str, full_text: &str, span: Range<usize>) -> ValidationOutcome {
-        match self {
-            Self::Keyword(kw) => kw.validate_with_context(full_text, span),
-            Self::And(left, right) => {
-                let l = left.validate_with_context(candidate, full_text, span.clone());
-                if matches!(l, ValidationOutcome::Invalid) {
-                    return ValidationOutcome::Invalid;
-                }
-                let r = right.validate_with_context(candidate, full_text, span);
-                and_combine(l, r)
-            }
-            other => other.validate(candidate),
-        }
-    }
-}
-
-fn and_combine(l: ValidationOutcome, r: ValidationOutcome) -> ValidationOutcome {
-    match (l, r) {
-        (ValidationOutcome::Invalid, _) | (_, ValidationOutcome::Invalid) => ValidationOutcome::Invalid,
-        (ValidationOutcome::Valid, ValidationOutcome::Valid) => ValidationOutcome::Valid,
-        _ => ValidationOutcome::Unknown,
     }
 }

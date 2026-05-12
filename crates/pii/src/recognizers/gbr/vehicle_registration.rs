@@ -5,6 +5,23 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for UK vehicle registration.
+const CONTEXT: &[&str] = &[
+    "vehicle",
+    "registration",
+    "number plate",
+    "licence plate",
+    "license plate",
+    "reg",
+    "vrn",
+    "dvla",
+    "v5c",
+    "logbook",
+    "mot",
+    "car",
+    "insured vehicle",
+];
+
 /// Build the `VEHICLE_REGISTRATION_UK` recognizer.
 ///
 /// # Panics
@@ -38,6 +55,7 @@ pub fn vehicle_registration_gbr() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("VehicleRegistrationGbrRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

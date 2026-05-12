@@ -6,6 +6,21 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Reisepass.
+const CONTEXT: &[&str] = &[
+    "reisepass",
+    "pass",
+    "passnummer",
+    "reisepassnummer",
+    "passport",
+    "passport number",
+    "pass-nr",
+    "dokumentennummer",
+    "bundesrepublik deutschland",
+    "ausweisdokument",
+    "mrz",
+];
+
 /// Build the `PASSPORT_DE` recognizer.
 ///
 /// # Panics
@@ -24,6 +39,7 @@ pub fn passport_deu() -> Recognizer {
         .with_name("PassportDeuRecognizer")
         .with_validator(Validator::IcaoMrz9)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

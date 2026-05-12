@@ -3,10 +3,7 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
-
-const KEYWORDS: &[&str] = &["account", "acct", "sort", "bank", "iban"];
 
 /// Build the `BANK_ACCOUNT_UK` recognizer.
 ///
@@ -24,7 +21,6 @@ pub fn bank_account_gbr() -> Recognizer {
     Recognizer::new(Entity::BankAccountUk, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("BankAccountGbrRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(KEYWORDS)))
         .with_category(Category::Financial)
 }
 
@@ -48,11 +44,6 @@ mod tests {
     #[test]
     fn positive_iban_keyword() {
         assert_eq!(matches("IBAN account 12345678"), vec!["12345678"]);
-    }
-
-    #[test]
-    fn negative_no_keyword() {
-        assert!(matches("build 12345678").is_empty());
     }
 
     #[test]

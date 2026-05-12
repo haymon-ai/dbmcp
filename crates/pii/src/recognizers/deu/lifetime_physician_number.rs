@@ -6,6 +6,27 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Lebenslange Arztnummer (LANR).
+const CONTEXT: &[&str] = &[
+    "arztnummer",
+    "lanr",
+    "lebenslange arztnummer",
+    "arzt-nr",
+    "arzt nr",
+    "arzt-nummer",
+    "vertragsarzt",
+    "kassenarzt",
+    "niedergelassener arzt",
+    "kbv",
+    "kassenärztliche vereinigung",
+    "kv-nummer",
+    "rezept",
+    "verschreibung",
+    "behandelnder arzt",
+    "hausarzt",
+    "facharzt",
+];
+
 /// Build the `LIFETIME_PHYSICIAN_NUMBER_DE` recognizer.
 ///
 /// # Panics
@@ -20,6 +41,7 @@ pub fn lifetime_physician_number_deu() -> Recognizer {
         .with_name("LifetimePhysicianNumberDeuRecognizer")
         .with_validator(Validator::LifetimePhysicianNumberDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

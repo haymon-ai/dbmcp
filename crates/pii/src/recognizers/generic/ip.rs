@@ -10,6 +10,9 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for IP addresses.
+const CONTEXT: &[&str] = &["ip", "ipv4", "ipv6"];
+
 /// Build the `IP_ADDRESS` recognizer.
 ///
 /// # Panics
@@ -34,6 +37,7 @@ pub fn ip_address() -> Recognizer {
         .with_name("IpRecognizer")
         .with_validator(Validator::IpAddress)
         .with_category(Category::Network)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

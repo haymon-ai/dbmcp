@@ -5,6 +5,22 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Steuernummer.
+const CONTEXT: &[&str] = &[
+    "steuernummer",
+    "steuer-nr",
+    "steuer nr",
+    "st.-nr",
+    "st-nr",
+    "finanzamt",
+    "umsatzsteuer",
+    "einkommensteuer",
+    "körperschaftsteuer",
+    "gewerbesteuer",
+    "steuerveranlagung",
+    "steuerbescheid",
+];
+
 /// Build the `TAX_NUMBER_DE` recognizer.
 ///
 /// # Panics
@@ -36,6 +52,7 @@ pub fn tax_number_deu() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("TaxNumberDeuRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

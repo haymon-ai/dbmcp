@@ -6,6 +6,23 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Rentenversicherungsnummer.
+const CONTEXT: &[&str] = &[
+    "rentenversicherungsnummer",
+    "sozialversicherungsnummer",
+    "versicherungsnummer",
+    "rvnr",
+    "svnr",
+    "sv-nummer",
+    "rente",
+    "rentenversicherung",
+    "deutsche rentenversicherung",
+    "drv",
+    "sozialversicherung",
+    "sozialversicherungsausweis",
+    "rentenausweis",
+];
+
 /// Build the `SOCIAL_SECURITY_DE` recognizer.
 ///
 /// # Panics
@@ -32,6 +49,7 @@ pub fn social_security_deu() -> Recognizer {
         .with_name("SocialSecurityDeuRecognizer")
         .with_validator(Validator::SocialSecurityDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 //! implementations call.
 
 use dbmcp_config::{Config, DatabaseConfig};
-use dbmcp_pii::{Analyzer, Redactor};
+use dbmcp_pii::Redactor;
 use dbmcp_server::{Server, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -79,10 +79,7 @@ impl MysqlHandler {
         Self {
             config: config.database.clone(),
             connection: MysqlConnection::new(&config.database),
-            redactor: config
-                .pii
-                .enabled
-                .then(|| Redactor::new(Analyzer::from_pii_config(&config.pii), config.pii.operator.into())),
+            redactor: Redactor::from_config(&config.pii),
             tool_router: build_tool_router(config.database.read_only),
         }
     }

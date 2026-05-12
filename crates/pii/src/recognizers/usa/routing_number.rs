@@ -3,10 +3,11 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
+use crate::validators::Validator;
 use crate::{Category, Entity};
 
-const KEYWORDS: &[&str] = &["routing", "aba", "rtn", "bank"];
+/// Context keywords for US ABA routing number.
+const CONTEXT: &[&str] = &["aba", "routing", "abarouting", "association", "bankrouting"];
 
 /// Build the `ROUTING_NUMBER_US` recognizer.
 ///
@@ -17,15 +18,12 @@ const KEYWORDS: &[&str] = &["routing", "aba", "rtn", "bank"];
 pub fn routing_number_usa() -> Recognizer {
     let pattern = Pattern::new("US ABA routing", r"\b\d{9}\b", Score::from_static(0.4))
         .expect("static ABA routing pattern compiles");
-    let validator = Validator::And(
-        Box::new(Validator::AbaRoutingUsa),
-        Box::new(Validator::Keyword(KeywordValidator::new(KEYWORDS))),
-    );
     Recognizer::new(Entity::RoutingNumberUs, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("RoutingNumberUsaRecognizer")
-        .with_validator(validator)
+        .with_validator(Validator::AbaRoutingUsa)
         .with_category(Category::Financial)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
@@ -47,7 +45,7 @@ mod tests {
             ("bank routing 021000021", &[(13, 22)]),
             ("aba 021000021", &[(4, 13)]),
             ("rtn=021000021", &[(4, 13)]),
-            ("version 021000021", &[]),
+            ("version 021000021", &[(8, 17)]),
             ("bank routing 021000020", &[]),
             ("bank routing 121000021", &[]),
             ("bank routing 12345678", &[]),

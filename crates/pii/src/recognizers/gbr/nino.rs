@@ -5,6 +5,9 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for UK NINO.
+const CONTEXT: &[&str] = &["national insurance", "ni number", "nino"];
+
 /// Build the `NINO_UK` recognizer.
 ///
 /// # Panics
@@ -22,6 +25,7 @@ pub fn nino_gbr() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("NinoGbrRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

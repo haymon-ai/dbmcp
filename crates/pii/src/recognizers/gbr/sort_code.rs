@@ -3,10 +3,7 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
-
-const KEYWORDS: &[&str] = &["sort", "sortcode", "sort code"];
 
 /// Build the `SORT_CODE_UK` recognizer.
 ///
@@ -24,7 +21,6 @@ pub fn sort_code_gbr() -> Recognizer {
     Recognizer::new(Entity::SortCodeUk, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("SortCodeGbrRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(KEYWORDS)))
         .with_category(Category::Financial)
 }
 
@@ -48,10 +44,5 @@ mod tests {
     #[test]
     fn positive_spaced_with_keyword() {
         assert_eq!(matches("sort code 12 34 56"), vec!["12 34 56"]);
-    }
-
-    #[test]
-    fn negative_no_keyword() {
-        assert!(matches("transaction 12-34-56").is_empty());
     }
 }

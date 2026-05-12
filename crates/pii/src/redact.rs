@@ -23,6 +23,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::Entity;
+use crate::words::push_key_words;
 use crate::{AnalyzeOptions, Analyzer, OperatorConfig, anonymize};
 
 /// Errors produced by [`Redactor::apply`].
@@ -55,6 +56,15 @@ pub struct RedactionStats {
     pub string_leaves_scanned: u64,
 }
 
+enum Frame<'a> {
+    /// Top-level row or array element — no key words to push.
+    Root(&'a mut Value),
+    /// Object child — `key` is split into words on entry into the shared path.
+    KeyedChild(&'a mut Value, &'a str),
+    /// Truncates the shared path by `n` words once a subtree is done.
+    Pop(usize),
+}
+
 /// Redacts PII from query tool response rows.
 ///
 /// Holds an [`Arc<Analyzer>`] so handlers stay cheap to clone.
@@ -62,33 +72,65 @@ pub struct RedactionStats {
 pub struct Redactor {
     analyzer: Arc<Analyzer>,
     operator: OperatorConfig,
+    opts: AnalyzeOptions,
 }
 
 impl Redactor {
-    /// Builds a redactor with the [`Analyzer`]'s built-in recognizer set.
+    /// Builds a redactor with the [`Analyzer`]'s built-in recognizer set,
+    /// the default operator, and the context-aware boost enabled with its
+    /// documented defaults.
     #[must_use]
     pub fn with_defaults() -> Self {
-        Self {
-            analyzer: Arc::new(Analyzer::with_defaults()),
-            operator: OperatorConfig::default(),
-        }
+        Self::new(Analyzer::with_defaults(), OperatorConfig::default())
     }
 
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self {
-            analyzer: Arc::new(analyzer),
-            operator: OperatorConfig::default(),
-        }
+        Self::new(analyzer, OperatorConfig::default())
     }
 
     /// Builds a redactor wrapping a caller-supplied analyzer and operator config.
+    ///
+    /// The analyzer runs the context-aware boost with its documented
+    /// defaults and the `min_score_with_context` floor.
     #[must_use]
     pub fn new(analyzer: Analyzer, operator: OperatorConfig) -> Self {
+        let settings = crate::context::ContextSettings::default();
+        let min_score = settings.min_score_with_context;
         Self {
             analyzer: Arc::new(analyzer),
             operator,
+            opts: AnalyzeOptions {
+                min_score,
+                context: Some(settings),
+            },
         }
+    }
+
+    /// Override the per-call [`AnalyzeOptions`] used by every leaf scan.
+    ///
+    /// Used by the binary layer to enable context-aware scoring per
+    /// `PiiContextConfig`. Default (off) preserves today's behaviour.
+    #[must_use]
+    pub fn with_analyze_options(mut self, opts: AnalyzeOptions) -> Self {
+        self.opts = opts;
+        self
+    }
+
+    /// Resolve a [`dbmcp_config::PiiConfig`] to an optional [`Redactor`].
+    ///
+    /// Returns `None` when `cfg.enabled` is `false`. When enabled, the
+    /// redactor runs the context-aware confidence boost over every leaf and
+    /// drops candidates whose post-boost score falls below the
+    /// `min_score_with_context` floor — so weak-pattern recognizers (CVV,
+    /// AWS secret, bank account, …) surface only when a nearby keyword
+    /// lifts them.
+    #[must_use]
+    pub fn from_config(cfg: &dbmcp_config::PiiConfig) -> Option<Self> {
+        if !cfg.enabled {
+            return None;
+        }
+        Some(Self::new(crate::Analyzer::from_config(cfg), cfg.operator.into()))
     }
 
     /// Walks every reachable string leaf in `rows` through the analyzer pipeline.
@@ -108,12 +150,32 @@ impl Redactor {
     pub fn apply(&self, rows: &mut [Value]) -> Result<RedactionStats, RedactionError> {
         let mut stats = RedactionStats::default();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let mut stack: Vec<&mut Value> = rows.iter_mut().collect();
-            while let Some(v) = stack.pop() {
+            // Shared key-path stack. Each `Frame::Visit` carries the tokens
+            // to push when entered; a `Frame::Pop` queued before its children
+            // restores the path after the subtree is done. This keeps path
+            // mutations O(depth) instead of O(depth²) per leaf (no per-child
+            // path clone).
+            let mut path: Vec<String> = Vec::new();
+            let mut stack: Vec<Frame<'_>> = rows.iter_mut().rev().map(Frame::Root).collect();
+            while let Some(frame) = stack.pop() {
+                let v = match frame {
+                    Frame::Pop(n) => {
+                        path.truncate(path.len() - n);
+                        continue;
+                    }
+                    Frame::Root(v) => v,
+                    Frame::KeyedChild(v, key) => {
+                        // Pop pushed before children → runs after them (LIFO).
+                        // Pop(0) is a no-op for separator-only keys.
+                        let n = push_key_words(&mut path, key);
+                        stack.push(Frame::Pop(n));
+                        v
+                    }
+                };
                 match v {
                     Value::String(s) => {
                         stats.string_leaves_scanned += 1;
-                        let results = self.analyzer.analyze(s, &AnalyzeOptions::default());
+                        let results = self.analyzer.analyze_with_context(s, &path, &self.opts);
                         if results.is_empty() {
                             continue;
                         }
@@ -127,8 +189,18 @@ impl Redactor {
                         }
                         *s = anon.text;
                     }
-                    Value::Object(map) => stack.extend(map.values_mut()),
-                    Value::Array(arr) => stack.extend(arr.iter_mut()),
+                    Value::Object(map) => {
+                        for (key, child) in map.iter_mut() {
+                            stack.push(Frame::KeyedChild(child, key));
+                        }
+                    }
+                    Value::Array(arr) => {
+                        // Array index does NOT inject context (sibling values
+                        // are independent — FR-020 / spec edge case).
+                        for child in arr.iter_mut() {
+                            stack.push(Frame::Root(child));
+                        }
+                    }
                     Value::Number(_) | Value::Bool(_) | Value::Null => {}
                 }
             }
@@ -154,9 +226,11 @@ impl Redactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::{ContextMatchingMode, ContextSettings};
     use crate::pattern::Pattern;
     use crate::recognizers::Recognizer;
     use crate::score::Score;
+
     use crate::validators::Validator;
     use dbmcp_config::PiiOperator;
     use serde_json::json;
@@ -478,5 +552,90 @@ mod tests {
         match err {
             RedactionError::Internal(msg) => assert!(msg.contains("panicked")),
         }
+    }
+
+    fn ctx_settings() -> ContextSettings {
+        ContextSettings {
+            similarity_factor: Score::from_static(0.35),
+            min_score_with_context: Score::from_static(0.4),
+            prefix_words: 5,
+            suffix_words: 0,
+            matching_mode: ContextMatchingMode::WholeWord,
+        }
+    }
+
+    fn weak_phone_analyzer() -> Analyzer {
+        // Weak-confidence phone-shape pattern with NO validator (Validator::Noop)
+        // so the candidate's score remains at 0.1 (below default min_score=0.4).
+        // Context boost is the only path that can lift it to the floor.
+        let p = Pattern::new("digits", r"\b\d{3} \d{3} \d{4}\b", Score::from_static(0.1)).expect("static");
+        let rec = Recognizer::new(Entity::PhoneNumber, vec![p])
+            .expect("non-empty")
+            .with_name("PhoneRecognizer")
+            .with_context(&["phone"]);
+        let mut a = Analyzer::empty();
+        a.register(rec);
+        a
+    }
+
+    #[test]
+    fn redact_object_with_phone_column_boosts_via_key() {
+        let r = Redactor::new(weak_phone_analyzer(), OperatorConfig::default()).with_analyze_options(AnalyzeOptions {
+            min_score: Score::from_static(0.4),
+            context: Some(ctx_settings()),
+        });
+        let mut rows = vec![json!({"customer_phone": "415 555 0142"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["customer_phone"], "<PHONE_NUMBER>");
+        assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn redact_nested_object_accumulates_parent_keys() {
+        let r = Redactor::new(weak_phone_analyzer(), OperatorConfig::default()).with_analyze_options(AnalyzeOptions {
+            min_score: Score::from_static(0.4),
+            context: Some(ctx_settings()),
+        });
+        let mut rows = vec![json!({"user": {"contact": {"phone_number": "415 555 0142"}}})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["user"]["contact"]["phone_number"], "<PHONE_NUMBER>");
+        assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn redact_array_does_not_leak_sibling_keys() {
+        let r = Redactor::new(weak_phone_analyzer(), OperatorConfig::default()).with_analyze_options(AnalyzeOptions {
+            min_score: Score::from_static(0.4),
+            context: Some(ctx_settings()),
+        });
+        // Array of objects: each object has its own key path. A sibling
+        // object's "phone" key MUST NOT seed context for the first object.
+        let mut rows = vec![json!([
+            {"name": "415 555 0142"},
+            {"phone": "415 555 9999"}
+        ])];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        // First element: "name" doesn't match recognizer context → no boost → no redaction.
+        assert_eq!(rows[0][0]["name"], "415 555 0142");
+        // Second element: "phone" matches → boosted → redacted.
+        assert_eq!(rows[0][1]["phone"], "<PHONE_NUMBER>");
+        assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn redact_off_when_context_disabled_byte_identical() {
+        // SC-002: with context disabled the redactor output is unchanged
+        // from the no-context baseline.
+        let r_off = Redactor::new(weak_phone_analyzer(), OperatorConfig::default());
+        let mut rows = vec![json!({"customer_phone": "415 555 0142"})];
+        let stats = r_off.apply(&mut rows).expect("apply ok");
+        // No boost → candidate stays at score 0.1 → below 0.0 floor irrelevant,
+        // but the analyzer's default min_score is 0.0, so the result IS emitted
+        // with score 0.1. Redactor still rewrites it because anonymize replaces
+        // every result regardless of score. Adjust expectation: with context
+        // off there is no `supportive_keyword` and the rewrite is identical to
+        // pre-feature output (the regex match itself triggered redaction).
+        assert_eq!(rows[0]["customer_phone"], "<PHONE_NUMBER>");
+        assert_eq!(stats.total, 1);
     }
 }

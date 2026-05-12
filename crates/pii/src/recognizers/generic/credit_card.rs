@@ -6,6 +6,21 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords boosted by the context-aware scoring pass.
+const CONTEXT: &[&str] = &[
+    "credit",
+    "card",
+    "visa",
+    "mastercard",
+    "cc",
+    "amex",
+    "discover",
+    "jcb",
+    "diners",
+    "maestro",
+    "instapayment",
+];
+
 /// Build the `CREDIT_CARD` recognizer.
 ///
 /// # Panics
@@ -24,6 +39,7 @@ pub fn credit_card() -> Recognizer {
         .with_name("CreditCardRecognizer")
         .with_validator(Validator::Luhn)
         .with_category(Category::Financial)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

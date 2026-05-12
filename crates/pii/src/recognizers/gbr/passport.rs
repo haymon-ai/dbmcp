@@ -5,6 +5,19 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for UK passport.
+const CONTEXT: &[&str] = &[
+    "passport",
+    "passport number",
+    "travel document",
+    "uk passport",
+    "british passport",
+    "her majesty",
+    "his majesty",
+    "hm passport",
+    "hmpo",
+];
+
 /// Build the `PASSPORT_UK` recognizer.
 ///
 /// # Panics
@@ -18,6 +31,7 @@ pub fn passport_gbr() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("PassportGbrRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

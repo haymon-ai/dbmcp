@@ -5,6 +5,27 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Führerschein.
+const CONTEXT: &[&str] = &[
+    "führerscheinnummer",
+    "führerschein",
+    "fahrerlaubnis",
+    "fahrerlaubnisnummer",
+    "fahrerlaubnisklasse",
+    "führerscheininhaber",
+    "fev",
+    "kba",
+    "kraftfahrt-bundesamt",
+    "driving licence",
+    "driving license",
+    "driver's license",
+    "licence number",
+    "license number",
+    "dokument nr",
+    "dokument-nr",
+    "feld 5",
+];
+
 /// Build the `DRIVING_LICENCE_DE` recognizer.
 ///
 /// # Panics
@@ -22,6 +43,7 @@ pub fn driving_licence_deu() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("DrivingLicenceDeuRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

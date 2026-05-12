@@ -11,6 +11,17 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for US NPI.
+const CONTEXT: &[&str] = &[
+    "npi",
+    "national provider",
+    "provider",
+    "npi number",
+    "provider id",
+    "provider identifier",
+    "taxonomy",
+];
+
 /// Build the `NPI_US` recognizer.
 ///
 /// # Panics
@@ -31,6 +42,7 @@ pub fn npi_usa() -> Recognizer {
         .with_name("NpiUsaRecognizer")
         .with_validator(Validator::NpiUsa)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

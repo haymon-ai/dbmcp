@@ -6,6 +6,24 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Personalausweis.
+const CONTEXT: &[&str] = &[
+    "personalausweis",
+    "ausweis",
+    "personalausweisnummer",
+    "ausweisnummer",
+    "ausweisdokument",
+    "dokumentennummer",
+    "seriennummer",
+    "npa",
+    "neuer personalausweis",
+    "personalausweisgesetz",
+    "pauwsg",
+    "bundespersonalausweis",
+    "identity card",
+    "national id",
+];
+
 /// Build the `ID_CARD_DE` recognizer.
 ///
 /// # Panics
@@ -32,6 +50,7 @@ pub fn id_card_deu() -> Recognizer {
         .with_name("IdCardDeuRecognizer")
         .with_validator(Validator::IdCardDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

@@ -6,6 +6,26 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Betriebsstättennummer (BSNR).
+const CONTEXT: &[&str] = &[
+    "betriebsstättennummer",
+    "betriebsstätten-nummer",
+    "bsnr",
+    "betriebsstätte",
+    "praxisnummer",
+    "arztpraxis",
+    "praxis",
+    "kassenärztliche vereinigung",
+    "kv-nummer",
+    "kv nummer",
+    "praxisadresse",
+    "praxisstandort",
+    "nebenbetriebsstätte",
+    "hauptbetriebsstätte",
+    "behandlungsort",
+    "vertragsarztpraxis",
+];
+
 /// Build the `MEDICAL_PRACTICE_ID_DE` recognizer.
 ///
 /// # Panics
@@ -20,6 +40,7 @@ pub fn medical_practice_id_deu() -> Recognizer {
         .with_name("MedicalPracticeIdDeuRecognizer")
         .with_validator(Validator::MedicalPracticeIdDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

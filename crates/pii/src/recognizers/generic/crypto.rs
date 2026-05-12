@@ -9,6 +9,9 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for crypto wallet addresses.
+const CONTEXT: &[&str] = &["wallet", "btc", "bitcoin", "crypto"];
+
 /// Build the `CRYPTO` recognizer.
 ///
 /// # Panics
@@ -26,6 +29,7 @@ pub fn crypto() -> Recognizer {
         .with_name("CryptoRecognizer")
         .with_validator(Validator::Crypto)
         .with_category(Category::Crypto)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

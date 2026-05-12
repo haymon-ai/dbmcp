@@ -2,20 +2,15 @@
 //!
 //! Per FR-204 / clarification 2026-05-06 Q5: five named providers only — AWS
 //! access key, AWS secret access key, `GitHub` PAT, Stripe live keys, Google
-//! API, `OpenAI`. No generic high-entropy fallback. AWS secret needs a keyword
-//! context (the regex alone matches any 40-char base64 string).
-//!
-//! Two `Recognizer`s ship from this module so the AWS-secret leg can
-//! attach a [`crate::KeywordValidator`] without forcing keyword
-//! requirements on the strongly-anchored providers.
+//! API, `OpenAI`. No generic high-entropy fallback. AWS secret is weak on its
+//! own (the regex alone matches any 40-char base64 string); the context-aware
+//! confidence boost lifts it whenever a keyword like `aws_secret_access_key`
+//! sits in the surrounding window.
 
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
-
-const AWS_SECRET_KEYWORDS: &[&str] = &["secret", "aws_secret_access_key", "aws_secret"];
 
 /// Build the strongly-anchored `API_KEY` recognizer (AWS access, `GitHub`, Stripe, Google, `OpenAI`).
 ///
@@ -38,11 +33,13 @@ pub fn api_key_strong() -> Recognizer {
         .with_category(Category::DigitalIdentity)
 }
 
-/// Build the keyword-gated AWS secret-access-key recognizer.
+/// Build the weak-pattern AWS secret-access-key recognizer.
 ///
-/// AWS secrets are 40-char base64 strings — the regex alone is far too weak.
-/// Strict keyword-context (`secret`, `aws_secret_access_key`, …) inside ±64
-/// chars is required (FR-204 / Q2).
+/// AWS secrets are 40-char base64 strings — the regex alone is too weak;
+/// the [crate-level context-aware boost](crate::context) lifts matches that
+/// sit near one of the context keywords (e.g. `aws_secret_access_key`).
+/// Without a nearby keyword the match's score stays below the redactor's
+/// `min_score` floor and is dropped.
 ///
 /// # Panics
 ///
@@ -54,7 +51,6 @@ pub fn api_key_aws_secret() -> Recognizer {
     Recognizer::new(Entity::ApiKey, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("ApiKeyAwsSecretRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(AWS_SECRET_KEYWORDS)))
         .with_category(Category::DigitalIdentity)
 }
 
@@ -103,12 +99,15 @@ mod tests {
 
     #[test]
     fn recognizes_api_key_aws_secret() {
+        // AWS secret regex matches any 40-char base64 string. The
+        // context-aware scoring pass + redactor `min_score` floor decide
+        // whether a match surfaces; the recognizer itself emits any hit.
         let cases: &[(&str, &[(usize, usize)])] = &[
             (
                 "aws_secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 &[(22, 62)],
             ),
-            ("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", &[]),
+            ("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", &[(0, 40)]),
             ("", &[]),
         ];
         for (input, expected) in cases {

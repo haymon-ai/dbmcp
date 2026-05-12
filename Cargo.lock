@@ -659,7 +659,6 @@ dependencies = [
  "criterion",
  "dbmcp-config",
  "fancy-regex",
- "regex",
  "rmcp",
  "serde",
  "serde_json",

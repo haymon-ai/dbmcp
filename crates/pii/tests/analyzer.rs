@@ -104,6 +104,7 @@ fn ct_005_min_score_filters_before_overlap() {
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions {
         min_score: Score::new(0.95).unwrap(),
+        context: None,
     };
     // Phone numbers ship at 0.4 → must be filtered out.
     let results = analyzer.analyze("call +14155552671", &opts);

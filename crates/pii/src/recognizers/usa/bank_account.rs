@@ -1,17 +1,18 @@
 //! `BANK_ACCOUNT_US` recognizer.
 //!
 //! Pure digit run of 8–17 chars; the regex on its own is too broad to be
-//! useful, so a keyword-context validator drops any match without a banking
-//! keyword nearby. Mirrors Presidio's `UsBankRecognizer` weak score plus
-//! context boost.
+//! useful. Weak base score paired with context keywords: the context-aware
+//! scoring pass lifts matches whose surrounding window or owning JSON key
+//! contains a banking keyword. Matches without a nearby keyword fall below
+//! the redactor's `min_score` floor and are dropped.
 
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
 use crate::{Category, Entity};
 
-const KEYWORDS: &[&str] = &["check", "account", "acct", "bank", "savings", "debit", "checking"];
+/// Context keywords for US bank account.
+const CONTEXT: &[&str] = &["check", "account", "acct", "bank", "save", "debit"];
 
 /// Build the `BANK_ACCOUNT_US` recognizer.
 ///
@@ -25,8 +26,8 @@ pub fn bank_account_usa() -> Recognizer {
     Recognizer::new(Entity::BankAccountUs, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("BankAccountUsaRecognizer")
-        .with_validator(Validator::Keyword(KeywordValidator::new(KEYWORDS)))
         .with_category(Category::Financial)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
@@ -43,11 +44,13 @@ mod tests {
 
     #[test]
     fn recognizes_bank_account_usa() {
+        // The regex matches any 8-17 digit run; context-boost + redactor
+        // `min_score` floor decide whether the match surfaces.
         let cases: &[(&str, &[(usize, usize)])] = &[
             ("checking account 12345678", &[(17, 25)]),
             ("bank 1234567890123", &[(5, 18)]),
             ("savings acct 9876543210", &[(13, 23)]),
-            ("order 12345678", &[]),
+            ("order 12345678", &[(6, 14)]),
             ("account 1234567", &[]),
             ("account 123456789012345678", &[]),
             ("", &[]),

@@ -5,6 +5,25 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for DE KFZ-Kennzeichen.
+const CONTEXT: &[&str] = &[
+    "kennzeichen",
+    "kfz-kennzeichen",
+    "kraftfahrzeugkennzeichen",
+    "nummernschild",
+    "fahrzeugkennzeichen",
+    "zulassung",
+    "kfz",
+    "fahrzeug",
+    "auto",
+    "pkw",
+    "lkw",
+    "fahrzeugschein",
+    "fahrzeugbrief",
+    "zulassungsbescheinigung",
+    "amtliches kennzeichen",
+];
+
 /// Build the `LICENSE_PLATE_DE` recognizer.
 ///
 /// # Panics
@@ -48,6 +67,7 @@ pub fn license_plate_deu() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("LicensePlateDeuRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

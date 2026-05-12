@@ -5,6 +5,19 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for UK postcode.
+const CONTEXT: &[&str] = &[
+    "postcode",
+    "post code",
+    "postal code",
+    "zip",
+    "address",
+    "delivery",
+    "mailing",
+    "shipping",
+    "correspondence",
+];
+
 /// Build the `POSTCODE_UK` recognizer.
 ///
 /// # Panics
@@ -22,6 +35,7 @@ pub fn postcode_gbr() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("PostcodeGbrRecognizer")
         .with_category(Category::Contact)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

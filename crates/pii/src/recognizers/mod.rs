@@ -49,6 +49,7 @@ pub struct Recognizer {
     regexes: Vec<Pattern>,
     validator: Validator,
     category: Category,
+    context: &'static [&'static str],
 }
 
 impl Recognizer {
@@ -68,6 +69,7 @@ impl Recognizer {
             regexes,
             validator: Validator::Noop,
             category: Category::Personal,
+            context: &[],
         })
     }
 
@@ -92,6 +94,28 @@ impl Recognizer {
         self
     }
 
+    /// Attach a context keyword list used by the context-aware boost step.
+    ///
+    /// Each entry MUST be non-empty and ASCII-lowercase; debug builds assert.
+    /// Calling twice overwrites — last call wins.
+    ///
+    /// # Panics
+    ///
+    /// Debug-asserts every keyword is non-empty and lowercase.
+    #[must_use]
+    pub fn with_context(mut self, words: &'static [&'static str]) -> Self {
+        debug_assert!(
+            words.iter().all(|w| !w.is_empty()),
+            "Recognizer::with_context: keyword entries must be non-empty"
+        );
+        debug_assert!(
+            words.iter().all(|w| w.chars().all(|c| !c.is_ascii_uppercase())),
+            "Recognizer::with_context: keyword entries must be lowercase"
+        );
+        self.context = words;
+        self
+    }
+
     /// Recognizer's display name; surfaced in [`crate::AnalysisExplanation`].
     #[must_use]
     pub fn name(&self) -> &str {
@@ -108,6 +132,12 @@ impl Recognizer {
     #[must_use]
     pub fn category(&self) -> Category {
         self.category
+    }
+
+    /// Configured context keyword list, or an empty slice when not configured.
+    #[must_use]
+    pub fn context(&self) -> &'static [&'static str] {
+        self.context
     }
 
     /// Analyze `text` and return the recognizer's own results, pre-overlap.
@@ -137,7 +167,7 @@ impl Recognizer {
             return None;
         }
         let candidate = &text[start..end];
-        let validation = self.validator.validate_with_context(candidate, text, start..end);
+        let validation = self.validator.validate(candidate);
         let original_score = regex.score();
         let final_score = match validation {
             ValidationOutcome::Valid => MAX_SCORE,
@@ -158,6 +188,7 @@ impl Recognizer {
                 original_score,
                 validation,
                 final_score,
+                supportive_keyword: None,
             },
         })
     }
@@ -217,4 +248,85 @@ pub fn all() -> Vec<Recognizer> {
         tax_id_deu(),
         tax_number_deu(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Recognizer, all};
+    use crate::Entity;
+    use crate::pattern::Pattern;
+    use crate::score::Score;
+
+    fn dummy_recognizer() -> Recognizer {
+        let pat = Pattern::new("dummy", r"\b\d+\b", Score::from_static(0.3)).expect("static");
+        Recognizer::new(Entity::CreditCard, vec![pat]).expect("non-empty patterns")
+    }
+
+    #[test]
+    fn default_context_is_empty() {
+        let r = dummy_recognizer();
+        assert!(r.context().is_empty());
+    }
+
+    #[test]
+    fn with_context_overrides_default() {
+        const CTX: &[&str] = &["foo", "bar"];
+        let r = dummy_recognizer().with_context(CTX);
+        assert_eq!(r.context(), CTX);
+    }
+
+    #[test]
+    fn with_context_preserves_order() {
+        const CTX: &[&str] = &["alpha", "beta", "gamma"];
+        let r = dummy_recognizer().with_context(CTX);
+        assert_eq!(r.context(), &["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn with_context_last_call_wins() {
+        const A: &[&str] = &["foo"];
+        const B: &[&str] = &["bar"];
+        let r = dummy_recognizer().with_context(A).with_context(B);
+        assert_eq!(r.context(), B);
+    }
+
+    #[test]
+    fn all_returns_nonzero_recognizers() {
+        assert!(!all().is_empty());
+    }
+
+    #[test]
+    fn every_non_opt_out_recognizer_in_all_has_context() {
+        // Opt-out recognizers: entities with no upstream context-keyword
+        // reference list in our published source catalogue. The context-aware
+        // scoring pass simply does not boost these — matches surface only on
+        // their base score / validator outcome.
+        const OPT_OUT: &[&str] = &[
+            "CvvRecognizer",
+            "TaxIdEinUsaRecognizer",
+            "VatNumberEurRecognizer",
+            "ApiKeyRecognizer",
+            "ApiKeyAwsSecretRecognizer",
+            "JwtTokenRecognizer",
+            "PrivateKeyRecognizer",
+            "BankAccountGbrRecognizer",
+            "SortCodeGbrRecognizer",
+        ];
+        let mut missing = Vec::new();
+        for r in all() {
+            if OPT_OUT.contains(&r.name()) {
+                assert!(
+                    r.context().is_empty(),
+                    "{} listed as opt-out but ships a context list",
+                    r.name()
+                );
+            } else if r.context().is_empty() {
+                missing.push(r.name().to_owned());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "recognizers missing context list (not opt-out): {missing:?}"
+        );
+    }
 }

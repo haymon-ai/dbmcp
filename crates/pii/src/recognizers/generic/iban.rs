@@ -6,6 +6,9 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for IBAN.
+const CONTEXT: &[&str] = &["iban", "bank", "transaction"];
+
 /// Build the `IBAN_CODE` recognizer.
 ///
 /// # Panics
@@ -24,6 +27,7 @@ pub fn iban() -> Recognizer {
         .with_name("IbanRecognizer")
         .with_validator(Validator::Iban)
         .with_category(Category::Financial)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

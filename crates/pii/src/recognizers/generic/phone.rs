@@ -10,6 +10,9 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords used by the boost step.
+const CONTEXT: &[&str] = &["phone", "number", "telephone", "cell", "cellphone", "mobile", "call"];
+
 /// Build the `PHONE_NUMBER` recognizer.
 ///
 /// # Panics
@@ -29,11 +32,15 @@ pub fn phone_number() -> Recognizer {
         .with_name("PhoneRecognizer")
         .with_validator(Validator::PhoneNational)
         .with_category(Category::Contact)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::phone_number;
+    use super::{CONTEXT, phone_number};
+    use crate::analyzer::{AnalyzeOptions, Analyzer};
+    use crate::context::{ContextMatchingMode, ContextSettings};
+    use crate::score::Score;
 
     fn matches(text: &str) -> Vec<String> {
         let r = phone_number();
@@ -45,6 +52,32 @@ mod tests {
 
     fn redacts(text: &str) -> bool {
         !matches(text).is_empty()
+    }
+
+    #[test]
+    fn phone_recognizer_carries_context_list() {
+        assert!(!phone_number().context().is_empty());
+        assert_eq!(phone_number().context(), CONTEXT);
+    }
+
+    #[test]
+    fn phone_context_boost_lifts_score() {
+        let mut a = Analyzer::empty();
+        a.register(phone_number());
+        let opts = AnalyzeOptions {
+            min_score: Score::default(),
+            context: Some(ContextSettings {
+                similarity_factor: Score::from_static(0.35),
+                min_score_with_context: Score::from_static(0.4),
+                prefix_words: 5,
+                suffix_words: 0,
+                matching_mode: ContextMatchingMode::WholeWord,
+            }),
+        };
+        let out = a.analyze("my phone 415 555 0142", &opts);
+        assert!(!out.is_empty());
+        let r = &out[0];
+        assert_eq!(r.explanation.supportive_keyword.as_deref(), Some("phone"));
     }
 
     #[test]

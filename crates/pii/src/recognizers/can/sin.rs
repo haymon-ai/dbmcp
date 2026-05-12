@@ -3,12 +3,18 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
+use crate::validators::Validator;
 use crate::{Category, Entity};
 
-const KEYWORDS: &[&str] = &[
+/// Context keywords for Canadian SIN.
+const CONTEXT: &[&str] = &[
     "sin",
+    "sin number",
     "social insurance",
+    "social insurance number",
+    "canada",
+    "nas",
+    "numéro nas",
     "numéro d'assurance sociale",
     "assurance sociale",
 ];
@@ -26,15 +32,12 @@ pub fn sin_can() -> Recognizer {
         Score::from_static(0.4),
     )
     .expect("static SIN_CA pattern compiles");
-    let validator = Validator::And(
-        Box::new(Validator::LuhnSinCan),
-        Box::new(Validator::Keyword(KeywordValidator::new(KEYWORDS))),
-    );
     Recognizer::new(Entity::SinCa, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("SinCanRecognizer")
-        .with_validator(validator)
+        .with_validator(Validator::LuhnSinCan)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
@@ -48,11 +51,14 @@ mod tests {
     #[test]
     fn recognizes_sin_can() {
         // 046 454 286 — known-valid Canadian SIN test number.
+        // Recognizer-level results: Luhn-validator passes → MAX score.
+        // Keyword gating is handled by the context-boost pass + redactor
+        // `min_score` floor, not by the recognizer itself.
         let cases: &[(&str, &[(usize, usize)])] = &[
             ("SIN 046 454 286", &[(4, 15)]),
             ("social insurance 046-454-286", &[(17, 28)]),
             ("sin: 046454286", &[(5, 14)]),
-            ("046 454 286", &[]),
+            ("046 454 286", &[(0, 11)]),
             ("SIN 046 454 287", &[]),
             ("SIN 146 454 286", &[]),
             ("SIN 12345678", &[]),

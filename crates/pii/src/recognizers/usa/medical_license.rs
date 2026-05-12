@@ -8,10 +8,11 @@
 use super::Recognizer;
 use crate::pattern::Pattern;
 use crate::score::Score;
-use crate::validators::{KeywordValidator, Validator};
+use crate::validators::Validator;
 use crate::{Category, Entity};
 
-const KEYWORDS: &[&str] = &["dea", "medical", "certificate", "license", "physician", "doctor"];
+/// Context keywords for US medical license.
+const CONTEXT: &[&str] = &["medical", "certificate", "dea"];
 
 const PATTERN: &str = concat!(
     r"\b[abcdefghjklmprstuxABCDEFGHJKLMPRSTUX][a-zA-Z]\d{7}\b",
@@ -27,15 +28,12 @@ const PATTERN: &str = concat!(
 #[must_use]
 pub fn medical_license_usa() -> Recognizer {
     let pattern = Pattern::new("US DEA", PATTERN, Score::from_static(0.4)).expect("static DEA pattern compiles");
-    let validator = Validator::And(
-        Box::new(Validator::MedicalLicenseUsaDea),
-        Box::new(Validator::Keyword(KeywordValidator::new(KEYWORDS))),
-    );
     Recognizer::new(Entity::MedicalLicenseUs, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("MedicalLicenseUsaRecognizer")
-        .with_validator(validator)
+        .with_validator(Validator::MedicalLicenseUsaDea)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
@@ -56,7 +54,7 @@ mod tests {
             ("DEA #: AB1234563", &[(7, 16)]),
             ("dea AB1234563", &[(4, 13)]),
             ("medical certificate A91234563", &[(20, 29)]),
-            ("random AB1234563", &[]),
+            ("random AB1234563", &[(7, 16)]),
             ("DEA AB1234560", &[]),
             ("DEA IB1234563", &[]),
             ("", &[]),

@@ -5,6 +5,29 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Handelsregisternummer.
+const CONTEXT: &[&str] = &[
+    "handelsregister",
+    "handelsregisternummer",
+    "amtsgericht",
+    "registergericht",
+    "hra",
+    "hrb",
+    "hr-nummer",
+    "registerauszug",
+    "handelsregistereintrag",
+    "firma",
+    "gesellschaft",
+    "gmbh",
+    "ag",
+    "ug",
+    "kg",
+    "ohg",
+    "einzelkaufmann",
+    "einzelkauffrau",
+    "handelsregisterblattnummer",
+];
+
 /// Build the `COMMERCIAL_REGISTER_DE` recognizer.
 ///
 /// # Panics
@@ -22,6 +45,7 @@ pub fn commercial_register_deu() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("CommercialRegisterDeuRecognizer")
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

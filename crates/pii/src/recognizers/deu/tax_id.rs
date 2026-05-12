@@ -6,6 +6,21 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Steueridentifikationsnummer.
+const CONTEXT: &[&str] = &[
+    "steueridentifikationsnummer",
+    "steuer-id",
+    "steuerid",
+    "steuerliche identifikationsnummer",
+    "steuerliche identifikation",
+    "persönliche identifikationsnummer",
+    "steuer identifikation",
+    "idnr",
+    "steuer-idnr",
+    "steuernummer",
+    "bzst",
+];
+
 /// Build the `TAX_ID_DE` recognizer.
 ///
 /// # Panics
@@ -24,6 +39,7 @@ pub fn tax_id_deu() -> Recognizer {
         .with_name("TaxIdDeuRecognizer")
         .with_validator(Validator::TaxIdDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

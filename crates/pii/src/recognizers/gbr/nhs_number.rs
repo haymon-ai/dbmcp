@@ -6,6 +6,14 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for UK NHS number.
+const CONTEXT: &[&str] = &[
+    "national health service",
+    "nhs",
+    "health services authority",
+    "health authority",
+];
+
 /// Build the `NHS_NUMBER` recognizer.
 ///
 /// # Panics
@@ -24,6 +32,7 @@ pub fn nhs_number_gbr() -> Recognizer {
         .with_name("NhsNumberGbrRecognizer")
         .with_validator(Validator::Mod11NhsGbr)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

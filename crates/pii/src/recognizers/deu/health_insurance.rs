@@ -6,6 +6,28 @@ use crate::score::Score;
 use crate::validators::Validator;
 use crate::{Category, Entity};
 
+/// Context keywords for DE Krankenversicherungsnummer.
+const CONTEXT: &[&str] = &[
+    "krankenversicherungsnummer",
+    "krankenversichertennummer",
+    "versichertennummer",
+    "kvnr",
+    "krankenkasse",
+    "krankenversicherung",
+    "gesundheitskarte",
+    "egk",
+    "elektronische gesundheitskarte",
+    "gkv",
+    "gesetzliche krankenversicherung",
+    "krankenversicherungsausweis",
+    "versichertenausweis",
+    "versichertenkarte",
+    "aok",
+    "tkk",
+    "barmer",
+    "dak",
+];
+
 /// Build the `HEALTH_INSURANCE_DE` recognizer.
 ///
 /// # Panics
@@ -24,6 +46,7 @@ pub fn health_insurance_deu() -> Recognizer {
         .with_name("HealthInsuranceDeuRecognizer")
         .with_validator(Validator::HealthInsuranceDeu)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

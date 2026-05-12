@@ -43,7 +43,6 @@ hmac = "0.12"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
-regex = "1"
 rmcp = { version = "1.6", features = [
     "macros",
     "server",

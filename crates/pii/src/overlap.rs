@@ -115,6 +115,7 @@ mod tests {
                 original_score: s,
                 validation: ValidationOutcome::Unknown,
                 final_score: s,
+                supportive_keyword: None,
             },
         }
     }

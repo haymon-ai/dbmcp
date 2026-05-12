@@ -5,6 +5,9 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for URLs.
+const CONTEXT: &[&str] = &["url", "website", "link"];
+
 /// Build the `URL` recognizer.
 ///
 /// # Panics
@@ -22,6 +25,7 @@ pub fn url() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("UrlRecognizer")
         .with_category(Category::Network)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]

@@ -5,6 +5,9 @@ use crate::pattern::Pattern;
 use crate::score::Score;
 use crate::{Category, Entity};
 
+/// Context keywords for email.
+const CONTEXT: &[&str] = &["email"];
+
 /// Build the `EMAIL_ADDRESS` recognizer.
 ///
 /// # Panics
@@ -23,6 +26,7 @@ pub fn email() -> Recognizer {
         .expect("non-empty pattern list")
         .with_name("EmailRecognizer")
         .with_category(Category::Personal)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
