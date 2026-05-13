@@ -20,7 +20,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "json"] }
-sqlx-json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

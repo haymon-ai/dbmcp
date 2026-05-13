@@ -52,20 +52,20 @@ rmcp = { version = "1.6", features = [
 schemars = { version = "1.2", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-sqlparser = { version = "0.61", features = ["visitor"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "runtime-tokio-rustls"] }
+sha2 = "0.11"
+sqlparser = { version = "0.62", features = ["visitor"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-toml = "0.8"
+toml = "1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = "0.3"
 
 # Dev/test dependencies
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 insta = { version = "1", features = ["json", "redactions"] }
 
 [workspace.lints.rust]
