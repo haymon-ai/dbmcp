@@ -2,6 +2,13 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.11.1](https://github.com/haymon-ai/dbmcp/compare/298b65533c418f93736fdc53d8d139b64ceba234..v0.11.1) - 2026-05-17
+#### Features
+- (**pii**) context-aware boost + redactor walker simplifications (#162) - ([298b655](https://github.com/haymon-ai/dbmcp/commit/298b65533c418f93736fdc53d8d139b64ceba234)) - [@athopen](https://github.com/athopen)
+- externalize tool descriptions + read-only-aware instructions (#164) - ([27f6b81](https://github.com/haymon-ai/dbmcp/commit/27f6b81e169cc9229f3a7ed79cb29db05e037368)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.11.0](https://github.com/haymon-ai/dbmcp/compare/3a93a73bb537c7935dda065298d8d067b33261e7..v0.11.0) - 2026-05-11
 #### Features
 - (**pii**) add 12 German recognizers (#159) - ([b9365ce](https://github.com/haymon-ai/dbmcp/commit/b9365ce0bb7283dcca016bf3a44371f61313bf02)) - [@athopen](https://github.com/athopen)
