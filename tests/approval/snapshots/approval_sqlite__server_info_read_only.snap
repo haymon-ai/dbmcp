@@ -1,0 +1,18 @@
+---
+source: tests/approval/sqlite.rs
+expression: info
+---
+{
+  "protocolVersion": "2025-11-25",
+  "capabilities": {
+    "tools": {}
+  },
+  "serverInfo": {
+    "name": "dbmcp",
+    "title": "Database MCP Server",
+    "version": "[version]",
+    "description": "Database MCP Server for SQLite",
+    "websiteUrl": "https://dbmcp.haymon.ai"
+  },
+  "instructions": "## Workflow\n\n1. Call `listTables` to discover tables in the connected database. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.\n2. Call `listViews` to discover views in the connected database.\n3. Call `listTriggers` to discover triggers in the connected database.\n4. Use `readQuery` for read-only SQL (SELECT).\n5. Use `explainQuery` to analyze query execution plans and diagnose slow queries.\n\n## Constraints\n\n- The server runs in read-only mode. Data and schema changes are not possible.\n- Multi-statement queries are not supported. Send one statement per request.\n"
+}

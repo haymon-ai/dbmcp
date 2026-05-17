@@ -26,29 +26,11 @@ use crate::tools::{
 /// Backend-specific description for `PostgreSQL`.
 const DESCRIPTION: &str = "Database MCP Server for PostgreSQL";
 
-/// Backend-specific instructions for `PostgreSQL`.
-const INSTRUCTIONS: &str = r"## Workflow
+/// Backend-specific instructions for `PostgreSQL` in read-write mode.
+const INSTRUCTIONS: &str = include_str!("../assets/instructions.md");
 
-1. Call `listDatabases` to discover available databases.
-2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
-3. Call `listViews` to see views in the `public` schema.
-4. Call `listTriggers` to see user-defined triggers in the `public` schema.
-5. Call `listFunctions` to see user-defined functions in the `public` schema.
-6. Call `listProcedures` to see user-defined procedures in the `public` schema.
-7. Call `listMaterializedViews` to see materialized views in the `public` schema.
-8. Use `readQuery` for read-only SQL (SELECT, SHOW, EXPLAIN).
-9. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-10. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-11. Use `createDatabase` to create a new database.
-12. Use `dropDatabase` to drop an existing database.
-13. Use `dropTable` to remove a table from a database (supports `cascade` for foreign key dependencies).
-
-Per-database tools default to the active database; pass `database` to target another.
-
-## Constraints
-
-- The `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` tools are hidden when read-only mode is active.
-- Multi-statement queries are not supported. Send one statement per request.";
+/// Backend-specific instructions for `PostgreSQL` in read-only mode.
+const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions.readonly.md");
 
 /// `PostgreSQL` database handler.
 ///
@@ -124,7 +106,11 @@ impl ServerHandler for PostgresHandler {
     fn get_info(&self) -> ServerInfo {
         let mut info = server_info();
         info.server_info.description = Some(DESCRIPTION.into());
-        info.instructions = Some(INSTRUCTIONS.into());
+        info.instructions = Some(if self.config.read_only {
+            INSTRUCTIONS_READ_ONLY.into()
+        } else {
+            INSTRUCTIONS.into()
+        });
         info
     }
 
@@ -230,6 +216,23 @@ mod tests {
         assert!(!router.has_route("createDatabase"));
         assert!(!router.has_route("dropDatabase"));
         assert!(!router.has_route("dropTable"));
+    }
+
+    #[tokio::test]
+    async fn instructions_match_read_only_mode() {
+        let read_write = handler(false).get_info().instructions.expect("instructions present");
+        assert!(
+            read_write.contains("writeQuery"),
+            "read-write instructions mention writeQuery"
+        );
+
+        let read_only = handler(true).get_info().instructions.expect("instructions present");
+        for tool in ["writeQuery", "createDatabase", "dropDatabase", "dropTable"] {
+            assert!(
+                !read_only.contains(tool),
+                "read-only instructions must not mention {tool}"
+            );
+        }
     }
 
     #[tokio::test]

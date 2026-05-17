@@ -1,0 +1,18 @@
+---
+source: tests/approval/mysql.rs
+expression: info
+---
+{
+  "protocolVersion": "2025-11-25",
+  "capabilities": {
+    "tools": {}
+  },
+  "serverInfo": {
+    "name": "dbmcp",
+    "title": "Database MCP Server",
+    "version": "[version]",
+    "description": "Database MCP Server for MySQL and MariaDB",
+    "websiteUrl": "https://dbmcp.haymon.ai"
+  },
+  "instructions": "## Workflow\n\n1. Call `listDatabases` to discover available databases.\n2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.\n3. Call `listViews` to see views.\n4. Call `listTriggers` to see triggers.\n5. Call `listFunctions` to see stored functions.\n6. Call `listProcedures` to see stored procedures.\n7. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).\n8. Use `explainQuery` to analyze query execution plans and diagnose slow queries.\n\nPer-database tools default to the active database; pass `database` to target another.\n\n## Constraints\n\n- The server runs in read-only mode. Data and schema changes are not possible.\n- Multi-statement queries are not supported. Send one statement per request.\n"
+}

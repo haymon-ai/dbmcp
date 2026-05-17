@@ -23,21 +23,11 @@ use crate::tools::{
 /// Backend-specific description for `SQLite`.
 const DESCRIPTION: &str = "Database MCP Server for SQLite";
 
-/// Backend-specific instructions for `SQLite`.
-const INSTRUCTIONS: &str = r"## Workflow
+/// Backend-specific instructions for `SQLite` in read-write mode.
+const INSTRUCTIONS: &str = include_str!("../assets/instructions.md");
 
-1. Call `listTables` to discover tables in the connected database. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
-2. Call `listViews` to discover views in the connected database.
-3. Call `listTriggers` to discover triggers in the connected database.
-4. Use `readQuery` for read-only SQL (SELECT).
-5. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
-6. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
-7. Use `dropTable` to remove a table from the database.
-
-## Constraints
-
-- The `writeQuery` and `dropTable` tools are hidden when read-only mode is active.
-- Multi-statement queries are not supported. Send one statement per request.";
+/// Backend-specific instructions for `SQLite` in read-only mode.
+const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions.readonly.md");
 
 /// `SQLite` file-based database handler.
 ///
@@ -105,7 +95,11 @@ impl ServerHandler for SqliteHandler {
     fn get_info(&self) -> ServerInfo {
         let mut info = server_info();
         info.server_info.description = Some(DESCRIPTION.into());
-        info.instructions = Some(INSTRUCTIONS.into());
+        info.instructions = Some(if self.config.read_only {
+            INSTRUCTIONS_READ_ONLY.into()
+        } else {
+            INSTRUCTIONS.into()
+        });
         info
     }
 
@@ -207,6 +201,23 @@ mod tests {
         assert!(router.has_route("explainQuery"));
         assert!(!router.has_route("writeQuery"));
         assert!(!router.has_route("dropTable"));
+    }
+
+    #[tokio::test]
+    async fn instructions_match_read_only_mode() {
+        let read_write = handler(false).get_info().instructions.expect("instructions present");
+        assert!(
+            read_write.contains("writeQuery"),
+            "read-write instructions mention writeQuery"
+        );
+
+        let read_only = handler(true).get_info().instructions.expect("instructions present");
+        for tool in ["writeQuery", "dropTable"] {
+            assert!(
+                !read_only.contains(tool),
+                "read-only instructions must not mention {tool}"
+            );
+        }
     }
 
     #[tokio::test]
