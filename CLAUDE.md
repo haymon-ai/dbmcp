@@ -45,6 +45,7 @@ Cargo workspace: root binary (`dbmcp`) + 7 library crates under `crates/`. Works
 - Env vars are set by the MCP client (via `env` or `envFile` in server config)
 - Run `cargo run -- --help` for the full list of flags and env var mappings
 - `DB_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
+- Pinning a database name (`--db-name` / `DB_NAME`) hides the cross-database tools (`listDatabases`, `createDatabase`, `dropDatabase`) on MySQL/PostgreSQL
 - `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`. The toggle (`--pii` / `PII_ENABLE`) defaults to **off**; the operator (`--pii-operator` / `PII_OPERATOR`) defaults to `replace`. Optional category subset via `--pii-categories` / `PII_CATEGORIES` (comma-separated kebab values; unset = all built-ins).
 
 ## Code Style
