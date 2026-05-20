@@ -13,29 +13,29 @@ use rmcp::handler::server::router::tool::{AsyncTool, ToolRouter};
 pub struct ToolSpec<H: Send + Sync + 'static> {
     /// Registers the tool on a router, returning the extended router.
     register: fn(ToolRouter<H>) -> ToolRouter<H>,
+    /// Whether the tool registers only when a database name is pinned in config.
+    pinned: bool,
     /// Whether the tool is hidden in read-only mode.
     read_only: bool,
-    /// Whether the tool is hidden when a database name is pinned.
-    pinned: bool,
 }
 
 impl<H: Send + Sync + 'static> std::fmt::Debug for ToolSpec<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolSpec")
-            .field("read_only", &self.read_only)
             .field("pinned", &self.pinned)
+            .field("read_only", &self.read_only)
             .finish_non_exhaustive()
     }
 }
 
 impl<H: Send + Sync + 'static> ToolSpec<H> {
-    /// Creates a spec for an async tool `T` with its read-only and pinned gates.
+    /// Creates a spec for an async tool `T` with its pinned and read-only gates.
     #[must_use]
-    pub const fn async_tool<T: AsyncTool<H> + 'static>(read_only: bool, pinned: bool) -> Self {
+    pub const fn async_tool<T: AsyncTool<H> + 'static>(pinned: bool, read_only: bool) -> Self {
         Self {
             register: ToolRouter::with_async_tool::<T>,
-            read_only,
             pinned,
+            read_only,
         }
     }
 }
@@ -45,7 +45,7 @@ pub trait ToolRouterExt<H: Send + Sync + 'static>: Sized {
     /// Builds a router from `specs`, skipping mode-gated tools.
     ///
     /// A spec is skipped when its `read_only` gate coincides with `read_only`
-    /// mode, or its `pinned` gate with `pinned` mode.
+    /// mode, or its `pinned` gate disagrees with the current `pinned` mode.
     #[must_use]
     fn from_specs(specs: &[ToolSpec<H>], read_only: bool, pinned: bool) -> Self;
 }
@@ -54,7 +54,7 @@ impl<H: Send + Sync + 'static> ToolRouterExt<H> for ToolRouter<H> {
     fn from_specs(specs: &[ToolSpec<H>], read_only: bool, pinned: bool) -> Self {
         specs
             .iter()
-            .filter(|spec| (!spec.read_only || !read_only) && (!spec.pinned || !pinned))
+            .filter(|spec| (!spec.read_only || !read_only) && spec.pinned == pinned)
             .fold(ToolRouter::new(), |router, spec| (spec.register)(router))
     }
 }

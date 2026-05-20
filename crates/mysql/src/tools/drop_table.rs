@@ -10,48 +10,80 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::MysqlHandler;
 use crate::connection::quote_ident;
-use crate::types::DropTableRequest;
+use crate::types::{PinnedDropTableRequest, UnpinnedDropTableRequest};
 
-/// Marker type for the `dropTable` MCP tool.
-pub(crate) struct DropTableTool;
+const NAME: &str = "dropTable";
+const TITLE: &str = "Drop Table";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/drop_table/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/drop_table/unpinned.md");
 
-impl DropTableTool {
-    const NAME: &'static str = "dropTable";
-    const TITLE: &'static str = "Drop Table";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/drop_table.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(false)
+        .destructive(true)
+        .idempotent(false)
+        .open_world(false)
 }
 
-impl ToolBase for DropTableTool {
-    type Parameter = DropTableRequest;
+/// Marker type for the `dropTable` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedDropTableTool;
+
+impl ToolBase for PinnedDropTableTool {
+    type Parameter = PinnedDropTableRequest;
     type Output = MessageResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(false)
-                .destructive(true)
-                .idempotent(false)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<MysqlHandler> for DropTableTool {
+impl AsyncTool<MysqlHandler> for PinnedDropTableTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.drop_table(params).await
+        handler.drop_table(None, params.table).await
+    }
+}
+
+/// Marker type for the `dropTable` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedDropTableTool;
+
+impl ToolBase for UnpinnedDropTableTool {
+    type Parameter = UnpinnedDropTableRequest;
+    type Output = MessageResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<MysqlHandler> for UnpinnedDropTableTool {
+    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler.drop_table(params.database, params.inner.table).await
     }
 }
 
@@ -66,10 +98,7 @@ impl MysqlHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
-    pub async fn drop_table(
-        &self,
-        DropTableRequest { database, table }: DropTableRequest,
-    ) -> Result<MessageResponse, ErrorData> {
+    pub async fn drop_table(&self, database: Option<String>, table: String) -> Result<MessageResponse, ErrorData> {
         if self.config.read_only {
             return Err(SqlError::ReadOnlyViolation.into());
         }

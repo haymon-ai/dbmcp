@@ -10,13 +10,8 @@
 
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
 use dbmcp_mysql::MysqlHandler;
-use dbmcp_mysql::types::{
-    DropTableRequest, ListEntries, ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListViewsRequest,
-};
-use dbmcp_server::types::{
-    CreateDatabaseRequest, DropDatabaseRequest, ExplainQueryRequest, ListDatabasesRequest, ListTriggersRequest,
-    QueryRequest, ReadQueryRequest,
-};
+use dbmcp_mysql::types::ListEntries;
+use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use serde_json::Value;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -60,29 +55,35 @@ fn handler_with_page_size(page_size: u16) -> MysqlHandler {
 async fn test_write_query_insert_and_verify() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
-        query: "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(insert).await.unwrap();
+    handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('WriteTest', 'write@test.com')".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
     // Verify the row was inserted
-    let select = ReadQueryRequest {
-        query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT name FROM users WHERE email = 'write@test.com'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let arr = &rows.rows;
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["name"], "WriteTest");
 
     // Clean up
-    let delete = QueryRequest {
-        query: "DELETE FROM users WHERE email = 'write@test.com'".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(delete).await.unwrap();
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email = 'write@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -90,59 +91,73 @@ async fn test_write_query_update() {
     let handler = handler(false);
 
     // Insert a row
-    let insert = QueryRequest {
-        query: "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(insert).await.unwrap();
+    handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Before', 'update@test.com')".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
     // Update it
-    let update = QueryRequest {
-        query: "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(update).await.unwrap();
+    handler
+        .write_query(
+            "UPDATE users SET name = 'After' WHERE email = 'update@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
     // Verify
-    let select = ReadQueryRequest {
-        query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT name FROM users WHERE email = 'update@test.com'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let arr = &rows.rows;
     assert_eq!(arr[0]["name"], "After");
 
     // Clean up
-    let delete = QueryRequest {
-        query: "DELETE FROM users WHERE email = 'update@test.com'".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(delete).await.unwrap();
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email = 'update@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn test_write_query_delete() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
-        query: "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(insert).await.unwrap();
+    handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Deletable', 'delete@test.com')".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
-    let delete = QueryRequest {
-        query: "DELETE FROM users WHERE email = 'delete@test.com'".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(delete).await.unwrap();
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email = 'delete@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
-    let select = ReadQueryRequest {
-        query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let arr = &rows.rows;
     assert!(arr.is_empty(), "Row should be deleted");
 }
@@ -160,12 +175,11 @@ async fn test_lists_databases() {
 #[tokio::test]
 async fn test_lists_tables() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: Some("app".into()),
-        ..Default::default()
-    };
 
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler
+        .list_tables(Some("app".into()), None, None, false)
+        .await
+        .unwrap();
     let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
@@ -181,26 +195,25 @@ async fn test_lists_tables() {
 #[tokio::test]
 async fn test_executes_sql() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users ORDER BY id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("SELECT * FROM users ORDER BY id".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     assert_eq!(response.rows.len(), 3, "Expected 3 users, got {}", response.rows.len());
 }
 
 #[tokio::test]
 async fn test_blocks_writes_in_read_only_mode() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query(
+            "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
+            Some("app".into()),
+            None,
+        )
+        .await;
 
     assert!(response.is_err(), "Expected error for write in read-only mode");
 }
@@ -290,12 +303,11 @@ async fn test_drop_database_invalid_identifier() {
 #[tokio::test]
 async fn test_lists_tables_cross_database() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: Some("analytics".into()),
-        ..Default::default()
-    };
 
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler
+        .list_tables(Some("analytics".into()), None, None, false)
+        .await
+        .unwrap();
     let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
@@ -313,13 +325,15 @@ async fn test_lists_tables_cross_database() {
 #[tokio::test]
 async fn test_executes_sql_cross_database() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM events ORDER BY id".into(),
-        database: Some("analytics".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT * FROM events ORDER BY id".into(),
+            Some("analytics".into()),
+            None,
+        )
+        .await
+        .unwrap();
     assert_eq!(response.rows.len(), 2, "Expected 2 events, got {}", response.rows.len());
 }
 
@@ -339,13 +353,14 @@ async fn test_lists_databases_includes_cross_db() {
 #[tokio::test]
 async fn test_blocks_writes_cross_database_in_read_only_mode() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "INSERT INTO events (name) VALUES ('hack')".into(),
-        database: Some("analytics".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query(
+            "INSERT INTO events (name) VALUES ('hack')".into(),
+            Some("analytics".into()),
+            None,
+        )
+        .await;
 
     assert!(
         response.is_err(),
@@ -356,12 +371,11 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
 #[tokio::test]
 async fn test_uses_default_pool_for_matching_database() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: Some("app".into()),
-        ..Default::default()
-    };
 
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler
+        .list_tables(Some("app".into()), None, None, false)
+        .await
+        .unwrap();
     let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
@@ -383,14 +397,11 @@ async fn test_query_timeout_cancels_slow_query() {
         http: None,
         pii: PiiConfig::default(),
     });
-    let request = ReadQueryRequest {
-        query: "SELECT SLEEP(30)".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
     let start = std::time::Instant::now();
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query("SELECT SLEEP(30)".into(), Some("app".into()), None)
+        .await;
     let elapsed = start.elapsed();
 
     assert!(response.is_err(), "Expected timeout error");
@@ -417,13 +428,10 @@ async fn test_query_timeout_disabled_with_zero() {
         http: None,
         pii: PiiConfig::default(),
     });
-    let request = ReadQueryRequest {
-        query: "SELECT 1 AS value".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query("SELECT 1 AS value".into(), Some("app".into()), None)
+        .await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
 
@@ -432,26 +440,26 @@ async fn test_drop_table_success() {
     let handler = handler(false);
 
     // Create a temporary table
-    let create = QueryRequest {
-        query: "CREATE TABLE drop_test_simple (id INT PRIMARY KEY)".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(create).await.unwrap();
+    handler
+        .write_query(
+            "CREATE TABLE drop_test_simple (id INT PRIMARY KEY)".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
     // Drop it
-    let drop_request = DropTableRequest {
-        database: Some("app".into()),
-        table: "drop_test_simple".into(),
-    };
-    let response = handler.drop_table(drop_request).await.unwrap();
+    let response = handler
+        .drop_table(Some("app".into()), "drop_test_simple".into())
+        .await
+        .unwrap();
     assert!(response.message.contains("dropped successfully"));
 
     // Verify it's gone
-    let tables_request = ListTablesRequest {
-        database: Some("app".into()),
-        ..Default::default()
-    };
-    let response = handler.list_tables(tables_request).await.unwrap();
+    let response = handler
+        .list_tables(Some("app".into()), None, None, false)
+        .await
+        .unwrap();
     let ListEntries::Brief(tables) = response.tables else {
         panic!("expected brief-mode tables");
     };
@@ -466,62 +474,48 @@ async fn test_drop_table_fk_error() {
     let handler = handler(false);
 
     // Create parent and child tables with FK
-    let create_parent = QueryRequest {
-        query: "CREATE TABLE drop_test_parent (id INT PRIMARY KEY) ENGINE=InnoDB".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(create_parent).await.unwrap();
+    handler
+        .write_query(
+            "CREATE TABLE drop_test_parent (id INT PRIMARY KEY) ENGINE=InnoDB".into(),
+            Some("app".into()),
+        )
+        .await
+        .unwrap();
 
-    let create_child = QueryRequest {
-        query: "CREATE TABLE drop_test_child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES drop_test_parent(id)) ENGINE=InnoDB".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(create_child).await.unwrap();
+    handler.write_query("CREATE TABLE drop_test_child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES drop_test_parent(id)) ENGINE=InnoDB".into(), Some("app".into())).await.unwrap();
 
     // Attempt to drop parent — should fail due to FK
-    let drop_request = DropTableRequest {
-        database: Some("app".into()),
-        table: "drop_test_parent".into(),
-    };
-    let response = handler.drop_table(drop_request).await;
+    let response = handler.drop_table(Some("app".into()), "drop_test_parent".into()).await;
     assert!(response.is_err(), "Expected FK constraint error");
 
     // Clean up
-    let cleanup_child = QueryRequest {
-        query: "DROP TABLE drop_test_child".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(cleanup_child).await.unwrap();
+    handler
+        .write_query("DROP TABLE drop_test_child".into(), Some("app".into()))
+        .await
+        .unwrap();
 
-    let cleanup_parent = QueryRequest {
-        query: "DROP TABLE drop_test_parent".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(cleanup_parent).await.unwrap();
+    handler
+        .write_query("DROP TABLE drop_test_parent".into(), Some("app".into()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn test_drop_table_invalid_identifier() {
     let handler = handler(false);
-    let drop_request = DropTableRequest {
-        database: Some("app".into()),
-        table: String::new(),
-    };
 
-    let response = handler.drop_table(drop_request).await;
+    let response = handler.drop_table(Some("app".into()), String::new()).await;
     assert!(response.is_err(), "Expected error for empty table name");
 }
 
 #[tokio::test]
 async fn test_explain_query_select() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "SELECT * FROM users".into(),
-        analyze: false,
-    };
 
-    let response = handler.explain_query(request).await.unwrap();
+    let response = handler
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), false)
+        .await
+        .unwrap();
     let plan = &response.rows;
     assert!(!plan.is_empty(), "Expected non-empty execution plan");
 }
@@ -529,13 +523,14 @@ async fn test_explain_query_select() {
 #[tokio::test]
 async fn test_explain_query_analyze_write_blocked_read_only() {
     let handler = handler(true);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
-        analyze: true,
-    };
 
-    let response = handler.explain_query(request).await;
+    let response = handler
+        .explain_query(
+            Some("app".into()),
+            "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+            true,
+        )
+        .await;
     assert!(
         response.is_err(),
         "Expected error for EXPLAIN ANALYZE on write statement in read-only mode"
@@ -545,14 +540,13 @@ async fn test_explain_query_analyze_write_blocked_read_only() {
 #[tokio::test]
 async fn test_list_tables_nonexistent_database_returns_empty() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: Some("nonexistent_db_xyz".into()),
-        ..Default::default()
-    };
 
     // MySQL queries information_schema.TABLES — a nonexistent schema returns
     // zero rows rather than an error.
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler
+        .list_tables(Some("nonexistent_db_xyz".into()), None, None, false)
+        .await
+        .unwrap();
     assert!(
         response.tables.is_empty(),
         "Nonexistent database should return empty table list, got: {:?}",
@@ -563,13 +557,9 @@ async fn test_list_tables_nonexistent_database_returns_empty() {
 #[tokio::test]
 async fn test_list_tables_empty_database_falls_back_to_default() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: Some(String::new()),
-        ..Default::default()
-    };
 
     let response = handler
-        .list_tables(request)
+        .list_tables(Some(String::new()), None, None, false)
         .await
         .expect("empty db should default to --db-name");
     let tables = response.tables.as_brief().expect("brief-mode tables");
@@ -582,13 +572,9 @@ async fn test_list_tables_empty_database_falls_back_to_default() {
 #[tokio::test]
 async fn test_list_tables_omitted_database_falls_back_to_default() {
     let handler = handler(false);
-    let request = ListTablesRequest {
-        database: None,
-        ..Default::default()
-    };
 
     let response = handler
-        .list_tables(request)
+        .list_tables(None, None, None, false)
         .await
         .expect("omitted db should default to --db-name");
     let tables = response.tables.as_brief().expect("brief-mode tables");
@@ -625,15 +611,13 @@ async fn test_create_database_invalid_identifier() {
 #[tokio::test]
 async fn test_explain_query_analyze() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "SELECT * FROM users".into(),
-        analyze: true,
-    };
 
     // MariaDB does not support EXPLAIN ANALYZE, so this may fail on MariaDB.
     // We accept either a successful plan or a query error.
-    match handler.explain_query(request).await {
+    match handler
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true)
+        .await
+    {
         Ok(response) => {
             let plan = &response.rows;
             assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
@@ -651,13 +635,15 @@ async fn test_explain_query_analyze() {
 #[tokio::test]
 async fn test_explain_query_plain_write_allowed_in_read_only() {
     let handler = handler(true);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
-        analyze: false,
-    };
 
-    let response = handler.explain_query(request).await.unwrap();
+    let response = handler
+        .explain_query(
+            Some("app".into()),
+            "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+            false,
+        )
+        .await
+        .unwrap();
     let plan = &response.rows;
     assert!(
         !plan.is_empty(),
@@ -668,91 +654,71 @@ async fn test_explain_query_plain_write_allowed_in_read_only() {
 #[tokio::test]
 async fn test_explain_query_invalid_query() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "NOT VALID SQL AT ALL".into(),
-        analyze: false,
-    };
 
-    let response = handler.explain_query(request).await;
+    let response = handler
+        .explain_query(Some("app".into()), "NOT VALID SQL AT ALL".into(), false)
+        .await;
     assert!(response.is_err(), "Expected error for invalid SQL");
 }
 
 #[tokio::test]
 async fn test_read_query_empty_query() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: String::new(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read_query(String::new(), Some("app".into()), None).await;
     assert!(response.is_err(), "Expected error for empty query");
 }
 
 #[tokio::test]
 async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "   \t\n  ".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler.read_query("   \t\n  ".into(), Some("app".into()), None).await;
     assert!(response.is_err(), "Expected error for whitespace-only query");
 }
 
 #[tokio::test]
 async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT 1; DROP TABLE users".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query("SELECT 1; DROP TABLE users".into(), Some("app".into()), None)
+        .await;
     assert!(response.is_err(), "Expected error for multi-statement query");
 }
 
 #[tokio::test]
 async fn test_read_query_load_file_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT LOAD_FILE('/etc/passwd')".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query("SELECT LOAD_FILE('/etc/passwd')".into(), Some("app".into()), None)
+        .await;
     assert!(response.is_err(), "Expected error for LOAD_FILE");
 }
 
 #[tokio::test]
 async fn test_read_query_into_outfile_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query(
+            "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await;
     assert!(response.is_err(), "Expected error for INTO OUTFILE");
 }
 
 #[tokio::test]
 async fn test_read_query_show_tables() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SHOW TABLES".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("SHOW TABLES".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "SHOW TABLES should return results");
 }
@@ -760,13 +726,11 @@ async fn test_read_query_show_tables() {
 #[tokio::test]
 async fn test_read_query_describe_table() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "DESCRIBE users".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "DESCRIBE should return column info");
 }
@@ -774,12 +738,10 @@ async fn test_read_query_describe_table() {
 #[tokio::test]
 async fn test_drop_table_nonexistent() {
     let handler = handler(false);
-    let drop_request = DropTableRequest {
-        database: Some("app".into()),
-        table: "nonexistent_table_xyz".into(),
-    };
 
-    let response = handler.drop_table(drop_request).await;
+    let response = handler
+        .drop_table(Some("app".into()), "nonexistent_table_xyz".into())
+        .await;
     assert!(response.is_err(), "Expected error for nonexistent table");
 }
 
@@ -788,18 +750,19 @@ async fn test_drop_table_cross_database() {
     let handler = handler(false);
 
     // Create a table in the analytics database
-    let create = QueryRequest {
-        query: "CREATE TABLE drop_cross_test (id INT PRIMARY KEY)".into(),
-        database: Some("analytics".into()),
-    };
-    handler.write_query(create).await.unwrap();
+    handler
+        .write_query(
+            "CREATE TABLE drop_cross_test (id INT PRIMARY KEY)".into(),
+            Some("analytics".into()),
+        )
+        .await
+        .unwrap();
 
     // Drop it from the analytics database
-    let drop_request = DropTableRequest {
-        database: Some("analytics".into()),
-        table: "drop_cross_test".into(),
-    };
-    let response = handler.drop_table(drop_request).await.unwrap();
+    let response = handler
+        .drop_table(Some("analytics".into()), "drop_cross_test".into())
+        .await
+        .unwrap();
     assert!(response.message.contains("dropped successfully"));
 }
 
@@ -807,39 +770,47 @@ async fn test_drop_table_cross_database() {
 async fn test_write_query_cross_database() {
     let handler = handler(false);
 
-    let insert = QueryRequest {
-        query: "INSERT INTO events (name, payload) VALUES ('cross_test', '{\"test\":true}')".into(),
-        database: Some("analytics".into()),
-    };
-    handler.write_query(insert).await.unwrap();
+    handler
+        .write_query(
+            "INSERT INTO events (name, payload) VALUES ('cross_test', '{\"test\":true}')".into(),
+            Some("analytics".into()),
+        )
+        .await
+        .unwrap();
 
-    let select = ReadQueryRequest {
-        query: "SELECT name FROM events WHERE name = 'cross_test'".into(),
-        database: Some("analytics".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT name FROM events WHERE name = 'cross_test'".into(),
+            Some("analytics".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let arr = &rows.rows;
     assert!(!arr.is_empty(), "Cross-database write should persist");
 
     // Clean up
-    let delete = QueryRequest {
-        query: "DELETE FROM events WHERE name = 'cross_test'".into(),
-        database: Some("analytics".into()),
-    };
-    handler.write_query(delete).await.unwrap();
+    handler
+        .write_query(
+            "DELETE FROM events WHERE name = 'cross_test'".into(),
+            Some("analytics".into()),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn test_read_query_empty_result_set() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(rows.is_empty(), "Expected empty result set");
 }
@@ -848,13 +819,15 @@ async fn test_read_query_empty_result_set() {
 async fn test_read_query_null_values() {
     let handler = handler(false);
     // posts.body can be NULL, and published defaults to 0
-    let request = ReadQueryRequest {
-        query: "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     // body should be present (even if not null in seed data, the column exists)
@@ -864,13 +837,11 @@ async fn test_read_query_null_values() {
 #[tokio::test]
 async fn test_read_query_aggregate() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT COUNT(*) AS total FROM users".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("SELECT COUNT(*) AS total FROM users".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["total"], 3);
@@ -879,13 +850,15 @@ async fn test_read_query_aggregate() {
 #[tokio::test]
 async fn test_read_query_group_by() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(rows.len() >= 2, "Expected at least 2 groups");
 }
@@ -893,14 +866,12 @@ async fn test_read_query_group_by() {
 #[tokio::test]
 async fn test_read_query_use_statement() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "USE app".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
     // USE passes read_only validation and executes without returning rows
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("USE app".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(rows.is_empty(), "USE returns no rows");
 }
@@ -908,13 +879,11 @@ async fn test_read_query_use_statement() {
 #[tokio::test]
 async fn test_read_query_show_databases() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SHOW DATABASES".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query("SHOW DATABASES".into(), Some("app".into()), None)
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "SHOW DATABASES should return results");
 }
@@ -922,13 +891,11 @@ async fn test_read_query_show_databases() {
 #[tokio::test]
 async fn test_explain_query_cross_database() {
     let handler = handler(false);
-    let request = ExplainQueryRequest {
-        database: Some("analytics".into()),
-        query: "SELECT * FROM events".into(),
-        analyze: false,
-    };
 
-    let response = handler.explain_query(request).await.unwrap();
+    let response = handler
+        .explain_query(Some("analytics".into()), "SELECT * FROM events".into(), false)
+        .await
+        .unwrap();
     let plan = &response.rows;
     assert!(!plan.is_empty(), "EXPLAIN should work cross-database");
 }
@@ -936,13 +903,15 @@ async fn test_explain_query_cross_database() {
 #[tokio::test]
 async fn test_read_query_with_comments() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Comment-prefixed SELECT should work");
 }
@@ -950,13 +919,15 @@ async fn test_read_query_with_comments() {
 #[tokio::test]
 async fn test_read_query_subquery() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert!(!rows.is_empty(), "Subquery should return results");
 }
@@ -964,13 +935,15 @@ async fn test_read_query_subquery() {
 #[tokio::test]
 async fn test_read_query_with_join() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 5, "Should return all 5 posts with user names");
     assert!(rows[0].get("title").is_some());
@@ -980,14 +953,12 @@ async fn test_read_query_with_join() {
 #[tokio::test]
 async fn test_explain_query_analyze_select_allowed_in_read_only() {
     let handler = handler(true);
-    let request = ExplainQueryRequest {
-        database: Some("app".into()),
-        query: "SELECT * FROM users".into(),
-        analyze: true,
-    };
 
     // MariaDB doesn't support EXPLAIN ANALYZE, so tolerate both outcomes
-    match handler.explain_query(request).await {
+    match handler
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true)
+        .await
+    {
         Ok(response) => {
             let plan = &response.rows;
             assert!(
@@ -1009,25 +980,25 @@ async fn test_explain_query_analyze_select_allowed_in_read_only() {
 #[tokio::test]
 async fn test_write_query_invalid_sql() {
     let handler = handler(false);
-    let request = QueryRequest {
-        query: "NOT VALID SQL AT ALL".into(),
-        database: Some("app".into()),
-    };
 
-    let response = handler.write_query(request).await;
+    let response = handler
+        .write_query("NOT VALID SQL AT ALL".into(), Some("app".into()))
+        .await;
     assert!(response.is_err(), "Expected error for invalid SQL in write_query");
 }
 
 #[tokio::test]
 async fn test_read_query_with_limit() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "SELECT * FROM users ORDER BY id LIMIT 2".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 2, "LIMIT 2 should return exactly 2 rows");
 }
@@ -1036,18 +1007,16 @@ async fn test_read_query_with_limit() {
 async fn test_drop_table_empty_database_falls_back_to_default() {
     let handler = handler(false);
 
-    let create = QueryRequest {
-        query: "CREATE TABLE drop_default_my (id INT PRIMARY KEY)".into(),
-        database: Some("app".into()),
-    };
-    handler.write_query(create).await.expect("seed table");
+    handler
+        .write_query(
+            "CREATE TABLE drop_default_my (id INT PRIMARY KEY)".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("seed table");
 
-    let drop_request = DropTableRequest {
-        database: Some(String::new()),
-        table: "drop_default_my".into(),
-    };
     let response = handler
-        .drop_table(drop_request)
+        .drop_table(Some(String::new()), "drop_default_my".into())
         .await
         .expect("empty db should default to --db-name");
     assert!(response.message.contains("dropped successfully"));
@@ -1056,13 +1025,15 @@ async fn test_drop_table_empty_database_falls_back_to_default() {
 #[tokio::test]
 async fn test_read_query_with_line_comment() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await.unwrap();
+    let response = handler
+        .read_query(
+            "-- get users\nSELECT * FROM users ORDER BY id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let rows = &response.rows;
     assert_eq!(rows.len(), 3, "Line-comment prefixed SELECT should work");
 }
@@ -1070,13 +1041,14 @@ async fn test_read_query_with_line_comment() {
 #[tokio::test]
 async fn test_read_query_into_dumpfile_blocked() {
     let handler = handler(false);
-    let request = ReadQueryRequest {
-        query: "SELECT * FROM users INTO DUMPFILE '/tmp/out'".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
 
-    let response = handler.read_query(request).await;
+    let response = handler
+        .read_query(
+            "SELECT * FROM users INTO DUMPFILE '/tmp/out'".into(),
+            Some("app".into()),
+            None,
+        )
+        .await;
     assert!(response.is_err(), "Expected error for INTO DUMPFILE");
 }
 
@@ -1103,12 +1075,8 @@ async fn test_drop_database_blocked_in_read_only() {
 #[tokio::test]
 async fn test_drop_table_blocked_in_read_only() {
     let handler = handler(true);
-    let drop_request = DropTableRequest {
-        database: Some("app".into()),
-        table: "users".into(),
-    };
 
-    let response = handler.drop_table(drop_request).await;
+    let response = handler.drop_table(Some("app".into()), "users".into()).await;
     assert!(response.is_err(), "drop_table should be blocked in read-only mode");
 }
 
@@ -1144,12 +1112,9 @@ async fn test_timeout_on_list_tables() {
         pii: PiiConfig::default(),
     });
 
-    let request = ReadQueryRequest {
-        query: "SELECT SLEEP(60)".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let result = handler.read_query(request).await;
+    let result = handler
+        .read_query("SELECT SLEEP(60)".into(), Some("app".into()), None)
+        .await;
     assert!(result.is_err(), "slow query should time out");
 }
 
@@ -1159,12 +1124,10 @@ async fn collect_all_paged(handler: &MysqlHandler) -> Vec<String> {
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
-        let request = ListTablesRequest {
-            database: Some(MY_DB.into()),
-            cursor,
-            ..Default::default()
-        };
-        let response = handler.list_tables(request).await.expect("list page");
+        let response = handler
+            .list_tables(Some(MY_DB.into()), cursor.take(), None, false)
+            .await
+            .expect("list page");
         all.extend(response.tables.into_brief().expect("brief-mode page"));
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -1182,10 +1145,7 @@ async fn test_list_tables_pagination_traverses_pages() {
     let collected = collect_all_paged(&handler_paged).await;
 
     let single_page = handler_full
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("single page");
 
@@ -1202,10 +1162,7 @@ async fn test_list_tables_pagination_traverses_pages() {
 async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .unwrap();
     assert!(
@@ -1218,10 +1175,7 @@ async fn test_list_tables_pagination_small_table_set_no_next_cursor() {
 async fn test_list_tables_pagination_boundary_page_size_equals_total() {
     let handler_full = handler(true);
     let total = handler_full
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("discover total")
         .tables
@@ -1230,10 +1184,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
 
     let handler_boundary = handler_with_page_size(page_size);
     let response = handler_boundary
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .unwrap();
     assert_eq!(
@@ -1252,12 +1203,10 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
     use dbmcp_server::pagination::Cursor;
 
     let handler = handler(true);
-    let request = ListTablesRequest {
-        database: Some(MY_DB.into()),
-        cursor: Some(Cursor { offset: 10_000 }),
-        ..Default::default()
-    };
-    let response = handler.list_tables(request).await.unwrap();
+    let response = handler
+        .list_tables(Some(MY_DB.into()), Some(Cursor { offset: 10_000 }), None, false)
+        .await
+        .unwrap();
 
     assert!(
         response.tables.is_empty(),
@@ -1271,10 +1220,7 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
 async fn test_list_tables_respects_configured_page_size() {
     let handler = handler_with_page_size(2);
     let first = handler
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("first page");
     assert_eq!(first.tables.len(), 2, "configured page_size=2 must cap page 1");
@@ -1288,10 +1234,7 @@ async fn test_list_tables_respects_configured_page_size() {
 async fn test_list_tables_respects_configured_page_size_minimum() {
     let handler = handler_with_page_size(1);
     let first = handler
-        .list_tables(ListTablesRequest {
-            database: Some(MY_DB.into()),
-            ..Default::default()
-        })
+        .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("first page");
     assert_eq!(first.tables.len(), 1, "page_size=1 must return one table per page");
@@ -1410,12 +1353,10 @@ async fn collect_all_paged_read_query(handler: &MysqlHandler, query: &str) -> Ve
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
-        let request = ReadQueryRequest {
-            query: query.into(),
-            database: Some("app".into()),
-            cursor,
-        };
-        let response = handler.read_query(request).await.expect("read_query page");
+        let response = handler
+            .read_query(query.into(), Some("app".into()), cursor.take())
+            .await
+            .expect("read_query page");
         all.extend(response.rows);
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -1434,11 +1375,7 @@ async fn test_read_query_pagination_traverses_pages() {
     let collected = collect_all_paged_read_query(&handler_paged, query).await;
 
     let single = handler_full
-        .read_query(ReadQueryRequest {
-            query: query.into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query(query.into(), Some("app".into()), None)
         .await
         .expect("single page");
     assert_eq!(
@@ -1456,11 +1393,7 @@ async fn test_read_query_pagination_traverses_pages() {
 async fn test_read_query_pagination_small_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT id FROM users WHERE id = 1".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query("SELECT id FROM users WHERE id = 1".into(), Some("app".into()), None)
         .await
         .unwrap();
     assert!(
@@ -1474,11 +1407,7 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
 async fn test_read_query_pagination_empty_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT id FROM users WHERE id = -1".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query("SELECT id FROM users WHERE id = -1".into(), Some("app".into()), None)
         .await
         .unwrap();
     assert!(&response.rows.is_empty());
@@ -1489,11 +1418,11 @@ async fn test_read_query_pagination_empty_result_no_next_cursor() {
 async fn test_read_query_pagination_preserves_inner_limit() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query(
+            "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
+            Some("app".into()),
+            None,
+        )
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1511,11 +1440,11 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
     use dbmcp_server::pagination::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT id FROM users ORDER BY id".into(),
-            database: Some("app".into()),
-            cursor: Some(Cursor { offset: 10_000 }),
-        })
+        .read_query(
+            "SELECT id FROM users ORDER BY id".into(),
+            Some("app".into()),
+            Some(Cursor { offset: 10_000 }),
+        )
         .await
         .unwrap();
     assert!(&response.rows.is_empty());
@@ -1529,7 +1458,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
     let bad_cursors = ["!!!not-base64", "bm90LWpzb24", "eyJ4IjoxfQ", "eyJvZmZzZXQiOi0xfQ"];
 
     for bad in bad_cursors {
-        let err = serde_json::from_value::<ReadQueryRequest>(json!({
+        let err = serde_json::from_value::<dbmcp_server::types::UnpinnedReadQueryRequest>(json!({
             "query": "SELECT 1",
             "database": "app",
             "cursor": bad,
@@ -1551,20 +1480,12 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
-        .read_query(ReadQueryRequest {
-            query: "SHOW TABLES".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query("SHOW TABLES".into(), Some("app".into()), None)
         .await
         .expect("SHOW TABLES without cursor should succeed");
 
     let with_cursor = handler
-        .read_query(ReadQueryRequest {
-            query: "SHOW TABLES".into(),
-            database: Some("app".into()),
-            cursor: Some(Cursor { offset: 100 }),
-        })
+        .read_query("SHOW TABLES".into(), Some("app".into()), Some(Cursor { offset: 100 }))
         .await
         .expect("SHOW TABLES with cursor should succeed — cursor must be ignored");
 
@@ -1596,11 +1517,7 @@ async fn test_read_query_non_select_describe_users_single_page() {
     let handler = handler_with_page_size(2);
 
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "DESCRIBE users".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query("DESCRIBE users".into(), Some("app".into()), None)
         .await
         .expect("DESCRIBE users should succeed");
 
@@ -1623,11 +1540,11 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     let handler = handler(false);
 
     let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT `date`, `time`, `datetime`, `timestamp` FROM temporal WHERE id = 1".into(),
-            database: Some("app".into()),
-            cursor: None,
-        })
+        .read_query(
+            "SELECT `date`, `time`, `datetime`, `timestamp` FROM temporal WHERE id = 1".into(),
+            Some("app".into()),
+            None,
+        )
         .await
         .expect("temporal SELECT should succeed");
 
@@ -1642,13 +1559,11 @@ async fn test_read_query_returns_non_null_temporal_columns() {
 #[tokio::test]
 async fn test_list_views_returns_seeded_views() {
     let handler = handler(true);
-    let request = ListViewsRequest {
-        database: Some("app".into()),
-        cursor: None,
-        ..Default::default()
-    };
 
-    let response = handler.list_views(request).await.expect("list_views");
+    let response = handler
+        .list_views(Some("app".into()), None, None, false)
+        .await
+        .expect("list_views");
 
     let names = response.views.as_brief().expect("brief mode");
     assert!(
@@ -1665,11 +1580,7 @@ async fn test_list_views_returns_seeded_views() {
 async fn test_list_views_excludes_base_tables() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), None, None, false)
         .await
         .expect("list_views");
 
@@ -1688,11 +1599,7 @@ async fn test_list_views_excludes_base_tables() {
 async fn test_list_views_empty_for_view_less_database() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("analytics".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(Some("analytics".into()), None, None, false)
         .await
         .expect("list_views");
 
@@ -1707,11 +1614,7 @@ async fn test_list_views_empty_for_view_less_database() {
 async fn test_list_views_empty_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some(String::new()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(Some(String::new()), None, None, false)
         .await
         .expect("empty db should default to --db-name");
     assert!(
@@ -1725,11 +1628,7 @@ async fn test_list_views_empty_database_falls_back_to_default() {
 async fn test_list_views_omitted_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: None,
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(None, None, None, false)
         .await
         .expect("omitted db should default to --db-name");
     assert!(
@@ -1747,12 +1646,10 @@ async fn test_list_views_pagination_traverses_pages() {
     let mut all = Vec::new();
     let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
     loop {
-        let request = ListViewsRequest {
-            database: Some("app".into()),
-            cursor,
-            ..Default::default()
-        };
-        let response = handler_paged.list_views(request).await.expect("paged list_views");
+        let response = handler_paged
+            .list_views(Some("app".into()), cursor.take(), None, false)
+            .await
+            .expect("paged list_views");
         all.extend(response.views.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -1761,11 +1658,7 @@ async fn test_list_views_pagination_traverses_pages() {
     }
 
     let single = handler_full
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), cursor.take(), None, false)
         .await
         .expect("single-page list_views");
 
@@ -1777,11 +1670,7 @@ async fn test_list_views_pagination_traverses_pages() {
 async fn test_list_views_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), None, None, false)
         .await
         .expect("list_views in read-only mode");
 
@@ -1795,11 +1684,7 @@ async fn test_list_views_works_in_read_only_mode() {
 async fn test_list_triggers_returns_seeded_triggers() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, None, false)
         .await
         .expect("list_triggers");
 
@@ -1818,11 +1703,7 @@ async fn test_list_triggers_returns_seeded_triggers() {
 async fn test_list_triggers_empty_for_trigger_less_database() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("analytics".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_triggers(Some("analytics".into()), None, None, false)
         .await
         .expect("list_triggers");
 
@@ -1834,11 +1715,7 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
 async fn test_list_triggers_empty_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some(String::new()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_triggers(Some(String::new()), None, None, false)
         .await
         .expect("empty db should default to --db-name");
     assert!(
@@ -1852,11 +1729,7 @@ async fn test_list_triggers_empty_database_falls_back_to_default() {
 async fn test_list_triggers_omitted_database_falls_back_to_default() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: None,
-            cursor: None,
-            ..Default::default()
-        })
+        .list_triggers(None, None, None, false)
         .await
         .expect("omitted db should default to --db-name");
     assert!(
@@ -1870,11 +1743,7 @@ async fn test_list_triggers_omitted_database_falls_back_to_default() {
 async fn test_list_triggers_works_in_read_only_mode() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, None, false)
         .await
         .expect("list_triggers in read-only mode");
 
@@ -1888,11 +1757,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
 async fn test_list_triggers_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
         .await
         .expect("list_triggers");
 
@@ -1910,19 +1775,11 @@ async fn test_list_triggers_search_filter_returns_only_matches() {
 async fn test_list_triggers_search_is_case_insensitive() {
     let handler = handler(true);
     let upper = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("AUDIT".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("AUDIT".into()), false)
         .await
         .expect("upper");
     let lower = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
         .await
         .expect("lower");
     assert_eq!(upper.triggers.as_brief(), lower.triggers.as_brief());
@@ -1932,11 +1789,7 @@ async fn test_list_triggers_search_is_case_insensitive() {
 async fn test_list_triggers_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("nonexistent_trigger_xyz".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("nonexistent_trigger_xyz".into()), false)
         .await
         .expect("list_triggers");
 
@@ -1951,19 +1804,11 @@ async fn test_list_triggers_search_supports_wildcard_semantics() {
     // same match set.
     let handler = handler(true);
     let plain = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
         .await
         .expect("plain");
     let with_wildcard = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("%audit%".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("%audit%".into()), false)
         .await
         .expect("wildcard");
     assert_eq!(plain.triggers.as_brief(), with_wildcard.triggers.as_brief());
@@ -1974,11 +1819,7 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "\\", "`", "/* */"] {
         let response = handler
-            .list_triggers(ListTriggersRequest {
-                database: Some("app".into()),
-                search: Some(payload.into()),
-                ..Default::default()
-            })
+            .list_triggers(Some("app".into()), None, Some(payload.into()), false)
             .await
             .unwrap_or_else(|e| panic!("list_triggers failed for payload {payload:?}: {e:?}"));
 
@@ -1996,12 +1837,7 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_triggers(ListTriggersRequest {
-                database: Some("app".into()),
-                cursor,
-                search: Some("audit".into()),
-                ..Default::default()
-            })
+            .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), false)
             .await
             .expect("list_triggers paginated");
         let names = response.triggers.as_brief().expect("brief").to_vec();
@@ -2013,11 +1849,7 @@ async fn test_list_triggers_search_paginates_filtered_results() {
     }
 
     let single = handler(true)
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), false)
         .await
         .expect("single-page list_triggers");
     assert_eq!(
@@ -2031,26 +1863,15 @@ async fn test_list_triggers_search_paginates_filtered_results() {
 async fn test_list_triggers_search_empty_is_same_as_no_filter() {
     let handler = handler(true);
     let no_filter = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, None, false)
         .await
         .expect("no filter");
     let empty = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some(String::new()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some(String::new()), false)
         .await
         .expect("empty filter");
     let whitespace = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("   ".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("   ".into()), false)
         .await
         .expect("whitespace");
 
@@ -2067,10 +1888,7 @@ async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() 
     let handler = handler(true);
     for bound in ["shop;DROP", "shop'", "shop\"", "shop`"] {
         let result = handler
-            .list_triggers(ListTriggersRequest {
-                database: Some(bound.into()),
-                ..Default::default()
-            })
+            .list_triggers(Some(bound.into()), None, None, false)
             .await
             .unwrap_or_else(|e| panic!("expected bound-literal handling, got error: {e:?} for {bound:?}"));
         assert!(
@@ -2085,12 +1903,7 @@ async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() 
 async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("posts_audit_after_insert".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2147,12 +1960,7 @@ async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
 async fn test_list_triggers_detailed_definition_uses_canonical_definer_form() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("posts_audit_after_insert".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2197,12 +2005,7 @@ async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger
     // both engines accept it as a valid `CREATE TRIGGER` body.
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("posts_audit_after_insert".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
         .await
         .expect("list_triggers");
     let entries = response.triggers.as_detailed().expect("detailed mode");
@@ -2232,12 +2035,7 @@ async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger
 async fn test_list_triggers_detailed_per_event_returns_single_element_events_array() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("posts_audit_after".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("posts_audit_after".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2266,12 +2064,7 @@ async fn test_list_triggers_detailed_per_event_returns_single_element_events_arr
 async fn test_list_triggers_detailed_session_context_fields_are_populated() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2300,12 +2093,7 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
     // "trigger body contains literal newlines or quote characters".
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("users_audit_after_insert".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("users_audit_after_insert".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2335,10 +2123,7 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
 async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, None, false)
         .await
         .expect("list_triggers");
 
@@ -2355,12 +2140,7 @@ async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
 async fn test_list_triggers_detailed_search_narrows_payload() {
     let handler = handler(true);
     let response = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
         .await
         .expect("list_triggers");
 
@@ -2387,12 +2167,7 @@ async fn test_list_triggers_detailed_paginates() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_triggers(ListTriggersRequest {
-                database: Some("app".into()),
-                cursor,
-                search: Some("audit".into()),
-                detailed: true,
-            })
+            .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), true)
             .await
             .expect("list_triggers paginated");
         let entries = response.triggers.as_detailed().expect("detailed");
@@ -2405,12 +2180,7 @@ async fn test_list_triggers_detailed_paginates() {
     }
 
     let single = handler(true)
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("audit".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("audit".into()), true)
         .await
         .expect("single-page list_triggers");
     let single_keys: Vec<String> = single
@@ -2438,11 +2208,7 @@ async fn test_list_triggers_detailed_sort_is_deterministic() {
     let mut calls = Vec::new();
     for _ in 0..3 {
         let response = handler
-            .list_triggers(ListTriggersRequest {
-                database: Some("app".into()),
-                detailed: true,
-                ..Default::default()
-            })
+            .list_triggers(Some("app".into()), None, None, true)
             .await
             .expect("list_triggers");
         let keys: Vec<String> = response
@@ -2467,12 +2233,7 @@ async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
     // as part of Clarification Q1. Verify here so a future revert is caught.
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
-            database: Some("app".into()),
-            search: Some("posts".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_tables(Some("app".into()), None, Some("posts".into()), true)
         .await
         .expect("list_tables");
 
@@ -2501,11 +2262,7 @@ async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
 async fn test_list_functions_returns_seeded_functions() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, None, false)
         .await
         .expect("list_functions");
 
@@ -2524,11 +2281,7 @@ async fn test_list_functions_returns_seeded_functions() {
 async fn test_list_functions_excludes_procedures() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, None, false)
         .await
         .expect("list_functions");
 
@@ -2545,10 +2298,7 @@ async fn test_list_functions_excludes_procedures() {
 async fn test_list_procedures_returns_seeded_procedures() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_procedures(Some("app".into()), None, None, false)
         .await
         .expect("list_procedures");
 
@@ -2567,10 +2317,7 @@ async fn test_list_procedures_returns_seeded_procedures() {
 async fn test_list_procedures_excludes_functions() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_procedures(Some("app".into()), None, None, false)
         .await
         .expect("list_procedures");
 
@@ -2587,11 +2334,7 @@ async fn test_list_procedures_excludes_functions() {
 async fn test_list_routines_empty_for_empty_database() {
     let handler = handler(true);
     let functions = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("analytics".into()),
-            cursor: None,
-            ..Default::default()
-        })
+        .list_functions(Some("analytics".into()), None, None, false)
         .await
         .expect("list_functions");
     assert!(
@@ -2601,10 +2344,7 @@ async fn test_list_routines_empty_for_empty_database() {
     );
 
     let procedures = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("analytics".into()),
-            ..Default::default()
-        })
+        .list_procedures(Some("analytics".into()), None, None, false)
         .await
         .expect("list_procedures");
     assert!(
@@ -2618,11 +2358,7 @@ async fn test_list_routines_empty_for_empty_database() {
 
 async fn brief_tables(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_tables(ListTablesRequest {
-            database: Some("app".into()),
-            search: search.map(str::to_owned),
-            ..Default::default()
-        })
+        .list_tables(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_tables");
     response.tables.into_brief().expect("brief mode")
@@ -2630,12 +2366,7 @@ async fn brief_tables(handler: &MysqlHandler, search: Option<&str>) -> Vec<Strin
 
 async fn detailed_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_tables(ListTablesRequest {
-            database: Some("app".into()),
-            search: Some(search.into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_tables(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_tables");
     response.tables.as_detailed().expect("detailed mode").clone()
@@ -2707,12 +2438,7 @@ async fn list_tables_brief_pagination_under_search() {
     let mut cursor = None;
     loop {
         let response = handler
-            .list_tables(ListTablesRequest {
-                database: Some("app".into()),
-                cursor,
-                search: Some("post".into()),
-                ..Default::default()
-            })
+            .list_tables(Some("app".into()), cursor.take(), Some("post".into()), false)
             .await
             .expect("paged brief search");
         let page = response.tables.into_brief().expect("brief mode");
@@ -2922,12 +2648,7 @@ async fn list_tables_detailed_search_preserves_filter_across_pages() {
     let mut cursor = None;
     loop {
         let response = handler
-            .list_tables(ListTablesRequest {
-                database: Some("app".into()),
-                cursor,
-                search: Some("post".into()),
-                detailed: true,
-            })
+            .list_tables(Some("app".into()), cursor.take(), Some("post".into()), true)
             .await
             .expect("paged detailed search");
         let page = response.tables.as_detailed().expect("detailed mode");
@@ -2955,11 +2676,7 @@ async fn list_tables_detailed_excludes_system_schemas_passes_through_validation(
     // whatever metadata that schema's TABLE rows expose. Regression pin.
     let handler = handler(true);
     let response = handler
-        .list_tables(ListTablesRequest {
-            database: Some("information_schema".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_tables(Some("information_schema".into()), None, None, true)
         .await
         .expect("information_schema is identifier-valid");
     let entries = response.tables.as_detailed().expect("detailed mode");
@@ -3012,11 +2729,7 @@ async fn list_tables_detailed_empty_page_is_empty_object() {
 async fn test_list_functions_search_filter_returns_only_matches() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), false)
         .await
         .expect("list_functions");
 
@@ -3033,19 +2746,11 @@ async fn test_list_functions_search_filter_returns_only_matches() {
 async fn test_list_functions_search_is_case_insensitive() {
     let handler = handler(true);
     let upper = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("ORDER".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("ORDER".into()), false)
         .await
         .expect("upper");
     let lower = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), false)
         .await
         .expect("lower");
     assert_eq!(upper.functions.as_brief(), lower.functions.as_brief());
@@ -3055,11 +2760,7 @@ async fn test_list_functions_search_is_case_insensitive() {
 async fn test_list_functions_search_no_match_returns_empty() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("nonexistent_function_xyz".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("nonexistent_function_xyz".into()), false)
         .await
         .expect("list_functions");
 
@@ -3071,19 +2772,11 @@ async fn test_list_functions_search_no_match_returns_empty() {
 async fn test_list_functions_search_supports_wildcard_semantics() {
     let handler = handler(true);
     let plain = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), false)
         .await
         .expect("plain");
     let with_wildcard = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("%order%".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("%order%".into()), false)
         .await
         .expect("wildcard");
     assert_eq!(plain.functions.as_brief(), with_wildcard.functions.as_brief());
@@ -3102,11 +2795,7 @@ async fn test_list_functions_search_sql_meta_payloads_are_safe() {
         "'; DROP FUNCTION calc_order_total; --",
     ] {
         let response = handler
-            .list_functions(ListFunctionsRequest {
-                database: Some("app".into()),
-                search: Some(payload.into()),
-                ..Default::default()
-            })
+            .list_functions(Some("app".into()), None, Some(payload.into()), false)
             .await
             .unwrap_or_else(|e| panic!("list_functions failed for payload {payload:?}: {e:?}"));
 
@@ -3124,12 +2813,7 @@ async fn test_list_functions_search_paginates_filtered_results() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_functions(ListFunctionsRequest {
-                database: Some("app".into()),
-                cursor,
-                search: Some("order".into()),
-                ..Default::default()
-            })
+            .list_functions(Some("app".into()), cursor.take(), Some("order".into()), false)
             .await
             .expect("list_functions paginated");
         let names = response.functions.as_brief().expect("brief").to_vec();
@@ -3141,11 +2825,7 @@ async fn test_list_functions_search_paginates_filtered_results() {
     }
 
     let single = handler(true)
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), false)
         .await
         .expect("single-page list_functions");
     assert_eq!(
@@ -3159,10 +2839,7 @@ async fn test_list_functions_search_paginates_filtered_results() {
 async fn test_list_functions_brief_mode_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, None, false)
         .await
         .expect("list_functions");
 
@@ -3184,12 +2861,7 @@ async fn test_list_functions_brief_mode_wire_shape_unchanged() {
 async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("calc_order_total".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
         .await
         .expect("list_functions");
 
@@ -3246,12 +2918,7 @@ async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
 async fn test_list_functions_detailed_definition_uses_canonical_definer_form() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("calc_order_total".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
         .await
         .expect("list_functions");
 
@@ -3299,12 +2966,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // recalc_order_total_v2 — NOT DETERMINISTIC + MODIFIES SQL DATA + DEFINER security.
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("recalc_order_total_v2".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("recalc_order_total_v2".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3323,12 +2985,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // current_pricing_version — NO_SQL.
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("current_pricing_version".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("current_pricing_version".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3344,12 +3001,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
 
     // double_it — CONTAINS_SQL (default for declarations without an access clause).
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("double_it".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("double_it".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3368,12 +3020,7 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
 
     // Multi-parameter function — `arguments` follows ORDINAL_POSITION ASC.
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("calc_order_subtotal".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("calc_order_subtotal".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3408,12 +3055,7 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
 
     // Zero-parameter function — `arguments` is empty string, not null.
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("current_pricing_version".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("current_pricing_version".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3437,12 +3079,7 @@ async fn test_list_functions_detailed_description_null_coercion() {
 
     // Function with no COMMENT — description must be JSON null (NOT empty string).
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("double_it".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("double_it".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3460,12 +3097,7 @@ async fn test_list_functions_detailed_description_null_coercion() {
 
     // Function with a COMMENT — description carries the text.
     let resp = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("calc_order_total".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("calc_order_total".into()), true)
         .await
         .expect("list_functions");
     let entry = resp
@@ -3485,12 +3117,7 @@ async fn test_list_functions_detailed_description_null_coercion() {
 async fn test_list_functions_detailed_session_context_fields_are_populated() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), true)
         .await
         .expect("list_functions");
 
@@ -3516,12 +3143,7 @@ async fn test_list_functions_detailed_session_context_fields_are_populated() {
 async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("format_audit_note".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("format_audit_note".into()), true)
         .await
         .expect("list_functions");
 
@@ -3546,12 +3168,7 @@ async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
 async fn test_list_functions_detailed_search_narrows_payload() {
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            search: Some("order".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, Some("order".into()), true)
         .await
         .expect("list_functions");
 
@@ -3585,12 +3202,7 @@ async fn test_list_functions_detailed_paginates() {
     let mut cursor = None;
     loop {
         let response = paged
-            .list_functions(ListFunctionsRequest {
-                database: Some("app".into()),
-                cursor,
-                detailed: true,
-                ..Default::default()
-            })
+            .list_functions(Some("app".into()), cursor.take(), None, true)
             .await
             .expect("list_functions paginated");
         let entries = response.functions.as_detailed().expect("detailed");
@@ -3603,11 +3215,7 @@ async fn test_list_functions_detailed_paginates() {
     }
 
     let single = handler(true)
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, None, true)
         .await
         .expect("single-page list_functions");
     let single_keys: Vec<String> = single
@@ -3626,10 +3234,7 @@ async fn test_list_functions_excludes_loadable_udfs_and_procedures() {
     // through listFunctions — ROUTINE_TYPE='FUNCTION' filter enforces this.
     let handler = handler(true);
     let response = handler
-        .list_functions(ListFunctionsRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_functions(Some("app".into()), None, None, false)
         .await
         .expect("list_functions");
 
@@ -3651,12 +3256,7 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
     let handler = handler(true);
 
     let triggers = handler
-        .list_triggers(ListTriggersRequest {
-            database: Some("app".into()),
-            search: Some("posts_audit_after_insert".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
         .await
         .expect("list_triggers detailed");
     let trigger_def = triggers
@@ -3677,12 +3277,7 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
     );
 
     let tables = handler
-        .list_tables(ListTablesRequest {
-            database: Some("app".into()),
-            search: Some("posts".into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_tables(Some("app".into()), None, Some("posts".into()), true)
         .await
         .expect("list_tables detailed");
     let posts = tables
@@ -3711,11 +3306,7 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
 
 async fn brief_procedures(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("app".into()),
-            search: search.map(str::to_owned),
-            ..Default::default()
-        })
+        .list_procedures(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_procedures");
     response.procedures.into_brief().expect("brief mode")
@@ -3723,12 +3314,7 @@ async fn brief_procedures(handler: &MysqlHandler, search: Option<&str>) -> Vec<S
 
 async fn detailed_procedure_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("app".into()),
-            search: Some(search.into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_procedures(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_procedures");
     response.procedures.as_detailed().expect("detailed mode").clone()
@@ -3784,11 +3370,7 @@ async fn test_list_procedures_search_resists_sql_meta_chars() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "`", "\\", "archive'; DROP PROCEDURE bad; --"] {
         let result = handler
-            .list_procedures(ListProceduresRequest {
-                database: Some("app".into()),
-                search: Some(payload.into()),
-                ..Default::default()
-            })
+            .list_procedures(Some("app".into()), None, Some(payload.into()), false)
             .await;
         assert!(
             result.is_ok(),
@@ -3802,10 +3384,7 @@ async fn test_list_procedures_search_resists_sql_meta_chars() {
 async fn test_list_procedures_brief_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_procedures(ListProceduresRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_procedures(Some("app".into()), None, None, false)
         .await
         .expect("list_procedures");
 
@@ -4098,11 +3677,7 @@ async fn test_list_procedures_detailed_definition_uses_canonical_definer_form() 
 
 async fn brief_views(handler: &MysqlHandler, search: Option<&str>) -> Vec<String> {
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            search: search.map(str::to_owned),
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_views");
     response.views.into_brief().expect("brief mode")
@@ -4110,12 +3685,7 @@ async fn brief_views(handler: &MysqlHandler, search: Option<&str>) -> Vec<String
 
 async fn detailed_view_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            search: Some(search.into()),
-            detailed: true,
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_views");
     response.views.as_detailed().expect("detailed mode").clone()
@@ -4180,10 +3750,7 @@ async fn test_list_views_search_no_match_returns_empty() {
 async fn test_list_views_brief_wire_shape_unchanged() {
     let handler = handler(true);
     let response = handler
-        .list_views(ListViewsRequest {
-            database: Some("app".into()),
-            ..Default::default()
-        })
+        .list_views(Some("app".into()), None, None, false)
         .await
         .expect("list_views");
 
@@ -4205,11 +3772,7 @@ async fn test_list_views_search_resists_sql_meta_chars() {
     let handler = handler(true);
     for payload in ["'", ";", "--", "`", "\\", "active'; DROP VIEW bad; --"] {
         let result = handler
-            .list_views(ListViewsRequest {
-                database: Some("app".into()),
-                search: Some(payload.into()),
-                ..Default::default()
-            })
+            .list_views(Some("app".into()), None, Some(payload.into()), false)
             .await;
         assert!(
             result.is_ok(),
@@ -4450,12 +4013,10 @@ fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
 #[tokio::test]
 async fn read_query_redacts_email_when_enabled() {
     let handler = handler_with_redaction(true);
-    let select = ReadQueryRequest {
-        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query("SELECT 'ping me at jane.doe@example.com' AS msg".into(), None, None)
+        .await
+        .unwrap();
     assert_eq!(rows.rows.len(), 1);
     assert_eq!(rows.rows[0]["msg"], "ping me at <EMAIL_ADDRESS>");
 }
@@ -4463,48 +4024,43 @@ async fn read_query_redacts_email_when_enabled() {
 #[tokio::test]
 async fn read_query_unchanged_when_disabled() {
     let handler = handler_with_redaction(false);
-    let select = ReadQueryRequest {
-        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query("SELECT 'ping me at jane.doe@example.com' AS msg".into(), None, None)
+        .await
+        .unwrap();
     assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
 }
 
 #[tokio::test]
 async fn write_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
-    let insert = QueryRequest {
-        query: "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
-        database: None,
-    };
-    handler.write_query(insert).await.unwrap();
+    handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('PIIWrite', 'piiwrite@example.com')".into(),
+            None,
+        )
+        .await
+        .unwrap();
 
-    let select = ReadQueryRequest {
-        query: "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query("SELECT email FROM users WHERE name = 'PIIWrite'".into(), None, None)
+        .await
+        .unwrap();
     assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
 
-    let cleanup = QueryRequest {
-        query: "DELETE FROM users WHERE name = 'PIIWrite'".into(),
-        database: None,
-    };
-    handler_with_redaction(false).write_query(cleanup).await.unwrap();
+    handler_with_redaction(false)
+        .write_query("DELETE FROM users WHERE name = 'PIIWrite'".into(), None)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn explain_query_redacts_when_enabled() {
     let handler = handler_with_redaction(true);
-    let explain = ExplainQueryRequest {
-        database: None,
-        query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
-        analyze: false,
-    };
-    let rows = handler.explain_query(explain).await.unwrap();
+    let rows = handler
+        .explain_query(None, "SELECT 'ping me at jane.doe@example.com' AS msg".into(), false)
+        .await
+        .unwrap();
     let serialized = serde_json::to_string(&rows.rows).unwrap();
     assert!(
         !serialized.contains("jane.doe@example.com"),
@@ -4515,12 +4071,10 @@ async fn explain_query_redacts_when_enabled() {
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(PiiOperator::Mask);
-    let select = ReadQueryRequest {
-        query: "SELECT 'jane.doe@example.com' AS msg".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None)
+        .await
+        .unwrap();
     let out = rows.rows[0]["msg"].as_str().unwrap();
     assert_eq!(out.len(), "jane.doe@example.com".len(), "mask preserves length");
     assert!(out.chars().all(|c| c == '*'), "mask must use '*': {out}");
@@ -4529,24 +4083,24 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
     let handler = handler_with_operator(PiiOperator::Redact);
-    let select = ReadQueryRequest {
-        query: "SELECT 'jane.doe@example.com' AS msg".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None)
+        .await
+        .unwrap();
     assert_eq!(rows.rows[0]["msg"], "");
 }
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_stable_digest() {
     let handler = handler_with_operator(PiiOperator::Hash);
-    let select = ReadQueryRequest {
-        query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
-        database: None,
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     let a = rows.rows[0]["a"].as_str().unwrap();
     let b = rows.rows[0]["b"].as_str().unwrap();
     assert_eq!(a, b, "same input must hash to same digest");
@@ -4561,12 +4115,14 @@ async fn read_query_hash_operator_emits_stable_digest() {
 #[tokio::test]
 async fn test_read_numeric_columns_round_trip() {
     let handler = handler(false);
-    let select = ReadQueryRequest {
-        query: "SELECT label, d_small, d_int, d_overflow, f, dbl FROM numeric_samples ORDER BY id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT label, d_small, d_int, d_overflow, f, dbl FROM numeric_samples ORDER BY id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let by_label: std::collections::HashMap<&str, &Value> = rows
         .rows
         .iter()
@@ -4617,14 +4173,15 @@ async fn test_read_numeric_columns_round_trip() {
 #[tokio::test]
 async fn test_read_decimal_aggregation_exact_precision() {
     let handler = handler(false);
-    let select = ReadQueryRequest {
-        query:
+    let rows = handler
+        .read_query(
             "SELECT SUM(d_small) AS total FROM numeric_samples WHERE label IN ('basic', 'trailing_zero', 'overflow')"
                 .into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     // 123.45 + 1.20 + 0.01 = 124.66 — fits in f64 → JSON number.
     assert_eq!(rows.rows[0]["total"], serde_json::json!(124.66));
 }
@@ -4635,14 +4192,16 @@ async fn test_read_decimal_aggregation_exact_precision() {
 #[tokio::test]
 async fn test_read_decimal_avg_preserves_precision() {
     let handler = handler(false);
-    let select = ReadQueryRequest {
-        query: "SELECT AVG(d_int) AS avg_int FROM numeric_samples \
+    let rows = handler
+        .read_query(
+            "SELECT AVG(d_int) AS avg_int FROM numeric_samples \
                 WHERE label IN ('basic', 'trailing_zero')"
-            .into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+                .into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     // (42 + 10) / 2 = 26 — integer-valued → integer fast-path.
     assert_eq!(rows.rows[0]["avg_int"], serde_json::json!(26));
 }
@@ -4653,15 +4212,17 @@ async fn test_read_decimal_avg_preserves_precision() {
 #[tokio::test]
 async fn test_read_float_invalid_math_emits_null() {
     let handler = handler(false);
-    let select = ReadQueryRequest {
-        query: "SELECT 0.0 / 0.0 AS div_zero, \
+    let rows = handler
+        .read_query(
+            "SELECT 0.0 / 0.0 AS div_zero, \
                        LOG(-1) AS log_neg, \
                        SQRT(-1) AS sqrt_neg"
-            .into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+                .into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     assert_eq!(rows.rows[0]["div_zero"], Value::Null);
     assert_eq!(rows.rows[0]["log_neg"], Value::Null);
     assert_eq!(rows.rows[0]["sqrt_neg"], Value::Null);
@@ -4674,12 +4235,14 @@ async fn test_read_float_invalid_math_emits_null() {
 #[tokio::test]
 async fn test_read_float_column_full_range() {
     let handler = handler(false);
-    let select = ReadQueryRequest {
-        query: "SELECT label, f FROM numeric_samples ORDER BY id".into(),
-        database: Some("app".into()),
-        cursor: None,
-    };
-    let rows = handler.read_query(select).await.unwrap();
+    let rows = handler
+        .read_query(
+            "SELECT label, f FROM numeric_samples ORDER BY id".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
     let by_label: std::collections::HashMap<&str, &Value> = rows
         .rows
         .iter()

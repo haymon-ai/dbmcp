@@ -2,54 +2,97 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
-use crate::types::{ListMaterializedViewsRequest, ListMaterializedViewsResponse};
+use crate::types::{
+    ListMaterializedViewsResponse, PinnedListMaterializedViewsRequest, UnpinnedListMaterializedViewsRequest,
+};
 
-/// Marker type for the `listMaterializedViews` MCP tool.
-pub(crate) struct ListMaterializedViewsTool;
+const NAME: &str = "listMaterializedViews";
+const TITLE: &str = "List Materialized Views";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_materialized_views/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_materialized_views/unpinned.md");
 
-impl ListMaterializedViewsTool {
-    const NAME: &'static str = "listMaterializedViews";
-    const TITLE: &'static str = "List Materialized Views";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_materialized_views.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
 
-impl ToolBase for ListMaterializedViewsTool {
-    type Parameter = ListMaterializedViewsRequest;
+/// Marker type for the `listMaterializedViews` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedListMaterializedViewsTool;
+
+impl ToolBase for PinnedListMaterializedViewsTool {
+    type Parameter = PinnedListMaterializedViewsRequest;
     type Output = ListMaterializedViewsResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<PostgresHandler> for ListMaterializedViewsTool {
+impl AsyncTool<PostgresHandler> for PinnedListMaterializedViewsTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_materialized_views(params).await
+        handler
+            .list_materialized_views(None, params.cursor, params.search, params.detailed)
+            .await
+    }
+}
+
+/// Marker type for the `listMaterializedViews` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedListMaterializedViewsTool;
+
+impl ToolBase for UnpinnedListMaterializedViewsTool {
+    type Parameter = UnpinnedListMaterializedViewsRequest;
+    type Output = ListMaterializedViewsResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<PostgresHandler> for UnpinnedListMaterializedViewsTool {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .list_materialized_views(
+                params.database,
+                params.inner.cursor,
+                params.inner.search,
+                params.inner.detailed,
+            )
+            .await
     }
 }
 
@@ -108,12 +151,10 @@ impl PostgresHandler {
     /// or the underlying query fails.
     pub async fn list_materialized_views(
         &self,
-        ListMaterializedViewsRequest {
-            database,
-            cursor,
-            search,
-            detailed,
-        }: ListMaterializedViewsRequest,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        search: Option<String>,
+        detailed: bool,
     ) -> Result<ListMaterializedViewsResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());

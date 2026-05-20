@@ -10,14 +10,12 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::{ListTablesRequest, ListTablesResponse};
 
+const NAME: &str = "listTables";
+const TITLE: &str = "List Tables";
+const DESCRIPTION: &str = include_str!("../../assets/tools/list_tables.md");
+
 /// Marker type for the `listTables` MCP tool.
 pub(crate) struct ListTablesTool;
-
-impl ListTablesTool {
-    const NAME: &'static str = "listTables";
-    const TITLE: &'static str = "List Tables";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_tables.md");
-}
 
 impl ToolBase for ListTablesTool {
     type Parameter = ListTablesRequest;
@@ -25,15 +23,15 @@ impl ToolBase for ListTablesTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

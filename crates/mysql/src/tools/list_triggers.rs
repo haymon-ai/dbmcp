@@ -2,54 +2,95 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
-use dbmcp_server::types::{ListTriggersRequest, ListTriggersResponse};
+use dbmcp_server::pagination::{Cursor, Pager};
+use dbmcp_server::types::{ListTriggersResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::MysqlHandler;
 
-/// Marker type for the `listTriggers` MCP tool.
-pub(crate) struct ListTriggersTool;
+const NAME: &str = "listTriggers";
+const TITLE: &str = "List Triggers";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_triggers/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_triggers/unpinned.md");
 
-impl ListTriggersTool {
-    const NAME: &'static str = "listTriggers";
-    const TITLE: &'static str = "List Triggers";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_triggers.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
 
-impl ToolBase for ListTriggersTool {
-    type Parameter = ListTriggersRequest;
+/// Marker type for the `listTriggers` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedListTriggersTool;
+
+impl ToolBase for PinnedListTriggersTool {
+    type Parameter = PinnedListTriggersRequest;
     type Output = ListTriggersResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<MysqlHandler> for ListTriggersTool {
+impl AsyncTool<MysqlHandler> for PinnedListTriggersTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_triggers(params).await
+        handler
+            .list_triggers(None, params.cursor, params.search, params.detailed)
+            .await
+    }
+}
+
+/// Marker type for the `listTriggers` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedListTriggersTool;
+
+impl ToolBase for UnpinnedListTriggersTool {
+    type Parameter = UnpinnedListTriggersRequest;
+    type Output = ListTriggersResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<MysqlHandler> for UnpinnedListTriggersTool {
+    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .list_triggers(
+                params.database,
+                params.inner.cursor,
+                params.inner.search,
+                params.inner.detailed,
+            )
+            .await
     }
 }
 
@@ -125,12 +166,10 @@ impl MysqlHandler {
     /// or the underlying query fails.
     pub async fn list_triggers(
         &self,
-        ListTriggersRequest {
-            database,
-            cursor,
-            search,
-            detailed,
-        }: ListTriggersRequest,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        search: Option<String>,
+        detailed: bool,
     ) -> Result<ListTriggersResponse, ErrorData> {
         let database = database
             .as_deref()

@@ -12,14 +12,12 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ListTriggersRequest;
 
+const NAME: &str = "listTriggers";
+const TITLE: &str = "List Triggers";
+const DESCRIPTION: &str = include_str!("../../assets/tools/list_triggers.md");
+
 /// Marker type for the `listTriggers` MCP tool.
 pub(crate) struct ListTriggersTool;
-
-impl ListTriggersTool {
-    const NAME: &'static str = "listTriggers";
-    const TITLE: &'static str = "List Triggers";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_triggers.md");
-}
 
 impl ToolBase for ListTriggersTool {
     type Parameter = ListTriggersRequest;
@@ -27,15 +25,15 @@ impl ToolBase for ListTriggersTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

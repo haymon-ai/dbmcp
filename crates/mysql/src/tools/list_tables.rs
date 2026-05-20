@@ -2,13 +2,13 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::MysqlHandler;
-use crate::types::{ListTablesRequest, ListTablesResponse};
+use crate::types::{ListTablesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
 
 /// Brief-mode SQL: `information_schema.TABLES` filtered to `BASE TABLE` rows.
 ///
@@ -289,46 +289,87 @@ LEFT JOIN partitions_info pi
  AND pi.TABLE_NAME   = ti.table_name
 ORDER BY ti.table_name"#;
 
-/// Marker type for the `listTables` MCP tool.
-pub(crate) struct ListTablesTool;
+const NAME: &str = "listTables";
+const TITLE: &str = "List Tables";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_tables/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_tables/unpinned.md");
 
-impl ListTablesTool {
-    const NAME: &'static str = "listTables";
-    const TITLE: &'static str = "List Tables";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_tables.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
 
-impl ToolBase for ListTablesTool {
-    type Parameter = ListTablesRequest;
+/// Marker type for the `listTables` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedListTablesTool;
+
+impl ToolBase for PinnedListTablesTool {
+    type Parameter = PinnedListTablesRequest;
     type Output = ListTablesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<MysqlHandler> for ListTablesTool {
+impl AsyncTool<MysqlHandler> for PinnedListTablesTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_tables(params).await
+        handler
+            .list_tables(None, params.cursor, params.search, params.detailed)
+            .await
+    }
+}
+
+/// Marker type for the `listTables` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedListTablesTool;
+
+impl ToolBase for UnpinnedListTablesTool {
+    type Parameter = UnpinnedListTablesRequest;
+    type Output = ListTablesResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<MysqlHandler> for UnpinnedListTablesTool {
+    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .list_tables(
+                params.database,
+                params.inner.cursor,
+                params.inner.search,
+                params.inner.detailed,
+            )
+            .await
     }
 }
 
@@ -342,12 +383,10 @@ impl MysqlHandler {
     /// query fails.
     pub async fn list_tables(
         &self,
-        ListTablesRequest {
-            database,
-            cursor,
-            search,
-            detailed,
-        }: ListTablesRequest,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        search: Option<String>,
+        detailed: bool,
     ) -> Result<ListTablesResponse, ErrorData> {
         let database = database
             .as_deref()

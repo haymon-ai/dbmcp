@@ -24,10 +24,10 @@ fn server(read_only: bool) -> Server {
 }
 
 #[tokio::test]
-async fn test_server_info() {
+async fn test_server_info_read_write() {
     common::run_with_client(server(false), |peer| async move {
         let info = peer.peer_info().expect("missing peer_info");
-        insta::assert_json_snapshot!("server_info", info, {
+        insta::assert_json_snapshot!("server_info_read_write", info, {
             ".serverInfo.version" => "[version]"
         });
     })
@@ -46,10 +46,10 @@ async fn test_server_info_read_only() {
 }
 
 #[tokio::test]
-async fn test_list_tools() {
+async fn test_list_tools_read_write() {
     common::run_with_client(server(false), |peer| async move {
         let tools = peer.list_all_tools().await.expect("list_all_tools failed");
-        insta::assert_json_snapshot!("list_tools", tools);
+        insta::assert_json_snapshot!("list_tools_read_write", tools);
     })
     .await;
 }

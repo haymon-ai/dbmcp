@@ -2,54 +2,95 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
-use crate::types::{ListFunctionsRequest, ListFunctionsResponse};
+use crate::types::{ListFunctionsResponse, PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
 
-/// Marker type for the `listFunctions` MCP tool.
-pub(crate) struct ListFunctionsTool;
+const NAME: &str = "listFunctions";
+const TITLE: &str = "List Functions";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_functions/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_functions/unpinned.md");
 
-impl ListFunctionsTool {
-    const NAME: &'static str = "listFunctions";
-    const TITLE: &'static str = "List Functions";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_functions.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
 
-impl ToolBase for ListFunctionsTool {
-    type Parameter = ListFunctionsRequest;
+/// Marker type for the `listFunctions` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedListFunctionsTool;
+
+impl ToolBase for PinnedListFunctionsTool {
+    type Parameter = PinnedListFunctionsRequest;
     type Output = ListFunctionsResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<PostgresHandler> for ListFunctionsTool {
+impl AsyncTool<PostgresHandler> for PinnedListFunctionsTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_functions(params).await
+        handler
+            .list_functions(None, params.cursor, params.search, params.detailed)
+            .await
+    }
+}
+
+/// Marker type for the `listFunctions` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedListFunctionsTool;
+
+impl ToolBase for UnpinnedListFunctionsTool {
+    type Parameter = UnpinnedListFunctionsRequest;
+    type Output = ListFunctionsResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<PostgresHandler> for UnpinnedListFunctionsTool {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .list_functions(
+                params.database,
+                params.inner.cursor,
+                params.inner.search,
+                params.inner.detailed,
+            )
+            .await
     }
 }
 
@@ -134,12 +175,10 @@ impl PostgresHandler {
     /// or the underlying query fails.
     pub async fn list_functions(
         &self,
-        ListFunctionsRequest {
-            database,
-            cursor,
-            search,
-            detailed,
-        }: ListFunctionsRequest,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        search: Option<String>,
+        detailed: bool,
     ) -> Result<ListFunctionsResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());

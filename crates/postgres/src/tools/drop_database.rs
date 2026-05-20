@@ -11,14 +11,12 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::PostgresHandler;
 use crate::connection::quote_ident;
 
+const NAME: &str = "dropDatabase";
+const TITLE: &str = "Drop Database";
+const DESCRIPTION: &str = include_str!("../../assets/tools/drop_database/default.md");
+
 /// Marker type for the `dropDatabase` MCP tool.
 pub(crate) struct DropDatabaseTool;
-
-impl DropDatabaseTool {
-    const NAME: &'static str = "dropDatabase";
-    const TITLE: &'static str = "Drop Database";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/drop_database.md");
-}
 
 impl ToolBase for DropDatabaseTool {
     type Parameter = DropDatabaseRequest;
@@ -26,15 +24,15 @@ impl ToolBase for DropDatabaseTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

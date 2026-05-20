@@ -60,12 +60,11 @@ impl ListEntries {
 
 /// Response for the `listTables` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListTablesResponse {
     /// Page of matching tables. Shape depends on the request's `detailed` flag.
     pub tables: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -91,7 +90,6 @@ impl ListTablesResponse {
 
 /// Response for tools with no structured return data.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct MessageResponse {
     /// Description of the completed operation.
     pub message: String,
@@ -99,7 +97,6 @@ pub struct MessageResponse {
 
 /// Request for the `listDatabases` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListDatabasesRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -108,18 +105,16 @@ pub struct ListDatabasesRequest {
 
 /// Response for the `listDatabases` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListDatabasesResponse {
     /// Sorted list of database names for this page.
     pub databases: Vec<String>,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `createDatabase` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateDatabaseRequest {
     /// Name of the database to create. Must be non-empty.
     pub database: String,
@@ -127,7 +122,6 @@ pub struct CreateDatabaseRequest {
 
 /// Request for the `dropDatabase` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct DropDatabaseRequest {
     /// Name of the database to drop. Must be non-empty.
     pub database: String,
@@ -135,24 +129,31 @@ pub struct DropDatabaseRequest {
 
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListViewsRequest {
-    /// Database to list views from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
+#[schemars(rename = "ListViewsRequest")]
+pub struct PinnedListViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
 }
 
+/// Request for the `listViews` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "ListViewsRequest")]
+pub struct UnpinnedListViewsRequest {
+    #[serde(flatten)]
+    pub inner: PinnedListViewsRequest,
+    /// Database to list views from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
 /// Response for the `listViews` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListViewsResponse {
     /// Page of matching views. Shape depends on the request's `detailed` flag.
     pub views: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -178,11 +179,8 @@ impl ListViewsResponse {
 
 /// Request for the `listTriggers` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListTriggersRequest {
-    /// Database to list triggers from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
+#[schemars(rename = "ListTriggersRequest")]
+pub struct PinnedListTriggersRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -197,14 +195,24 @@ pub struct ListTriggersRequest {
     pub detailed: bool,
 }
 
+/// Request for the `listTriggers` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "ListTriggersRequest")]
+pub struct UnpinnedListTriggersRequest {
+    #[serde(flatten)]
+    pub inner: PinnedListTriggersRequest,
+    /// Database to list triggers from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
 /// Response for the `listTriggers` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListTriggersResponse {
     /// Page of matching triggers. Shape depends on the request's `detailed` flag.
     pub triggers: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -230,24 +238,31 @@ impl ListTriggersResponse {
 
 /// Request for the `listFunctions` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ListFunctionsRequest {
-    /// Database to list functions from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
+#[schemars(rename = "ListFunctionsRequest")]
+pub struct PinnedListFunctionsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
 }
 
+/// Request for the `listFunctions` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "ListFunctionsRequest")]
+pub struct UnpinnedListFunctionsRequest {
+    #[serde(flatten)]
+    pub inner: PinnedListFunctionsRequest,
+    /// Database to list functions from. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
 /// Response for the `listFunctions` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListFunctionsResponse {
     /// Page of matching functions. Shape depends on the request's `detailed` flag.
     pub functions: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -273,12 +288,11 @@ impl ListFunctionsResponse {
 
 /// Response for the `listProcedures` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListProceduresResponse {
     /// Page of matching procedures. Shape depends on the request's `detailed` flag.
     pub procedures: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -304,10 +318,18 @@ impl ListProceduresResponse {
 
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryRequest {
+#[schemars(rename = "QueryRequest")]
+pub struct PinnedQueryRequest {
     /// The SQL query to execute.
     pub query: String,
+}
+
+/// Request for the `writeQuery` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "QueryRequest")]
+pub struct UnpinnedQueryRequest {
+    #[serde(flatten)]
+    pub inner: PinnedQueryRequest,
     /// Database to run the query against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -315,21 +337,28 @@ pub struct QueryRequest {
 
 /// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadQueryRequest {
+#[schemars(rename = "ReadQueryRequest")]
+pub struct PinnedReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
-    /// Database to run the query against. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
 }
 
+/// Request for the `readQuery` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "ReadQueryRequest")]
+pub struct UnpinnedReadQueryRequest {
+    #[serde(flatten)]
+    pub inner: PinnedReadQueryRequest,
+    /// Database to run the query against. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
 /// Response for the `writeQuery` and `explainQuery` tools.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
     pub rows: Vec<Value>,
@@ -337,24 +366,20 @@ pub struct QueryResponse {
 
 /// Response for the `readQuery` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ReadQueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
     pub rows: Vec<Value>,
     /// Opaque cursor pointing to the next page. Absent when this is the final
     /// page, when the result fits in one page, or when the statement is a
     /// non-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
 /// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ExplainQueryRequest {
-    /// Database to explain against. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
+#[schemars(rename = "ExplainQueryRequest")]
+pub struct PinnedExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,
     /// If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.
@@ -362,25 +387,47 @@ pub struct ExplainQueryRequest {
     pub analyze: bool,
 }
 
+/// Request for the `explainQuery` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(rename = "ExplainQueryRequest")]
+pub struct UnpinnedExplainQueryRequest {
+    #[serde(flatten)]
+    pub inner: PinnedExplainQueryRequest,
+    /// Database to explain against. Defaults to the active database.
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListEntries, ListFunctionsResponse, ListTablesResponse, ListTriggersRequest, ListTriggersResponse,
+        IndexMap, ListEntries, ListFunctionsResponse, ListTablesResponse, ListTriggersResponse,
+        PinnedListTriggersRequest, UnpinnedListTriggersRequest,
     };
     use serde_json::{Value, json};
 
     #[test]
-    fn list_triggers_request_defaults_to_brief_mode_without_search() {
-        let req: ListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
+    fn unpinned_list_triggers_request_defaults_to_brief_mode_without_search() {
+        let req: PinnedListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
         assert!(req.search.is_none());
         assert!(!req.detailed, "detailed must default to false");
     }
 
     #[test]
-    fn list_triggers_request_accepts_search_and_detailed() {
-        let req: ListTriggersRequest = serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
+    fn unpinned_list_triggers_request_accepts_search_and_detailed() {
+        let req: PinnedListTriggersRequest =
+            serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
         assert_eq!(req.search.as_deref(), Some("audit"));
         assert!(req.detailed);
+    }
+
+    #[test]
+    fn pinned_list_triggers_request_accepts_database_and_inner_fields() {
+        let req: UnpinnedListTriggersRequest =
+            serde_json::from_str(r#"{"database": "mydb", "search": "audit", "detailed": true}"#).expect("parse");
+        assert_eq!(req.database.as_deref(), Some("mydb"));
+        assert_eq!(req.inner.search.as_deref(), Some("audit"));
+        assert!(req.inner.detailed);
     }
 
     #[test]

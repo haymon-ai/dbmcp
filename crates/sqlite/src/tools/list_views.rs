@@ -13,14 +13,12 @@ use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ListViewsRequest;
 
+const NAME: &str = "listViews";
+const TITLE: &str = "List Views";
+const DESCRIPTION: &str = include_str!("../../assets/tools/list_views.md");
+
 /// Marker type for the `listViews` MCP tool.
 pub(crate) struct ListViewsTool;
-
-impl ListViewsTool {
-    const NAME: &'static str = "listViews";
-    const TITLE: &'static str = "List Views";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_views.md");
-}
 
 impl ToolBase for ListViewsTool {
     type Parameter = ListViewsRequest;
@@ -28,15 +26,15 @@ impl ToolBase for ListViewsTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {

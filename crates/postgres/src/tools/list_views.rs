@@ -2,54 +2,95 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
-use crate::types::{ListViewsRequest, ListViewsResponse};
+use crate::types::{ListViewsResponse, PinnedListViewsRequest, UnpinnedListViewsRequest};
 
-/// Marker type for the `listViews` MCP tool.
-pub(crate) struct ListViewsTool;
+const NAME: &str = "listViews";
+const TITLE: &str = "List Views";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_views/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_views/unpinned.md");
 
-impl ListViewsTool {
-    const NAME: &'static str = "listViews";
-    const TITLE: &'static str = "List Views";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/list_views.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
 
-impl ToolBase for ListViewsTool {
-    type Parameter = ListViewsRequest;
+/// Marker type for the `listViews` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedListViewsTool;
+
+impl ToolBase for PinnedListViewsTool {
+    type Parameter = PinnedListViewsRequest;
     type Output = ListViewsResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<PostgresHandler> for ListViewsTool {
+impl AsyncTool<PostgresHandler> for PinnedListViewsTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_views(params).await
+        handler
+            .list_views(None, params.cursor, params.search, params.detailed)
+            .await
+    }
+}
+
+/// Marker type for the `listViews` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedListViewsTool;
+
+impl ToolBase for UnpinnedListViewsTool {
+    type Parameter = UnpinnedListViewsRequest;
+    type Output = ListViewsResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<PostgresHandler> for UnpinnedListViewsTool {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .list_views(
+                params.database,
+                params.inner.cursor,
+                params.inner.search,
+                params.inner.detailed,
+            )
+            .await
     }
 }
 
@@ -103,12 +144,10 @@ impl PostgresHandler {
     /// or the underlying query fails.
     pub async fn list_views(
         &self,
-        ListViewsRequest {
-            database,
-            cursor,
-            search,
-            detailed,
-        }: ListViewsRequest,
+        database: Option<String>,
+        cursor: Option<Cursor>,
+        search: Option<String>,
+        detailed: bool,
     ) -> Result<ListViewsResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());

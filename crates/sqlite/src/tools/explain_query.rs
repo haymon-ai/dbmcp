@@ -11,14 +11,12 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ExplainQueryRequest;
 
+const NAME: &str = "explainQuery";
+const TITLE: &str = "Explain Query";
+const DESCRIPTION: &str = include_str!("../../assets/tools/explain_query.md");
+
 /// Marker type for the `explainQuery` MCP tool.
 pub(crate) struct ExplainQueryTool;
-
-impl ExplainQueryTool {
-    const NAME: &'static str = "explainQuery";
-    const TITLE: &'static str = "Explain Query";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/explain_query.md");
-}
 
 impl ToolBase for ExplainQueryTool {
     type Parameter = ExplainQueryRequest;
@@ -26,15 +24,15 @@ impl ToolBase for ExplainQueryTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

@@ -29,17 +29,19 @@ const INSTRUCTIONS: &str = include_str!("../assets/instructions/default.md");
 /// Backend-specific instructions for `SQLite` in read-only mode.
 const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-only.md");
 
-/// Declarative tool table: `(tool, read_only, pinned)`.
+/// Declarative tool table: `(tool, pinned, read_only)`.
 ///
-/// `SQLite` has no cross-database tools, so every entry is `pinned = false`.
+/// `SQLite` has no cross-database tools and no `database` request field;
+/// its file path is always pinned, so every tool is `pinned = true` and
+/// the handler builds the router with `pinned = true`.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
-    ToolSpec::async_tool::<ListTablesTool>(false, false),
-    ToolSpec::async_tool::<ListViewsTool>(false, false),
-    ToolSpec::async_tool::<ListTriggersTool>(false, false),
-    ToolSpec::async_tool::<ReadQueryTool>(false, false),
-    ToolSpec::async_tool::<ExplainQueryTool>(false, false),
-    ToolSpec::async_tool::<WriteQueryTool>(true, false),
-    ToolSpec::async_tool::<DropTableTool>(true, false),
+    ToolSpec::async_tool::<ListTablesTool>(true, false),
+    ToolSpec::async_tool::<ListViewsTool>(true, false),
+    ToolSpec::async_tool::<ListTriggersTool>(true, false),
+    ToolSpec::async_tool::<ReadQueryTool>(true, false),
+    ToolSpec::async_tool::<ExplainQueryTool>(true, false),
+    ToolSpec::async_tool::<WriteQueryTool>(true, true),
+    ToolSpec::async_tool::<DropTableTool>(true, true),
 ];
 
 /// `SQLite` file-based database handler.
@@ -75,7 +77,7 @@ impl SqliteHandler {
             config: config.database.clone(),
             connection: SqliteConnection::new(&config.database),
             redactor: Redactor::from_config(&config.pii),
-            tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, false),
+            tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
         }
     }
 }

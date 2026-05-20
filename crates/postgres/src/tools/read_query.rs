@@ -2,8 +2,8 @@
 
 use std::borrow::Cow;
 
-use dbmcp_server::pagination::Pager;
-use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
+use dbmcp_server::pagination::{Cursor, Pager};
+use dbmcp_server::types::{PinnedReadQueryRequest, ReadQueryResponse, UnpinnedReadQueryRequest};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
@@ -13,46 +13,80 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 
 use crate::PostgresHandler;
 
-/// Marker type for the `readQuery` MCP tool.
-pub(crate) struct ReadQueryTool;
+const NAME: &str = "readQuery";
+const TITLE: &str = "Read Query";
+const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read_query/pinned.md");
+const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read_query/unpinned.md");
 
-impl ReadQueryTool {
-    const NAME: &'static str = "readQuery";
-    const TITLE: &'static str = "Read Query";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/read_query.md");
+fn annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(true)
 }
 
-impl ToolBase for ReadQueryTool {
-    type Parameter = ReadQueryRequest;
+/// Marker type for the `readQuery` MCP tool (pinned variant — no `database` field).
+pub(crate) struct PinnedReadQueryTool;
+
+impl ToolBase for PinnedReadQueryTool {
+    type Parameter = PinnedReadQueryRequest;
     type Output = ReadQueryResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION_PINNED.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(true),
-        )
+        Some(annotations())
     }
 }
 
-impl AsyncTool<PostgresHandler> for ReadQueryTool {
+impl AsyncTool<PostgresHandler> for PinnedReadQueryTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.read_query(params).await
+        handler.read_query(params.query, None, params.cursor).await
+    }
+}
+
+/// Marker type for the `readQuery` MCP tool (unpinned variant — carries `database`).
+pub(crate) struct UnpinnedReadQueryTool;
+
+impl ToolBase for UnpinnedReadQueryTool {
+    type Parameter = UnpinnedReadQueryRequest;
+    type Output = ReadQueryResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION_UNPINNED.into())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
+    }
+}
+
+impl AsyncTool<PostgresHandler> for UnpinnedReadQueryTool {
+    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .read_query(params.inner.query, params.database, params.inner.cursor)
+            .await
     }
 }
 
@@ -72,11 +106,9 @@ impl PostgresHandler {
     /// read-only, or [`SqlError::Query`] if the backend reports an error.
     pub async fn read_query(
         &self,
-        ReadQueryRequest {
-            query,
-            database,
-            cursor,
-        }: ReadQueryRequest,
+        query: String,
+        database: Option<String>,
+        cursor: Option<Cursor>,
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read_only(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());

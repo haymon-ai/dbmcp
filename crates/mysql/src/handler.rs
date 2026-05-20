@@ -17,8 +17,11 @@ use rmcp::{ErrorData, ServerHandler};
 
 use crate::connection::MysqlConnection;
 use crate::tools::{
-    CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, ListDatabasesTool, ListFunctionsTool,
-    ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
+    CreateDatabaseTool, DropDatabaseTool, ListDatabasesTool, PinnedDropTableTool, PinnedExplainQueryTool,
+    PinnedListFunctionsTool, PinnedListProceduresTool, PinnedListTablesTool, PinnedListTriggersTool,
+    PinnedListViewsTool, PinnedReadQueryTool, PinnedWriteQueryTool, UnpinnedDropTableTool, UnpinnedExplainQueryTool,
+    UnpinnedListFunctionsTool, UnpinnedListProceduresTool, UnpinnedListTablesTool, UnpinnedListTriggersTool,
+    UnpinnedListViewsTool, UnpinnedReadQueryTool, UnpinnedWriteQueryTool,
 };
 
 /// Backend-specific description for MySQL/MariaDB.
@@ -36,20 +39,35 @@ const INSTRUCTIONS_PINNED: &str = include_str!("../assets/instructions/default.p
 /// Backend-specific instructions for read-only mode with a pinned database.
 const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions/read-only.pinned.md");
 
-/// Declarative tool table: `(tool, read_only, pinned)`.
+/// Declarative tool table: `(tool, pinned, read_only)`.
+///
+/// Per-database tools expose a `Pinned*Tool` variant (no `database` field)
+/// when the config pins a db name, and an `Unpinned*Tool` variant
+/// (carries a `database` field) otherwise. Cross-database tools
+/// (`listDatabases`, `createDatabase`, `dropDatabase`) are hidden in pinned
+/// mode altogether.
 const TOOLS: &[ToolSpec<MysqlHandler>] = &[
-    ToolSpec::async_tool::<ListDatabasesTool>(false, true),
-    ToolSpec::async_tool::<ListTablesTool>(false, false),
-    ToolSpec::async_tool::<ListViewsTool>(false, false),
-    ToolSpec::async_tool::<ListTriggersTool>(false, false),
-    ToolSpec::async_tool::<ListFunctionsTool>(false, false),
-    ToolSpec::async_tool::<ListProceduresTool>(false, false),
-    ToolSpec::async_tool::<ReadQueryTool>(false, false),
-    ToolSpec::async_tool::<ExplainQueryTool>(false, false),
-    ToolSpec::async_tool::<CreateDatabaseTool>(true, true),
-    ToolSpec::async_tool::<DropDatabaseTool>(true, true),
-    ToolSpec::async_tool::<DropTableTool>(true, false),
-    ToolSpec::async_tool::<WriteQueryTool>(true, false),
+    ToolSpec::async_tool::<ListDatabasesTool>(false, false),
+    ToolSpec::async_tool::<PinnedListTablesTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedListTablesTool>(false, false),
+    ToolSpec::async_tool::<PinnedListViewsTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedListViewsTool>(false, false),
+    ToolSpec::async_tool::<PinnedListTriggersTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedListTriggersTool>(false, false),
+    ToolSpec::async_tool::<PinnedListFunctionsTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedListFunctionsTool>(false, false),
+    ToolSpec::async_tool::<PinnedListProceduresTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedListProceduresTool>(false, false),
+    ToolSpec::async_tool::<PinnedReadQueryTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedReadQueryTool>(false, false),
+    ToolSpec::async_tool::<PinnedExplainQueryTool>(true, false),
+    ToolSpec::async_tool::<UnpinnedExplainQueryTool>(false, false),
+    ToolSpec::async_tool::<CreateDatabaseTool>(false, true),
+    ToolSpec::async_tool::<DropDatabaseTool>(false, true),
+    ToolSpec::async_tool::<PinnedDropTableTool>(true, true),
+    ToolSpec::async_tool::<UnpinnedDropTableTool>(false, true),
+    ToolSpec::async_tool::<PinnedWriteQueryTool>(true, true),
+    ToolSpec::async_tool::<UnpinnedWriteQueryTool>(false, true),
 ];
 
 /// MySQL/MariaDB database handler.

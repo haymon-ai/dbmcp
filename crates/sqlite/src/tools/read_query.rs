@@ -15,14 +15,12 @@ use rmcp::model::{ErrorData, ToolAnnotations};
 use crate::SqliteHandler;
 use crate::types::ReadQueryRequest;
 
+const NAME: &str = "readQuery";
+const TITLE: &str = "Read Query";
+const DESCRIPTION: &str = include_str!("../../assets/tools/read_query.md");
+
 /// Marker type for the `readQuery` MCP tool.
 pub(crate) struct ReadQueryTool;
-
-impl ReadQueryTool {
-    const NAME: &'static str = "readQuery";
-    const TITLE: &'static str = "Read Query";
-    const DESCRIPTION: &'static str = include_str!("../../assets/tools/read_query.md");
-}
 
 impl ToolBase for ReadQueryTool {
     type Parameter = ReadQueryRequest;
@@ -30,15 +28,15 @@ impl ToolBase for ReadQueryTool {
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
-        Self::NAME.into()
+        NAME.into()
     }
 
     fn title() -> Option<String> {
-        Some(Self::TITLE.into())
+        Some(TITLE.into())
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(Self::DESCRIPTION.into())
+        Some(DESCRIPTION.into())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

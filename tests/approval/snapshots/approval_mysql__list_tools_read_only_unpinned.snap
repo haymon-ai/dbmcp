@@ -59,6 +59,58 @@ expression: tools
     }
   },
   {
+    "name": "listDatabases",
+    "title": "List Databases",
+    "description": "List all accessible databases on the connected server. Use this tool to discover what databases are available before using other tools.\n\n<usecase>\nALWAYS call this tool FIRST when:\n- You need to explore what databases exist on the server\n- You need a database name for listTables or query tools\n- The user asks what data is available\n</usecase>\n\n<examples>\n✓ \"What databases are on this server?\"\n✓ \"Show me what's available\" → call listDatabases first\n</examples>\n\n<what_it_returns>\nA sorted JSON array of database name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Request for the `listDatabases` tool.",
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ListDatabasesRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Response for the `listDatabases` tool.",
+      "properties": {
+        "databases": {
+          "description": "Sorted list of database names for this page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "databases"
+      ],
+      "title": "ListDatabasesResponse",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "listFunctions",
     "title": "List Functions",
     "description": "List user-defined SQL functions in a database, optionally filtered and/or with full metadata. Loadable UDFs (`mysql.func`) and stored procedures are excluded.\n\n<usecase>\nUse when:\n- Auditing stored functions across a database (brief mode, default).\n- Searching for a function by partial name (pass `search`).\n- Inspecting a function's language, signature, return type, determinism, SQL-data-access classification, security mode, definer, comment, session context, and full reconstructed `CREATE FUNCTION` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `information_schema.ROUTINES` / `information_schema.PARAMETERS`.\n</usecase>\n\n<parameters>\n- `database` — Database to target. Defaults to the active database.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on function names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by function name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What functions are in the mydb database?\" → listFunctions(database=\"mydb\")\n✓ \"Find the order-total calculation\" → listFunctions(search=\"order\")\n✓ \"What does calc_order_total do?\" → listFunctions(search=\"calc_order_total\", detailed=true)\n✗ \"List stored procedures\" → use listProcedures instead\n✗ \"List loadable UDFs from mysql.func\" → not supported; only routines in information_schema.ROUTINES are returned\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of function-name strings, e.g. `[\"calc_order_subtotal\", \"calc_order_total\", \"double_it\"]`.\nDetailed mode: a JSON object keyed by bare function name (MySQL/MariaDB do not allow function overloading, so no signature suffix is needed); each value carries `schema`, `language` (typically `\"SQL\"`; MariaDB external-language functions report the external language name), `arguments` (comma-separated `name type` pairs from `information_schema.PARAMETERS`, empty string for zero-parameter functions), `returnType` (full `DTD_IDENTIFIER` including length/precision/unsigned/enum/set members), `deterministic` (boolean), `sqlDataAccess` (one of `CONTAINS_SQL`, `NO_SQL`, `READS_SQL_DATA`, `MODIFIES_SQL_DATA`), `security` (`INVOKER` or `DEFINER`), `definer` (`user@host`), `description` (the `COMMENT` text or `null` when no comment was set — the empty string MySQL stores is coerced to JSON `null`), `definition` (the canonical reconstructed `CREATE FUNCTION` text including `DEFINER=` in `` `user`@`host` `` form), `sqlMode`, `characterSetClient`, `collationConnection`, and `databaseCollation`. Versus the Postgres detailed payload: `volatility`, `parallelSafety`, and `strict` are intentionally absent (no MySQL/MariaDB analogues), `owner` is renamed to `definer` (more accurate for the MySQL `DEFINER` concept), keys are bare names rather than `name(arguments)` (no overloads possible), and the four session-context fields (`sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`) are MySQL/MariaDB-only additions.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",

@@ -15,7 +15,6 @@ pub use dbmcp_server::types::{ListEntries, ListTablesResponse};
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct DropTableRequest {
     /// Name of the table to drop. Must be non-empty.
     pub table: String,
@@ -23,7 +22,6 @@ pub struct DropTableRequest {
 
 /// Request for the `SQLite` `listTables` tool — supports optional search filter and detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListTablesRequest {
     /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
@@ -43,7 +41,6 @@ pub struct ListTablesRequest {
 
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListViewsRequest {
     /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
@@ -54,7 +51,6 @@ pub struct ListViewsRequest {
 
 /// Request for the `SQLite` `listTriggers` tool — supports optional search filter and detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ListTriggersRequest {
     /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
@@ -74,7 +70,6 @@ pub struct ListTriggersRequest {
 
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
@@ -82,7 +77,6 @@ pub struct QueryRequest {
 
 /// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
@@ -96,7 +90,6 @@ pub struct ReadQueryRequest {
 
 /// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,
