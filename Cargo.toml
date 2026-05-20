@@ -43,8 +43,7 @@ hmac = "0.12"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
-rmcp = { version = "1.6", features = [
-    "macros",
+rmcp = { version = "1.7", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
