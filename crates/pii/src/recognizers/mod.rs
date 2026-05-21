@@ -33,8 +33,8 @@ pub use gbr::{
     vehicle_registration_gbr,
 };
 pub use generic::{
-    api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, email, iban, ip_address, jwt_token, mac_address,
-    phone_number, private_key, url,
+    api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, date_of_birth, email, iban, ip_address, jwt_token,
+    mac_address, phone_number, private_key, url,
 };
 pub use usa::{
     bank_account_usa, driver_license_usa, itin_usa, mbi_usa, medical_license_usa, npi_usa, passport_usa,
@@ -212,6 +212,7 @@ pub fn all() -> Vec<Recognizer> {
         ssn_usa(),
         mac_address(),
         bank_account_gbr(),
+        date_of_birth(),
         sort_code_gbr(),
         routing_number_usa(),
         cvv(),

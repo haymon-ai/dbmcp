@@ -637,4 +637,31 @@ mod tests {
         assert_eq!(rows[0]["customer_phone"], "<PHONE_NUMBER>");
         assert_eq!(stats.total, 1);
     }
+
+    #[test]
+    fn dob_column_redacts_via_birth_keyword() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"date_of_birth": "2021-08-11"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["date_of_birth"], "<DATE_OF_BIRTH>");
+        assert_eq!(stats.by_entity.get(&Entity::DateOfBirth).copied(), Some(1));
+    }
+
+    #[test]
+    fn timestamp_column_not_flagged_as_date_of_birth() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"created_at": "2021-10-04"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["created_at"], "2021-10-04");
+        assert!(!stats.by_entity.contains_key(&Entity::DateOfBirth));
+    }
+
+    #[test]
+    fn numeric_reference_untouched() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"reference": "900000000"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["reference"], "900000000");
+        assert_eq!(stats.total, 0);
+    }
 }

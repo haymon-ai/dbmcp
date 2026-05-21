@@ -103,6 +103,8 @@ pub enum Entity {
     TaxIdDe,
     /// `TAX_NUMBER_DE` — German Steuernummer.
     TaxNumberDe,
+    /// `DATE_OF_BIRTH` — birth date, surfaced only in a birth-keyword context.
+    DateOfBirth,
 }
 
 impl Entity {
@@ -152,6 +154,7 @@ impl Entity {
         Entity::SocialSecurityDe,
         Entity::TaxIdDe,
         Entity::TaxNumberDe,
+        Entity::DateOfBirth,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -202,6 +205,7 @@ impl Entity {
             Entity::SocialSecurityDe => "SOCIAL_SECURITY_DE",
             Entity::TaxIdDe => "TAX_ID_DE",
             Entity::TaxNumberDe => "TAX_NUMBER_DE",
+            Entity::DateOfBirth => "DATE_OF_BIRTH",
         }
     }
 
@@ -253,6 +257,7 @@ impl Entity {
             Entity::SocialSecurityDe => "<SOCIAL_SECURITY_DE>",
             Entity::TaxIdDe => "<TAX_ID_DE>",
             Entity::TaxNumberDe => "<TAX_NUMBER_DE>",
+            Entity::DateOfBirth => "<DATE_OF_BIRTH>",
         }
     }
 }
@@ -311,6 +316,7 @@ impl FromStr for Entity {
             "SOCIAL_SECURITY_DE" => Ok(Entity::SocialSecurityDe),
             "TAX_ID_DE" => Ok(Entity::TaxIdDe),
             "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
+            "DATE_OF_BIRTH" => Ok(Entity::DateOfBirth),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -353,8 +359,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_44_variants() {
-        assert_eq!(Entity::ALL.len(), 44);
+    fn all_has_45_variants() {
+        assert_eq!(Entity::ALL.len(), 45);
     }
 
     #[test]
