@@ -309,8 +309,6 @@ mod tests {
             "ApiKeyAwsSecretRecognizer",
             "JwtTokenRecognizer",
             "PrivateKeyRecognizer",
-            "BankAccountGbrRecognizer",
-            "SortCodeGbrRecognizer",
         ];
         let mut missing = Vec::new();
         for r in all() {

@@ -39,7 +39,7 @@ mod words;
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
 pub use crate::anonymizer::{OperatorConfig, anonymize};
 pub use crate::category::{Category, ParseCategoryError};
-pub use crate::context::{ContextMatchingMode, ContextSettings};
+pub use crate::context::ContextSettings;
 pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::operators::{ChunkCount, HashAlgorithm, Operator};
 pub use crate::redact::{RedactionError, RedactionStats, Redactor};

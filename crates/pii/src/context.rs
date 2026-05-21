@@ -15,21 +15,11 @@ use crate::result::RecognizerResult;
 use crate::score::{MAX_SCORE, Score};
 use crate::words::{first_word, words};
 
-/// Matching mode for context keyword comparison.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ContextMatchingMode {
-    /// Window word must equal the keyword (case-insensitive).
-    WholeWord,
-    /// Window word must contain the keyword as a substring (case-insensitive).
-    #[default]
-    Substring,
-}
-
 /// Per-call tuning for the boost pass.
 ///
 /// Constructed via [`Default::default`] — values are not user-tunable today.
 /// `similarity_factor=0.35`, `min_score_with_context=0.4`, `prefix_words=5`,
-/// `suffix_words=0`, `matching_mode=Substring`.
+/// `suffix_words=0`. Keyword comparison is whole-word (case-insensitive).
 #[derive(Debug, Clone)]
 pub struct ContextSettings {
     /// Score increment applied on a successful keyword match.
@@ -40,8 +30,6 @@ pub struct ContextSettings {
     pub prefix_words: u16,
     /// Number of words after the match included in the window.
     pub suffix_words: u16,
-    /// Whole-word vs substring keyword comparison.
-    pub matching_mode: ContextMatchingMode,
 }
 
 impl Default for ContextSettings {
@@ -51,7 +39,6 @@ impl Default for ContextSettings {
             min_score_with_context: Score::from_static(0.4),
             prefix_words: 5,
             suffix_words: 0,
-            matching_mode: ContextMatchingMode::Substring,
         }
     }
 }
@@ -100,7 +87,7 @@ fn boost_one(
         settings.suffix_words,
     );
 
-    let Some(hit) = find_supportive_keyword(&window, external_context, keywords, settings.matching_mode) else {
+    let Some(hit) = find_supportive_keyword(&window, external_context, keywords) else {
         return;
     };
 
@@ -162,16 +149,14 @@ fn find_supportive_keyword(
     window: &[String],
     external_context: &[String],
     keywords: &[&'static str],
-    mode: ContextMatchingMode,
 ) -> Option<&'static str> {
     // Window words and external_context are already lowercased; recognizer
-    // keywords are pre-lowercased (debug_asserted by `with_context`).
-    keywords.iter().copied().find(|&kw| {
-        window.iter().chain(external_context.iter()).any(|w| match mode {
-            ContextMatchingMode::WholeWord => w == kw,
-            ContextMatchingMode::Substring => w.contains(kw),
-        })
-    })
+    // keywords are pre-lowercased (debug_asserted by `with_context`). A
+    // window word must equal a keyword (whole-word, case-insensitive).
+    keywords
+        .iter()
+        .copied()
+        .find(|&kw| window.iter().chain(external_context.iter()).any(|w| w == kw))
 }
 
 fn boost_score(current: Score, factor: Score, floor: Score) -> Score {
@@ -195,7 +180,6 @@ mod tests {
             min_score_with_context: Score::from_static(0.4),
             prefix_words: 5,
             suffix_words: 0,
-            matching_mode: ContextMatchingMode::WholeWord,
         }
     }
 
@@ -230,7 +214,6 @@ mod tests {
         let settings = ContextSettings::default();
         assert_eq!(settings.prefix_words, 5);
         assert_eq!(settings.suffix_words, 0);
-        assert!(matches!(settings.matching_mode, ContextMatchingMode::Substring));
     }
 
     #[test]
@@ -280,26 +263,11 @@ mod tests {
 
     #[test]
     fn whole_word_excludes_substring() {
+        // "discard" must NOT satisfy the "card" keyword — whole-word only.
         let rec = dummy_recognizer("R", &["card"]);
         let text = "discard 4012";
-        let settings = ContextSettings {
-            matching_mode: ContextMatchingMode::WholeWord,
-            ..default_settings()
-        };
-        let out = apply_context_boost(text, vec![result(0.1, "R", 8, 12)], &rec, &[], &settings);
+        let out = apply_context_boost(text, vec![result(0.1, "R", 8, 12)], &rec, &[], &default_settings());
         assert!(out[0].explanation.supportive_keyword.is_none());
-    }
-
-    #[test]
-    fn substring_includes_substring() {
-        let rec = dummy_recognizer("R", &["card"]);
-        let text = "discard 4012";
-        let settings = ContextSettings {
-            matching_mode: ContextMatchingMode::Substring,
-            ..default_settings()
-        };
-        let out = apply_context_boost(text, vec![result(0.1, "R", 8, 12)], &rec, &[], &settings);
-        assert_eq!(out[0].explanation.supportive_keyword.as_deref(), Some("card"));
     }
 
     #[test]

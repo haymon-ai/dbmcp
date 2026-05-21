@@ -182,7 +182,7 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     use super::{AnalyzeOptions, Analyzer};
-    use crate::context::{ContextMatchingMode, ContextSettings};
+    use crate::context::ContextSettings;
     use crate::pattern::Pattern;
     use crate::recognizers::Recognizer;
     use crate::score::Score;
@@ -195,7 +195,6 @@ mod tests {
             min_score_with_context: Score::from_static(0.4),
             prefix_words: 5,
             suffix_words: 0,
-            matching_mode: ContextMatchingMode::WholeWord,
         }
     }
 

@@ -34,31 +34,37 @@ pub fn passport_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::passport_usa;
+    use super::{CONTEXT, passport_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(passport_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         passport_usa()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_passport_usa() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("912803456", &[(0, 9)]),
-            ("Z12803456", &[(0, 9)]),
-            ("A12803456", &[(0, 9)]),
-            ("my travel document is A12803456", &[(22, 31)]),
-            ("my travel passport is A12803456", &[(22, 31)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("912803456", &[("912803456", 0.05)]),
+            ("Z12803456", &[("Z12803456", 0.1)]),
+            ("A12803456", &[("A12803456", 0.1)]),
+            ("900000000", &[("900000000", 0.05)]),
+            ("my travel document is A12803456", &[("A12803456", 0.1)]),
+            ("my travel passport is A12803456", &[("A12803456", 0.1)]),
             ("12345678", &[]),
             ("1234567890", &[]),
             ("AB12803456", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

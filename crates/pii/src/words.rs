@@ -5,10 +5,9 @@
 //! * [`push_key_words`] — JSON object keys. Splits on every
 //!   non-alphanumeric ASCII char (`_`, `-`, `.`, whitespace, punctuation,
 //!   any non-ASCII byte) and lowercases the surviving pieces. camelCase /
-//!   `PascalCase` are intentionally left glued: the boost runs under
-//!   [`crate::ContextMatchingMode::Substring`] in production, so `"phone"`
-//!   matches `"customerphone"` via `str::contains`, and acronym
-//!   substrings like `"ipv4"` stay intact against `"ipv4"` keywords.
+//!   `PascalCase` are left glued; the boost matches whole words, so a glued
+//!   key like `"customerphone"` does not satisfy a `"phone"` keyword —
+//!   snake/kebab/dotted keys (the SQL norm) split into matchable tokens.
 //! * [`words`] / [`first_word`] — free-form text inside the boost window.
 //!   Manual `char::is_alphanumeric || '_'` scan that mirrors Unicode
 //!   `\w+` semantics for the inputs the boost actually sees, so
@@ -94,8 +93,7 @@ mod tests {
 
     #[test]
     fn camel_and_pascal_case_stay_glued() {
-        // camelCase / PascalCase do NOT split — substring matching against
-        // recognizer keywords still finds `"phone"` inside `"customerphone"`.
+        // camelCase / PascalCase do NOT split into separate tokens.
         assert_eq!(words("customerPhoneNumber"), vec!["customerphonenumber"]);
         assert_eq!(words("CustomerPhoneNumber"), vec!["customerphonenumber"]);
         assert_eq!(words("APIKey"), vec!["apikey"]);

@@ -39,7 +39,7 @@ pub fn phone_number() -> Recognizer {
 mod tests {
     use super::{CONTEXT, phone_number};
     use crate::analyzer::{AnalyzeOptions, Analyzer};
-    use crate::context::{ContextMatchingMode, ContextSettings};
+    use crate::context::ContextSettings;
     use crate::score::Score;
 
     fn matches(text: &str) -> Vec<String> {
@@ -71,7 +71,6 @@ mod tests {
                 min_score_with_context: Score::from_static(0.4),
                 prefix_words: 5,
                 suffix_words: 0,
-                matching_mode: ContextMatchingMode::WholeWord,
             }),
         };
         let out = a.analyze("my phone 415 555 0142", &opts);
