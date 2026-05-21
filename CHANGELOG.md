@@ -2,6 +2,13 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.12.0](https://github.com/haymon-ai/dbmcp/compare/aadf0e60353b4df1be4de80f3ae43ae459268642..v0.12.0) - 2026-05-20
+#### Features
+- (**tools**) split per-database tools into Pinned/Unpinned variants (#167) - ([41b5bfa](https://github.com/haymon-ai/dbmcp/commit/41b5bfadb111ddca00218d8188860822e34e778c)) - [@athopen](https://github.com/athopen)
+- (**tools**) hide cross-database tools when a database name is pinned (#165) - ([aadf0e6](https://github.com/haymon-ai/dbmcp/commit/aadf0e60353b4df1be4de80f3ae43ae459268642)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.11.1](https://github.com/haymon-ai/dbmcp/compare/298b65533c418f93736fdc53d8d139b64ceba234..v0.11.1) - 2026-05-17
 #### Features
 - (**pii**) context-aware boost + redactor walker simplifications (#162) - ([298b655](https://github.com/haymon-ai/dbmcp/commit/298b65533c418f93736fdc53d8d139b64ceba234)) - [@athopen](https://github.com/athopen)
