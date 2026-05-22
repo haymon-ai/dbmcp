@@ -657,6 +657,24 @@ mod tests {
     }
 
     #[test]
+    fn zip_code_column_redacts_de_postcode_via_zip_keyword() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"zip_code": "41100"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["zip_code"], "<POSTCODE_DE>");
+        assert_eq!(stats.by_entity.get(&Entity::PostcodeDe).copied(), Some(1));
+    }
+
+    #[test]
+    fn de_postcode_value_untouched_without_address_context() {
+        let r = Redactor::with_defaults();
+        let mut rows = vec![json!({"reference": "41100"})];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["reference"], "41100");
+        assert!(!stats.by_entity.contains_key(&Entity::PostcodeDe));
+    }
+
+    #[test]
     fn numeric_reference_untouched() {
         let r = Redactor::with_defaults();
         let mut rows = vec![json!({"reference": "900000000"})];

@@ -24,6 +24,15 @@ const CONTEXT: &[&str] = &[
     "gemeinde",
     "stadt",
     "dorf",
+    "zip",
+    "postcode",
+    "postal",
+    "address",
+    "city",
+    "delivery",
+    "mailing",
+    "shipping",
+    "correspondence",
 ];
 
 /// Build the `POSTCODE_DE` recognizer.
