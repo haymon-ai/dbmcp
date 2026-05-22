@@ -45,67 +45,46 @@ pub fn password_hash() -> Recognizer {
 mod tests {
     use super::password_hash;
 
-    fn matches(text: &str) -> Vec<&str> {
+    fn results(text: &str) -> Vec<(&str, f32)> {
         password_hash()
             .analyze(text)
             .into_iter()
-            .map(|r| &text[r.start..r.end])
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
-    fn recognizes_bcrypt() {
+    fn recognizes_password_hash() {
         let bcrypt = format!("$2y$12${}", "a".repeat(53));
-        assert_eq!(matches(&bcrypt), vec![bcrypt.as_str()]);
-
         let bcrypt_b = format!("$2b$10$./{}", "a".repeat(51));
-        assert_eq!(matches(&bcrypt_b), vec![bcrypt_b.as_str()]);
-
         let embedded = format!("password={bcrypt} stored");
-        assert_eq!(matches(&embedded), vec![bcrypt.as_str()]);
-    }
-
-    #[test]
-    fn redacts_hash_prefix_of_overlong_value() {
         let overlong = format!("$2y$12${}", "a".repeat(60));
-        let hash_prefix = &overlong[.."$2y$12$".len() + 53];
-        assert_eq!(matches(&overlong), vec![hash_prefix]);
-    }
-
-    #[test]
-    fn recognizes_sha_crypt() {
+        let overlong_prefix = &overlong[.."$2y$12$".len() + 53];
         let sha512 = format!("$6$rounds=5000$abcdefghijklmnop${}", "a".repeat(86));
-        assert_eq!(matches(&sha512), vec![sha512.as_str()]);
-
         let sha256 = format!("$5$saltsalt${}", "z".repeat(43));
-        assert_eq!(matches(&sha256), vec![sha256.as_str()]);
-
         let md5 = format!("$1$abcdefgh${}", "Q".repeat(22));
-        assert_eq!(matches(&md5), vec![md5.as_str()]);
-    }
-
-    #[test]
-    fn recognizes_argon2() {
         let argon = format!("$argon2id$v=19$m=65536,t=3,p=4${}${}", "c".repeat(22), "d".repeat(43));
-        assert_eq!(matches(&argon), vec![argon.as_str()]);
-
         let argon_i = format!("$argon2i$m=4096,t=3,p=1${}${}", "e".repeat(16), "f".repeat(32));
-        assert_eq!(matches(&argon_i), vec![argon_i.as_str()]);
-    }
-
-    #[test]
-    fn rejects_non_hashes() {
         let truncated = format!("$2y$12${}", "a".repeat(40));
-        let cases: &[&str] = &[
-            "$2c$12$short",
-            truncated.as_str(),
-            "$3$notreal$xyz",
-            "not_a_hash_at_all",
-            "$2y$",
-            "",
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            (bcrypt.as_str(), &[(bcrypt.as_str(), 0.7)]),
+            (bcrypt_b.as_str(), &[(bcrypt_b.as_str(), 0.7)]),
+            (embedded.as_str(), &[(bcrypt.as_str(), 0.7)]),
+            (overlong.as_str(), &[(overlong_prefix, 0.7)]),
+            (sha512.as_str(), &[(sha512.as_str(), 0.7)]),
+            (sha256.as_str(), &[(sha256.as_str(), 0.7)]),
+            (md5.as_str(), &[(md5.as_str(), 0.7)]),
+            (argon.as_str(), &[(argon.as_str(), 0.7)]),
+            (argon_i.as_str(), &[(argon_i.as_str(), 0.7)]),
+            ("$2c$12$short", &[]),
+            (truncated.as_str(), &[]),
+            ("$3$notreal$xyz", &[]),
+            ("not_a_hash_at_all", &[]),
+            ("$2y$", &[]),
+            ("", &[]),
         ];
-        for input in cases {
-            assert!(matches(input).is_empty(), "input {input:?} should not match");
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

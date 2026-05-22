@@ -45,27 +45,32 @@ pub fn medical_practice_id_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::medical_practice_id_deu;
+    use super::{CONTEXT, medical_practice_id_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(medical_practice_id_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         medical_practice_id_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_medical_practice_id_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("021234568", &[(0, 9)]),
-            ("521234567", &[(0, 9)]),
-            ("711234567", &[(0, 9)]),
-            ("351234567", &[(0, 9)]),
-            ("991234567", &[(0, 9)]),
-            ("051234567", &[(0, 9)]),
-            ("Betriebsstättennummer: 021234568", &[(24, 33)]),
-            ("BSNR 711234567 der Praxis.", &[(5, 14)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("021234568", &[("021234568", 0.2)]),
+            ("521234567", &[("521234567", 0.2)]),
+            ("711234567", &[("711234567", 0.2)]),
+            ("351234567", &[("351234567", 0.2)]),
+            ("991234567", &[("991234567", 0.2)]),
+            ("051234567", &[("051234567", 0.2)]),
+            ("Betriebsstättennummer: 021234568", &[("021234568", 0.2)]),
+            ("BSNR 711234567 der Praxis.", &[("711234567", 0.2)]),
             ("000000000", &[]),
             ("02123456", &[]),
             ("0212345689", &[]),
@@ -73,7 +78,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

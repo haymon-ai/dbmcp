@@ -58,30 +58,45 @@ pub fn api_key_aws_secret() -> Recognizer {
 mod tests {
     use super::{api_key_aws_secret, api_key_strong};
 
-    fn matches_strong(text: &str) -> Vec<(usize, usize)> {
+    fn results_strong(text: &str) -> Vec<(&str, f32)> {
         api_key_strong()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
-    fn matches_secret(text: &str) -> Vec<(usize, usize)> {
+    fn results_secret(text: &str) -> Vec<(&str, f32)> {
         api_key_aws_secret()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_api_key_strong() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("aws_access_key_id=AKIAIOSFODNN7EXAMPLE", &[(18, 38)]),
-            ("GH_TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789", &[(9, 49)]),
-            ("STRIPE=sk_live_aBcDeFgHiJkLmNoPqRsTuVwX", &[(7, 39)]),
-            ("GOOGLE_API_KEY=AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", &[(15, 54)]),
-            ("OPENAI=sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &[(7, 58)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            (
+                "aws_access_key_id=AKIAIOSFODNN7EXAMPLE",
+                &[("AKIAIOSFODNN7EXAMPLE", 0.6)],
+            ),
+            (
+                "GH_TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789",
+                &[("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789", 0.6)],
+            ),
+            (
+                "STRIPE=sk_live_aBcDeFgHiJkLmNoPqRsTuVwX",
+                &[("sk_live_aBcDeFgHiJkLmNoPqRsTuVwX", 0.6)],
+            ),
+            (
+                "GOOGLE_API_KEY=AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                &[("AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 0.6)],
+            ),
+            (
+                "OPENAI=sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &[("sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0.6)],
+            ),
             ("AKIA0OSFODNN7EXAMPLE", &[]),
             ("AKIAIOSFODNN8EXAMPLE", &[]),
             ("GH_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &[]),
@@ -89,33 +104,25 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(
-                matches_strong(input),
-                expected.to_vec(),
-                "input {input:?}: span mismatch"
-            );
+            assert_eq!(results_strong(input), expected.to_vec(), "input {input:?}");
         }
     }
 
     #[test]
     fn recognizes_api_key_aws_secret() {
-        // AWS secret regex matches any 40-char base64 string. The
-        // context-aware scoring pass + redactor `min_score` floor decide
-        // whether a match surfaces; the recognizer itself emits any hit.
-        let cases: &[(&str, &[(usize, usize)])] = &[
+        let cases: &[(&str, &[(&str, f32)])] = &[
             (
                 "aws_secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                &[(22, 62)],
+                &[("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 0.3)],
             ),
-            ("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", &[(0, 40)]),
+            (
+                "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                &[("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", 0.3)],
+            ),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(
-                matches_secret(input),
-                expected.to_vec(),
-                "input {input:?}: span mismatch"
-            );
+            assert_eq!(results_secret(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

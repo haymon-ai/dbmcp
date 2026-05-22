@@ -60,26 +60,34 @@ pub fn vehicle_registration_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::vehicle_registration_gbr;
+    use super::{CONTEXT, vehicle_registration_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(vehicle_registration_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         vehicle_registration_gbr()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_vehicle_registration_gbr() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("AB51 ABC", &[(0, 8)]),
-            ("BD62XYZ", &[(0, 7)]),
-            ("LN14-HGT", &[(0, 8)]),
-            ("aa02 aaa", &[(0, 8)]),
-            ("My car reg is AB51 ABC and it expires", &[(14, 22)]),
-            ("Vehicles AB51 ABC and BD62XYZ were seen", &[(9, 17), (22, 29)]),
-            ("AB70 DEF", &[(0, 8)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("AB51 ABC", &[("AB51 ABC", 0.3)]),
+            ("BD62XYZ", &[("BD62XYZ", 0.3)]),
+            ("LN14-HGT", &[("LN14-HGT", 0.3)]),
+            ("aa02 aaa", &[("aa02 aaa", 0.3)]),
+            ("My car reg is AB51 ABC and it expires", &[("AB51 ABC", 0.3)]),
+            (
+                "Vehicles AB51 ABC and BD62XYZ were seen",
+                &[("AB51 ABC", 0.3), ("BD62XYZ", 0.3)],
+            ),
+            ("AB70 DEF", &[("AB70 DEF", 0.3)]),
             ("IB51 ABC", &[]),
             ("AQ51 ABC", &[]),
             ("AB00 ABC", &[]),
@@ -87,14 +95,14 @@ mod tests {
             ("AB49 ABC", &[]),
             ("AB80 ABC", &[]),
             ("AB51 AIB", &[]),
-            ("A123 BCD", &[(0, 8)]),
-            ("K1 ABC", &[(0, 6)]),
-            ("M456DEF", &[(0, 7)]),
+            ("A123 BCD", &[("A123 BCD", 0.2)]),
+            ("K1 ABC", &[("K1 ABC", 0.2)]),
+            ("M456DEF", &[("M456DEF", 0.2)]),
             ("I123 BCD", &[]),
             ("O123 BCD", &[]),
-            ("ABC 123D", &[(0, 8)]),
-            ("ABC 1D", &[(0, 6)]),
-            ("DEF456G", &[(0, 7)]),
+            ("ABC 123D", &[("ABC 123D", 0.15)]),
+            ("ABC 1D", &[("ABC 1D", 0.15)]),
+            ("DEF456G", &[("DEF456G", 0.15)]),
             ("ABC 123I", &[]),
             ("ABC 123Z", &[]),
             ("hello world", &[]),
@@ -103,7 +111,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

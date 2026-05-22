@@ -76,29 +76,34 @@ pub fn driver_license_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::driver_license_usa;
+    use super::{CONTEXT, driver_license_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(driver_license_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         driver_license_usa()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_driver_license_usa() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("driver license A1234567", &[(15, 23)]),
-            ("DL: H12345678", &[(4, 13)]),
-            ("driving permit 1234567", &[(15, 22)]),
-            ("cdl 12345678901234", &[(4, 18)]),
-            ("driving licence 1234567890123456", &[(16, 32)]),
-            ("order A1234567", &[(6, 14)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("driver license A1234567", &[("A1234567", 0.3)]),
+            ("DL: H12345678", &[("H12345678", 0.3)]),
+            ("driving permit 1234567", &[("1234567", 0.01)]),
+            ("cdl 12345678901234", &[("12345678901234", 0.01)]),
+            ("driving licence 1234567890123456", &[("1234567890123456", 0.01)]),
+            ("order A1234567", &[("A1234567", 0.3)]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

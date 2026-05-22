@@ -30,27 +30,30 @@ pub fn vat_number_eur() -> Recognizer {
 mod tests {
     use super::vat_number_eur;
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    fn results(text: &str) -> Vec<(&str, f32)> {
         vat_number_eur()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_vat_number_eur() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("VAT DE123456789", &[(4, 15)]),
-            ("VAT GB123456789", &[(4, 15)]),
-            ("billing DE123456789 and GB987654321", &[(8, 19), (24, 35)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("VAT DE123456789", &[("DE123456789", 1.0)]),
+            ("VAT GB123456789", &[("GB123456789", 1.0)]),
+            (
+                "billing DE123456789 and GB987654321",
+                &[("DE123456789", 1.0), ("GB987654321", 1.0)],
+            ),
             ("VAT XX123456789", &[]),
             ("DE12345", &[]),
             ("VAT de123456789", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

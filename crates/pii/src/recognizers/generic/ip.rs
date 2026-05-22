@@ -42,39 +42,50 @@ pub fn ip_address() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::ip_address;
+    use super::{CONTEXT, ip_address};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(ip_address().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         ip_address()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_ip_address() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("haymon.ai 192.168.0.1", &[(10, 21)]),
-            ("10.0.0.0/24", &[(0, 11)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("haymon.ai 192.168.0.1", &[("192.168.0.1", 1.0)]),
+            ("10.0.0.0/24", &[("10.0.0.0/24", 1.0)]),
             ("my ip: 192.168.0", &[]),
             ("192.168.1.999", &[]),
             ("256.256.256.256", &[]),
-            ("haymon.ai 684D:1111:222:3333:4444:5555:6:77", &[(10, 43)]),
-            ("my ip: 684D:1111:222:3333:4444:5555:6:77", &[(7, 40)]),
+            (
+                "haymon.ai 684D:1111:222:3333:4444:5555:6:77",
+                &[("684D:1111:222:3333:4444:5555:6:77", 1.0)],
+            ),
+            (
+                "my ip: 684D:1111:222:3333:4444:5555:6:77",
+                &[("684D:1111:222:3333:4444:5555:6:77", 1.0)],
+            ),
             ("684D:1111:222:3333:4444:5555:77", &[]),
-            ("my ip: ::1", &[(7, 10)]),
-            ("connecting from ::1", &[(16, 19)]),
-            ("2400:c401::5054:ff:fe1b:b031", &[(0, 28)]),
-            ("fe80::1", &[(0, 7)]),
-            ("2001:db8::8a2e:370:7334", &[(0, 23)]),
-            ("2001:db8::1", &[(0, 11)]),
-            ("Server IP: 2001:db8::1", &[(11, 22)]),
-            ("Connect to [2001:db8::1]:8080", &[(12, 23)]),
+            ("my ip: ::1", &[("::1", 1.0)]),
+            ("connecting from ::1", &[("::1", 1.0)]),
+            ("2400:c401::5054:ff:fe1b:b031", &[("2400:c401::5054:ff:fe1b:b031", 1.0)]),
+            ("fe80::1", &[("fe80::1", 1.0)]),
+            ("2001:db8::8a2e:370:7334", &[("2001:db8::8a2e:370:7334", 1.0)]),
+            ("2001:db8::1", &[("2001:db8::1", 1.0)]),
+            ("Server IP: 2001:db8::1", &[("2001:db8::1", 1.0)]),
+            ("Connect to [2001:db8::1]:8080", &[("2001:db8::1", 1.0)]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

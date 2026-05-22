@@ -50,36 +50,41 @@ pub fn commercial_register_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::commercial_register_deu;
+    use super::{CONTEXT, commercial_register_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(commercial_register_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         commercial_register_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_commercial_register_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("HRB 123456", &[(0, 10)]),
-            ("HRB 1", &[(0, 5)]),
-            ("HRB123456", &[(0, 9)]),
-            ("HRA 12345", &[(0, 9)]),
-            ("HRA12345", &[(0, 8)]),
-            ("Amtsgericht München HRB 12345.", &[(21, 30)]),
-            ("eingetragen im HRA 99999 Köln", &[(15, 24)]),
-            ("Handelsregisternummer: HRB 123456", &[(23, 33)]),
-            ("HRB 999999", &[(0, 10)]),
-            ("hrb 12345", &[(0, 9)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("HRB 123456", &[("HRB 123456", 0.5)]),
+            ("HRB 1", &[("HRB 1", 0.5)]),
+            ("HRB123456", &[("HRB123456", 0.5)]),
+            ("HRA 12345", &[("HRA 12345", 0.5)]),
+            ("HRA12345", &[("HRA12345", 0.5)]),
+            ("Amtsgericht München HRB 12345.", &[("HRB 12345", 0.5)]),
+            ("eingetragen im HRA 99999 Köln", &[("HRA 99999", 0.5)]),
+            ("Handelsregisternummer: HRB 123456", &[("HRB 123456", 0.5)]),
+            ("HRB 999999", &[("HRB 999999", 0.5)]),
+            ("hrb 12345", &[("hrb 12345", 0.5)]),
             ("HRC 12345", &[]),
             ("HR 12345", &[]),
             ("HRB 1234567", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

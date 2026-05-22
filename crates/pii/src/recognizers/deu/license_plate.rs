@@ -72,42 +72,52 @@ pub fn license_plate_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::license_plate_deu;
+    use super::{CONTEXT, license_plate_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        let mut spans: Vec<(usize, usize)> = license_plate_deu()
-            .analyze(text)
-            .into_iter()
-            .map(|r| (r.start, r.end))
-            .collect();
-        spans.sort_unstable();
-        spans.dedup();
-        spans
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(license_plate_deu().context(), CONTEXT);
     }
 
-    fn matched(text: &str) -> bool {
-        !matches(text).is_empty()
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        let mut hits: Vec<(usize, usize, f32)> = license_plate_deu()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (r.start, r.end, r.score.as_f32()))
+            .collect();
+        // The Umlaut and ASCII patterns can match one span at different scores; keep the highest.
+        hits.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then(b.2.total_cmp(&a.2)));
+        hits.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        hits.into_iter().map(|(s, e, score)| (&text[s..e], score)).collect()
     }
 
     #[test]
     fn recognizes_license_plate_deu() {
-        assert!(matched("B AB 1234"));
-        assert!(matched("M XY 999"));
-        assert!(matched("HH AB 1234"));
-        assert!(matched("KA EF 12H"));
-        assert!(matched("S AB 12E"));
-        assert!(matched("MIL E 1234"));
-        assert!(matched("MIL EF 1234E"));
-        assert!(matched("B-AB-1234"));
-        assert!(matched("M-XY-999"));
-        assert!(matched("HH-AB-1234"));
-        assert!(matched("Das Fahrzeug mit Kennzeichen B AB 1234 wurde gesehen."));
-        assert!(matched("Kennzeichen: HH-AB-1234."));
-        assert!(matched("b ab 1234"));
-        assert!(matched("m xy 999"));
-        assert!(!matched("BAB1234"));
-        assert!(!matched("B 1234"));
-        assert!(!matched("BXYZ AB 1234"));
-        assert!(!matched(""));
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("B AB 1234", &[("B AB 1234", 0.3)]),
+            ("M XY 999", &[("M XY 999", 0.3)]),
+            ("HH AB 1234", &[("HH AB 1234", 0.3)]),
+            ("KA EF 12H", &[("KA EF 12H", 0.3)]),
+            ("S AB 12E", &[("S AB 12E", 0.3)]),
+            ("MIL E 1234", &[("MIL E 1234", 0.3)]),
+            ("MIL EF 1234E", &[("MIL EF 1234E", 0.3)]),
+            ("B-AB-1234", &[("B-AB-1234", 0.3)]),
+            ("M-XY-999", &[("M-XY-999", 0.3)]),
+            ("HH-AB-1234", &[("HH-AB-1234", 0.3)]),
+            (
+                "Das Fahrzeug mit Kennzeichen B AB 1234 wurde gesehen.",
+                &[("B AB 1234", 0.3)],
+            ),
+            ("Kennzeichen: HH-AB-1234.", &[("HH-AB-1234", 0.3)]),
+            ("b ab 1234", &[("b ab 1234", 0.3)]),
+            ("m xy 999", &[("m xy 999", 0.3)]),
+            ("BAB1234", &[]),
+            ("B 1234", &[]),
+            ("BXYZ AB 1234", &[]),
+            ("", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
+        }
     }
 }

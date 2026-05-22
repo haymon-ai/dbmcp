@@ -26,38 +26,33 @@ pub fn tax_id_ein_usa() -> Recognizer {
 mod tests {
     use super::tax_id_ein_usa;
 
-    fn matches(text: &str) -> Vec<String> {
-        let r = tax_id_ein_usa();
-        r.analyze(text)
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        tax_id_ein_usa()
+            .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
-    fn positive_known_prefix() {
-        // 04 is a valid IRS prefix.
-        assert_eq!(matches("EIN 04-1234567"), vec!["04-1234567"]);
-    }
-
-    #[test]
-    fn negative_invalid_prefix() {
-        let bad = [
-            "07-1234567",
-            "08-1234567",
-            "09-1234567",
-            "17-1234567",
-            "18-1234567",
-            "19-1234567",
-            "28-1234567",
-            "29-1234567",
-            "49-1234567",
-            "69-1234567",
-            "70-1234567",
-            "78-1234567",
+    fn recognizes_tax_id_ein_usa() {
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("EIN 04-1234567", &[("04-1234567", 1.0)]),
+            ("07-1234567", &[]),
+            ("08-1234567", &[]),
+            ("09-1234567", &[]),
+            ("17-1234567", &[]),
+            ("18-1234567", &[]),
+            ("19-1234567", &[]),
+            ("28-1234567", &[]),
+            ("29-1234567", &[]),
+            ("49-1234567", &[]),
+            ("69-1234567", &[]),
+            ("70-1234567", &[]),
+            ("78-1234567", &[]),
         ];
-        for n in bad {
-            assert!(matches(n).is_empty(), "{n} has invalid IRS prefix, expected no match");
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

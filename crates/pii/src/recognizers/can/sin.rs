@@ -42,30 +42,35 @@ pub fn sin_can() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::sin_can;
+    use super::{CONTEXT, sin_can};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        sin_can().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(sin_can().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        sin_can()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_sin_can() {
-        // 046 454 286 — known-valid Canadian SIN test number.
-        // Recognizer-level results: Luhn-validator passes → MAX score.
-        // Keyword gating is handled by the context-boost pass + redactor
-        // `min_score` floor, not by the recognizer itself.
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("SIN 046 454 286", &[(4, 15)]),
-            ("social insurance 046-454-286", &[(17, 28)]),
-            ("sin: 046454286", &[(5, 14)]),
-            ("046 454 286", &[(0, 11)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("SIN 046 454 286", &[("046 454 286", 1.0)]),
+            ("social insurance 046-454-286", &[("046-454-286", 1.0)]),
+            ("sin: 046454286", &[("046454286", 1.0)]),
+            ("046 454 286", &[("046 454 286", 1.0)]),
             ("SIN 046 454 287", &[]),
             ("SIN 146 454 286", &[]),
             ("SIN 12345678", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

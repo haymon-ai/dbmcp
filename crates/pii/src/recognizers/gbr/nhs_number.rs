@@ -37,26 +37,29 @@ pub fn nhs_number_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::nhs_number_gbr;
+    use super::{CONTEXT, nhs_number_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(nhs_number_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         nhs_number_gbr()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_nhs_number_gbr() {
-        // 943 476 5919 — valid NHS test number; 0000000051 — remainder-10 branch
-        // (sum%11 == 10 → check digit 1) regression case.
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("401-023-2137", &[(0, 12)]),
-            ("221 395 1837", &[(0, 12)]),
-            ("0032698674", &[(0, 10)]),
-            ("NHS 943 476 5919", &[(4, 16)]),
-            ("NHS 0000000051", &[(4, 14)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("401-023-2137", &[("401-023-2137", 1.0)]),
+            ("221 395 1837", &[("221 395 1837", 1.0)]),
+            ("0032698674", &[("0032698674", 1.0)]),
+            ("NHS 943 476 5919", &[("943 476 5919", 1.0)]),
+            ("NHS 0000000051", &[("0000000051", 1.0)]),
             ("401-023-2138", &[]),
             ("NHS 943 476 5910", &[]),
             ("NHS 943 476 5917", &[]),
@@ -64,7 +67,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

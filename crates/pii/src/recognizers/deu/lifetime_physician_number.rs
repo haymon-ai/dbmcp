@@ -46,27 +46,32 @@ pub fn lifetime_physician_number_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::lifetime_physician_number_deu;
+    use super::{CONTEXT, lifetime_physician_number_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(lifetime_physician_number_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         lifetime_physician_number_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_lifetime_physician_number_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("123456601", &[(0, 9)]),
-            ("234567701", &[(0, 9)]),
-            ("100000601", &[(0, 9)]),
-            ("987654401", &[(0, 9)]),
-            ("555555501", &[(0, 9)]),
-            ("999999901", &[(0, 9)]),
-            ("LANR: 123456601 des behandelnden Arztes.", &[(6, 15)]),
-            ("Arztnummer 987654401 auf dem Rezept.", &[(11, 20)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("123456601", &[("123456601", 1.0)]),
+            ("234567701", &[("234567701", 1.0)]),
+            ("100000601", &[("100000601", 1.0)]),
+            ("987654401", &[("987654401", 1.0)]),
+            ("555555501", &[("555555501", 1.0)]),
+            ("999999901", &[("999999901", 1.0)]),
+            ("LANR: 123456601 des behandelnden Arztes.", &[("123456601", 1.0)]),
+            ("Arztnummer 987654401 auf dem Rezept.", &[("987654401", 1.0)]),
             ("123456901", &[]),
             ("234567601", &[]),
             ("100000401", &[]),
@@ -75,7 +80,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

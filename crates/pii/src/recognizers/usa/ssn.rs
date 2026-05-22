@@ -31,20 +31,29 @@ pub fn ssn_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::ssn_usa;
+    use super::{CONTEXT, ssn_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        ssn_usa().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(ssn_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        ssn_usa()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_ssn_usa() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("078-051121 07805-1121", &[(0, 10), (11, 21)]),
-            ("078051121", &[(0, 9)]),
-            ("078-05-1123", &[(0, 11)]),
-            ("078 05 1123", &[(0, 11)]),
-            ("abc 078 05 1123 abc", &[(4, 15)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("078-051121 07805-1121", &[("078-051121", 1.0), ("07805-1121", 1.0)]),
+            ("078051121", &[("078051121", 1.0)]),
+            ("078-05-1123", &[("078-05-1123", 1.0)]),
+            ("078 05 1123", &[("078 05 1123", 1.0)]),
+            ("abc 078 05 1123 abc", &[("078 05 1123", 1.0)]),
             ("0780511201", &[]),
             ("000000000", &[]),
             ("666000000", &[]),
@@ -55,7 +64,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

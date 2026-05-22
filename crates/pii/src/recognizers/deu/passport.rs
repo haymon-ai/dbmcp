@@ -44,38 +44,43 @@ pub fn passport_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::passport_deu;
+    use super::{CONTEXT, passport_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(passport_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         passport_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_passport_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("C01234565", &[(0, 9)]),
-            ("F12345671", &[(0, 9)]),
-            ("L01X00T44", &[(0, 9)]),
-            ("CZ6311T03", &[(0, 9)]),
-            ("G00000002", &[(0, 9)]),
-            ("C01X00T41", &[(0, 9)]),
-            ("Reisepass C01234565 ausgestellt am 01.01.2020.", &[(10, 19)]),
-            ("Pass-Nr.: F12345671", &[(10, 19)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("C01234565", &[("C01234565", 1.0)]),
+            ("F12345671", &[("F12345671", 1.0)]),
+            ("L01X00T44", &[("L01X00T44", 1.0)]),
+            ("CZ6311T03", &[("CZ6311T03", 1.0)]),
+            ("G00000002", &[("G00000002", 1.0)]),
+            ("C01X00T41", &[("C01X00T41", 1.0)]),
+            ("Reisepass C01234565 ausgestellt am 01.01.2020.", &[("C01234565", 1.0)]),
+            ("Pass-Nr.: F12345671", &[("F12345671", 1.0)]),
             ("C01234567", &[]),
             ("F12345678", &[]),
             ("L01X00T47", &[]),
-            ("c01234565", &[(0, 9)]),
+            ("c01234565", &[("c01234565", 1.0)]),
             ("C0123456", &[]),
             ("C012345678", &[]),
             ("901234567", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

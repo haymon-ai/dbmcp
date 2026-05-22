@@ -57,26 +57,31 @@ pub fn postcode_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::postcode_deu;
+    use super::{CONTEXT, postcode_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(postcode_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         postcode_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_postcode_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("10115", &[(0, 5)]),
-            ("80331", &[(0, 5)]),
-            ("22085", &[(0, 5)]),
-            ("01001", &[(0, 5)]),
-            ("99998", &[(0, 5)]),
-            ("PLZ: 10115", &[(5, 10)]),
-            ("Postleitzahl 80331 München", &[(13, 18)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("10115", &[("10115", 0.05)]),
+            ("80331", &[("80331", 0.05)]),
+            ("22085", &[("22085", 0.05)]),
+            ("01001", &[("01001", 0.05)]),
+            ("99998", &[("99998", 0.05)]),
+            ("PLZ: 10115", &[("10115", 0.05)]),
+            ("Postleitzahl 80331 München", &[("80331", 0.05)]),
             ("00000", &[]),
             ("01000", &[]),
             ("99999", &[]),
@@ -85,7 +90,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

@@ -32,31 +32,34 @@ pub fn bank_account_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::bank_account_usa;
+    use super::{CONTEXT, bank_account_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(bank_account_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         bank_account_usa()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_bank_account_usa() {
-        // The regex matches any 8-17 digit run; context-boost + redactor
-        // `min_score` floor decide whether the match surfaces.
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("checking account 12345678", &[(17, 25)]),
-            ("bank 1234567890123", &[(5, 18)]),
-            ("savings acct 9876543210", &[(13, 23)]),
-            ("order 12345678", &[(6, 14)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("checking account 12345678", &[("12345678", 0.05)]),
+            ("bank 1234567890123", &[("1234567890123", 0.05)]),
+            ("savings acct 9876543210", &[("9876543210", 0.05)]),
+            ("order 12345678", &[("12345678", 0.05)]),
             ("account 1234567", &[]),
             ("account 123456789012345678", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

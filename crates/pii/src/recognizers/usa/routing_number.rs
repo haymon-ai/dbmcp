@@ -28,31 +28,35 @@ pub fn routing_number_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::routing_number_usa;
+    use super::{CONTEXT, routing_number_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(routing_number_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         routing_number_usa()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_routing_number_usa() {
-        // 021000021 — JPMorgan Chase ABA routing (valid checksum).
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("bank routing 021000021", &[(13, 22)]),
-            ("aba 021000021", &[(4, 13)]),
-            ("rtn=021000021", &[(4, 13)]),
-            ("version 021000021", &[(8, 17)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("bank routing 021000021", &[("021000021", 1.0)]),
+            ("aba 021000021", &[("021000021", 1.0)]),
+            ("rtn=021000021", &[("021000021", 1.0)]),
+            ("version 021000021", &[("021000021", 1.0)]),
             ("bank routing 021000020", &[]),
             ("bank routing 121000021", &[]),
             ("bank routing 12345678", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

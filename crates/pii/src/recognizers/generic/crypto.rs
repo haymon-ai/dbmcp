@@ -34,34 +34,58 @@ pub fn crypto() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::crypto;
+    use super::{CONTEXT, crypto};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        crypto().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(crypto().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        crypto()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_crypto() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ", &[(0, 34)]),
-            ("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", &[(0, 34)]),
-            ("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", &[(0, 42)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            (
+                "16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ",
+                &[("16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ", 1.0)],
+            ),
+            (
+                "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+                &[("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", 1.0)],
+            ),
+            (
+                "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+                &[("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", 1.0)],
+            ),
             (
                 "bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297",
-                &[(0, 62)],
+                &[("bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297", 1.0)],
             ),
             (
                 "16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ 3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
-                &[(0, 34), (35, 69)],
+                &[
+                    ("16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ", 1.0),
+                    ("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", 1.0),
+                ],
             ),
-            ("my wallet address is: 16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ", &[(22, 56)]),
+            (
+                "my wallet address is: 16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ",
+                &[("16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ", 1.0)],
+            ),
             ("16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ2", &[]),
             ("my wallet address is: 16Yeky6GMjeNkAiNcBY7ZhrLoMSgg1BoyZ2", &[]),
             ("", &[]),
             ("8f953371d3e85eddb89b05ed6b9e680791055315c73e1025ab5dba7bb2aee189", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

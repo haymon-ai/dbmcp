@@ -54,27 +54,36 @@ pub fn social_security_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::social_security_deu;
+    use super::{CONTEXT, social_security_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        let mut spans: Vec<(usize, usize)> = social_security_deu()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(social_security_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        let mut hits: Vec<(usize, usize, f32)> = social_security_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (r.start, r.end, r.score.as_f32()))
             .collect();
-        spans.sort_unstable();
-        spans.dedup();
-        spans
+        // The strict and relaxed patterns can match one span at different scores; keep the highest.
+        hits.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then(b.2.total_cmp(&a.2)));
+        hits.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        hits.into_iter().map(|(s, e, score)| (&text[s..e], score)).collect()
     }
 
     #[test]
     fn recognizes_social_security_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("15070649C103", &[(0, 12)]),
-            ("65070803A019", &[(0, 12)]),
-            ("20151090B023", &[(0, 12)]),
-            ("38551285K051", &[(0, 12)]),
-            ("RVNR: 15070649C103 laut Sozialversicherungsausweis.", &[(6, 18)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("15070649C103", &[("15070649C103", 1.0)]),
+            ("65070803A019", &[("65070803A019", 1.0)]),
+            ("20151090B023", &[("20151090B023", 1.0)]),
+            ("38551285K051", &[("38551285K051", 1.0)]),
+            (
+                "RVNR: 15070649C103 laut Sozialversicherungsausweis.",
+                &[("15070649C103", 1.0)],
+            ),
             ("15070649C100", &[]),
             ("65070803A012", &[]),
             ("15070049C103", &[]),
@@ -85,7 +94,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

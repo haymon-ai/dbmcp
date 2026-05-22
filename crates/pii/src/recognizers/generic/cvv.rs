@@ -24,31 +24,24 @@ pub fn cvv() -> Recognizer {
 mod tests {
     use super::cvv;
 
-    fn matches(text: &str) -> Vec<String> {
-        let r = cvv();
-        r.analyze(text)
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        cvv()
+            .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
-    fn positive_three_digit() {
-        assert_eq!(matches("cvv: 123"), vec!["123"]);
-    }
-
-    #[test]
-    fn positive_four_digit() {
-        assert_eq!(matches("cvc 4567"), vec!["4567"]);
-    }
-
-    #[test]
-    fn positive_csc_keyword() {
-        assert_eq!(matches("CSC=789"), vec!["789"]);
-    }
-
-    #[test]
-    fn negative_too_short() {
-        assert!(matches("cvv 12").is_empty());
+    fn recognizes_cvv() {
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("cvv: 123", &[("123", 0.3)]),
+            ("cvc 4567", &[("4567", 0.3)]),
+            ("CSC=789", &[("789", 0.3)]),
+            ("cvv 12", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
+        }
     }
 }

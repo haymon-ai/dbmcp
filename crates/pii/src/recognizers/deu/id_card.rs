@@ -55,33 +55,39 @@ pub fn id_card_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::id_card_deu;
+    use super::{CONTEXT, id_card_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        let mut spans: Vec<(usize, usize)> = id_card_deu()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(id_card_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        let mut hits: Vec<(usize, usize, f32)> = id_card_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (r.start, r.end, r.score.as_f32()))
             .collect();
-        spans.sort_unstable();
-        spans.dedup();
-        spans
+        // The nPA and legacy-T patterns can match one span at different scores; keep the highest.
+        hits.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then(b.2.total_cmp(&a.2)));
+        hits.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        hits.into_iter().map(|(s, e, score)| (&text[s..e], score)).collect()
     }
 
     #[test]
     fn recognizes_id_card_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("L01X00T44", &[(0, 9)]),
-            ("C01234565", &[(0, 9)]),
-            ("CZ6311T03", &[(0, 9)]),
-            ("G00000002", &[(0, 9)]),
-            ("Personalausweis: L01X00T44.", &[(17, 26)]),
-            ("l01x00t44", &[(0, 9)]),
-            ("T22000129", &[(0, 9)]),
-            ("T00000000", &[(0, 9)]),
-            ("T99999999", &[(0, 9)]),
-            ("Ausweis Nr. T22000129 gültig bis 2025.", &[(12, 21)]),
-            ("t22000129", &[(0, 9)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("L01X00T44", &[("L01X00T44", 1.0)]),
+            ("C01234565", &[("C01234565", 1.0)]),
+            ("CZ6311T03", &[("CZ6311T03", 1.0)]),
+            ("G00000002", &[("G00000002", 1.0)]),
+            ("Personalausweis: L01X00T44.", &[("L01X00T44", 1.0)]),
+            ("l01x00t44", &[("l01x00t44", 1.0)]),
+            ("T22000129", &[("T22000129", 0.5)]),
+            ("T00000000", &[("T00000000", 0.5)]),
+            ("T99999999", &[("T99999999", 0.5)]),
+            ("Ausweis Nr. T22000129 gültig bis 2025.", &[("T22000129", 0.5)]),
+            ("t22000129", &[("t22000129", 0.5)]),
             ("L01X00T47", &[]),
             ("C01234567", &[]),
             ("T2200012", &[]),
@@ -90,7 +96,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

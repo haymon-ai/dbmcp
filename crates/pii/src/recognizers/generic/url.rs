@@ -30,38 +30,50 @@ pub fn url() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::url;
+    use super::{CONTEXT, url};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        url().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(url().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        url()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_url() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("https://www.haymon.ai/", &[(0, 21)]),
-            ("http://www.haymon.ai/", &[(0, 20)]),
-            ("http://www.haymon.ai", &[(0, 20)]),
-            ("http://haymon.ai", &[(0, 16)]),
-            ("http://haymon.site", &[(0, 18)]),
-            ("http://haymon.webcam", &[(0, 20)]),
-            ("http://haymon.vlaanderen", &[(0, 24)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("https://www.haymon.ai/", &[("https://www.haymon.ai", 0.5)]),
+            ("http://www.haymon.ai/", &[("http://www.haymon.ai", 0.5)]),
+            ("http://www.haymon.ai", &[("http://www.haymon.ai", 0.5)]),
+            ("http://haymon.ai", &[("http://haymon.ai", 0.5)]),
+            ("http://haymon.site", &[("http://haymon.site", 0.5)]),
+            ("http://haymon.webcam", &[("http://haymon.webcam", 0.5)]),
+            ("http://haymon.vlaanderen", &[("http://haymon.vlaanderen", 0.5)]),
             (
                 "https://webhook.site/a8eedfd6-9d8a-44e0-b0fc-cc7d517db5dc?q=1&b=2",
-                &[(0, 65)],
+                &[("https://webhook.site/a8eedfd6-9d8a-44e0-b0fc-cc7d517db5dc?q=1&b=2", 0.5)],
             ),
-            ("https://www.haymon.ai/store/abc/", &[(0, 31)]),
-            ("Visit https://www.haymon.ai/ today", &[(6, 27)]),
+            (
+                "https://www.haymon.ai/store/abc/",
+                &[("https://www.haymon.ai/store/abc", 0.5)],
+            ),
+            ("Visit https://www.haymon.ai/ today", &[("https://www.haymon.ai", 0.5)]),
             (
                 "see https://www.haymon.ai/ and http://docs.haymon.ai/",
-                &[(4, 25), (31, 52)],
+                &[("https://www.haymon.ai", 0.5), ("http://docs.haymon.ai", 0.5)],
             ),
             ("haymon.ai", &[]),
             ("www.haymon.ai", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

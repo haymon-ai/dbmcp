@@ -30,22 +30,34 @@ pub fn nino_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::nino_gbr;
+    use super::{CONTEXT, nino_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        nino_gbr().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(nino_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        nino_gbr()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_nino_gbr() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("AA 12 34 56 B", &[(0, 13)]),
-            ("hh 01 02 03 d", &[(0, 13)]),
-            ("tw987654a", &[(0, 9)]),
-            ("nino: PR 123612C", &[(6, 16)]),
-            ("Here is my National Insurance Number YZ 61 48 68 B", &[(37, 50)]),
-            ("NI number AB123456C", &[(10, 19)]),
-            ("NI AB123456", &[(3, 11)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("AA 12 34 56 B", &[("AA 12 34 56 B", 0.4)]),
+            ("hh 01 02 03 d", &[("hh 01 02 03 d", 0.4)]),
+            ("tw987654a", &[("tw987654a", 0.4)]),
+            ("nino: PR 123612C", &[("PR 123612C", 0.4)]),
+            (
+                "Here is my National Insurance Number YZ 61 48 68 B",
+                &[("YZ 61 48 68 B", 0.4)],
+            ),
+            ("NI number AB123456C", &[("AB123456C", 0.4)]),
+            ("NI AB123456", &[("AB123456", 0.4)]),
             ("FQ 00 00 00 C", &[]),
             ("BG123612A", &[]),
             ("nino: nt 99 88 77 a", &[]),
@@ -56,7 +68,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

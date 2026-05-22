@@ -30,46 +30,35 @@ pub fn private_key() -> Recognizer {
 mod tests {
     use super::private_key;
 
-    fn matches(text: &str) -> Vec<String> {
+    const RSA: &str = "-----BEGIN RSA PRIVATE KEY-----\n\
+                       MIIEowIBAAKCAQEAfake==\n\
+                       -----END RSA PRIVATE KEY-----";
+    const EC: &str = "-----BEGIN EC PRIVATE KEY-----\n\
+                      MHcCAQEEIfake==\n\
+                      -----END EC PRIVATE KEY-----";
+    const OPENSSH: &str = "-----BEGIN OPENSSH PRIVATE KEY-----\nbase64data\n-----END OPENSSH PRIVATE KEY-----";
+    const CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----\nbase64\n-----END CERTIFICATE-----";
+    const MISMATCHED: &str = "-----BEGIN RSA PRIVATE KEY-----\nbase64\n-----END EC PRIVATE KEY-----";
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         private_key()
             .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
-    fn positive_rsa() {
-        let block = "-----BEGIN RSA PRIVATE KEY-----\n\
-                     MIIEowIBAAKCAQEAfake==\n\
-                     -----END RSA PRIVATE KEY-----";
-        assert_eq!(matches(block), vec![block.to_string()]);
-    }
-
-    #[test]
-    fn positive_ec() {
-        let block = "-----BEGIN EC PRIVATE KEY-----\n\
-                     MHcCAQEEIfake==\n\
-                     -----END EC PRIVATE KEY-----";
-        assert_eq!(matches(block), vec![block.to_string()]);
-    }
-
-    #[test]
-    fn positive_openssh() {
-        let block = "-----BEGIN OPENSSH PRIVATE KEY-----\nbase64data\n-----END OPENSSH PRIVATE KEY-----";
-        assert_eq!(matches(block), vec![block.to_string()]);
-    }
-
-    #[test]
-    fn negative_certificate_block() {
-        let cert = "-----BEGIN CERTIFICATE-----\nbase64\n-----END CERTIFICATE-----";
-        assert!(matches(cert).is_empty());
-    }
-
-    #[test]
-    fn negative_mismatched_types() {
-        // Regex matches BEGIN..END pair; PrivateKeyTypeValidator rejects type mismatch.
-        let bad = "-----BEGIN RSA PRIVATE KEY-----\nbase64\n-----END EC PRIVATE KEY-----";
-        assert!(matches(bad).is_empty(), "type mismatch must drop");
+    fn recognizes_private_key() {
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            (RSA, &[(RSA, 1.0)]),
+            (EC, &[(EC, 1.0)]),
+            (OPENSSH, &[(OPENSSH, 1.0)]),
+            (CERTIFICATE, &[]),
+            (MISMATCHED, &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
+        }
     }
 }

@@ -44,23 +44,28 @@ pub fn tax_id_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::tax_id_deu;
+    use super::{CONTEXT, tax_id_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(tax_id_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         tax_id_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_tax_id_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("12345678903", &[(0, 11)]),
-            ("98765432106", &[(0, 11)]),
-            ("Meine Steuer-ID: 12345678903.", &[(17, 28)]),
-            ("IdNr. 98765432106 liegt vor.", &[(6, 17)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("12345678903", &[("12345678903", 1.0)]),
+            ("98765432106", &[("98765432106", 1.0)]),
+            ("Meine Steuer-ID: 12345678903.", &[("12345678903", 1.0)]),
+            ("IdNr. 98765432106 liegt vor.", &[("98765432106", 1.0)]),
             ("12345678901", &[]),
             ("98765432100", &[]),
             ("02345678901", &[]),
@@ -71,7 +76,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

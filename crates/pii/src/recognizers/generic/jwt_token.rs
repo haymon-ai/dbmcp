@@ -30,34 +30,27 @@ pub fn jwt_token() -> Recognizer {
 mod tests {
     use super::jwt_token;
 
-    fn matches(text: &str) -> Vec<String> {
+    const JWT: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         jwt_token()
             .analyze(text)
             .into_iter()
-            .map(|res| text[res.start..res.end].to_string())
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
-    fn positive_real_header_with_alg() {
-        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
-        assert_eq!(matches(&format!("Bearer {jwt}")), vec![jwt.to_string()]);
-    }
-
-    #[test]
-    fn negative_dotted_version_string() {
-        assert!(matches("version 1.2.3").is_empty());
-    }
-
-    #[test]
-    fn negative_two_segments() {
-        let body = "eyJhbGciOiJIUzI1NiJ9.payload";
-        assert!(matches(body).is_empty());
-    }
-
-    #[test]
-    fn negative_header_without_alg() {
-        let bad = "eyJ0eXAiOiJKV1QifQ.payload.sig";
-        assert!(matches(bad).is_empty());
+    fn recognizes_jwt_token() {
+        let bearer = format!("Bearer {JWT}");
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            (bearer.as_str(), &[(JWT, 1.0)]),
+            ("version 1.2.3", &[]),
+            ("eyJhbGciOiJIUzI1NiJ9.payload", &[]),
+            ("eyJ0eXAiOiJKV1QifQ.payload.sig", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
+        }
     }
 }

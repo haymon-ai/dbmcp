@@ -31,28 +31,37 @@ pub fn email() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::email;
+    use super::{CONTEXT, email};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        email().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(email().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        email()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_email() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("info@haymon.ai", &[(0, 14)]),
-            ("my email address is info@haymon.ai", &[(20, 34)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("info@haymon.ai", &[("info@haymon.ai", 0.5)]),
+            ("my email address is info@haymon.ai", &[("info@haymon.ai", 0.5)]),
             (
                 "try one of these emails: info@haymon.ai or anotherinfo@haymon.ai",
-                &[(25, 39), (43, 64)],
+                &[("info@haymon.ai", 0.5), ("anotherinfo@haymon.ai", 0.5)],
             ),
             ("my email is info@haymon.", &[]),
-            ("support+test@example.com", &[(0, 24)]),
+            ("support+test@example.com", &[("support+test@example.com", 0.5)]),
             ("not.an.email@", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

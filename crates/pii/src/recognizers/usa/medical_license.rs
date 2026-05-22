@@ -38,29 +38,34 @@ pub fn medical_license_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::medical_license_usa;
+    use super::{CONTEXT, medical_license_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(medical_license_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         medical_license_usa()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_medical_license_usa() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("DEA #: AB1234563", &[(7, 16)]),
-            ("dea AB1234563", &[(4, 13)]),
-            ("medical certificate A91234563", &[(20, 29)]),
-            ("random AB1234563", &[(7, 16)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("DEA #: AB1234563", &[("AB1234563", 1.0)]),
+            ("dea AB1234563", &[("AB1234563", 1.0)]),
+            ("medical certificate A91234563", &[("A91234563", 1.0)]),
+            ("random AB1234563", &[("AB1234563", 1.0)]),
             ("DEA AB1234560", &[]),
             ("DEA IB1234563", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

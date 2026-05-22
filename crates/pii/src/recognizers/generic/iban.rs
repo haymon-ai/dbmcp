@@ -32,21 +32,36 @@ pub fn iban() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::iban;
+    use super::{CONTEXT, iban};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        iban().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(iban().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        iban()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_iban() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("DE89370400440532013000", &[(0, 22)]),
-            ("GB82WEST12345698765432", &[(0, 22)]),
-            ("FR1420041010050500013M02606", &[(0, 27)]),
-            ("BE62510007547061", &[(0, 16)]),
-            ("transfer to DE89370400440532013000 today", &[(12, 34)]),
-            ("DE89370400440532013000 GB82WEST12345698765432", &[(0, 22), (23, 45)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("DE89370400440532013000", &[("DE89370400440532013000", 1.0)]),
+            ("GB82WEST12345698765432", &[("GB82WEST12345698765432", 1.0)]),
+            ("FR1420041010050500013M02606", &[("FR1420041010050500013M02606", 1.0)]),
+            ("BE62510007547061", &[("BE62510007547061", 1.0)]),
+            (
+                "transfer to DE89370400440532013000 today",
+                &[("DE89370400440532013000", 1.0)],
+            ),
+            (
+                "DE89370400440532013000 GB82WEST12345698765432",
+                &[("DE89370400440532013000", 1.0), ("GB82WEST12345698765432", 1.0)],
+            ),
             ("DE00370400440532013000", &[]),
             ("DE89 3704 0044 0532 0130 00", &[]),
             ("de89370400440532013000", &[]),
@@ -54,7 +69,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

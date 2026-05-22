@@ -40,33 +40,38 @@ pub fn postcode_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::postcode_gbr;
+    use super::{CONTEXT, postcode_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(postcode_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         postcode_gbr()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_postcode_gbr() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("M1 1AA", &[(0, 6)]),
-            ("M60 1NW", &[(0, 7)]),
-            ("W1A 1HQ", &[(0, 7)]),
-            ("CR2 6XH", &[(0, 7)]),
-            ("DN55 1PT", &[(0, 8)]),
-            ("EC1A 1BB", &[(0, 8)]),
-            ("GIR 0AA", &[(0, 7)]),
-            ("M11AA", &[(0, 5)]),
-            ("EC1A1BB", &[(0, 7)]),
-            ("DN551PT", &[(0, 7)]),
-            ("GIR0AA", &[(0, 6)]),
-            ("My address is SW1A 1AA in London", &[(14, 22)]),
-            ("Send to postcode EC2A 1NT please", &[(17, 25)]),
-            ("From SW1A 1AA to EC1A 1BB", &[(5, 13), (17, 25)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("M1 1AA", &[("M1 1AA", 0.1)]),
+            ("M60 1NW", &[("M60 1NW", 0.1)]),
+            ("W1A 1HQ", &[("W1A 1HQ", 0.1)]),
+            ("CR2 6XH", &[("CR2 6XH", 0.1)]),
+            ("DN55 1PT", &[("DN55 1PT", 0.1)]),
+            ("EC1A 1BB", &[("EC1A 1BB", 0.1)]),
+            ("GIR 0AA", &[("GIR 0AA", 0.1)]),
+            ("M11AA", &[("M11AA", 0.1)]),
+            ("EC1A1BB", &[("EC1A1BB", 0.1)]),
+            ("DN551PT", &[("DN551PT", 0.1)]),
+            ("GIR0AA", &[("GIR0AA", 0.1)]),
+            ("My address is SW1A 1AA in London", &[("SW1A 1AA", 0.1)]),
+            ("Send to postcode EC2A 1NT please", &[("EC2A 1NT", 0.1)]),
+            ("From SW1A 1AA to EC1A 1BB", &[("SW1A 1AA", 0.1), ("EC1A 1BB", 0.1)]),
             ("QA1 1AA", &[]),
             ("VA1 1AA", &[]),
             ("XA1 1AA", &[]),
@@ -77,7 +82,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

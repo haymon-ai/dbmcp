@@ -47,25 +47,34 @@ pub fn npi_usa() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::npi_usa;
+    use super::{CONTEXT, npi_usa};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
-        npi_usa().analyze(text).into_iter().map(|r| (r.start, r.end)).collect()
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(npi_usa().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
+        npi_usa()
+            .analyze(text)
+            .into_iter()
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
+            .collect()
     }
 
     #[test]
     fn recognizes_npi_usa() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("NPI 1234567893", &[(4, 14)]),
-            ("provider 1234-567-893", &[(9, 21)]),
-            ("npi 1234 567 893", &[(4, 16)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("NPI 1234567893", &[("1234567893", 1.0)]),
+            ("provider 1234-567-893", &[("1234-567-893", 1.0)]),
+            ("npi 1234 567 893", &[("1234 567 893", 1.0)]),
             ("NPI 1234567890", &[]),
             ("NPI 3234567893", &[]),
             ("NPI 9999999995", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

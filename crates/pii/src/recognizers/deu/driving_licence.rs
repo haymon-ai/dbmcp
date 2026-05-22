@@ -48,29 +48,34 @@ pub fn driving_licence_deu() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::driving_licence_deu;
+    use super::{CONTEXT, driving_licence_deu};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(driving_licence_deu().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         driving_licence_deu()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_driving_licence_deu() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("BO12345678A", &[(0, 11)]),
-            ("MU12345678B", &[(0, 11)]),
-            ("HH98765432C", &[(0, 11)]),
-            ("KO12345678X", &[(0, 11)]),
-            ("DO98765432Z", &[(0, 11)]),
-            ("GE123456780", &[(0, 11)]),
-            ("MU123456785", &[(0, 11)]),
-            ("Führerscheinnummer: BO12345678A", &[(21, 32)]),
-            ("Fahrerlaubnis MU12345678B wurde ausgestellt.", &[(14, 25)]),
-            ("mu12345678b", &[(0, 11)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("BO12345678A", &[("BO12345678A", 0.35)]),
+            ("MU12345678B", &[("MU12345678B", 0.35)]),
+            ("HH98765432C", &[("HH98765432C", 0.35)]),
+            ("KO12345678X", &[("KO12345678X", 0.35)]),
+            ("DO98765432Z", &[("DO98765432Z", 0.35)]),
+            ("GE123456780", &[("GE123456780", 0.35)]),
+            ("MU123456785", &[("MU123456785", 0.35)]),
+            ("Führerscheinnummer: BO12345678A", &[("BO12345678A", 0.35)]),
+            ("Fahrerlaubnis MU12345678B wurde ausgestellt.", &[("MU12345678B", 0.35)]),
+            ("mu12345678b", &[("mu12345678b", 0.35)]),
             ("BO12345678", &[]),
             ("BO12345678AB", &[]),
             ("12345678901", &[]),
@@ -78,7 +83,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

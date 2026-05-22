@@ -42,30 +42,35 @@ pub fn driving_licence_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::driving_licence_gbr;
+    use super::{CONTEXT, driving_licence_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(driving_licence_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         driving_licence_gbr()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_driving_licence_gbr() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("MORGA607054SM9IJ", &[(0, 16)]),
-            ("MORGA657054SM9IJ", &[(0, 16)]),
-            ("FO999512018AA1AB", &[(0, 16)]),
-            ("SMIT9801015JK2CD", &[(0, 16)]),
-            ("Licence: MORGA607054SM9IJ ok", &[(9, 25)]),
-            ("morga607054sm9ij", &[(0, 16)]),
-            ("JONES710153J99EF", &[(0, 16)]),
-            ("SMITH802290AB1CD", &[(0, 16)]),
-            ("SMITH812310AB1CD", &[(0, 16)]),
-            ("SMITH851010AB1CD", &[(0, 16)]),
-            ("SMITH862310AB1CD", &[(0, 16)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("MORGA607054SM9IJ", &[("MORGA607054SM9IJ", 0.5)]),
+            ("MORGA657054SM9IJ", &[("MORGA657054SM9IJ", 0.5)]),
+            ("FO999512018AA1AB", &[("FO999512018AA1AB", 0.5)]),
+            ("SMIT9801015JK2CD", &[("SMIT9801015JK2CD", 0.5)]),
+            ("Licence: MORGA607054SM9IJ ok", &[("MORGA607054SM9IJ", 0.5)]),
+            ("morga607054sm9ij", &[("morga607054sm9ij", 0.5)]),
+            ("JONES710153J99EF", &[("JONES710153J99EF", 0.5)]),
+            ("SMITH802290AB1CD", &[("SMITH802290AB1CD", 0.5)]),
+            ("SMITH812310AB1CD", &[("SMITH812310AB1CD", 0.5)]),
+            ("SMITH851010AB1CD", &[("SMITH851010AB1CD", 0.5)]),
+            ("SMITH862310AB1CD", &[("SMITH862310AB1CD", 0.5)]),
             ("MORGA600054SM9IJ", &[]),
             ("MORGA613054SM9IJ", &[]),
             ("MORGA650054SM9IJ", &[]),
@@ -79,7 +84,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }

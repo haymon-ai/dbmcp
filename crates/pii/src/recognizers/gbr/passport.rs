@@ -36,24 +36,35 @@ pub fn passport_gbr() -> Recognizer {
 
 #[cfg(test)]
 mod tests {
-    use super::passport_gbr;
+    use super::{CONTEXT, passport_gbr};
 
-    fn matches(text: &str) -> Vec<(usize, usize)> {
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(passport_gbr().context(), CONTEXT);
+    }
+
+    fn results(text: &str) -> Vec<(&str, f32)> {
         passport_gbr()
             .analyze(text)
             .into_iter()
-            .map(|r| (r.start, r.end))
+            .map(|r| (&text[r.start..r.end], r.score.as_f32()))
             .collect()
     }
 
     #[test]
     fn recognizes_passport_gbr() {
-        let cases: &[(&str, &[(usize, usize)])] = &[
-            ("AB1234567", &[(0, 9)]),
-            ("XY9876543", &[(0, 9)]),
-            ("ab1234567", &[(0, 9)]),
-            ("My passport number is CD7654321 and it expires soon", &[(22, 31)]),
-            ("Passports: AB1234567 and XY9876543", &[(11, 20), (25, 34)]),
+        let cases: &[(&str, &[(&str, f32)])] = &[
+            ("AB1234567", &[("AB1234567", 0.1)]),
+            ("XY9876543", &[("XY9876543", 0.1)]),
+            ("ab1234567", &[("ab1234567", 0.1)]),
+            (
+                "My passport number is CD7654321 and it expires soon",
+                &[("CD7654321", 0.1)],
+            ),
+            (
+                "Passports: AB1234567 and XY9876543",
+                &[("AB1234567", 0.1), ("XY9876543", 0.1)],
+            ),
             ("A12345678", &[]),
             ("ABC123456", &[]),
             ("AB123456", &[]),
@@ -65,7 +76,7 @@ mod tests {
             ("", &[]),
         ];
         for (input, expected) in cases {
-            assert_eq!(matches(input), expected.to_vec(), "input {input:?}: span mismatch");
+            assert_eq!(results(input), expected.to_vec(), "input {input:?}");
         }
     }
 }
