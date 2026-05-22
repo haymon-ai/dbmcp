@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.12.1](https://github.com/haymon-ai/dbmcp/compare/2ab63dbcb935a57a10c1fc12fd2b25710d591eda..v0.12.1) - 2026-05-22
+#### Features
+- (**pii**) add password-hash recognizer (bcrypt, sha-crypt, argon2) (#172) - ([a3f2607](https://github.com/haymon-ai/dbmcp/commit/a3f2607ba2214f15e89523b0bcee33daf0c2df0a)) - [@athopen](https://github.com/athopen)
+- (**pii**) add context-gated date-of-birth recognizer (#169) - ([9f0d5da](https://github.com/haymon-ai/dbmcp/commit/9f0d5dad362343651919c919dc8aee9902525454)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**pii**) redact German postcodes in English-named columns (#171) - ([a49e7c5](https://github.com/haymon-ai/dbmcp/commit/a49e7c5a53ac251d9152db0fe9ddcc62508133b2)) - [@athopen](https://github.com/athopen)
+- (**pii**) scope phone detection to international-prefixed numbers (#170) - ([3643aef](https://github.com/haymon-ai/dbmcp/commit/3643aef49eb0e17a41c7c4fddbdd39efb372a026)) - [@athopen](https://github.com/athopen)
+- (**pii**) context-gate weak numeric recognizers (#168) - ([2ab63db](https://github.com/haymon-ai/dbmcp/commit/2ab63dbcb935a57a10c1fc12fd2b25710d591eda)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.12.0](https://github.com/haymon-ai/dbmcp/compare/aadf0e60353b4df1be4de80f3ae43ae459268642..v0.12.0) - 2026-05-20
 #### Features
 - (**tools**) split per-database tools into Pinned/Unpinned variants (#167) - ([41b5bfa](https://github.com/haymon-ai/dbmcp/commit/41b5bfadb111ddca00218d8188860822e34e778c)) - [@athopen](https://github.com/athopen)
