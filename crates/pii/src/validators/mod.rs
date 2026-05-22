@@ -17,7 +17,6 @@ mod medical_license_usa;
 mod medical_practice_id_deu;
 mod mod11_nhs_gbr;
 mod npi_usa;
-mod phone_national;
 mod private_key_type;
 mod social_security_deu;
 mod ssn_usa;
@@ -53,8 +52,6 @@ pub enum Validator {
     Mod11NhsGbr,
     /// US NPI Luhn checksum with `"80840"` prefix and degenerate-body filter.
     NpiUsa,
-    /// Phone-number national-format grammar (E.164/US/UK/DE).
-    PhoneNational,
     /// PEM private-key block type.
     PrivateKeyType,
     /// US SSN reserved-value filter.
@@ -104,7 +101,6 @@ impl Validator {
             Self::MedicalLicenseUsaDea => medical_license_usa::validate(candidate),
             Self::Mod11NhsGbr => mod11_nhs_gbr::validate(candidate),
             Self::NpiUsa => npi_usa::validate(candidate),
-            Self::PhoneNational => phone_national::validate(candidate),
             Self::PrivateKeyType => private_key_type::validate(candidate),
             Self::SsnUsa => ssn_usa::validate(candidate),
             Self::VatCountryLengthEur => vat_country_length_eur::validate(candidate),

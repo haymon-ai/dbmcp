@@ -121,9 +121,6 @@ fn ct_006_overlap_higher_score_wins_cross_type() {
     // wins against any partial-overlap. Construct a string where CC + phone overlap.
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
-    // Phone US pattern would also match the bare card digits string in some forms; the CC
-    // recognizer is registered first AND validates Luhn → reaches MAX_SCORE 1.0, so even
-    // if a phone span overlaps it, the CC wins.
     let results = analyzer.analyze("4111-1111-1111-1111", &opts);
     let mut found_cc = false;
     let mut overlapping_phone = false;
