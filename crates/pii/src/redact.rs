@@ -675,6 +675,16 @@ mod tests {
     }
 
     #[test]
+    fn bcrypt_hash_redacted_value_only() {
+        let r = Redactor::with_defaults();
+        let hash = format!("$2y$12${}", "a".repeat(53));
+        let mut rows = vec![json!({ "note": hash })];
+        let stats = r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["note"], "<PASSWORD_HASH>");
+        assert_eq!(stats.by_entity.get(&Entity::PasswordHash).copied(), Some(1));
+    }
+
+    #[test]
     fn numeric_reference_untouched() {
         let r = Redactor::with_defaults();
         let mut rows = vec![json!({"reference": "900000000"})];

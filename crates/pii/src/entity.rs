@@ -105,6 +105,8 @@ pub enum Entity {
     TaxNumberDe,
     /// `DATE_OF_BIRTH` — birth date, surfaced only in a birth-keyword context.
     DateOfBirth,
+    /// `PASSWORD_HASH` — modular-crypt / PHC hash (bcrypt, sha-crypt, argon2).
+    PasswordHash,
 }
 
 impl Entity {
@@ -155,6 +157,7 @@ impl Entity {
         Entity::TaxIdDe,
         Entity::TaxNumberDe,
         Entity::DateOfBirth,
+        Entity::PasswordHash,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -206,6 +209,7 @@ impl Entity {
             Entity::TaxIdDe => "TAX_ID_DE",
             Entity::TaxNumberDe => "TAX_NUMBER_DE",
             Entity::DateOfBirth => "DATE_OF_BIRTH",
+            Entity::PasswordHash => "PASSWORD_HASH",
         }
     }
 
@@ -258,6 +262,7 @@ impl Entity {
             Entity::TaxIdDe => "<TAX_ID_DE>",
             Entity::TaxNumberDe => "<TAX_NUMBER_DE>",
             Entity::DateOfBirth => "<DATE_OF_BIRTH>",
+            Entity::PasswordHash => "<PASSWORD_HASH>",
         }
     }
 }
@@ -317,6 +322,7 @@ impl FromStr for Entity {
             "TAX_ID_DE" => Ok(Entity::TaxIdDe),
             "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
             "DATE_OF_BIRTH" => Ok(Entity::DateOfBirth),
+            "PASSWORD_HASH" => Ok(Entity::PasswordHash),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -359,8 +365,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_45_variants() {
-        assert_eq!(Entity::ALL.len(), 45);
+    fn all_has_46_variants() {
+        assert_eq!(Entity::ALL.len(), 46);
     }
 
     #[test]

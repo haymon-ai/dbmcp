@@ -34,7 +34,7 @@ pub use gbr::{
 };
 pub use generic::{
     api_key_aws_secret, api_key_strong, credit_card, crypto, cvv, date_of_birth, email, iban, ip_address, jwt_token,
-    mac_address, phone_number, private_key, url,
+    mac_address, password_hash, phone_number, private_key, url,
 };
 pub use usa::{
     bank_account_usa, driver_license_usa, itin_usa, mbi_usa, medical_license_usa, npi_usa, passport_usa,
@@ -228,6 +228,7 @@ pub fn all() -> Vec<Recognizer> {
         api_key_aws_secret(),
         jwt_token(),
         private_key(),
+        password_hash(),
         medical_license_usa(),
         bank_account_usa(),
         driver_license_usa(),
@@ -310,6 +311,7 @@ mod tests {
             "ApiKeyAwsSecretRecognizer",
             "JwtTokenRecognizer",
             "PrivateKeyRecognizer",
+            "PasswordHashRecognizer",
         ];
         let mut missing = Vec::new();
         for r in all() {
