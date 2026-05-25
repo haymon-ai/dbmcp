@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.haymon/dbmcp",
-  "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite",
+  "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention",
   "version": "0.12.1",
   "websiteUrl": "https://dbmcp.haymon.ai",
   "repository": {
@@ -149,7 +149,8 @@
     {
       "type": "named",
       "name": "--db-ssl-verify-cert",
-      "description": "Verify server certificate"
+      "description": "Verify server certificate",
+      "default": "true"
     },
     {
       "type": "named",
@@ -173,6 +174,41 @@
       "name": "--db-query-timeout",
       "description": "Query execution timeout in seconds",
       "default": "30"
+    },
+    {
+      "type": "named",
+      "name": "--db-page-size",
+      "description": "Maximum items returned in a single paginated tool response (1-500)",
+      "default": "100"
+    },
+    {
+      "type": "named",
+      "name": "--pii",
+      "description": "Enable PII redaction of query tool output",
+      "default": "false"
+    },
+    {
+      "type": "named",
+      "name": "--pii-operator",
+      "description": "Operator applied to detected PII spans",
+      "default": "replace",
+      "choices": ["replace", "mask", "redact", "hash"]
+    },
+    {
+      "type": "named",
+      "name": "--pii-categories",
+      "description": "Comma-separated PII categories to detect (default: all). Values: personal, financial, government, contact, network, digital-identity, crypto"
+    },
+    {
+      "type": "named",
+      "name": "--pii-ner",
+      "description": "Enable the optional ML/NER pass (person & location detection)",
+      "default": "false"
+    },
+    {
+      "type": "named",
+      "name": "--pii-ner-model",
+      "description": "Path to the NER model directory (required with --pii-ner)"
     },
     {
       "type": "named",
@@ -238,7 +274,7 @@
       "name": "DB_SSL_VERIFY_CERT",
       "description": "Verify server certificate",
       "format": "boolean",
-      "default": "false"
+      "default": "true"
     },
     {
       "name": "DB_READ_ONLY",
@@ -262,6 +298,39 @@
       "description": "Query execution timeout in seconds",
       "format": "number",
       "default": "30"
+    },
+    {
+      "name": "DB_PAGE_SIZE",
+      "description": "Maximum items returned in a single paginated tool response (1-500)",
+      "format": "number",
+      "default": "100"
+    },
+    {
+      "name": "PII_ENABLE",
+      "description": "Enable PII redaction of query tool output",
+      "format": "boolean",
+      "default": "false"
+    },
+    {
+      "name": "PII_OPERATOR",
+      "description": "Operator applied to detected PII spans",
+      "default": "replace",
+      "choices": ["replace", "mask", "redact", "hash"]
+    },
+    {
+      "name": "PII_CATEGORIES",
+      "description": "Comma-separated PII categories to detect (default: all). Values: personal, financial, government, contact, network, digital-identity, crypto"
+    },
+    {
+      "name": "PII_NER_ENABLE",
+      "description": "Enable the optional ML/NER pass (person & location detection)",
+      "format": "boolean",
+      "default": "false"
+    },
+    {
+      "name": "PII_NER_MODEL",
+      "description": "Path to the NER model directory (required with PII_NER_ENABLE=true)",
+      "format": "filepath"
     },
     {
       "name": "LOG_LEVEL",

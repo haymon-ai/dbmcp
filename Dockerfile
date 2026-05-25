@@ -12,7 +12,7 @@ RUN ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || ec
 FROM gcr.io/distroless/cc-debian12
 
 LABEL org.opencontainers.image.title="dbmcp" \
-      org.opencontainers.image.description="Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite" \
+      org.opencontainers.image.description="Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/haymon-ai/dbmcp" \
       io.modelcontextprotocol.server.name="ai.haymon/dbmcp"
