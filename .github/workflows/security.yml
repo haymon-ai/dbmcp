@@ -11,7 +11,7 @@ on:
 jobs:
   audit:
     name: Audit Dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     permissions:
       contents: read

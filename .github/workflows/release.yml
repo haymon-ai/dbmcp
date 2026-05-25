@@ -20,19 +20,19 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             artifact: dbmcp
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             artifact: dbmcp
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15
             artifact: dbmcp
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-15
             artifact: dbmcp
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: windows-2025
             artifact: dbmcp.exe
     steps:
       - uses: actions/checkout@v6
@@ -43,16 +43,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (Linux ARM)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package artifact (Unix)
         if: runner.os != 'Windows'
@@ -74,7 +66,7 @@ jobs:
   release:
     name: Create Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -100,7 +92,7 @@ jobs:
   ghcr-io:
     name: Publish to ghcr.io
     needs: [release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -141,7 +133,7 @@ jobs:
   registry-modelcontextprotocol-io:
     name: Publish to registry.modelcontextprotocol.io
     needs: [ghcr-io]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -162,7 +154,7 @@ jobs:
   crates-io:
     name: Publish to crates.io
     needs: [release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     permissions:
       id-token: write
