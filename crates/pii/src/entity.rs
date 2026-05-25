@@ -107,6 +107,10 @@ pub enum Entity {
     DateOfBirth,
     /// `PASSWORD_HASH` — modular-crypt / PHC hash (bcrypt, sha-crypt, argon2).
     PasswordHash,
+    /// `PERSON` — person name detected by the optional ML/NER pass.
+    Person,
+    /// `LOCATION` — place or city name detected by the optional ML/NER pass.
+    Location,
 }
 
 impl Entity {
@@ -158,6 +162,8 @@ impl Entity {
         Entity::TaxNumberDe,
         Entity::DateOfBirth,
         Entity::PasswordHash,
+        Entity::Person,
+        Entity::Location,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -210,6 +216,8 @@ impl Entity {
             Entity::TaxNumberDe => "TAX_NUMBER_DE",
             Entity::DateOfBirth => "DATE_OF_BIRTH",
             Entity::PasswordHash => "PASSWORD_HASH",
+            Entity::Person => "PERSON",
+            Entity::Location => "LOCATION",
         }
     }
 
@@ -263,6 +271,8 @@ impl Entity {
             Entity::TaxNumberDe => "<TAX_NUMBER_DE>",
             Entity::DateOfBirth => "<DATE_OF_BIRTH>",
             Entity::PasswordHash => "<PASSWORD_HASH>",
+            Entity::Person => "<PERSON>",
+            Entity::Location => "<LOCATION>",
         }
     }
 }
@@ -323,6 +333,8 @@ impl FromStr for Entity {
             "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
             "DATE_OF_BIRTH" => Ok(Entity::DateOfBirth),
             "PASSWORD_HASH" => Ok(Entity::PasswordHash),
+            "PERSON" => Ok(Entity::Person),
+            "LOCATION" => Ok(Entity::Location),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -365,8 +377,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_46_variants() {
-        assert_eq!(Entity::ALL.len(), 46);
+    fn all_has_48_variants() {
+        assert_eq!(Entity::ALL.len(), 48);
     }
 
     #[test]

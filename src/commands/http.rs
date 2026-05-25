@@ -147,7 +147,7 @@ impl HttpCommand {
         let config = Config::try_from(self)?;
         let http_config = config.http.as_ref().expect("http config set by TryFrom impl");
 
-        let server = common::create_server(&config);
+        let server = common::create_server(&config)?;
         let cancel_token = CancellationToken::new();
 
         let router = build_http_router(http_config, server, &cancel_token);
@@ -287,7 +287,7 @@ mod tests {
             http: Some(http_config.clone()),
             pii: PiiConfig::default(),
         };
-        let server = common::create_server(&config);
+        let server = common::create_server(&config).expect("server builds in test");
         let cancel = CancellationToken::new();
         build_http_router(&http_config, server, &cancel)
     }

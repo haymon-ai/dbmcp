@@ -33,6 +33,7 @@ fn handler(read_only: bool) -> SqliteHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 fn handler_with_page_size(page_size: u16) -> SqliteHandler {
@@ -45,6 +46,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]
@@ -175,7 +177,8 @@ async fn test_query_timeout_fast_query_succeeds() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
     let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
@@ -195,7 +198,8 @@ async fn test_query_timeout_disabled_with_none() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
@@ -1820,6 +1824,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
@@ -1832,6 +1837,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]

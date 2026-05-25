@@ -20,7 +20,7 @@ fn server(read_only: bool) -> Server {
         http: None,
         pii: PiiConfig::default(),
     };
-    SqliteHandler::new(&config).into()
+    SqliteHandler::new(&config).expect("handler builds").into()
 }
 
 #[tokio::test]

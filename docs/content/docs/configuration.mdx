@@ -94,6 +94,9 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 | `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
 | `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
 | `--pii-categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
+| `--pii-ner` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person & location detection) |
+| `--pii-ner-model` | `PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
+| `--pii-ner-threshold` | `PII_NER_THRESHOLD` | `0.5` | Minimum NER span confidence, in `[0.0, 1.0]` |
 
 ### Operator Values
 
@@ -118,7 +121,31 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 
 An empty list is rejected at startup. If the selected categories produce an empty registry, the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
 
-> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR` and `PII_CATEGORIES` alone have no effect.
+### ML/NER pass (person & location)
+
+The regex/checksum recognisers cannot catch free-form **person names** or **place names** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON` and `LOCATION` detection on top of the regex layer.
+
+It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `--pii` and `--pii-ner` are enabled and a model directory is supplied.
+
+```bash
+dbmcp stdio --db-backend sqlite --db-name app.db \
+  --pii true --pii-ner true --pii-ner-model ./models/bert-ner
+```
+
+Inference uses **candle** (pure Rust) — there is **no external runtime library** to install: the customer needs only the binary and a model directory. The directory must contain:
+
+- `config.json` (with an `id2label` map exposing a `PER`/`LOC` label)
+- `tokenizer.json`
+- `model.safetensors`
+
+The recommended English model is [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) (MIT licensed; `dslim/distilbert-NER` is a smaller/faster variant). v1 is English-only; the pipeline is model-agnostic, so a different-language model can be supplied.
+
+Behaviour notes:
+
+- **Fail-closed.** If `--pii-ner` is set but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
+- **Category-aware.** The NER pass respects `--pii-categories`: `PERSON` is emitted only when `personal` is selected and `LOCATION` only when `contact` is. With no subset (the default), both apply.
+
+> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR`, `PII_CATEGORIES`, and the `PII_NER_*` flags alone have no effect.
 
 ## Client Configuration Examples
 

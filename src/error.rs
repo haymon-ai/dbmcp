@@ -22,6 +22,10 @@ pub(crate) enum Error {
     /// Configuration validation failed with one or more errors.
     #[error("{}", BulletList(.0))]
     Config(#[from] ConfigErrors),
+
+    /// Server initialisation failed (e.g. fail-closed NER model load).
+    #[error("server initialisation failed: {0}")]
+    Init(String),
 }
 
 struct BulletList<'a>(&'a ConfigErrors);

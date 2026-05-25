@@ -48,6 +48,7 @@ mod tests {
                 enabled: true,
                 operator: PiiOperator::Mask,
                 categories: None,
+                ..PiiConfig::default()
             },
             ..mysql_config()
         };

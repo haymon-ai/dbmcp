@@ -2,8 +2,9 @@
 //!
 //! Library-only crate. Regex/pattern recognition with optional checksum
 //! validation, plus four built-in operators (`Replace`, `Mask`, `Redact`,
-//! `Hash`). No NLP, no LLM, no network. Wired into the MCP server's query
-//! tool output via [`Redactor`] behind `PiiConfig`.
+//! `Hash`). An ML/NER pass (person & location) is always compiled and
+//! enabled at runtime via `PiiConfig`; inference is pure-Rust with no
+//! network. Wired into the MCP server's query tool output via [`Redactor`].
 //!
 //! # Quickstart
 //!
@@ -25,6 +26,7 @@ pub mod category;
 pub mod context;
 pub mod entity;
 pub mod error;
+pub mod ner;
 pub mod operators;
 pub mod overlap;
 pub mod pattern;
@@ -41,8 +43,9 @@ pub use crate::anonymizer::{OperatorConfig, anonymize};
 pub use crate::category::{Category, ParseCategoryError};
 pub use crate::context::ContextSettings;
 pub use crate::entity::{Entity, ParseEntityError};
+pub use crate::ner::{NerEngine, NerError};
 pub use crate::operators::{ChunkCount, HashAlgorithm, Operator};
-pub use crate::redact::{RedactionError, RedactionStats, Redactor};
+pub use crate::redact::{RedactionError, RedactionStats, Redactor, RedactorInitError};
 pub use crate::result::{AnalysisExplanation, RecognizerResult};
 pub use crate::score::{MAX_SCORE, Score};
 pub use crate::validation::ValidationOutcome;

@@ -103,14 +103,17 @@ impl PostgresHandler {
     /// Constructs the [`PostgresConnection`] (which builds the
     /// lazy default pool and the per-database pool cache) and the MCP
     /// tool router. No network I/O happens here.
-    #[must_use]
-    pub fn new(config: &Config) -> Self {
-        Self {
+    /// # Errors
+    ///
+    /// Returns [`dbmcp_pii::RedactorInitError`] when PII redaction is enabled
+    /// with a NER model that fails to load (fail-closed startup).
+    pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
+        Ok(Self {
             config: config.database.clone(),
             connection: PostgresConnection::new(&config.database),
-            redactor: Redactor::from_config(&config.pii),
+            redactor: Redactor::from_config(&config.pii)?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
-        }
+        })
     }
 }
 
@@ -189,6 +192,7 @@ mod tests {
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
         })
+        .expect("handler builds in test")
     }
 
     /// Handler whose config pins a specific database name.
@@ -202,6 +206,7 @@ mod tests {
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
         })
+        .expect("handler builds in test")
     }
 
     #[tokio::test]
@@ -213,7 +218,8 @@ mod tests {
             },
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
-        });
+        })
+        .expect("handler builds in test");
         assert_eq!(handler.connection.default_database_name(), "mydb");
     }
 

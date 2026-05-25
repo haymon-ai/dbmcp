@@ -23,6 +23,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::Entity;
+use crate::result::RecognizerResult;
 use crate::words::push_key_words;
 use crate::{AnalyzeOptions, Analyzer, OperatorConfig, anonymize};
 
@@ -38,6 +39,17 @@ impl From<RedactionError> for rmcp::model::ErrorData {
     fn from(e: RedactionError) -> Self {
         Self::internal_error(e.to_string(), None)
     }
+}
+
+/// Error returned by [`Redactor::from_config`] when initialisation fails.
+///
+/// Surfacing this aborts server startup — the redactor is fail-closed: it
+/// never starts in a degraded state.
+#[derive(Debug, thiserror::Error)]
+pub enum RedactorInitError {
+    /// The optional NER engine failed to load; the server must not start.
+    #[error("NER engine initialisation failed: {0}")]
+    Ner(String),
 }
 
 /// Per-request redaction summary returned by [`Redactor::apply`].
@@ -125,12 +137,27 @@ impl Redactor {
     /// `min_score_with_context` floor — so weak-pattern recognizers (CVV,
     /// AWS secret, bank account, …) surface only when a nearby keyword
     /// lifts them.
-    #[must_use]
-    pub fn from_config(cfg: &dbmcp_config::PiiConfig) -> Option<Self> {
+    /// # Errors
+    ///
+    /// Returns [`RedactorInitError`] when the optional NER engine is enabled
+    /// but fails to load. Startup must abort — the redactor is fail-closed and
+    /// never degrades to regex-only when NER was requested.
+    pub fn from_config(cfg: &dbmcp_config::PiiConfig) -> Result<Option<Self>, RedactorInitError> {
         if !cfg.enabled {
-            return None;
+            return Ok(None);
         }
-        Some(Self::new(crate::Analyzer::from_config(cfg), cfg.operator.into()))
+        let mut analyzer = crate::Analyzer::from_config(cfg);
+        attach_ner(&mut analyzer, cfg)?;
+        Ok(Some(Self::new(analyzer, cfg.operator.into())))
+    }
+
+    /// Reports whether an ML/NER engine is attached.
+    ///
+    /// Callers use it to decide whether [`Self::apply`] needs offloading to
+    /// a blocking thread.
+    #[must_use]
+    pub fn uses_ner(&self) -> bool {
+        self.analyzer.ner_engine().is_some()
     }
 
     /// Walks every reachable string leaf in `rows` through the analyzer pipeline.
@@ -139,18 +166,21 @@ impl Redactor {
     /// and [`Value::Array`] elements at any depth using an iterative
     /// heap stack — call-stack depth does not scale with payload depth.
     /// Object keys are never inspected or modified; non-string scalars
-    /// pass through unchanged. Emits one `tracing::info!` event per
-    /// call when at least one span was rewritten.
+    /// pass through unchanged. When an NER engine is attached, each leaf is
+    /// also run through it and its spans merged with the regex hits. Emits
+    /// one `tracing::info!` event per call when at least one span was
+    /// rewritten.
     ///
     /// # Errors
     ///
     /// Returns [`RedactionError::Internal`] when the analyzer pipeline
-    /// panics at any depth; the request must be failed without
-    /// returning any row.
+    /// panics at any depth, or when the NER pass fails; the request must be
+    /// failed without returning any row (fail-closed).
     pub fn apply(&self, rows: &mut [Value]) -> Result<RedactionStats, RedactionError> {
         let mut stats = RedactionStats::default();
+        let mut infer_err: Option<String> = None;
         let result = catch_unwind(AssertUnwindSafe(|| {
-            // Shared key-path stack. Each `Frame::Visit` carries the tokens
+            // Shared key-path stack. Each `Frame::KeyedChild` carries the tokens
             // to push when entered; a `Frame::Pop` queued before its children
             // restores the path after the subtree is done. This keeps path
             // mutations O(depth) instead of O(depth²) per leaf (no per-child
@@ -175,7 +205,16 @@ impl Redactor {
                 match v {
                     Value::String(s) => {
                         stats.string_leaves_scanned += 1;
-                        let results = self.analyzer.analyze_with_context(s, &path, &self.opts);
+                        let mut results = self.analyzer.analyze_with_context(s, &path, &self.opts);
+                        if let Some(engine) = self.analyzer.ner_engine() {
+                            match engine.analyze(s) {
+                                Ok(ner) => results = merge_spans(results, ner, self.opts.min_score),
+                                Err(e) => {
+                                    infer_err = Some(e.to_string());
+                                    return;
+                                }
+                            }
+                        }
                         if results.is_empty() {
                             continue;
                         }
@@ -207,20 +246,104 @@ impl Redactor {
         }));
 
         result.map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
-
-        if stats.total > 0 {
-            tracing::info!(
-                target: "dbmcp::pii",
-                redactions = stats.total,
-                by_entity = ?stats.by_entity,
-                rows = rows.len(),
-                string_leaves_scanned = stats.string_leaves_scanned,
-                "pii.redacted"
-            );
+        if let Some(e) = infer_err {
+            return Err(RedactionError::Internal(format!("NER inference failed: {e}")));
         }
-
+        log_redactions(&stats, rows.len());
         Ok(stats)
     }
+
+    /// Redacts `rows`, keeping the heavier NER pass off the async runtime.
+    ///
+    /// Regex-only redaction runs inline on the caller's task; when an NER
+    /// engine is attached the CPU-bound inference is moved to a blocking
+    /// thread via [`tokio::task::spawn_blocking`] so it never stalls the
+    /// async executor. Returns the (possibly rewritten) rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RedactionError`] when the analyzer pipeline fails at any
+    /// depth or the offloaded task panics; the request must be failed
+    /// without returning any row (fail-closed).
+    pub async fn redact_rows(&self, mut rows: Vec<Value>) -> Result<Vec<Value>, RedactionError> {
+        if self.uses_ner() {
+            let redactor = self.clone();
+            tokio::task::spawn_blocking(move || redactor.apply(&mut rows).map(|_| rows))
+                .await
+                .map_err(|e| RedactionError::Internal(format!("redaction task panicked: {e}")))?
+        } else {
+            self.apply(&mut rows)?;
+            Ok(rows)
+        }
+    }
+}
+
+/// Emits one `tracing::info!` event when at least one span was rewritten.
+fn log_redactions(stats: &RedactionStats, row_count: usize) {
+    if stats.total > 0 {
+        tracing::info!(
+            target: "dbmcp::pii",
+            redactions = stats.total,
+            by_entity = ?stats.by_entity,
+            rows = row_count,
+            string_leaves_scanned = stats.string_leaves_scanned,
+            "pii.redacted"
+        );
+    }
+}
+
+/// Loads the NER engine and attaches it, failing closed on any load error.
+fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PiiConfig) -> Result<(), RedactorInitError> {
+    if !cfg.ner_enabled {
+        return Ok(());
+    }
+    // NER respects the category filter: PERSON needs Personal, LOCATION needs
+    // Contact. An unset subset means all categories apply. When neither target
+    // category is selected, skip loading the model entirely.
+    let (allow_person, allow_location) = ner_category_allowance(cfg);
+    if !allow_person && !allow_location {
+        return Ok(());
+    }
+    let Some(model) = cfg.ner_model.as_ref() else {
+        // `PiiConfig::validate` rejects this, but stay defensive and fail-closed.
+        return Err(RedactorInitError::Ner("model path missing".to_owned()));
+    };
+    let threshold = cfg
+        .ner_threshold
+        .and_then(|t| crate::Score::new(t).ok())
+        .unwrap_or_else(|| crate::Score::from_static(dbmcp_config::PiiConfig::DEFAULT_NER_THRESHOLD));
+    let mut engine =
+        crate::ner::NerEngine::load(model, threshold).map_err(|e| RedactorInitError::Ner(e.to_string()))?;
+    engine.set_allowed(allow_person, allow_location);
+    analyzer.attach_ner(std::sync::Arc::new(engine));
+    Ok(())
+}
+
+/// Resolves whether PERSON/LOCATION are permitted by the category filter.
+///
+/// An unset category subset means all categories apply.
+fn ner_category_allowance(cfg: &dbmcp_config::PiiConfig) -> (bool, bool) {
+    match cfg.categories.as_ref() {
+        None => (true, true),
+        Some(cats) => (
+            cats.contains(&dbmcp_config::PiiCategory::Personal),
+            cats.contains(&dbmcp_config::PiiCategory::Contact),
+        ),
+    }
+}
+
+/// Merges regex and NER spans for one leaf into a resolved result set.
+///
+/// NER spans below `min_score` are dropped first; the combined set is then
+/// overlap-resolved so higher-confidence spans win on collisions.
+fn merge_spans(
+    mut regex: Vec<RecognizerResult>,
+    mut ner: Vec<RecognizerResult>,
+    min_score: crate::Score,
+) -> Vec<RecognizerResult> {
+    ner.retain(|r| r.score >= min_score);
+    regex.append(&mut ner);
+    crate::overlap::resolve(regex)
 }
 
 #[cfg(test)]
@@ -691,5 +814,93 @@ mod tests {
         let stats = r.apply(&mut rows).expect("apply ok");
         assert_eq!(rows[0]["reference"], "900000000");
         assert_eq!(stats.total, 0);
+    }
+
+    #[test]
+    fn from_config_disabled_is_none() {
+        let cfg = dbmcp_config::PiiConfig::default();
+        assert!(Redactor::from_config(&cfg).expect("ok").is_none());
+    }
+
+    fn rr(entity: Entity, start: usize, end: usize, score: f32) -> RecognizerResult {
+        use crate::result::AnalysisExplanation;
+        use crate::validation::ValidationOutcome;
+        use std::borrow::Cow;
+        let s = Score::from_static(score);
+        RecognizerResult {
+            entity_type: entity,
+            start,
+            end,
+            score: s,
+            explanation: AnalysisExplanation {
+                recognizer_name: Cow::Borrowed("test"),
+                pattern_name: None,
+                original_score: s,
+                validation: ValidationOutcome::Unknown,
+                final_score: s,
+                supportive_keyword: None,
+            },
+        }
+    }
+
+    #[test]
+    fn merge_spans_drops_ner_below_min_score() {
+        let ner = vec![rr(Entity::Person, 0, 4, 0.3)];
+        let out = merge_spans(Vec::new(), ner, Score::from_static(0.5));
+        assert!(out.is_empty(), "sub-threshold NER span must be dropped");
+    }
+
+    #[test]
+    fn merge_spans_keeps_disjoint_regex_and_ner() {
+        let regex = vec![rr(Entity::EmailAddress, 10, 25, 1.0)];
+        let ner = vec![rr(Entity::Person, 0, 5, 0.9)];
+        let out = merge_spans(regex, ner, Score::from_static(0.4));
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn merge_spans_overlap_higher_score_wins() {
+        // A checksum-strong regex hit (1.0) overlaps a weaker NER person guess.
+        let regex = vec![rr(Entity::EmailAddress, 0, 16, 1.0)];
+        let ner = vec![rr(Entity::Person, 0, 10, 0.6)];
+        let out = merge_spans(regex, ner, Score::from_static(0.4));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].entity_type, Entity::EmailAddress);
+    }
+
+    #[test]
+    fn from_config_bad_model_path_fails_closed() {
+        let cfg = dbmcp_config::PiiConfig {
+            enabled: true,
+            ner_enabled: true,
+            ner_model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
+            ..dbmcp_config::PiiConfig::default()
+        };
+        let err = Redactor::from_config(&cfg).expect_err("unreadable model must fail closed");
+        assert!(matches!(err, RedactorInitError::Ner(_)));
+    }
+
+    #[test]
+    fn ner_allowance_unset_categories_allows_both() {
+        let cfg = dbmcp_config::PiiConfig {
+            ner_enabled: true,
+            ..dbmcp_config::PiiConfig::default()
+        };
+        assert_eq!(ner_category_allowance(&cfg), (true, true));
+    }
+
+    #[test]
+    fn ner_allowance_scoped_categories_gate_entities() {
+        let only_personal = dbmcp_config::PiiConfig {
+            categories: Some(vec![dbmcp_config::PiiCategory::Personal]),
+            ..dbmcp_config::PiiConfig::default()
+        };
+        assert_eq!(ner_category_allowance(&only_personal), (true, false));
+
+        let only_financial = dbmcp_config::PiiConfig {
+            categories: Some(vec![dbmcp_config::PiiCategory::Financial]),
+            ..dbmcp_config::PiiConfig::default()
+        };
+        assert_eq!(ner_category_allowance(&only_financial), (false, false));
     }
 }

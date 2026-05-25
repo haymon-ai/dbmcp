@@ -39,6 +39,7 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 fn handler(read_only: bool) -> PostgresHandler {
@@ -48,6 +49,7 @@ fn handler(read_only: bool) -> PostgresHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]
@@ -397,7 +399,8 @@ async fn test_query_timeout_cancels_slow_query() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
 
     let start = std::time::Instant::now();
     let response = handler
@@ -428,7 +431,8 @@ async fn test_query_timeout_disabled_with_none() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
 
     let response = handler
         .read_query("SELECT 1 AS value".into(), Some("app".into()), None)
@@ -3606,6 +3610,7 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
@@ -3618,6 +3623,7 @@ fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]

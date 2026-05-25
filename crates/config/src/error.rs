@@ -32,6 +32,14 @@ pub enum ConfigError {
     /// `PII_CATEGORIES` was supplied but the resolved list is empty.
     #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
     PiiCategoriesEmpty,
+
+    /// `--pii-ner` was enabled without a `--pii-ner-model` path.
+    #[error("PII_NER_MODEL (model directory) is required when PII_NER_ENABLE is set")]
+    PiiNerModelMissing,
+
+    /// `--pii-ner-threshold` was outside the inclusive `[0.0, 1.0]` range.
+    #[error("PII_NER_THRESHOLD must be within [0.0, 1.0], got {0}")]
+    PiiNerThresholdRange(f32),
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.

@@ -71,14 +71,17 @@ impl SqliteHandler {
     ///
     /// Constructs the [`SqliteConnection`] (which builds the
     /// lazy pool) and the MCP tool router. No file I/O happens here.
-    #[must_use]
-    pub fn new(config: &Config) -> Self {
-        Self {
+    /// # Errors
+    ///
+    /// Returns [`dbmcp_pii::RedactorInitError`] when PII redaction is enabled
+    /// with a NER model that fails to load (fail-closed startup).
+    pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
+        Ok(Self {
             config: config.database.clone(),
             connection: SqliteConnection::new(&config.database),
-            redactor: Redactor::from_config(&config.pii),
+            redactor: Redactor::from_config(&config.pii)?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
-        }
+        })
     }
 }
 
@@ -143,6 +146,7 @@ mod tests {
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
         })
+        .expect("handler builds in test")
     }
 
     #[tokio::test]

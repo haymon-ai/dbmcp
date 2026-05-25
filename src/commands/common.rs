@@ -6,6 +6,8 @@
 //! [`create_server`], the backend-selection factory that maps a
 //! configured [`DatabaseBackend`] onto the matching concrete adapter.
 
+use std::path::PathBuf;
+
 use clap::Args;
 use dbmcp_config::{Config, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator};
 use dbmcp_mysql::MysqlHandler;
@@ -179,6 +181,24 @@ pub(crate) struct PiiArguments {
         num_args = 1..,
     )]
     pub(crate) categories: Option<Vec<PiiCategory>>,
+
+    /// Enable the optional ML/NER pass (person & location detection)
+    #[arg(
+        long = "pii-ner",
+        env = "PII_NER_ENABLE",
+        default_value_t = PiiConfig::DEFAULT_NER_ENABLED,
+        action = clap::ArgAction::Set,
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub(crate) ner_enabled: bool,
+
+    /// Path to the NER model directory (required with --pii-ner)
+    #[arg(long = "pii-ner-model", env = "PII_NER_MODEL")]
+    pub(crate) ner_model: Option<PathBuf>,
+
+    /// Minimum NER confidence in [0.0, 1.0] (default: 0.5)
+    #[arg(long = "pii-ner-threshold", env = "PII_NER_THRESHOLD")]
+    pub(crate) ner_threshold: Option<f32>,
 }
 
 impl TryFrom<&PiiArguments> for PiiConfig {
@@ -189,6 +209,9 @@ impl TryFrom<&PiiArguments> for PiiConfig {
             enabled: args.enabled,
             operator: args.operator,
             categories: args.categories.clone(),
+            ner_enabled: args.ner_enabled,
+            ner_model: args.ner_model.clone(),
+            ner_threshold: args.ner_threshold,
         };
         candidate.validate()?;
         Ok(candidate)
@@ -202,17 +225,33 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 /// server to start and respond to protocol messages even when the
 /// database is unreachable. The caller is expected to pass a fully
 /// validated [`Config`].
-#[must_use]
-pub(crate) fn create_server(config: &Config) -> Server {
+/// # Errors
+///
+/// Returns [`crate::error::Error::Init`] when a handler fails to initialise
+/// (e.g. a fail-closed NER model load).
+#[allow(clippy::result_large_err)]
+pub(crate) fn create_server(config: &Config) -> Result<Server, crate::error::Error> {
     if config.database.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
     match config.database.backend {
-        DatabaseBackend::Sqlite => SqliteHandler::new(config).into(),
-        DatabaseBackend::Postgres => PostgresHandler::new(config).into(),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => MysqlHandler::new(config).into(),
+        DatabaseBackend::Sqlite => init(SqliteHandler::new(config)),
+        DatabaseBackend::Postgres => init(PostgresHandler::new(config)),
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => init(MysqlHandler::new(config)),
     }
+}
+
+/// Maps a handler constructor result into a [`Server`], failing closed.
+#[allow(clippy::result_large_err)]
+fn init<H, E>(handler: Result<H, E>) -> Result<Server, crate::error::Error>
+where
+    H: Into<Server>,
+    E: std::fmt::Display,
+{
+    handler
+        .map(Into::into)
+        .map_err(|e| crate::error::Error::Init(e.to_string()))
 }
 
 #[cfg(test)]
@@ -285,6 +324,9 @@ mod tests {
             std::env::remove_var("PII_ENABLE");
             std::env::remove_var("PII_OPERATOR");
             std::env::remove_var("PII_CATEGORIES");
+            std::env::remove_var("PII_NER_ENABLE");
+            std::env::remove_var("PII_NER_MODEL");
+            std::env::remove_var("PII_NER_THRESHOLD");
         }
     }
 
@@ -447,11 +489,47 @@ mod tests {
             enabled: true,
             operator: PiiOperator::Replace,
             categories: Some(Vec::new()),
+            ..PiiConfig::default()
         };
         let errors = cfg.validate().expect_err("empty categories must error");
         assert!(
             errors.iter().any(|e| matches!(e, ConfigError::PiiCategoriesEmpty)),
             "expected PiiCategoriesEmpty in {errors:?}"
         );
+    }
+
+    #[test]
+    fn clap_pii_ner_default_off() {
+        clear_pii_env();
+        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
+        assert!(!cli.pii.ner_enabled, "ner must default off");
+        assert!(cli.pii.ner_model.is_none(), "ner model must default unset");
+        assert!(cli.pii.ner_threshold.is_none(), "ner threshold must default unset");
+    }
+
+    #[test]
+    fn clap_pii_ner_flags_parse_and_convert() {
+        clear_pii_env();
+        let cli = TestCli::try_parse_from([
+            "--pii-ner",
+            "true",
+            "--pii-ner-model",
+            "/models/ner",
+            "--pii-ner-threshold",
+            "0.7",
+        ])
+        .expect("ner flags parse");
+        let cfg = PiiConfig::try_from(&cli.pii).expect("ner config validates");
+        assert!(cfg.ner_enabled);
+        assert_eq!(cfg.ner_model, Some(std::path::PathBuf::from("/models/ner")));
+        assert_eq!(cfg.ner_threshold, Some(0.7));
+    }
+
+    #[test]
+    fn pii_ner_enabled_without_model_errors_via_try_from() {
+        clear_pii_env();
+        let cli = TestCli::try_parse_from(["--pii-ner", "true"]).expect("clap parse");
+        let errors = PiiConfig::try_from(&cli.pii).expect_err("ner without model must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::PiiNerModelMissing)));
     }
 }

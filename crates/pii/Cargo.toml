@@ -12,6 +12,9 @@ autobenches = false
 base64 = { workspace = true }
 bech32 = { workspace = true }
 bs58 = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+candle-transformers = { workspace = true }
 dbmcp-config = { workspace = true }
 fancy-regex = { workspace = true }
 rmcp = { workspace = true }
@@ -19,6 +22,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tokenizers = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

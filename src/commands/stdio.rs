@@ -59,7 +59,7 @@ impl StdioCommand {
     /// protocol error.
     pub(crate) async fn execute(&self) -> Result<(), Error> {
         let config = Config::try_from(self)?;
-        let server = common::create_server(&config);
+        let server = common::create_server(&config)?;
 
         info!("Starting MCP server via stdio transport...");
         let transport = rmcp::transport::io::stdio();

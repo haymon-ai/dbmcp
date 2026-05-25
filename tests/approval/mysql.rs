@@ -27,7 +27,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
         http: None,
         pii: PiiConfig::default(),
     };
-    MysqlHandler::new(&config).into()
+    MysqlHandler::new(&config).expect("handler builds").into()
 }
 
 #[tokio::test]

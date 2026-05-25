@@ -28,7 +28,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
         http: None,
         pii: PiiConfig::default(),
     };
-    PostgresHandler::new(&config).into()
+    PostgresHandler::new(&config).expect("handler builds").into()
 }
 
 #[tokio::test]

@@ -118,17 +118,19 @@ impl PostgresHandler {
                 let pager = Pager::new(cursor, self.config.page_size);
                 let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
                 let rows = self.connection.fetch_json(wrapped.as_str(), database).await?;
-                let (mut rows, next_cursor) = pager.paginate(rows);
-                if let Some(r) = &self.redactor {
-                    r.apply(&mut rows)?;
-                }
+                let (rows, next_cursor) = pager.paginate(rows);
+                let rows = match &self.redactor {
+                    Some(r) => r.redact_rows(rows).await?,
+                    None => rows,
+                };
                 Ok(ReadQueryResponse { rows, next_cursor })
             }
             StatementKind::NonSelect => {
-                let mut rows = self.connection.fetch_json(query.as_str(), database).await?;
-                if let Some(r) = &self.redactor {
-                    r.apply(&mut rows)?;
-                }
+                let rows = self.connection.fetch_json(query.as_str(), database).await?;
+                let rows = match &self.redactor {
+                    Some(r) => r.redact_rows(rows).await?,
+                    None => rows,
+                };
                 Ok(ReadQueryResponse {
                     rows,
                     next_cursor: None,

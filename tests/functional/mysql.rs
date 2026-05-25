@@ -37,6 +37,7 @@ fn handler(read_only: bool) -> MysqlHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 fn handler_with_page_size(page_size: u16) -> MysqlHandler {
@@ -49,6 +50,7 @@ fn handler_with_page_size(page_size: u16) -> MysqlHandler {
         http: None,
         pii: PiiConfig::default(),
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]
@@ -396,7 +398,8 @@ async fn test_query_timeout_cancels_slow_query() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
 
     let start = std::time::Instant::now();
     let response = handler
@@ -427,7 +430,8 @@ async fn test_query_timeout_disabled_with_zero() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
 
     let response = handler
         .read_query("SELECT 1 AS value".into(), Some("app".into()), None)
@@ -1110,7 +1114,8 @@ async fn test_timeout_on_list_tables() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
-    });
+    })
+    .expect("handler builds");
 
     let result = handler
         .read_query("SELECT SLEEP(60)".into(), Some("app".into()), None)
@@ -3996,6 +4001,7 @@ fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
@@ -4008,6 +4014,7 @@ fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
             ..PiiConfig::default()
         },
     })
+    .expect("handler builds")
 }
 
 #[tokio::test]
