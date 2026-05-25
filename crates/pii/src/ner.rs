@@ -31,6 +31,13 @@ const MAX_SEQ_LEN: usize = 512;
 /// Token overlap between consecutive windows of an over-long input.
 const STRIDE: usize = 128;
 
+/// Maximum tokenized windows fed to one batched forward pass.
+///
+/// Bounds peak logits memory at `NER_BATCH_SIZE × MAX_SEQ_LEN × num_labels × 4 B`
+/// (≈ 1.2 MB at 16 × 512 × ~37 labels); inputs add three `× 8 B` tensors. Larger
+/// batches mean fewer `session.run` calls (and `Mutex` acquisitions) per request.
+const NER_BATCH_SIZE: usize = 16;
+
 /// Errors raised while loading or running the NER engine.
 ///
 /// All variants are returned, never panicked — the release profile uses
@@ -80,7 +87,8 @@ pub(crate) const NER_ENTITIES: &[Entity] = &[
 /// Reports whether any BIO label maps to a supported NER entity.
 ///
 /// Shares [`parse_bio`] with decoding, so the load gate accepts exactly the
-/// models `run_window` can decode — rejecting one that emits no target label.
+/// models [`NerEngine::decode_row`] can decode — rejecting one that emits no
+/// target label.
 fn has_supported_entity(labels: &[String]) -> bool {
     labels.iter().any(|label| parse_bio(label).0.is_some())
 }
@@ -134,7 +142,7 @@ fn softmax_argmax(logits: &[f32]) -> (usize, f32) {
 }
 
 /// One token's decoded BIO tag with its byte span and confidence.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct TokenTag {
     entity: Option<Entity>,
     is_begin: bool,
@@ -194,13 +202,7 @@ fn aggregate_words(tags: &[TokenTag], word_ids: &[Option<u32>]) -> Vec<TokenTag>
             }
             Some(id) => {
                 current = Some(id);
-                out.push(TokenTag {
-                    entity: tag.entity,
-                    is_begin: tag.is_begin,
-                    score: tag.score,
-                    start: tag.start,
-                    end: tag.end,
-                });
+                out.push(*tag);
             }
             None => {
                 current = None;
@@ -291,6 +293,16 @@ fn span_to_result(span: Span) -> RecognizerResult {
     }
 }
 
+/// One tokenized window paired with the index of the text it came from.
+///
+/// Over-long inputs yield several windows; batching flattens every window
+/// across every input into one list, so each carries its `src` index to route
+/// decoded spans back to the right text.
+struct Window {
+    src: usize,
+    enc: tokenizers::Encoding,
+}
+
 /// Loaded token-classification session plus its tokenizer and label map.
 ///
 /// Cheap to share behind an `Arc`. `ort` runs inference through `&mut Session`,
@@ -303,6 +315,8 @@ pub struct NerEngine {
     allowed: Vec<Entity>,
     /// Whether the graph declares a `token_type_ids` input (`DistilBERT` omits it).
     needs_token_type_ids: bool,
+    /// Token id used to right-pad batched rows; masked out, so its value is inert.
+    pad_id: i64,
 }
 
 impl std::fmt::Debug for NerEngine {
@@ -342,6 +356,17 @@ impl NerEngine {
             }))
             .map_err(|e| NerError::Load(format!("truncation config: {e}")))?;
 
+        // Pad id for batched rows: honour an embedded padding config, else the
+        // tokenizer's `[PAD]` token, else 0. Padded positions are attention-masked
+        // and never decoded, so this only needs to be a valid vocab index.
+        let pad_id = i64::from(
+            tokenizer
+                .get_padding()
+                .map(|p| p.pad_id)
+                .or_else(|| tokenizer.token_to_id("[PAD]"))
+                .unwrap_or(0),
+        );
+
         let session = Session::builder()
             .map_err(|e| NerError::Load(format!("session builder: {e}")))?
             .commit_from_file(model_dir.join("model.onnx"))
@@ -355,6 +380,7 @@ impl NerEngine {
             threshold,
             allowed: NER_ENTITIES.to_vec(),
             needs_token_type_ids,
+            pad_id,
         })
     }
 
@@ -375,64 +401,130 @@ impl NerEngine {
 
     /// Runs NER over one text, returning its spans as [`RecognizerResult`]s.
     ///
-    /// Byte offsets index into `text`. Over-long inputs are split into
-    /// overlapping windows whose spans merge via `crate::overlap::resolve`.
+    /// Byte offsets index into `text`. A thin wrapper over [`Self::analyze_batch`]
+    /// so single and batched inference share one code path.
     ///
     /// # Errors
     ///
     /// Returns [`NerError::Inference`] on a tokenization or forward-pass
     /// failure. Never panics.
     pub fn analyze(&self, text: &str) -> Result<Vec<RecognizerResult>, NerError> {
-        if text.is_empty() {
-            return Ok(Vec::new());
-        }
-        let encoding = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(|e| NerError::Inference(format!("tokenize: {e}")))?;
-
-        let mut results = Vec::new();
-        self.run_window(&encoding, &mut results)?;
-        for overflow in encoding.get_overflowing() {
-            self.run_window(overflow, &mut results)?;
-        }
-        Ok(crate::overlap::resolve(results))
+        Ok(self.analyze_batch(&[text])?.into_iter().next().unwrap_or_default())
     }
 
-    /// Runs one tokenized window through the model and appends decoded spans.
-    fn run_window(&self, enc: &tokenizers::Encoding, results: &mut Vec<RecognizerResult>) -> Result<(), NerError> {
-        let ids = enc.get_ids();
-        let seq = ids.len();
+    /// Runs NER over many texts in one batched forward pass.
+    ///
+    /// Returns one span vec per input, index-aligned; each span's byte offsets
+    /// index into its own text. Empty inputs yield an empty vec. Every input is
+    /// tokenized independently (so offsets stay per-text); batching happens only
+    /// at the tensor level — windows are padded to a common length and stacked
+    /// into `[batch, seq]`. Over-long inputs split into overlapping windows whose
+    /// spans merge per text via `crate::overlap::resolve`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NerError::Inference`] on a tokenization or forward-pass
+    /// failure. Never panics.
+    pub fn analyze_batch(&self, texts: &[&str]) -> Result<Vec<Vec<RecognizerResult>>, NerError> {
+        let mut results: Vec<Vec<RecognizerResult>> = vec![Vec::new(); texts.len()];
+        if self.id2label.is_empty() {
+            return Ok(results);
+        }
+
+        let mut windows: Vec<Window> = Vec::with_capacity(texts.len());
+        for (i, text) in texts.iter().enumerate() {
+            if text.is_empty() {
+                continue;
+            }
+            let mut encoding = self
+                .tokenizer
+                .encode(*text, true)
+                .map_err(|e| NerError::Inference(format!("tokenize: {e}")))?;
+            for overflow in encoding.take_overflowing() {
+                if !overflow.get_ids().is_empty() {
+                    windows.push(Window { src: i, enc: overflow });
+                }
+            }
+            if !encoding.get_ids().is_empty() {
+                windows.push(Window { src: i, enc: encoding });
+            }
+        }
+
+        for chunk in windows.chunks(NER_BATCH_SIZE) {
+            self.run_chunk(chunk, &mut results)?;
+        }
+
+        // Merge overflow-window dupes per text.
+        for spans in &mut results {
+            if !spans.is_empty() {
+                *spans = crate::overlap::resolve(std::mem::take(spans));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Runs one chunk of windows through the model and routes spans by source.
+    ///
+    /// Builds padded `[batch, max_len]` i64 tensors (right-padding with `pad_id`
+    /// and attention-mask zeros), one `session.run`, then decodes each row using
+    /// its window's own offsets and real token length into `results[src]`.
+    fn run_chunk(&self, chunk: &[Window], results: &mut [Vec<RecognizerResult>]) -> Result<(), NerError> {
+        let batch = chunk.len();
         let num_labels = self.id2label.len();
-        if seq == 0 || num_labels == 0 {
+        // Clamp is defensive: the tokenizer already truncates each window to MAX_SEQ_LEN.
+        let max_len = chunk
+            .iter()
+            .map(|w| w.enc.get_ids().len())
+            .max()
+            .unwrap_or(0)
+            .min(MAX_SEQ_LEN);
+        if batch == 0 || max_len == 0 {
             return Ok(());
         }
 
-        let len = i64::try_from(seq).map_err(|_| NerError::Inference("sequence too long".to_owned()))?;
-        let shape = [1_i64, len];
-        // BERT ONNX exports take int64 inputs; build one `[1, seq]` tensor per field.
-        let tensor = |name: &str, data: &[u32]| -> Result<Tensor<i64>, NerError> {
-            let row: Vec<i64> = data.iter().map(|&v| i64::from(v)).collect();
-            Tensor::from_array((shape, row)).map_err(|e| NerError::Inference(format!("{name}: {e}")))
+        let mut input_ids = vec![self.pad_id; batch * max_len];
+        let mut attention = vec![0_i64; batch * max_len];
+        let mut type_ids = if self.needs_token_type_ids {
+            vec![0_i64; batch * max_len]
+        } else {
+            Vec::new()
+        };
+        for (r, w) in chunk.iter().enumerate() {
+            let ids = w.enc.get_ids();
+            let mask = w.enc.get_attention_mask();
+            let base = r * max_len;
+            let real = ids.len().min(max_len);
+            for t in 0..real {
+                input_ids[base + t] = i64::from(ids[t]);
+                attention[base + t] = i64::from(mask[t]);
+            }
+            if self.needs_token_type_ids {
+                let tti = w.enc.get_type_ids();
+                for t in 0..real {
+                    type_ids[base + t] = i64::from(tti[t]);
+                }
+            }
+        }
+
+        let bdim = i64::try_from(batch).map_err(|_| NerError::Inference("batch too large".to_owned()))?;
+        let sdim = i64::try_from(max_len).map_err(|_| NerError::Inference("sequence too long".to_owned()))?;
+        let shape = [bdim, sdim];
+        // BERT ONNX exports take int64 inputs; one `[batch, max_len]` tensor per field.
+        let make = |name: &str, data: Vec<i64>| -> Result<Tensor<i64>, NerError> {
+            Tensor::from_array((shape, data)).map_err(|e| NerError::Inference(format!("{name}: {e}")))
         };
         let mut inputs = ort::inputs![
-            "input_ids" => tensor("input_ids", ids)?,
-            "attention_mask" => tensor("attention_mask", enc.get_attention_mask())?,
+            "input_ids" => make("input_ids", input_ids)?,
+            "attention_mask" => make("attention_mask", attention)?,
         ];
         // DistilBERT-style models omit token_type_ids; only send it when declared.
         if self.needs_token_type_ids {
-            inputs.push((
-                "token_type_ids".into(),
-                tensor("token_type_ids", enc.get_type_ids())?.into(),
-            ));
+            inputs.push(("token_type_ids".into(), make("token_type_ids", type_ids)?.into()));
         }
-        let offsets = enc.get_offsets();
-        let word_ids = enc.get_word_ids();
 
-        // Hold the session lock for inference and reading logits only. The guard
-        // (and the `logits` slice borrowed from it) drop at the end of this block,
-        // releasing the Mutex before the pure-CPU aggregation/decoding below.
-        let tags = {
+        // Hold the session lock for inference and reading logits only, then copy
+        // them out so the pure-CPU decode below runs without the Mutex held.
+        let logits: Vec<f32> = {
             let mut session = self
                 .session
                 .lock()
@@ -448,38 +540,60 @@ impl NerEngine {
             let (_logits_shape, logits) = output
                 .try_extract_tensor::<f32>()
                 .map_err(|e| NerError::Inference(format!("extract logits: {e}")))?;
-
-            let mut tags = Vec::with_capacity(seq);
-            for t in 0..seq {
-                // Special tokens ([CLS]/[SEP]) carry no word id; emit a closing "O".
-                // This is the same signal `aggregate_words` folds on, so one lookup
-                // gates both the skip here and the word grouping below.
-                if word_ids.get(t).copied().flatten().is_none() {
-                    tags.push(TokenTag::outside());
-                    continue;
-                }
-                let logit_row = logits.get(t * num_labels..(t + 1) * num_labels).unwrap_or(&[]);
-                let (best, prob) = softmax_argmax(logit_row);
-                let label = self.id2label.get(best).map_or("O", String::as_str);
-                let (mut entity, is_begin) = parse_bio(label);
-                if !self.entity_allowed(entity) {
-                    entity = None;
-                }
-                let (start, end) = offsets.get(t).copied().unwrap_or((0, 0));
-                tags.push(TokenTag {
-                    entity,
-                    is_begin,
-                    score: prob,
-                    start,
-                    end,
-                });
-            }
-            tags
+            logits.to_vec()
         };
 
-        let words = aggregate_words(&tags, word_ids);
-        results.extend(decode_spans(&words, self.threshold).into_iter().map(span_to_result));
+        let row_stride = max_len * num_labels;
+        for (r, w) in chunk.iter().enumerate() {
+            let real = w.enc.get_ids().len().min(max_len);
+            let start = r * row_stride;
+            let Some(row_logits) = logits.get(start..start + real * num_labels) else {
+                continue;
+            };
+            self.decode_row(row_logits, &w.enc, &mut results[w.src]);
+        }
         Ok(())
+    }
+
+    /// Decodes one row of logits (`real_len × num_labels`, row-major) into spans.
+    ///
+    /// `enc` supplies the per-token byte offsets and word ids; decoded spans are
+    /// appended to `out` with byte offsets into `enc`'s source text. Shared by the
+    /// single and batched paths so both decode bit-for-bit identically.
+    fn decode_row(&self, logit_rows: &[f32], enc: &tokenizers::Encoding, out: &mut Vec<RecognizerResult>) {
+        let seq = enc.get_ids().len();
+        let num_labels = self.id2label.len();
+        let offsets = enc.get_offsets();
+        let word_ids = enc.get_word_ids();
+
+        let mut tags = Vec::with_capacity(seq);
+        for t in 0..seq {
+            // Special tokens ([CLS]/[SEP]) carry no word id; emit a closing "O".
+            // This is the same signal `aggregate_words` folds on, so one lookup
+            // gates both the skip here and the word grouping below.
+            if word_ids.get(t).copied().flatten().is_none() {
+                tags.push(TokenTag::outside());
+                continue;
+            }
+            let logit_row = logit_rows.get(t * num_labels..(t + 1) * num_labels).unwrap_or(&[]);
+            let (best, prob) = softmax_argmax(logit_row);
+            let label = self.id2label.get(best).map_or("O", String::as_str);
+            let (mut entity, is_begin) = parse_bio(label);
+            if !self.entity_allowed(entity) {
+                entity = None;
+            }
+            let (start, end) = offsets.get(t).copied().unwrap_or((0, 0));
+            tags.push(TokenTag {
+                entity,
+                is_begin,
+                score: prob,
+                start,
+                end,
+            });
+        }
+
+        let words = aggregate_words(&tags, word_ids);
+        out.extend(decode_spans(&words, self.threshold).into_iter().map(span_to_result));
     }
 }
 

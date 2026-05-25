@@ -78,6 +78,17 @@ enum Frame<'a> {
     Pop(usize),
 }
 
+/// One string leaf deferred to the batched NER pass.
+///
+/// `slot` is the write-back handle to the (now-empty) leaf; `text` owns the
+/// leaf's original contents, moved out to serve as batch input; `regex` holds
+/// its already-computed regex spans. The merge pass restores `text` into `slot`.
+struct LeafSlot<'a> {
+    slot: &'a mut String,
+    text: String,
+    regex: Vec<RecognizerResult>,
+}
+
 /// Redacts PII from query tool response rows.
 ///
 /// Holds an [`Arc<Analyzer>`] so handlers stay cheap to clone.
@@ -181,6 +192,12 @@ impl Redactor {
         let mut stats = RedactionStats::default();
         let mut infer_err: Option<String> = None;
         let result = catch_unwind(AssertUnwindSafe(|| {
+            // When NER is attached, defer inference: collect every leaf during the
+            // walk and run one batched forward pass afterwards, instead of one pass
+            // per leaf. Without NER, anonymize inline (regex-only).
+            let ner_engine = self.analyzer.ner_engine();
+            let mut slots: Vec<LeafSlot<'_>> = Vec::new();
+
             // Shared key-path stack. Each `Frame::KeyedChild` carries the tokens
             // to push when entered; a `Frame::Pop` queued before its children
             // restores the path after the subtree is done. This keeps path
@@ -206,28 +223,16 @@ impl Redactor {
                 match v {
                     Value::String(s) => {
                         stats.string_leaves_scanned += 1;
-                        let mut results = self.analyzer.analyze_with_context(s, &path, &self.opts);
-                        if let Some(engine) = self.analyzer.ner_engine() {
-                            match engine.analyze(s) {
-                                Ok(ner) => results = merge_spans(results, ner, self.opts.min_score),
-                                Err(e) => {
-                                    infer_err = Some(e.to_string());
-                                    return;
-                                }
-                            }
+                        let regex = self.analyzer.analyze_with_context(s, &path, &self.opts);
+                        if ner_engine.is_some() {
+                            // Move the leaf's text out as batch input (no clone),
+                            // leaving the leaf empty; the merge pass restores it
+                            // before rewriting. `s` stays as the write-back handle.
+                            let text = std::mem::take(s);
+                            slots.push(LeafSlot { slot: s, text, regex });
+                        } else if !regex.is_empty() {
+                            apply_spans(s, regex, &self.operator, &mut stats);
                         }
-                        if results.is_empty() {
-                            continue;
-                        }
-                        let anon = anonymize(s, results, &self.operator);
-                        if anon.operations.is_empty() {
-                            continue;
-                        }
-                        for op in &anon.operations {
-                            stats.total += 1;
-                            *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
-                        }
-                        *s = anon.text;
                     }
                     Value::Object(map) => {
                         for (key, child) in map.iter_mut() {
@@ -242,6 +247,30 @@ impl Redactor {
                         }
                     }
                     Value::Number(_) | Value::Bool(_) | Value::Null => {}
+                }
+            }
+
+            // On failure, record the error and leave the moved-out leaves empty:
+            // `apply` fails closed and the caller discards the rows, so the
+            // emptied (or partial) state never leaks.
+            if let Some(engine) = ner_engine
+                && !slots.is_empty()
+            {
+                let texts: Vec<&str> = slots.iter().map(|l| l.text.as_str()).collect();
+                match engine.analyze_batch(&texts) {
+                    Ok(per_leaf) => {
+                        for (leaf, ner) in slots.into_iter().zip(per_leaf) {
+                            // Restore the moved-out text into the emptied leaf, so a
+                            // no-PII leaf keeps its original value and apply_spans
+                            // rewrites in place.
+                            *leaf.slot = leaf.text;
+                            let results = merge_spans(leaf.regex, ner, self.opts.min_score);
+                            if !results.is_empty() {
+                                apply_spans(leaf.slot, results, &self.operator, &mut stats);
+                            }
+                        }
+                    }
+                    Err(e) => infer_err = Some(e.to_string()),
                 }
             }
         }));
@@ -275,6 +304,29 @@ impl Redactor {
         } else {
             self.apply(&mut rows)?;
             Ok(rows)
+        }
+    }
+}
+
+/// Redaction over the `Option<Redactor>` field every query handler holds.
+///
+/// Centralizes the "redact when enabled, pass through when not" branch so
+/// each query tool calls one method instead of matching on the option.
+#[allow(async_fn_in_trait)]
+pub trait MaybeRedact {
+    /// Redacts `rows` when a redactor is present, else returns them unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`RedactionError`] from [`Redactor::redact_rows`].
+    async fn redact_rows(&self, rows: Vec<Value>) -> Result<Vec<Value>, RedactionError>;
+}
+
+impl MaybeRedact for Option<Redactor> {
+    async fn redact_rows(&self, rows: Vec<Value>) -> Result<Vec<Value>, RedactionError> {
+        match self {
+            Some(r) => r.redact_rows(rows).await,
+            None => Ok(rows),
         }
     }
 }
@@ -338,6 +390,22 @@ fn allowed_ner_entities(cfg: &dbmcp_config::PiiConfig) -> Vec<Entity> {
             Some(cats) => ner_entity_category(entity).is_some_and(|c| cats.contains(&c)),
         })
         .collect()
+}
+
+/// Anonymizes one leaf string in place, folding its operations into `stats`.
+///
+/// No-op when the resolved spans produce no operations. Shared by the inline
+/// regex-only path and the batched NER merge pass.
+fn apply_spans(s: &mut String, results: Vec<RecognizerResult>, operator: &OperatorConfig, stats: &mut RedactionStats) {
+    let anon = anonymize(s, results, operator);
+    if anon.operations.is_empty() {
+        return;
+    }
+    for op in &anon.operations {
+        stats.total += 1;
+        *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
+    }
+    *s = anon.text;
 }
 
 /// Merges regex and NER spans for one leaf into a resolved result set.
@@ -945,5 +1013,52 @@ mod tests {
             allowed_ner_entities(&cfg).is_empty(),
             "a non-NER category must allow no NER entities (model not loaded)"
         );
+    }
+
+    #[test]
+    fn ner_redactor_preserves_non_pii_leaves() {
+        // Exercises the batched-NER deferral in `apply`: a leaf whose text is
+        // moved out for inference must be restored verbatim when it yields no
+        // spans. Dropping the restore would silently blank every non-PII string
+        // under NER, so this guards that invariant. Skips without a local model.
+        let Some(dir) = std::env::var_os("PII_NER_TEST_MODEL").map(std::path::PathBuf::from) else {
+            eprintln!("PII_NER_TEST_MODEL unset; skipping NER redactor test");
+            return;
+        };
+        let cfg = dbmcp_config::PiiConfig {
+            enabled: true,
+            ner_enabled: true,
+            ner_model: Some(dir),
+            ..dbmcp_config::PiiConfig::default()
+        };
+        let r = Redactor::from_config(&cfg)
+            .expect("config ok")
+            .expect("redactor present");
+        let mut rows = vec![json!({
+            "name": "Alice Johnson",
+            "clean": "status code 200 returned",
+            "n": 42,
+        })];
+        r.apply(&mut rows).expect("apply ok");
+        // Non-PII leaf survives verbatim (the moved-out text was restored).
+        assert_eq!(rows[0]["clean"], "status code 200 returned");
+        assert_eq!(rows[0]["n"], 42);
+        // The person name is redacted (changed from the original).
+        assert_ne!(rows[0]["name"], "Alice Johnson");
+    }
+
+    #[tokio::test]
+    async fn maybe_redact_none_passes_rows_through_unchanged() {
+        let redactor: Option<Redactor> = None;
+        let rows = vec![email_row()];
+        let out = redactor.redact_rows(rows.clone()).await.expect("none passes through");
+        assert_eq!(out, rows);
+    }
+
+    #[tokio::test]
+    async fn maybe_redact_some_redacts_like_the_inner_redactor() {
+        let redactor = Some(Redactor::with_defaults());
+        let out = redactor.redact_rows(vec![email_row()]).await.expect("some redacts");
+        assert_eq!(out[0]["msg"], "ping me at <EMAIL_ADDRESS>");
     }
 }

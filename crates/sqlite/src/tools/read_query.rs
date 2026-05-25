@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::pagination::Pager;
 use dbmcp_server::types::ReadQueryResponse;
 
@@ -76,29 +77,19 @@ impl SqliteHandler {
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read_only(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        match kind {
+        let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 let pager = Pager::new(cursor, self.config.page_size);
                 let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
                 let rows = self.connection.fetch_json(wrapped.as_str(), None).await?;
-                let (rows, next_cursor) = pager.paginate(rows);
-                let rows = match &self.redactor {
-                    Some(r) => r.redact_rows(rows).await?,
-                    None => rows,
-                };
-                Ok(ReadQueryResponse { rows, next_cursor })
+                pager.paginate(rows)
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json(query.as_str(), None).await?;
-                let rows = match &self.redactor {
-                    Some(r) => r.redact_rows(rows).await?,
-                    None => rows,
-                };
-                Ok(ReadQueryResponse {
-                    rows,
-                    next_cursor: None,
-                })
+                (rows, None)
             }
-        }
+        };
+        let rows = self.redactor.redact_rows(rows).await?;
+        Ok(ReadQueryResponse { rows, next_cursor })
     }
 }

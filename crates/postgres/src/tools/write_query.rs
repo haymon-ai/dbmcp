@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{PinnedQueryRequest, QueryResponse, UnpinnedQueryRequest};
 use dbmcp_sql::Connection as _;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
@@ -92,10 +93,8 @@ impl PostgresHandler {
     /// Returns [`SqlError`] if the query fails.
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<QueryResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let mut rows = self.connection.fetch_json(query.as_str(), database).await?;
-        if let Some(r) = &self.redactor {
-            r.apply(&mut rows)?;
-        }
+        let rows = self.connection.fetch_json(query.as_str(), database).await?;
+        let rows = self.redactor.redact_rows(rows).await?;
         Ok(QueryResponse { rows })
     }
 }

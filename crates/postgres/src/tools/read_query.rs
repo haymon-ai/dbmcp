@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_server::types::{PinnedReadQueryRequest, ReadQueryResponse, UnpinnedReadQueryRequest};
 use dbmcp_sql::Connection as _;
@@ -113,29 +114,19 @@ impl PostgresHandler {
         let kind = validate_read_only(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        match kind {
+        let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 let pager = Pager::new(cursor, self.config.page_size);
                 let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
                 let rows = self.connection.fetch_json(wrapped.as_str(), database).await?;
-                let (rows, next_cursor) = pager.paginate(rows);
-                let rows = match &self.redactor {
-                    Some(r) => r.redact_rows(rows).await?,
-                    None => rows,
-                };
-                Ok(ReadQueryResponse { rows, next_cursor })
+                pager.paginate(rows)
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json(query.as_str(), database).await?;
-                let rows = match &self.redactor {
-                    Some(r) => r.redact_rows(rows).await?,
-                    None => rows,
-                };
-                Ok(ReadQueryResponse {
-                    rows,
-                    next_cursor: None,
-                })
+                (rows, None)
             }
-        }
+        };
+        let rows = self.redactor.redact_rows(rows).await?;
+        Ok(ReadQueryResponse { rows, next_cursor })
     }
 }

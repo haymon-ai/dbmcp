@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{PinnedExplainQueryRequest, QueryResponse, UnpinnedExplainQueryRequest};
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::validation::validate_read_only;
@@ -116,10 +117,8 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        let mut rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
-        if let Some(r) = &self.redactor {
-            r.apply(&mut rows)?;
-        }
+        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
+        let rows = self.redactor.redact_rows(rows).await?;
 
         Ok(QueryResponse { rows })
     }

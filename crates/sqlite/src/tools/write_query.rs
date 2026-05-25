@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::QueryResponse;
 
 use dbmcp_sql::Connection as _;
@@ -59,10 +60,8 @@ impl SqliteHandler {
     ///
     /// Returns [`SqlError`] if the query fails.
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<QueryResponse, ErrorData> {
-        let mut rows = self.connection.fetch_json(query.as_str(), None).await?;
-        if let Some(r) = &self.redactor {
-            r.apply(&mut rows)?;
-        }
+        let rows = self.connection.fetch_json(query.as_str(), None).await?;
+        let rows = self.redactor.redact_rows(rows).await?;
         Ok(QueryResponse { rows })
     }
 }
