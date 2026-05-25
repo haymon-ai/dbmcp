@@ -111,6 +111,12 @@ pub enum Entity {
     Person,
     /// `LOCATION` — place or city name detected by the optional ML/NER pass.
     Location,
+    /// `ORGANIZATION` — company or institution name (ML/NER pass).
+    Organization,
+    /// `NATIONALITY_RELIGION_POLITICS` — nationality, religion, or political group (ML/NER pass).
+    Nrp,
+    /// `FACILITY` — building, airport, or similar named facility (ML/NER pass).
+    Facility,
 }
 
 impl Entity {
@@ -164,6 +170,9 @@ impl Entity {
         Entity::PasswordHash,
         Entity::Person,
         Entity::Location,
+        Entity::Organization,
+        Entity::Nrp,
+        Entity::Facility,
     ];
 
     /// `SCREAMING_SNAKE` wire identifier (e.g. `"EMAIL_ADDRESS"`).
@@ -218,6 +227,9 @@ impl Entity {
             Entity::PasswordHash => "PASSWORD_HASH",
             Entity::Person => "PERSON",
             Entity::Location => "LOCATION",
+            Entity::Organization => "ORGANIZATION",
+            Entity::Nrp => "NATIONALITY_RELIGION_POLITICS",
+            Entity::Facility => "FACILITY",
         }
     }
 
@@ -273,6 +285,9 @@ impl Entity {
             Entity::PasswordHash => "<PASSWORD_HASH>",
             Entity::Person => "<PERSON>",
             Entity::Location => "<LOCATION>",
+            Entity::Organization => "<ORGANIZATION>",
+            Entity::Nrp => "<NATIONALITY_RELIGION_POLITICS>",
+            Entity::Facility => "<FACILITY>",
         }
     }
 }
@@ -335,6 +350,9 @@ impl FromStr for Entity {
             "PASSWORD_HASH" => Ok(Entity::PasswordHash),
             "PERSON" => Ok(Entity::Person),
             "LOCATION" => Ok(Entity::Location),
+            "ORGANIZATION" => Ok(Entity::Organization),
+            "NATIONALITY_RELIGION_POLITICS" => Ok(Entity::Nrp),
+            "FACILITY" => Ok(Entity::Facility),
             other => Err(ParseEntityError(other.to_string())),
         }
     }
@@ -377,8 +395,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_48_variants() {
-        assert_eq!(Entity::ALL.len(), 48);
+    fn all_has_51_variants() {
+        assert_eq!(Entity::ALL.len(), 51);
     }
 
     #[test]

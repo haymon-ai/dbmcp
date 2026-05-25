@@ -84,10 +84,6 @@ pub struct PiiConfig {
     /// Filesystem path to the NER model directory; required when
     /// [`Self::ner_enabled`] is set.
     pub ner_model: Option<PathBuf>,
-    /// Minimum confidence for NER spans, in `[0.0, 1.0]`.
-    ///
-    /// `None` falls back to [`Self::DEFAULT_NER_THRESHOLD`].
-    pub ner_threshold: Option<f32>,
 }
 
 impl PiiConfig {
@@ -97,17 +93,16 @@ impl PiiConfig {
     pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
     /// Default ML/NER pass state (off — opt-in only).
     pub const DEFAULT_NER_ENABLED: bool = false;
-    /// Default NER confidence floor when no override is supplied.
+    /// NER confidence floor applied to every detected span.
     pub const DEFAULT_NER_THRESHOLD: f32 = 0.5;
 
     /// Validates this configuration.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)`, when
-    /// `ner_enabled` is set without a `ner_model` path, or when `ner_threshold`
-    /// falls outside `[0.0, 1.0]`. clap already rejects unknown values for
-    /// `--pii-categories`, so that check lives there.
+    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)` or when
+    /// `ner_enabled` is set without a `ner_model` path. clap already rejects
+    /// unknown values for `--pii-categories`, so that check lives there.
     pub fn validate(&self) -> Result<(), ConfigErrors> {
         let mut errors = Vec::new();
         if let Some(cats) = &self.categories
@@ -117,11 +112,6 @@ impl PiiConfig {
         }
         if self.ner_enabled && self.ner_model.is_none() {
             errors.push(ConfigError::PiiNerModelMissing);
-        }
-        if let Some(threshold) = self.ner_threshold
-            && !(0.0..=1.0).contains(&threshold)
-        {
-            errors.push(ConfigError::PiiNerThresholdRange(threshold));
         }
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
     }
@@ -176,28 +166,6 @@ mod tests {
             ..PiiConfig::default()
         };
         cfg.validate().expect("ner with model path must validate");
-    }
-
-    #[test]
-    fn ner_threshold_out_of_range_errors() {
-        let cfg = PiiConfig {
-            ner_threshold: Some(1.5),
-            ..PiiConfig::default()
-        };
-        let errors = cfg.validate().expect_err("out-of-range threshold must error");
-        assert!(
-            errors.iter().any(|e| matches!(e, ConfigError::PiiNerThresholdRange(_))),
-            "expected PiiNerThresholdRange in {errors:?}"
-        );
-    }
-
-    #[test]
-    fn ner_threshold_in_range_validates_ok() {
-        let cfg = PiiConfig {
-            ner_threshold: Some(0.75),
-            ..PiiConfig::default()
-        };
-        cfg.validate().expect("in-range threshold must validate");
     }
 
     #[test]

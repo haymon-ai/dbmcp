@@ -195,10 +195,6 @@ pub(crate) struct PiiArguments {
     /// Path to the NER model directory (required with --pii-ner)
     #[arg(long = "pii-ner-model", env = "PII_NER_MODEL")]
     pub(crate) ner_model: Option<PathBuf>,
-
-    /// Minimum NER confidence in [0.0, 1.0] (default: 0.5)
-    #[arg(long = "pii-ner-threshold", env = "PII_NER_THRESHOLD")]
-    pub(crate) ner_threshold: Option<f32>,
 }
 
 impl TryFrom<&PiiArguments> for PiiConfig {
@@ -211,7 +207,6 @@ impl TryFrom<&PiiArguments> for PiiConfig {
             categories: args.categories.clone(),
             ner_enabled: args.ner_enabled,
             ner_model: args.ner_model.clone(),
-            ner_threshold: args.ner_threshold,
         };
         candidate.validate()?;
         Ok(candidate)
@@ -326,7 +321,6 @@ mod tests {
             std::env::remove_var("PII_CATEGORIES");
             std::env::remove_var("PII_NER_ENABLE");
             std::env::remove_var("PII_NER_MODEL");
-            std::env::remove_var("PII_NER_THRESHOLD");
         }
     }
 
@@ -504,25 +498,16 @@ mod tests {
         let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
         assert!(!cli.pii.ner_enabled, "ner must default off");
         assert!(cli.pii.ner_model.is_none(), "ner model must default unset");
-        assert!(cli.pii.ner_threshold.is_none(), "ner threshold must default unset");
     }
 
     #[test]
     fn clap_pii_ner_flags_parse_and_convert() {
         clear_pii_env();
-        let cli = TestCli::try_parse_from([
-            "--pii-ner",
-            "true",
-            "--pii-ner-model",
-            "/models/ner",
-            "--pii-ner-threshold",
-            "0.7",
-        ])
-        .expect("ner flags parse");
+        let cli =
+            TestCli::try_parse_from(["--pii-ner", "true", "--pii-ner-model", "/models/ner"]).expect("ner flags parse");
         let cfg = PiiConfig::try_from(&cli.pii).expect("ner config validates");
         assert!(cfg.ner_enabled);
         assert_eq!(cfg.ner_model, Some(std::path::PathBuf::from("/models/ner")));
-        assert_eq!(cfg.ner_threshold, Some(0.7));
     }
 
     #[test]

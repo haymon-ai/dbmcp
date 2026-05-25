@@ -74,19 +74,34 @@ fn parse_id2label(raw: &str) -> Result<Vec<String>, NerError> {
     Ok(labels)
 }
 
-/// Reports whether any BIO label maps to a person or location entity.
+/// Entities the decoder can emit; drives the default allow-set and load gate.
+pub(crate) const NER_ENTITIES: &[Entity] = &[
+    Entity::Person,
+    Entity::Location,
+    Entity::Organization,
+    Entity::Nrp,
+    Entity::Facility,
+];
+
+/// Reports whether any BIO label maps to a supported NER entity.
 ///
 /// Shares [`parse_bio`] with decoding, so the load gate accepts exactly the
 /// models `run_window` can decode — rejecting one that emits no target label.
-fn has_person_or_location(labels: &[String]) -> bool {
+fn has_supported_entity(labels: &[String]) -> bool {
     labels.iter().any(|label| parse_bio(label).0.is_some())
 }
 
 /// Maps a label core (without the `B-`/`I-` prefix) to a built-in entity.
+///
+/// Mirrors Presidio's `model_to_presidio_entity_mapping`, except `FAC` maps to
+/// a distinct [`Entity::Facility`] rather than being folded into location.
 fn entity_for_core(core: &str) -> Option<Entity> {
     match core {
         "PER" | "PERSON" => Some(Entity::Person),
         "LOC" | "GPE" => Some(Entity::Location),
+        "ORG" | "ORGANIZATION" => Some(Entity::Organization),
+        "NORP" | "NRP" => Some(Entity::Nrp),
+        "FAC" => Some(Entity::Facility),
         _ => None,
     }
 }
@@ -257,8 +272,7 @@ pub struct NerEngine {
     tokenizer: Tokenizer,
     id2label: Vec<String>,
     threshold: Score,
-    allow_person: bool,
-    allow_location: bool,
+    allowed: Vec<Entity>,
 }
 
 impl std::fmt::Debug for NerEngine {
@@ -278,7 +292,7 @@ impl NerEngine {
     /// # Errors
     ///
     /// Returns [`NerError::Load`] when any artifact is missing or unreadable,
-    /// `config.json` lacks a usable `id2label` exposing a person/location
+    /// `config.json` lacks a usable `id2label` exposing a supported NER
     /// label, or the weights fail to load.
     pub fn load(model_dir: &Path, threshold: Score) -> Result<Self, NerError> {
         let device = Device::Cpu;
@@ -286,8 +300,8 @@ impl NerEngine {
         let raw = std::fs::read_to_string(model_dir.join("config.json"))
             .map_err(|e| NerError::Load(format!("config.json: {e}")))?;
         let id2label = parse_id2label(&raw)?;
-        if !has_person_or_location(&id2label) {
-            return Err(NerError::Load("model exposes no PERSON or LOCATION label".to_owned()));
+        if !has_supported_entity(&id2label) {
+            return Err(NerError::Load("model exposes no supported NER label".to_owned()));
         }
         let config: bert::Config =
             serde_json::from_str(&raw).map_err(|e| NerError::Load(format!("config.json fields: {e}")))?;
@@ -318,27 +332,23 @@ impl NerEngine {
             tokenizer,
             id2label,
             threshold,
-            allow_person: true,
-            allow_location: true,
+            allowed: NER_ENTITIES.to_vec(),
         })
     }
 
     /// Restricts which entities the engine emits (respects `--pii-categories`).
     ///
-    /// A span whose entity is disallowed is dropped during decoding, so it
+    /// A span whose entity is not in the set is dropped during decoding, so it
     /// neither redacts nor displaces a regex hit.
-    pub(crate) fn set_allowed(&mut self, person: bool, location: bool) {
-        self.allow_person = person;
-        self.allow_location = location;
+    pub(crate) fn set_allowed(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        self.allowed = entities.into_iter().collect();
     }
 
     /// Reports whether a decoded entity is permitted by the category filter.
+    ///
+    /// Non-entity tags (`None`) are never filtered here.
     fn entity_allowed(&self, entity: Option<Entity>) -> bool {
-        match entity {
-            Some(Entity::Person) => self.allow_person,
-            Some(Entity::Location) => self.allow_location,
-            _ => true,
-        }
+        entity.is_none_or(|e| self.allowed.contains(&e))
     }
 
     /// Runs NER over one text, returning its spans as [`RecognizerResult`]s.
@@ -453,10 +463,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_bio_maps_organization_nrp_facility() {
+        assert_eq!(parse_bio("B-ORG"), (Some(Entity::Organization), true));
+        assert_eq!(parse_bio("I-ORGANIZATION"), (Some(Entity::Organization), false));
+        assert_eq!(parse_bio("B-NORP"), (Some(Entity::Nrp), true));
+        assert_eq!(parse_bio("B-NRP"), (Some(Entity::Nrp), true));
+        assert_eq!(parse_bio("B-FAC"), (Some(Entity::Facility), true));
+    }
+
+    #[test]
     fn parse_bio_ignores_outside_and_unmapped() {
         assert_eq!(parse_bio("O"), (None, false));
-        assert_eq!(parse_bio("B-ORG"), (None, true));
         assert_eq!(parse_bio("B-MISC"), (None, true));
+        assert_eq!(parse_bio("B-DATE"), (None, true));
+        assert_eq!(parse_bio("B-MONEY"), (None, true));
     }
 
     #[test]
@@ -551,8 +571,8 @@ mod tests {
     }
 
     #[test]
-    fn has_person_or_location_detects_targets() {
-        assert!(has_person_or_location(&[
+    fn has_supported_entity_detects_targets() {
+        assert!(has_supported_entity(&[
             "O".to_owned(),
             "B-PER".to_owned(),
             "I-LOC".to_owned()
@@ -560,12 +580,44 @@ mod tests {
     }
 
     #[test]
-    fn has_person_or_location_false_without_targets() {
-        assert!(!has_person_or_location(&[
+    fn has_supported_entity_accepts_org_only_model() {
+        // A CoNLL model lacking PER/LOC but exposing ORG must still load.
+        assert!(has_supported_entity(&["O".to_owned(), "B-ORG".to_owned()]));
+    }
+
+    #[test]
+    fn has_supported_entity_false_without_targets() {
+        assert!(!has_supported_entity(&[
             "O".to_owned(),
-            "B-ORG".to_owned(),
-            "B-MISC".to_owned()
+            "B-MISC".to_owned(),
+            "B-DATE".to_owned()
         ]));
+    }
+
+    #[test]
+    fn decode_emits_organization_nrp_facility() {
+        for entity in [Entity::Organization, Entity::Nrp, Entity::Facility] {
+            let tags = [tag(Some(entity), true, 0.9, 0, 5)];
+            let spans = decode_spans(&tags, Score::from_static(0.5));
+            assert_eq!(spans.len(), 1, "{entity} span must decode");
+            assert_eq!(spans[0].entity, entity);
+        }
+    }
+
+    #[test]
+    fn ner_entities_match_decoder_mapping() {
+        // Every advertised NER entity must be reachable through entity_for_core.
+        for &entity in NER_ENTITIES {
+            let core = match entity {
+                Entity::Person => "PER",
+                Entity::Location => "LOC",
+                Entity::Organization => "ORG",
+                Entity::Nrp => "NORP",
+                Entity::Facility => "FAC",
+                other => panic!("NER_ENTITIES lists an unmapped entity: {other}"),
+            };
+            assert_eq!(entity_for_core(core), Some(entity));
+        }
     }
 
     #[test]

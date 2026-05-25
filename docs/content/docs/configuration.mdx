@@ -94,9 +94,8 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 | `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
 | `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
 | `--pii-categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
-| `--pii-ner` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person & location detection) |
+| `--pii-ner` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
 | `--pii-ner-model` | `PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
-| `--pii-ner-threshold` | `PII_NER_THRESHOLD` | `0.5` | Minimum NER span confidence, in `[0.0, 1.0]` |
 
 ### Operator Values
 
@@ -121,9 +120,9 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 
 An empty list is rejected at startup. If the selected categories produce an empty registry, the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
 
-### ML/NER pass (person & location)
+### ML/NER pass (person, location, organization, NRP & facility)
 
-The regex/checksum recognisers cannot catch free-form **person names** or **place names** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON` and `LOCATION` detection on top of the regex layer.
+The regex/checksum recognisers cannot catch free-form **person names**, **place names**, **organizations**, **nationality/religious/political groups**, or **facilities** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection on top of the regex layer. Which entities a given model can produce depends on its label set: a CoNLL model (e.g. `dslim/bert-base-NER`) yields person/location/organization, while an OntoNotes-class model additionally yields NRP and facility.
 
 It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `--pii` and `--pii-ner` are enabled and a model directory is supplied.
 
@@ -134,7 +133,7 @@ dbmcp stdio --db-backend sqlite --db-name app.db \
 
 Inference uses **candle** (pure Rust) — there is **no external runtime library** to install: the customer needs only the binary and a model directory. The directory must contain:
 
-- `config.json` (with an `id2label` map exposing a `PER`/`LOC` label)
+- `config.json` (with an `id2label` map exposing at least one supported NER label: `PER`/`PERSON`, `LOC`/`GPE`, `ORG`/`ORGANIZATION`, `NORP`/`NRP`, or `FAC`)
 - `tokenizer.json`
 - `model.safetensors`
 
@@ -143,7 +142,7 @@ The recommended English model is [`dslim/bert-base-NER`](https://huggingface.co/
 Behaviour notes:
 
 - **Fail-closed.** If `--pii-ner` is set but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
-- **Category-aware.** The NER pass respects `--pii-categories`: `PERSON` is emitted only when `personal` is selected and `LOCATION` only when `contact` is. With no subset (the default), both apply.
+- **Category-aware.** The NER pass respects `--pii-categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
 
 > **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR`, `PII_CATEGORIES`, and the `PII_NER_*` flags alone have no effect.
 

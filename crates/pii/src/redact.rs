@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use dbmcp_config::PiiCategory;
 use serde_json::Value;
 
 use crate::Entity;
@@ -297,39 +298,46 @@ fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PiiConfig) -> Result<
     if !cfg.ner_enabled {
         return Ok(());
     }
-    // NER respects the category filter: PERSON needs Personal, LOCATION needs
-    // Contact. An unset subset means all categories apply. When neither target
-    // category is selected, skip loading the model entirely.
-    let (allow_person, allow_location) = ner_category_allowance(cfg);
-    if !allow_person && !allow_location {
+    // NER respects the category filter via each entity's category. When the
+    // category subset selects none of the NER entities, skip loading entirely.
+    let allowed = allowed_ner_entities(cfg);
+    if allowed.is_empty() {
         return Ok(());
     }
     let Some(model) = cfg.ner_model.as_ref() else {
         // `PiiConfig::validate` rejects this, but stay defensive and fail-closed.
         return Err(RedactorInitError::Ner("model path missing".to_owned()));
     };
-    let threshold = cfg
-        .ner_threshold
-        .and_then(|t| crate::Score::new(t).ok())
-        .unwrap_or_else(|| crate::Score::from_static(dbmcp_config::PiiConfig::DEFAULT_NER_THRESHOLD));
+    let threshold = crate::Score::from_static(dbmcp_config::PiiConfig::DEFAULT_NER_THRESHOLD);
     let mut engine =
         crate::ner::NerEngine::load(model, threshold).map_err(|e| RedactorInitError::Ner(e.to_string()))?;
-    engine.set_allowed(allow_person, allow_location);
+    engine.set_allowed(allowed);
     analyzer.attach_ner(std::sync::Arc::new(engine));
     Ok(())
 }
 
-/// Resolves whether PERSON/LOCATION are permitted by the category filter.
-///
-/// An unset category subset means all categories apply.
-fn ner_category_allowance(cfg: &dbmcp_config::PiiConfig) -> (bool, bool) {
-    match cfg.categories.as_ref() {
-        None => (true, true),
-        Some(cats) => (
-            cats.contains(&dbmcp_config::PiiCategory::Personal),
-            cats.contains(&dbmcp_config::PiiCategory::Contact),
-        ),
+/// Category each NER-emitted entity belongs to; `None` for ones NER never emits.
+fn ner_entity_category(entity: Entity) -> Option<PiiCategory> {
+    match entity {
+        Entity::Person | Entity::Organization | Entity::Nrp => Some(PiiCategory::Personal),
+        Entity::Location | Entity::Facility => Some(PiiCategory::Contact),
+        _ => None,
     }
+}
+
+/// Resolves the NER entities permitted by the category filter.
+///
+/// An unset category subset means all NER entities apply.
+fn allowed_ner_entities(cfg: &dbmcp_config::PiiConfig) -> Vec<Entity> {
+    let selected = cfg.categories.as_ref();
+    crate::ner::NER_ENTITIES
+        .iter()
+        .copied()
+        .filter(|&entity| match selected {
+            None => true,
+            Some(cats) => ner_entity_category(entity).is_some_and(|c| cats.contains(&c)),
+        })
+        .collect()
 }
 
 /// Merges regex and NER spans for one leaf into a resolved result set.
@@ -881,26 +889,61 @@ mod tests {
     }
 
     #[test]
-    fn ner_allowance_unset_categories_allows_both() {
+    fn ner_allowance_unset_categories_allows_all() {
         let cfg = dbmcp_config::PiiConfig {
             ner_enabled: true,
             ..dbmcp_config::PiiConfig::default()
         };
-        assert_eq!(ner_category_allowance(&cfg), (true, true));
+        let allowed = allowed_ner_entities(&cfg);
+        assert_eq!(allowed.len(), 5, "unset categories must allow every NER entity");
+        for entity in [
+            Entity::Person,
+            Entity::Location,
+            Entity::Organization,
+            Entity::Nrp,
+            Entity::Facility,
+        ] {
+            assert!(allowed.contains(&entity), "{entity} must be allowed");
+        }
     }
 
     #[test]
-    fn ner_allowance_scoped_categories_gate_entities() {
-        let only_personal = dbmcp_config::PiiConfig {
+    fn ner_allowance_personal_only_gates_to_personal_entities() {
+        let cfg = dbmcp_config::PiiConfig {
             categories: Some(vec![dbmcp_config::PiiCategory::Personal]),
             ..dbmcp_config::PiiConfig::default()
         };
-        assert_eq!(ner_category_allowance(&only_personal), (true, false));
+        let allowed = allowed_ner_entities(&cfg);
+        assert!(allowed.contains(&Entity::Person));
+        assert!(allowed.contains(&Entity::Organization));
+        assert!(allowed.contains(&Entity::Nrp));
+        assert!(!allowed.contains(&Entity::Location));
+        assert!(!allowed.contains(&Entity::Facility));
+    }
 
-        let only_financial = dbmcp_config::PiiConfig {
+    #[test]
+    fn ner_allowance_contact_only_gates_to_contact_entities() {
+        let cfg = dbmcp_config::PiiConfig {
+            categories: Some(vec![dbmcp_config::PiiCategory::Contact]),
+            ..dbmcp_config::PiiConfig::default()
+        };
+        let allowed = allowed_ner_entities(&cfg);
+        assert!(allowed.contains(&Entity::Location));
+        assert!(allowed.contains(&Entity::Facility));
+        assert!(!allowed.contains(&Entity::Person));
+        assert!(!allowed.contains(&Entity::Organization));
+        assert!(!allowed.contains(&Entity::Nrp));
+    }
+
+    #[test]
+    fn ner_allowance_unrelated_category_is_empty() {
+        let cfg = dbmcp_config::PiiConfig {
             categories: Some(vec![dbmcp_config::PiiCategory::Financial]),
             ..dbmcp_config::PiiConfig::default()
         };
-        assert_eq!(ner_category_allowance(&only_financial), (false, false));
+        assert!(
+            allowed_ner_entities(&cfg).is_empty(),
+            "a non-NER category must allow no NER entities (model not loaded)"
+        );
     }
 }
