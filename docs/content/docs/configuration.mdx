@@ -143,8 +143,12 @@ The quickest path is to download a model that has already been exported to ONNX.
 **1. Download the model into a local directory** — either with the Hugging Face CLI (`pip install huggingface_hub`):
 
 ```bash
-hf download optimum/bert-base-NER --local-dir ./models/bert-ner
+hf download optimum/bert-base-NER \
+  --include config.json tokenizer.json model.onnx \
+  --local-dir ./models/bert-ner
 ```
+
+`--include` fetches only the three required files and skips the rest.
 
 or with `git` + Git LFS (the `model.onnx` weights are LFS-tracked):
 
@@ -152,6 +156,8 @@ or with `git` + Git LFS (the `model.onnx` weights are LFS-tracked):
 git lfs install
 git clone https://huggingface.co/optimum/bert-base-NER ./models/bert-ner
 ```
+
+or manually from the browser — open the model's [**Files and versions**](https://huggingface.co/optimum/bert-base-NER/tree/main) tab on Hugging Face and download `config.json`, `tokenizer.json`, and `model.onnx` with the download icon next to each, saving all three into one directory (e.g. `./models/bert-ner`).
 
 **2. Confirm the required files are present:**
 
