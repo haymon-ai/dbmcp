@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.13.1](https://github.com/haymon-ai/dbmcp/compare/b9b095dcb6f6fe1632e324fb1e14ed4ed44adcb2..v0.13.1) - 2026-05-25
+#### Continuous Integration
+- (**release**) build aarch64-linux natively and pin runner images - ([b9b095d](https://github.com/haymon-ai/dbmcp/commit/b9b095dcb6f6fe1632e324fb1e14ed4ed44adcb2)) - athopen
+
+- - -
+
 ## [v0.13.0](https://github.com/haymon-ai/dbmcp/compare/358a25152a3f07bd0ea2f2fdb37cbdc780fb9793..v0.13.0) - 2026-05-25
 #### Features
 - (**pii**) swap candle NER backend for ONNX Runtime (#179) - ([c4ec38d](https://github.com/haymon-ai/dbmcp/commit/c4ec38d97168c73cad79d04d02ad570eb674fcc3)) - [@athopen](https://github.com/athopen)
