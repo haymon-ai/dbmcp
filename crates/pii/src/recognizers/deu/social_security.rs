@@ -1,10 +1,6 @@
 //! `SOCIAL_SECURITY_DE` recognizer (Rentenversicherungsnummer / RVNR).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Rentenversicherungsnummer.
 const CONTEXT: &[&str] = &[

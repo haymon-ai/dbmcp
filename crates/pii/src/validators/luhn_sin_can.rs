@@ -1,8 +1,7 @@
 //! Luhn checksum validator gated to exactly 9 digits, used by `SIN_CA`.
 
-use super::digits::collect_digits;
 use super::luhn::luhn_passes;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// Luhn checksum gated to exactly 9 digits, used by `SIN_CA`.
 ///

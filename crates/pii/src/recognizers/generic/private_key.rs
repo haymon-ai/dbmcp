@@ -1,10 +1,6 @@
 //! `PRIVATE_KEY` recognizer (PEM-fenced block; BEGIN-type == END-type).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `PRIVATE_KEY` recognizer.
 ///

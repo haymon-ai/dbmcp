@@ -1,10 +1,6 @@
 //! `VAT_NUMBER` recognizer (EU / UK / Northern Ireland VAT identifier).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `VAT_NUMBER` recognizer.
 ///

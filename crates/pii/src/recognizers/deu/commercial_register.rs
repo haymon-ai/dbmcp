@@ -1,9 +1,6 @@
 //! `COMMERCIAL_REGISTER_DE` recognizer (Handelsregisternummer, HRA/HRB prefix).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Handelsregisternummer.
 const CONTEXT: &[&str] = &[

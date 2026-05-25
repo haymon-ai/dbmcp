@@ -1,14 +1,9 @@
 //! MCP tool: `createDatabase`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
-use dbmcp_sql::Connection as _;
 use dbmcp_sql::SqlError;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::PostgresHandler;
+use super::prelude::*;
 use crate::connection::quote_ident;
 
 const NAME: &str = "createDatabase";

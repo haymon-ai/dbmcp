@@ -7,10 +7,7 @@
 //! Lengths follow each scheme's spec; no lookaround, so the fast regex engine
 //! is used and a hash-shaped prefix of an over-long value still redacts.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `PASSWORD_HASH` recognizer (bcrypt, sha-crypt, argon2).
 ///

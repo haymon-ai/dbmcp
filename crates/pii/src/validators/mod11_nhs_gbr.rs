@@ -1,7 +1,6 @@
 //! UK NHS-number mod-11 checksum validator.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// UK NHS number mod-11 validator.
 ///

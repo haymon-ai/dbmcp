@@ -18,6 +18,7 @@ pub mod deu;
 pub mod eur;
 pub mod gbr;
 pub mod generic;
+mod prelude;
 pub mod usa;
 
 // Flat re-exports preserve the `dbmcp_pii::recognizers::<name>` public API.

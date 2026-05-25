@@ -1,9 +1,6 @@
 //! `BANK_ACCOUNT_UK` recognizer (weak digit pattern, keyword-context gated).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for UK bank account.
 const CONTEXT: &[&str] = &["account", "acct", "bank", "iban"];

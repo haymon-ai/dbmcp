@@ -1,9 +1,6 @@
 //! `ITIN` recognizer (US Individual Taxpayer Identification Number).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US ITIN.
 const CONTEXT: &[&str] = &["individual", "taxpayer", "itin", "tax", "payer", "taxid", "tin"];

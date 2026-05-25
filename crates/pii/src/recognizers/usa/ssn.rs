@@ -3,11 +3,7 @@
 //! Plain regex matches `XXX-XX-XXXX` shape; reserved area/group/serial values
 //! are rejected by [`UsSsnValidator`].
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US SSN.
 const CONTEXT: &[&str] = &["social", "security", "ssn", "ssns", "ssid"];

@@ -5,8 +5,7 @@
 //! spec: `(2·(d1 + d3 + d5) + (d0 + d2 + d4)) mod 10 == check`. Letters and
 //! the optional middle `9` are ignored by the math.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let Some(digits) = candidate.get(2..).and_then(collect_digits::<7>) else {

@@ -1,9 +1,6 @@
 //! `LICENSE_PLATE_DE` recognizer (German vehicle registration plate / KFZ-Kennzeichen, FZV § 8).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE KFZ-Kennzeichen.
 const CONTEXT: &[&str] = &[

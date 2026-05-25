@@ -1,7 +1,6 @@
 //! US SSN validator filtering reserved area, group, and serial values.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// US Social Security Number validator. Rejects reserved area / group / serial values.
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {

@@ -1,6 +1,6 @@
 //! IBAN mod-97 checksum validator.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// IBAN mod-97 validator. Accepts upper-case input; whitespace stripped before checking.
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {

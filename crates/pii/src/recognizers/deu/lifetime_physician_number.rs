@@ -1,10 +1,6 @@
 //! `LIFETIME_PHYSICIAN_NUMBER_DE` recognizer (Lebenslange Arztnummer / LANR, KBV weighted checksum).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Lebenslange Arztnummer (LANR).
 const CONTEXT: &[&str] = &[

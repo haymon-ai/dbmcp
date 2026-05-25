@@ -1,6 +1,6 @@
 //! PEM private-key block type validator.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// PEM private-key block type validator: BEGIN-type MUST equal END-type.
 ///

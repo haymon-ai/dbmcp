@@ -1,10 +1,6 @@
 //! `MEDICAL_PRACTICE_ID_DE` recognizer (Betriebsstättennummer / BSNR — 9 digits, all-zero rejected).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Betriebsstättennummer (BSNR).
 const CONTEXT: &[&str] = &[

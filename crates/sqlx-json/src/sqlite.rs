@@ -1,12 +1,8 @@
 //! [`RowExt`](crate::RowExt) implementation for `SQLite` rows.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use serde_json::{Map, Value};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Column, Row, TypeInfo, ValueRef};
 
-use crate::RowExt;
+use crate::prelude::*;
 
 impl RowExt for SqliteRow {
     fn to_json(&self) -> Value {

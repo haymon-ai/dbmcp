@@ -1,15 +1,10 @@
 //! MCP tool: `explainQuery`.
 
-use std::borrow::Cow;
-
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{PinnedExplainQueryRequest, QueryResponse, UnpinnedExplainQueryRequest};
-use dbmcp_sql::Connection as _;
 use dbmcp_sql::validation::validate_read_only;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::MysqlHandler;
+use super::prelude::*;
 
 const NAME: &str = "explainQuery";
 const TITLE: &str = "Explain Query";

@@ -1,6 +1,6 @@
 //! Luhn checksum validator for credit-card numbers.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// Luhn checksum validator for credit-card numbers.
 ///

@@ -5,11 +5,7 @@
 //! algorithm — `"80840"` prefix prepended before the standard Luhn pass —
 //! with an additional filter rejecting all-identical-body numbers.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US NPI.
 const CONTEXT: &[&str] = &[

@@ -3,11 +3,7 @@
 //! BTC checksums (`Base58Check` + Bech32/Bech32m) enforced via [`Validator::Crypto`].
 //! ETH (`0x...`) candidates are unvalidated.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for crypto wallet addresses.
 const CONTEXT: &[&str] = &["wallet", "btc", "bitcoin", "crypto"];

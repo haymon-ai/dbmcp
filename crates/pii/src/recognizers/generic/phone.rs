@@ -4,10 +4,7 @@
 //! then 8–15 significant digits with optional punctuation. The required
 //! international prefix keeps bare digit runs (timestamps, IDs, references) out.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords used by the boost step.
 const CONTEXT: &[&str] = &["phone", "number", "telephone", "cell", "cellphone", "mobile", "call"];

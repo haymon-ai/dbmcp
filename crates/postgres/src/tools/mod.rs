@@ -16,6 +16,7 @@ mod list_procedures;
 mod list_tables;
 mod list_triggers;
 mod list_views;
+mod prelude;
 mod read_query;
 mod write_query;
 

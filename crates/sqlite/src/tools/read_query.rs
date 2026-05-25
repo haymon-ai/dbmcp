@@ -1,19 +1,14 @@
 //! MCP tool: `readQuery`.
 
-use std::borrow::Cow;
-
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::pagination::Pager;
 use dbmcp_server::types::ReadQueryResponse;
 
-use dbmcp_sql::Connection as _;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
 use dbmcp_sql::validation::validate_read_only;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::SqliteHandler;
+use super::prelude::*;
 use crate::types::ReadQueryRequest;
 
 const NAME: &str = "readQuery";

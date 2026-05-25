@@ -1,9 +1,6 @@
 //! `DRIVING_LICENCE_UK` recognizer (DVLA 16-character format).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for UK driving licence.
 const CONTEXT: &[&str] = &[

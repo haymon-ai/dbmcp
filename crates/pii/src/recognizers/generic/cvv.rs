@@ -1,9 +1,6 @@
 //! `CVV` recognizer (keyword-context required).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `CVV` recognizer.
 ///

@@ -1,10 +1,6 @@
 //! `IBAN_CODE` recognizer with mod-97 validator.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for IBAN.
 const CONTEXT: &[&str] = &["iban", "bank", "transaction"];

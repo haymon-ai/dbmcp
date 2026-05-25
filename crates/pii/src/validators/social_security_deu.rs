@@ -8,7 +8,7 @@
 //! resulting digits; each product is Quersumme-collapsed; sum modulo 10
 //! must equal the trailing check digit.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let trimmed = candidate.trim();

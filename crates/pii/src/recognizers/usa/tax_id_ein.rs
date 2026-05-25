@@ -1,10 +1,6 @@
 //! `TAX_ID_EIN` recognizer (US Employer Identification Number).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `TAX_ID_EIN` recognizer.
 ///

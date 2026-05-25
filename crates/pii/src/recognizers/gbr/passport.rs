@@ -1,9 +1,6 @@
 //! `PASSPORT_UK` recognizer (post-2015 format: 2 letters + 7 digits).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for UK passport.
 const CONTEXT: &[&str] = &[

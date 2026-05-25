@@ -1,7 +1,5 @@
 //! Germany-specific recognizers (ISO 3166-1 alpha-3 `DEU`).
 
-pub(super) use super::Recognizer;
-
 mod commercial_register;
 mod driving_licence;
 mod health_insurance;

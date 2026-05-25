@@ -1,10 +1,6 @@
 //! `CREDIT_CARD` recognizer with Luhn checksum validator.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords boosted by the context-aware scoring pass.
 const CONTEXT: &[&str] = &[

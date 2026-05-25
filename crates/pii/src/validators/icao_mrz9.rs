@@ -5,7 +5,7 @@
 //! must equal the trailing digit. Visually ambiguous letters `A B D E I O Q S U`
 //! are rejected outright per ICAO Doc 9303 §3.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 const FORBIDDEN: &[u8] = b"ABDEIOQSU";
 

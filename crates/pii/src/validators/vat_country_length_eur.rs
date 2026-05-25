@@ -1,6 +1,6 @@
 //! EU / UK VAT-number country-length validator.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 const VAT_COUNTRY_LENGTHS: &[([u8; 2], usize, usize)] = &[
     (*b"AT", 9, 9),

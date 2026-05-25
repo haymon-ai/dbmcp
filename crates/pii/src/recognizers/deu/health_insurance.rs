@@ -1,10 +1,6 @@
 //! `HEALTH_INSURANCE_DE` recognizer (KVNR, letter + 9 digits, GKV-Spitzenverband checksum).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Krankenversicherungsnummer.
 const CONTEXT: &[&str] = &[

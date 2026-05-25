@@ -5,8 +5,7 @@
 //! times in positions 1-10. The checksum is ISO 7064 Mod 11, 10 over the
 //! first ten digits.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let Some(digits) = collect_digits::<11>(candidate) else {

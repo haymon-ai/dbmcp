@@ -1,9 +1,6 @@
 //! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, weak 0.05 base score — requires context).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Postleitzahl.
 const CONTEXT: &[&str] = &[

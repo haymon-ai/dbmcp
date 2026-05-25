@@ -5,10 +5,7 @@
 //! licence is purely numeric (score `0.01`). Both are gated by a keyword
 //! context validator because the regex alone matches too many false positives.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US driver licence.
 const CONTEXT: &[&str] = &[

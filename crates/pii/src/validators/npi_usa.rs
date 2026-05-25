@@ -7,9 +7,8 @@
 //! (e.g. `1111111110`); without this filter the Luhn check passes for several
 //! such sequences and produces noisy false positives.
 
-use super::digits::collect_digits;
 use super::luhn::luhn_passes;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 const NPI_PREFIX: [u32; 5] = [8, 0, 8, 4, 0];
 

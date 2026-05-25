@@ -17,6 +17,7 @@ mod medical_license_usa;
 mod medical_practice_id_deu;
 mod mod11_nhs_gbr;
 mod npi_usa;
+mod prelude;
 mod private_key_type;
 mod social_security_deu;
 mod ssn_usa;

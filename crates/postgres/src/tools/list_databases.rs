@@ -1,14 +1,9 @@
 //! MCP tool: `listDatabases`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::pagination::Pager;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::PostgresHandler;
+use super::prelude::*;
 
 const NAME: &str = "listDatabases";
 const TITLE: &str = "List Databases";

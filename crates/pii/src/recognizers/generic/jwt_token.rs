@@ -1,10 +1,6 @@
 //! `JWT_TOKEN` recognizer (header `alg` field validated; signature NOT verified).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the `JWT_TOKEN` recognizer.
 ///

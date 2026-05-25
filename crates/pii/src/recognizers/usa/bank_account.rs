@@ -6,10 +6,7 @@
 //! contains a banking keyword. Matches without a nearby keyword fall below
 //! the redactor's `min_score` floor and are dropped.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US bank account.
 const CONTEXT: &[&str] = &["check", "account", "acct", "bank", "save", "debit"];

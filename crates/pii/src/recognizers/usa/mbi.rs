@@ -5,10 +5,7 @@
 //! (`0.3`) and dashed `XXXX-XXX-XXXX` (`0.5`); both regex-only — no
 //! published checksum.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 const ALPHA: &str = "ACDEFGHJKMNPQRTUVWXY";
 const ALNUM: &str = "0-9ACDEFGHJKMNPQRTUVWXY";

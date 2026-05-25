@@ -1,10 +1,6 @@
 //! `PASSPORT_DE` recognizer (Reisepassnummer, ICAO Doc 9303 9-character format).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Reisepass.
 const CONTEXT: &[&str] = &[

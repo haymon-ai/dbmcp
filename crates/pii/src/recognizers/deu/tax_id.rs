@@ -1,10 +1,6 @@
 //! `TAX_ID_DE` recognizer (Steueridentifikationsnummer, ISO 7064 Mod 11, 10).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Steueridentifikationsnummer.
 const CONTEXT: &[&str] = &[

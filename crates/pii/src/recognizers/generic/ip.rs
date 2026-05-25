@@ -4,11 +4,7 @@
 //! the precise validity check to [`std::net::IpAddr::from_str`]. False
 //! positives the regex lets through are dropped by the parser.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for IP addresses.
 const CONTEXT: &[&str] = &["ip", "ipv4", "ipv6"];

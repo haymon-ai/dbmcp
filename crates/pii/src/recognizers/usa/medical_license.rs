@@ -5,11 +5,7 @@
 //! `0.4` and gated by keyword context to suppress false positives on
 //! arbitrary alphanumeric tokens.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US medical license.
 const CONTEXT: &[&str] = &["medical", "certificate", "dea"];

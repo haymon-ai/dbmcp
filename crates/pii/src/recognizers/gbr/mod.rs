@@ -1,7 +1,5 @@
 //! United Kingdom-specific recognizers (ISO 3166-1 alpha-3 `GBR`).
 
-pub(super) use super::Recognizer;
-
 mod bank_account;
 mod driving_licence;
 mod nhs_number;

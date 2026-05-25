@@ -1,9 +1,6 @@
 //! `MAC_ADDRESS` recognizer.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for MAC addresses.
 const CONTEXT: &[&str] = &["mac", "mac address", "hardware address", "physical address", "ethernet"];

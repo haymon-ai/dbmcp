@@ -1,7 +1,6 @@
 //! US EIN (employer ID) prefix validator.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// IRS-published valid EIN prefixes, sorted ascending for binary search.
 const EIN_VALID_PREFIXES: &[u32] = &[

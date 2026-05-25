@@ -1,7 +1,5 @@
 //! United States-specific recognizers (ISO 3166-1 alpha-3 `USA`).
 
-pub(super) use super::Recognizer;
-
 mod bank_account;
 mod driver_license;
 mod itin;

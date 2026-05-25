@@ -1,13 +1,8 @@
 //! MCP tool: `listTables`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::pagination::Pager;
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::SqliteHandler;
+use super::prelude::*;
 use crate::types::{ListTablesRequest, ListTablesResponse};
 
 const NAME: &str = "listTables";

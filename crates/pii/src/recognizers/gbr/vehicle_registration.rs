@@ -1,9 +1,6 @@
 //! `VEHICLE_REGISTRATION_UK` recognizer (current + prefix + suffix formats).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for UK vehicle registration.
 const CONTEXT: &[&str] = &[

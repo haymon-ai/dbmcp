@@ -7,10 +7,7 @@
 //! confidence boost lifts it whenever a keyword like `aws_secret_access_key`
 //! sits in the surrounding window.
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Build the strongly-anchored `API_KEY` recognizer (AWS access, `GitHub`, Stripe, Google, `OpenAI`).
 ///

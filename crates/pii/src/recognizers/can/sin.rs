@@ -1,10 +1,6 @@
 //! `SIN_CA` recognizer (Luhn-validated, keyword-context required).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for Canadian SIN.
 const CONTEXT: &[&str] = &[

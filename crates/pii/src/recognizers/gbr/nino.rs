@@ -1,9 +1,6 @@
 //! `NINO_UK` recognizer (UK National Insurance Number; blocklist enforced in regex).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for UK NINO.
 const CONTEXT: &[&str] = &["national insurance", "ni number", "nino"];

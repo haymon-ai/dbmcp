@@ -1,9 +1,6 @@
 //! `TAX_NUMBER_DE` recognizer (Steuernummer, ELSTER + state-specific slash formats).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Steuernummer.
 const CONTEXT: &[&str] = &[

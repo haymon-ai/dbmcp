@@ -1,9 +1,6 @@
 //! `DRIVING_LICENCE_DE` recognizer (post-2013 EU-harmonised 11-character Führerschein).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Führerschein.
 const CONTEXT: &[&str] = &[

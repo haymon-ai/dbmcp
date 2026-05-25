@@ -10,6 +10,7 @@
 mod mysql;
 mod numeric;
 mod postgres;
+mod prelude;
 mod sqlite;
 mod traits;
 

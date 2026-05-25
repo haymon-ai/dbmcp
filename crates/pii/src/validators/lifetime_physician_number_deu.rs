@@ -5,8 +5,7 @@
 //! Digits 8 and 9 encode the medical specialty and are not part of the
 //! checksum.
 
-use super::digits::collect_digits;
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let Some(digits) = collect_digits::<9>(candidate) else {

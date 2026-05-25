@@ -1,16 +1,13 @@
 //! MCP tool: `listViews`.
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use dbmcp_server::pagination::Pager;
 use dbmcp_server::types::ListViewsResponse;
 
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+use rmcp::model::JsonObject;
 
-use crate::SqliteHandler;
+use super::prelude::*;
 use crate::types::ListViewsRequest;
 
 const NAME: &str = "listViews";

@@ -1,14 +1,9 @@
 //! MCP tool: `listTriggers`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_server::types::{ListTriggersResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::MysqlHandler;
+use super::prelude::*;
 
 const NAME: &str = "listTriggers";
 const TITLE: &str = "List Triggers";

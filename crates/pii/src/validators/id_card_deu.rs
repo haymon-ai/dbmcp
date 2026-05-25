@@ -6,7 +6,7 @@
 //! 2010 and carries no check digit — for that branch the validator returns
 //! [`ValidationOutcome::Unknown`] so the pattern score is preserved.
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 pub(super) fn validate(candidate: &str) -> ValidationOutcome {
     let trimmed = candidate.trim();

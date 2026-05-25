@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// IP-address validator that delegates to [`std::net::IpAddr::from_str`].
 ///

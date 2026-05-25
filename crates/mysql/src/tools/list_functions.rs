@@ -1,14 +1,9 @@
 //! MCP tool: `listFunctions`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::pagination::{Cursor, Pager};
 use dbmcp_server::types::ListFunctionsResponse;
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::MysqlHandler;
+use super::prelude::*;
 use crate::types::{PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
 
 const NAME: &str = "listFunctions";

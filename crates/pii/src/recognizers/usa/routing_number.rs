@@ -1,10 +1,6 @@
 //! `ROUTING_NUMBER_US` recognizer (ABA checksum + keyword-context).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US ABA routing number.
 const CONTEXT: &[&str] = &["aba", "routing", "abarouting", "association", "bankrouting"];

@@ -1,14 +1,9 @@
 //! MCP tool: `writeQuery`.
 
-use std::borrow::Cow;
-
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{PinnedQueryRequest, QueryResponse, UnpinnedQueryRequest};
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::MysqlHandler;
+use super::prelude::*;
 
 const NAME: &str = "writeQuery";
 const TITLE: &str = "Write Query";

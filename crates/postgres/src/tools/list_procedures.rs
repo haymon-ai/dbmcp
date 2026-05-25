@@ -1,13 +1,8 @@
 //! MCP tool: `listProcedures`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::pagination::{Cursor, Pager};
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
 
-use crate::PostgresHandler;
+use super::prelude::*;
 use crate::types::{ListProceduresResponse, PinnedListProceduresRequest, UnpinnedListProceduresRequest};
 
 const NAME: &str = "listProcedures";

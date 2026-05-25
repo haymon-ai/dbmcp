@@ -1,10 +1,6 @@
 //! `ID_CARD_DE` recognizer (Personalausweisnummer, nPA + legacy T-format).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::validators::Validator;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for DE Personalausweis.
 const CONTEXT: &[&str] = &[

@@ -1,6 +1,6 @@
 //! Bitcoin address checksum validator: `Base58Check` (P2PKH/P2SH) and Bech32/Bech32m (segwit).
 
-use crate::ValidationOutcome;
+use super::prelude::*;
 
 /// Validate a Bitcoin address candidate by checksum.
 ///

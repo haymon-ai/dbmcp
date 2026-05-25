@@ -1,9 +1,6 @@
 //! `PASSPORT_US` recognizer (9-digit weak + Next Generation [letter + 8 digits]).
 
-use super::Recognizer;
-use crate::pattern::Pattern;
-use crate::score::Score;
-use crate::{Category, Entity};
+use crate::recognizers::prelude::*;
 
 /// Context keywords for US passport.
 const CONTEXT: &[&str] = &["us", "united", "states", "passport", "travel", "document"];

@@ -1,15 +1,9 @@
 //! MCP tool: `dropTable`.
 
-use std::borrow::Cow;
-
 use dbmcp_server::types::MessageResponse;
 use dbmcp_sql::SqlError;
 
-use dbmcp_sql::Connection as _;
-use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
-use rmcp::model::{ErrorData, ToolAnnotations};
-
-use crate::SqliteHandler;
+use super::prelude::*;
 use crate::connection::quote_ident;
 use crate::types::DropTableRequest;
 

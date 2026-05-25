@@ -1,7 +1,5 @@
 //! Region-neutral recognizers.
 
-pub(super) use super::Recognizer;
-
 mod api_key;
 mod credit_card;
 mod crypto;
