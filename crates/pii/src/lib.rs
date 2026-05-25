@@ -2,9 +2,11 @@
 //!
 //! Library-only crate. Regex/pattern recognition with optional checksum
 //! validation, plus four built-in operators (`Replace`, `Mask`, `Redact`,
-//! `Hash`). An ML/NER pass (person & location) is always compiled and
-//! enabled at runtime via `PiiConfig`; inference is pure-Rust with no
-//! network. Wired into the MCP server's query tool output via [`Redactor`].
+//! `Hash`). An optional ML/NER pass detects person, location, organization,
+//! NRP, and facility spans (which entities depend on the model's labels); it
+//! is always compiled and enabled at runtime via `PiiConfig`. Inference runs
+//! locally via ONNX Runtime with no network. Wired into the MCP server's
+//! query tool output via [`Redactor`].
 //!
 //! # Quickstart
 //!
