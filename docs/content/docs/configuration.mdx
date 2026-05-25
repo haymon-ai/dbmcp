@@ -131,13 +131,13 @@ dbmcp stdio --db-backend sqlite --db-name app.db \
   --pii true --pii-ner true --pii-ner-model ./models/bert-ner
 ```
 
-Inference uses **candle** (pure Rust) — there is **no external runtime library** to install: the customer needs only the binary and a model directory. The directory must contain:
+Inference uses **ONNX Runtime** — there is **no external runtime library** to install: the customer needs only the binary and a model directory. The directory must contain:
 
 - `config.json` (with an `id2label` map exposing at least one supported NER label: `PER`/`PERSON`, `LOC`/`GPE`, `ORG`/`ORGANIZATION`, `NORP`/`NRP`, or `FAC`)
 - `tokenizer.json`
-- `model.safetensors`
+- `model.onnx` (an int8-quantized export keeps inference fast)
 
-The recommended English model is [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) (MIT licensed; `dslim/distilbert-NER` is a smaller/faster variant). v1 is English-only; the pipeline is model-agnostic, so a different-language model can be supplied.
+The recommended English model is [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) (MIT licensed; `dslim/distilbert-NER` is a smaller/faster variant), exported to ONNX. v1 is English-only; the pipeline is model-agnostic, so a different-language model can be supplied.
 
 Behaviour notes:
 

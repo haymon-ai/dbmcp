@@ -37,15 +37,16 @@ base64 = "0.22"
 bech32 = "0.11"
 bigdecimal = "0.4"
 bs58 = { version = "0.5", features = ["check"] }
-candle-core = { version = "0.10", default-features = false }
-candle-nn = { version = "0.10", default-features = false }
-candle-transformers = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 fancy-regex = "0.18"
 hmac = "0.12"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = [
+    "download-binaries",
+    "std",
+] }
 rmcp = { version = "1.7", features = [
     "server",
     "transport-io",

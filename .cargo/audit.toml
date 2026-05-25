@@ -8,8 +8,7 @@ ignore = [
     # we don't ship such a logger.
     "RUSTSEC-2026-0097",
     # paste: unmaintained (archived), not a vulnerability. Transitive,
-    # compile-time-only dep via candle-transformers -> candle-core -> gemm.
-    # No source uses it; candle 0.10.2 and gemm 0.19.0 are already latest and
-    # still pull paste, so there is no upstream fix to take.
+    # compile-time-only dep via tokenizers -> macro_rules_attribute -> paste.
+    # No source uses it directly and there is no upstream fix to take.
     "RUSTSEC-2024-0436",
 ]

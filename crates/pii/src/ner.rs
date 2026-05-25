@@ -1,8 +1,8 @@
-//! Optional ML/NER recognizer pass: pure-Rust BERT token-classification.
+//! Optional ML/NER recognizer pass: ONNX BERT token-classification.
 //!
 //! Loads a user-provided model directory
-//! (`tokenizer.json`, `config.json`, `model.safetensors`) and detects person
-//! and location spans via `candle` + `tokenizers`. Emitted [`RecognizerResult`]s
+//! (`tokenizer.json`, `config.json`, `model.onnx`) and detects person and
+//! location spans via `ort` + `tokenizers`. Emitted [`RecognizerResult`]s
 //! carry byte offsets, so they merge with the regex recognizers through
 //! `crate::overlap::resolve` exactly like any pattern hit.
 //!
@@ -11,10 +11,10 @@
 
 use std::borrow::Cow;
 use std::path::Path;
+use std::sync::Mutex;
 
-use candle_core::{Device, Tensor};
-use candle_nn::{Linear, Module, VarBuilder};
-use candle_transformers::models::bert::{self, BertModel};
+use ort::session::Session;
+use ort::value::Tensor;
 use tokenizers::{Tokenizer, TruncationParams};
 
 use crate::entity::Entity;
@@ -49,27 +49,21 @@ pub enum NerError {
 ///
 /// # Errors
 ///
-/// Returns [`NerError::Load`] when the field is absent, has a non-numeric key,
-/// a non-string value, or an index outside the map's length.
+/// Returns [`NerError::Load`] when the field is absent, a key is non-numeric, a
+/// value is not a string, or the indices are not the contiguous range `0..len`.
 fn parse_id2label(raw: &str) -> Result<Vec<String>, NerError> {
-    let cfg: serde_json::Value =
-        serde_json::from_str(raw).map_err(|e| NerError::Load(format!("config.json parse: {e}")))?;
-    let map = cfg
-        .get("id2label")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| NerError::Load("config.json missing id2label object".to_owned()))?;
-    let mut labels = vec![String::new(); map.len()];
-    for (key, value) in map {
-        let idx: usize = key
-            .parse()
-            .map_err(|_| NerError::Load(format!("non-numeric id2label key: {key}")))?;
-        let label = value
-            .as_str()
-            .ok_or_else(|| NerError::Load(format!("id2label[{key}] is not a string")))?;
-        let slot = labels
-            .get_mut(idx)
-            .ok_or_else(|| NerError::Load(format!("id2label index {idx} out of range")))?;
-        label.clone_into(slot);
+    #[derive(serde::Deserialize)]
+    struct Config {
+        id2label: std::collections::BTreeMap<usize, String>,
+    }
+
+    let cfg: Config = serde_json::from_str(raw).map_err(|e| NerError::Load(format!("config.json parse: {e}")))?;
+    let mut labels = Vec::with_capacity(cfg.id2label.len());
+    for (expected, (idx, label)) in cfg.id2label.into_iter().enumerate() {
+        if idx != expected {
+            return Err(NerError::Load(format!("id2label index {idx} out of range")));
+        }
+        labels.push(label);
     }
     Ok(labels)
 }
@@ -181,6 +175,42 @@ struct OpenSpan {
     max_score: f32,
 }
 
+/// Collapses subword tags into one tag per word (HF "first" strategy).
+///
+/// Tokens sharing a `word_id` fold into a single tag: the label comes from the
+/// word's first subword, the score is the max over its subwords, and the span
+/// runs from the first subword's start to the last subword's end. Tokens with no
+/// word id (special tokens) pass through unchanged, closing any open word.
+fn aggregate_words(tags: &[TokenTag], word_ids: &[Option<u32>]) -> Vec<TokenTag> {
+    let mut out: Vec<TokenTag> = Vec::with_capacity(tags.len());
+    let mut current: Option<u32> = None;
+    for (tag, &wid) in tags.iter().zip(word_ids) {
+        match wid {
+            Some(id) if current == Some(id) => {
+                if let Some(last) = out.last_mut() {
+                    last.end = tag.end;
+                    last.score = last.score.max(tag.score);
+                }
+            }
+            Some(id) => {
+                current = Some(id);
+                out.push(TokenTag {
+                    entity: tag.entity,
+                    is_begin: tag.is_begin,
+                    score: tag.score,
+                    start: tag.start,
+                    end: tag.end,
+                });
+            }
+            None => {
+                current = None;
+                out.push(TokenTag::outside());
+            }
+        }
+    }
+    out
+}
+
 /// Merges contiguous BIO tags into spans, keeping those at or above `threshold`.
 ///
 /// Subword token scores aggregate with the **maximum** strategy: a span's score
@@ -261,18 +291,18 @@ fn span_to_result(span: Span) -> RecognizerResult {
     }
 }
 
-/// Loaded token-classification model plus its tokenizer and label map.
+/// Loaded token-classification session plus its tokenizer and label map.
 ///
-/// Cheap to share behind an `Arc`. candle's `forward` takes `&self`, so
-/// concurrent requests run inference without a lock.
+/// Cheap to share behind an `Arc`. `ort` runs inference through `&mut Session`,
+/// so the session sits behind a `Mutex` and concurrent requests serialize on it.
 pub struct NerEngine {
-    model: BertModel,
-    classifier: Linear,
-    device: Device,
+    session: Mutex<Session>,
     tokenizer: Tokenizer,
     id2label: Vec<String>,
     threshold: Score,
     allowed: Vec<Entity>,
+    /// Whether the graph declares a `token_type_ids` input (`DistilBERT` omits it).
+    needs_token_type_ids: bool,
 }
 
 impl std::fmt::Debug for NerEngine {
@@ -285,7 +315,7 @@ impl std::fmt::Debug for NerEngine {
 }
 
 impl NerEngine {
-    /// Loads a model from `model_dir` (`config.json`, `tokenizer.json`, `model.safetensors`).
+    /// Loads a model from `model_dir` (`config.json`, `tokenizer.json`, `model.onnx`).
     ///
     /// `threshold` is the minimum aggregated span confidence to emit.
     ///
@@ -293,18 +323,14 @@ impl NerEngine {
     ///
     /// Returns [`NerError::Load`] when any artifact is missing or unreadable,
     /// `config.json` lacks a usable `id2label` exposing a supported NER
-    /// label, or the weights fail to load.
+    /// label, or the ONNX session fails to initialise.
     pub fn load(model_dir: &Path, threshold: Score) -> Result<Self, NerError> {
-        let device = Device::Cpu;
-
         let raw = std::fs::read_to_string(model_dir.join("config.json"))
             .map_err(|e| NerError::Load(format!("config.json: {e}")))?;
         let id2label = parse_id2label(&raw)?;
         if !has_supported_entity(&id2label) {
             return Err(NerError::Load("model exposes no supported NER label".to_owned()));
         }
-        let config: bert::Config =
-            serde_json::from_str(&raw).map_err(|e| NerError::Load(format!("config.json fields: {e}")))?;
 
         let mut tokenizer = Tokenizer::from_file(model_dir.join("tokenizer.json"))
             .map_err(|e| NerError::Load(format!("tokenizer.json: {e}")))?;
@@ -316,23 +342,19 @@ impl NerEngine {
             }))
             .map_err(|e| NerError::Load(format!("truncation config: {e}")))?;
 
-        let weights = model_dir.join("model.safetensors");
-        // SAFETY: the weights file is mmaped read-only for the engine's lifetime.
-        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], bert::DTYPE, &device) }
-            .map_err(|e| NerError::Load(format!("model.safetensors: {e}")))?;
-
-        let model = BertModel::load(vb.clone(), &config).map_err(|e| NerError::Load(format!("bert weights: {e}")))?;
-        let classifier = candle_nn::linear(config.hidden_size, id2label.len(), vb.pp("classifier"))
-            .map_err(|e| NerError::Load(format!("classifier weights: {e}")))?;
+        let session = Session::builder()
+            .map_err(|e| NerError::Load(format!("session builder: {e}")))?
+            .commit_from_file(model_dir.join("model.onnx"))
+            .map_err(|e| NerError::Load(format!("model.onnx: {e}")))?;
+        let needs_token_type_ids = session.inputs.iter().any(|i| i.name == "token_type_ids");
 
         Ok(Self {
-            model,
-            classifier,
-            device,
+            session: Mutex::new(session),
             tokenizer,
             id2label,
             threshold,
             allowed: NER_ENTITIES.to_vec(),
+            needs_token_type_ids,
         })
     }
 
@@ -381,61 +403,82 @@ impl NerEngine {
     fn run_window(&self, enc: &tokenizers::Encoding, results: &mut Vec<RecognizerResult>) -> Result<(), NerError> {
         let ids = enc.get_ids();
         let seq = ids.len();
-        if seq == 0 {
+        let num_labels = self.id2label.len();
+        if seq == 0 || num_labels == 0 {
             return Ok(());
         }
 
-        let ids_t = Tensor::new(ids, &self.device)
-            .and_then(|t| t.unsqueeze(0))
-            .map_err(|e| NerError::Inference(format!("input_ids: {e}")))?;
-        let mask_t = Tensor::new(enc.get_attention_mask(), &self.device)
-            .and_then(|t| t.unsqueeze(0))
-            .map_err(|e| NerError::Inference(format!("attention_mask: {e}")))?;
-        let types_t = Tensor::new(enc.get_type_ids(), &self.device)
-            .and_then(|t| t.unsqueeze(0))
-            .map_err(|e| NerError::Inference(format!("token_type_ids: {e}")))?;
+        let len = i64::try_from(seq).map_err(|_| NerError::Inference("sequence too long".to_owned()))?;
+        let shape = [1_i64, len];
+        // BERT ONNX exports take int64 inputs; build one `[1, seq]` tensor per field.
+        let tensor = |name: &str, data: &[u32]| -> Result<Tensor<i64>, NerError> {
+            let row: Vec<i64> = data.iter().map(|&v| i64::from(v)).collect();
+            Tensor::from_array((shape, row)).map_err(|e| NerError::Inference(format!("{name}: {e}")))
+        };
+        let mut inputs = ort::inputs![
+            "input_ids" => tensor("input_ids", ids)?,
+            "attention_mask" => tensor("attention_mask", enc.get_attention_mask())?,
+        ];
+        // DistilBERT-style models omit token_type_ids; only send it when declared.
+        if self.needs_token_type_ids {
+            inputs.push((
+                "token_type_ids".into(),
+                tensor("token_type_ids", enc.get_type_ids())?.into(),
+            ));
+        }
+        let offsets = enc.get_offsets();
+        let word_ids = enc.get_word_ids();
 
-        let sequence = self
-            .model
-            .forward(&ids_t, &types_t, Some(&mask_t))
-            .map_err(|e| NerError::Inference(format!("forward: {e}")))?;
-        let logits = self
-            .classifier
-            .forward(&sequence)
-            .map_err(|e| NerError::Inference(format!("classifier: {e}")))?;
-        let per_token = logits
-            .to_vec3::<f32>()
-            .map_err(|e| NerError::Inference(format!("extract logits: {e}")))?;
-        let Some(token_logits) = per_token.first() else {
-            return Ok(());
+        // Hold the session lock for inference and reading logits only. The guard
+        // (and the `logits` slice borrowed from it) drop at the end of this block,
+        // releasing the Mutex before the pure-CPU aggregation/decoding below.
+        let tags = {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| NerError::Inference("session lock poisoned".to_owned()))?;
+            let outputs = session
+                .run(inputs)
+                .map_err(|e| NerError::Inference(format!("run: {e}")))?;
+            // First graph output holds the logits; guard rather than index so an
+            // output-less model fails the request, never panics (release aborts).
+            let Some(output) = outputs.values().next() else {
+                return Ok(());
+            };
+            let (_logits_shape, logits) = output
+                .try_extract_tensor::<f32>()
+                .map_err(|e| NerError::Inference(format!("extract logits: {e}")))?;
+
+            let mut tags = Vec::with_capacity(seq);
+            for t in 0..seq {
+                // Special tokens ([CLS]/[SEP]) carry no word id; emit a closing "O".
+                // This is the same signal `aggregate_words` folds on, so one lookup
+                // gates both the skip here and the word grouping below.
+                if word_ids.get(t).copied().flatten().is_none() {
+                    tags.push(TokenTag::outside());
+                    continue;
+                }
+                let logit_row = logits.get(t * num_labels..(t + 1) * num_labels).unwrap_or(&[]);
+                let (best, prob) = softmax_argmax(logit_row);
+                let label = self.id2label.get(best).map_or("O", String::as_str);
+                let (mut entity, is_begin) = parse_bio(label);
+                if !self.entity_allowed(entity) {
+                    entity = None;
+                }
+                let (start, end) = offsets.get(t).copied().unwrap_or((0, 0));
+                tags.push(TokenTag {
+                    entity,
+                    is_begin,
+                    score: prob,
+                    start,
+                    end,
+                });
+            }
+            tags
         };
 
-        let offsets = enc.get_offsets();
-        let special = enc.get_special_tokens_mask();
-        let mut tags = Vec::with_capacity(seq);
-        for t in 0..seq {
-            if special.get(t).copied() == Some(1) {
-                tags.push(TokenTag::outside());
-                continue;
-            }
-            let logit_row = token_logits.get(t).map_or(&[][..], Vec::as_slice);
-            let (best, prob) = softmax_argmax(logit_row);
-            let label = self.id2label.get(best).map_or("O", String::as_str);
-            let (mut entity, is_begin) = parse_bio(label);
-            if !self.entity_allowed(entity) {
-                entity = None;
-            }
-            let (start, end) = offsets.get(t).copied().unwrap_or((0, 0));
-            tags.push(TokenTag {
-                entity,
-                is_begin,
-                score: prob,
-                start,
-                end,
-            });
-        }
-
-        results.extend(decode_spans(&tags, self.threshold).into_iter().map(span_to_result));
+        let words = aggregate_words(&tags, word_ids);
+        results.extend(decode_spans(&words, self.threshold).into_iter().map(span_to_result));
         Ok(())
     }
 }
@@ -618,6 +661,58 @@ mod tests {
             };
             assert_eq!(entity_for_core(core), Some(entity));
         }
+    }
+
+    #[test]
+    fn aggregate_folds_subwords_keeping_first_label_and_full_span() {
+        let tags = [
+            tag(Some(Entity::Organization), true, 0.6, 0, 2),
+            tag(None, false, 0.9, 2, 3),
+        ];
+        let words = aggregate_words(&tags, &[Some(0), Some(0)]);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].entity, Some(Entity::Organization));
+        assert_eq!((words[0].start, words[0].end), (0, 3), "span covers the whole word");
+        assert!((words[0].score - 0.9).abs() < 1e-6, "score lifts to the max subword");
+    }
+
+    #[test]
+    fn aggregate_first_label_suppresses_later_entity_subword() {
+        let tags = [
+            tag(None, false, 0.3, 0, 2),
+            tag(Some(Entity::Organization), true, 0.95, 2, 4),
+        ];
+        let words = aggregate_words(&tags, &[Some(0), Some(0)]);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].entity, None);
+        assert_eq!((words[0].start, words[0].end), (0, 4));
+    }
+
+    #[test]
+    fn aggregate_passes_special_tokens_through_as_outside() {
+        let tags = [
+            TokenTag::outside(),
+            tag(Some(Entity::Person), true, 0.9, 0, 4),
+            TokenTag::outside(),
+        ];
+        let words = aggregate_words(&tags, &[None, Some(0), None]);
+        assert_eq!(words.len(), 3);
+        assert!(words[0].entity.is_none());
+        assert_eq!(words[1].entity, Some(Entity::Person));
+        assert!(words[2].entity.is_none());
+    }
+
+    #[test]
+    fn aggregate_keeps_distinct_words_separate_for_bio_merge() {
+        let tags = [
+            tag(Some(Entity::Location), true, 0.9, 0, 3),
+            tag(Some(Entity::Location), false, 0.8, 4, 13),
+        ];
+        let words = aggregate_words(&tags, &[Some(0), Some(1)]);
+        assert_eq!(words.len(), 2, "distinct word ids must not fold together");
+        let spans = decode_spans(&words, Score::from_static(0.5));
+        assert_eq!(spans.len(), 1, "I- continuation merges the two words");
+        assert_eq!((spans[0].start, spans[0].end), (0, 13));
     }
 
     #[test]

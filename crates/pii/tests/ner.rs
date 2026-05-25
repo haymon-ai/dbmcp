@@ -1,8 +1,8 @@
-//! Opt-in NER integration test exercising a real safetensors model.
+//! Opt-in NER integration test exercising a real ONNX model.
 //!
 //! Skips unless `PII_NER_TEST_MODEL` points at a model directory
-//! (`tokenizer.json`, `config.json`, `model.safetensors`). The candle
-//! backend needs no external runtime library.
+//! (`tokenizer.json`, `config.json`, `model.onnx`). Inference uses a
+//! statically-linked ONNX Runtime; no external library to install.
 
 use std::path::PathBuf;
 
