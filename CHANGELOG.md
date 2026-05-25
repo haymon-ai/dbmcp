@@ -2,6 +2,19 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.13.0](https://github.com/haymon-ai/dbmcp/compare/358a25152a3f07bd0ea2f2fdb37cbdc780fb9793..v0.13.0) - 2026-05-25
+#### Features
+- (**pii**) swap candle NER backend for ONNX Runtime (#179) - ([c4ec38d](https://github.com/haymon-ai/dbmcp/commit/c4ec38d97168c73cad79d04d02ad570eb674fcc3)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) NER organization, NRP & facility entities (#177) - ([965dc89](https://github.com/haymon-ai/dbmcp/commit/965dc89dfab24553eeab3b35ad8a927eb31dbb61)) - [@athopen](https://github.com/athopen)
+- (**pii**) optional ML/NER PII pass (person & location) (#174) - ([358a251](https://github.com/haymon-ai/dbmcp/commit/358a25152a3f07bd0ea2f2fdb37cbdc780fb9793)) - [@athopen](https://github.com/athopen)
+#### Performance Improvements
+- (**pii**) batch NER inference and unify query redaction offload (#185) - ([6dbabc4](https://github.com/haymon-ai/dbmcp/commit/6dbabc45f51132fafac269133124036a9234bfb2)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- (**pii**) improve NER model download instructions (#183) - ([fcae670](https://github.com/haymon-ai/dbmcp/commit/fcae6709ee74539320be28d426130e935b809024)) - [@athopen](https://github.com/athopen)
+- (**pii**) add local NER model setup guide (#180) - ([e72439c](https://github.com/haymon-ai/dbmcp/commit/e72439cf2f8f98be4132283c3c93883f2cc7ddcf)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.12.1](https://github.com/haymon-ai/dbmcp/compare/2ab63dbcb935a57a10c1fc12fd2b25710d591eda..v0.12.1) - 2026-05-22
 #### Features
 - (**pii**) add password-hash recognizer (bcrypt, sha-crypt, argon2) (#172) - ([a3f2607](https://github.com/haymon-ai/dbmcp/commit/a3f2607ba2214f15e89523b0bcee33daf0c2df0a)) - [@athopen](https://github.com/athopen)
