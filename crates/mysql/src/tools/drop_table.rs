@@ -43,6 +43,14 @@ impl ToolBase for PinnedDropTableTool {
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<MysqlHandler> for PinnedDropTableTool {
@@ -73,6 +81,14 @@ impl ToolBase for UnpinnedDropTableTool {
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 }
 

@@ -45,6 +45,14 @@ impl ToolBase for PinnedReadQueryTool {
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<PostgresHandler> for PinnedReadQueryTool {
@@ -75,6 +83,14 @@ impl ToolBase for UnpinnedReadQueryTool {
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 }
 

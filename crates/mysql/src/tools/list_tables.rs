@@ -320,6 +320,14 @@ impl ToolBase for PinnedListTablesTool {
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<MysqlHandler> for PinnedListTablesTool {
@@ -352,6 +360,14 @@ impl ToolBase for UnpinnedListTablesTool {
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 }
 

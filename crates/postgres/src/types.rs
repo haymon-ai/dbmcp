@@ -18,7 +18,6 @@ pub use dbmcp_server::types::{
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "DropTableRequest")]
 pub struct PinnedDropTableRequest {
     /// Name of the table to drop. Must be non-empty.
     pub table: String,
@@ -29,7 +28,6 @@ pub struct PinnedDropTableRequest {
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "DropTableRequest")]
 pub struct UnpinnedDropTableRequest {
     #[serde(flatten)]
     pub inner: PinnedDropTableRequest,
@@ -40,7 +38,6 @@ pub struct UnpinnedDropTableRequest {
 
 /// Request for the Postgres `listTables` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTablesRequest")]
 pub struct PinnedListTablesRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -58,7 +55,6 @@ pub struct PinnedListTablesRequest {
 
 /// Request for the Postgres `listTables` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTablesRequest")]
 pub struct UnpinnedListTablesRequest {
     #[serde(flatten)]
     pub inner: PinnedListTablesRequest,
@@ -69,7 +65,6 @@ pub struct UnpinnedListTablesRequest {
 
 /// Request for the Postgres `listFunctions` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct PinnedListFunctionsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -88,7 +83,6 @@ pub struct PinnedListFunctionsRequest {
 
 /// Request for the Postgres `listFunctions` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct UnpinnedListFunctionsRequest {
     #[serde(flatten)]
     pub inner: PinnedListFunctionsRequest,
@@ -99,7 +93,6 @@ pub struct UnpinnedListFunctionsRequest {
 
 /// Request for the Postgres `listViews` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct PinnedListViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -117,7 +110,6 @@ pub struct PinnedListViewsRequest {
 
 /// Request for the Postgres `listViews` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct UnpinnedListViewsRequest {
     #[serde(flatten)]
     pub inner: PinnedListViewsRequest,
@@ -128,7 +120,6 @@ pub struct UnpinnedListViewsRequest {
 
 /// Request for the Postgres `listMaterializedViews` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListMaterializedViewsRequest")]
 pub struct PinnedListMaterializedViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -146,7 +137,6 @@ pub struct PinnedListMaterializedViewsRequest {
 
 /// Request for the Postgres `listMaterializedViews` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListMaterializedViewsRequest")]
 pub struct UnpinnedListMaterializedViewsRequest {
     #[serde(flatten)]
     pub inner: PinnedListMaterializedViewsRequest,
@@ -188,7 +178,6 @@ impl ListMaterializedViewsResponse {
 
 /// Request for the Postgres `listProcedures` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListProceduresRequest")]
 pub struct PinnedListProceduresRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -206,7 +195,6 @@ pub struct PinnedListProceduresRequest {
 
 /// Request for the Postgres `listProcedures` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListProceduresRequest")]
 pub struct UnpinnedListProceduresRequest {
     #[serde(flatten)]
     pub inner: PinnedListProceduresRequest,

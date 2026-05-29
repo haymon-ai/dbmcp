@@ -41,6 +41,14 @@ impl ToolBase for PinnedListFunctionsTool {
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<PostgresHandler> for PinnedListFunctionsTool {
@@ -73,6 +81,14 @@ impl ToolBase for UnpinnedListFunctionsTool {
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 }
 

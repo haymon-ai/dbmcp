@@ -1,11 +1,7 @@
 //! MCP tool: `listViews`.
 
-use std::sync::Arc;
-
 use dbmcp_server::pagination::Pager;
 use dbmcp_server::types::ListViewsResponse;
-
-use rmcp::model::JsonObject;
 
 use super::prelude::*;
 use crate::types::ListViewsRequest;
@@ -36,6 +32,10 @@ impl ToolBase for ListViewsTool {
 
     fn input_schema() -> Option<Arc<JsonObject>> {
         None
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 
     fn annotations() -> Option<ToolAnnotations> {

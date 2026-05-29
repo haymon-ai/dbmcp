@@ -39,6 +39,14 @@ impl ToolBase for WriteQueryTool {
                 .open_world(true),
         )
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<SqliteHandler> for WriteQueryTool {

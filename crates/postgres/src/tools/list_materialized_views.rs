@@ -43,6 +43,14 @@ impl ToolBase for PinnedListMaterializedViewsTool {
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
 }
 
 impl AsyncTool<PostgresHandler> for PinnedListMaterializedViewsTool {
@@ -75,6 +83,14 @@ impl ToolBase for UnpinnedListMaterializedViewsTool {
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>())
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
     }
 }
 

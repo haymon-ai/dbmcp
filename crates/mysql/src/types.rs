@@ -14,7 +14,6 @@ pub use dbmcp_server::types::{
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "DropTableRequest")]
 pub struct PinnedDropTableRequest {
     /// Name of the table to drop. Must be non-empty.
     pub table: String,
@@ -22,7 +21,6 @@ pub struct PinnedDropTableRequest {
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "DropTableRequest")]
 pub struct UnpinnedDropTableRequest {
     #[serde(flatten)]
     pub inner: PinnedDropTableRequest,
@@ -33,7 +31,6 @@ pub struct UnpinnedDropTableRequest {
 
 /// Request for the MySQL/MariaDB `listTables` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTablesRequest")]
 pub struct PinnedListTablesRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -51,7 +48,6 @@ pub struct PinnedListTablesRequest {
 
 /// Request for the MySQL/MariaDB `listTables` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTablesRequest")]
 pub struct UnpinnedListTablesRequest {
     #[serde(flatten)]
     pub inner: PinnedListTablesRequest,
@@ -62,7 +58,6 @@ pub struct UnpinnedListTablesRequest {
 
 /// Request for the MySQL/MariaDB `listFunctions` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct PinnedListFunctionsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -82,7 +77,6 @@ pub struct PinnedListFunctionsRequest {
 
 /// Request for the MySQL/MariaDB `listFunctions` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct UnpinnedListFunctionsRequest {
     #[serde(flatten)]
     pub inner: PinnedListFunctionsRequest,
@@ -93,7 +87,6 @@ pub struct UnpinnedListFunctionsRequest {
 
 /// Request for the MySQL/MariaDB `listProcedures` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListProceduresRequest")]
 pub struct PinnedListProceduresRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -113,7 +106,6 @@ pub struct PinnedListProceduresRequest {
 
 /// Request for the MySQL/MariaDB `listProcedures` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListProceduresRequest")]
 pub struct UnpinnedListProceduresRequest {
     #[serde(flatten)]
     pub inner: PinnedListProceduresRequest,
@@ -124,7 +116,6 @@ pub struct UnpinnedListProceduresRequest {
 
 /// Request for the MySQL/MariaDB `listViews` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct PinnedListViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -142,7 +133,6 @@ pub struct PinnedListViewsRequest {
 
 /// Request for the MySQL/MariaDB `listViews` tool — supports search + detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct UnpinnedListViewsRequest {
     #[serde(flatten)]
     pub inner: PinnedListViewsRequest,

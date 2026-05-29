@@ -129,7 +129,6 @@ pub struct DropDatabaseRequest {
 
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct PinnedListViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -138,7 +137,6 @@ pub struct PinnedListViewsRequest {
 
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListViewsRequest")]
 pub struct UnpinnedListViewsRequest {
     #[serde(flatten)]
     pub inner: PinnedListViewsRequest,
@@ -179,7 +177,6 @@ impl ListViewsResponse {
 
 /// Request for the `listTriggers` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTriggersRequest")]
 pub struct PinnedListTriggersRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -197,7 +194,6 @@ pub struct PinnedListTriggersRequest {
 
 /// Request for the `listTriggers` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListTriggersRequest")]
 pub struct UnpinnedListTriggersRequest {
     #[serde(flatten)]
     pub inner: PinnedListTriggersRequest,
@@ -238,7 +234,6 @@ impl ListTriggersResponse {
 
 /// Request for the `listFunctions` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct PinnedListFunctionsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
@@ -247,7 +242,6 @@ pub struct PinnedListFunctionsRequest {
 
 /// Request for the `listFunctions` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ListFunctionsRequest")]
 pub struct UnpinnedListFunctionsRequest {
     #[serde(flatten)]
     pub inner: PinnedListFunctionsRequest,
@@ -318,7 +312,6 @@ impl ListProceduresResponse {
 
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "QueryRequest")]
 pub struct PinnedQueryRequest {
     /// The SQL query to execute.
     pub query: String,
@@ -326,7 +319,6 @@ pub struct PinnedQueryRequest {
 
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "QueryRequest")]
 pub struct UnpinnedQueryRequest {
     #[serde(flatten)]
     pub inner: PinnedQueryRequest,
@@ -337,7 +329,6 @@ pub struct UnpinnedQueryRequest {
 
 /// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ReadQueryRequest")]
 pub struct PinnedReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
@@ -348,7 +339,6 @@ pub struct PinnedReadQueryRequest {
 
 /// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ReadQueryRequest")]
 pub struct UnpinnedReadQueryRequest {
     #[serde(flatten)]
     pub inner: PinnedReadQueryRequest,
@@ -378,7 +368,6 @@ pub struct ReadQueryResponse {
 
 /// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ExplainQueryRequest")]
 pub struct PinnedExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,
@@ -389,7 +378,6 @@ pub struct PinnedExplainQueryRequest {
 
 /// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[schemars(rename = "ExplainQueryRequest")]
 pub struct UnpinnedExplainQueryRequest {
     #[serde(flatten)]
     pub inner: PinnedExplainQueryRequest,

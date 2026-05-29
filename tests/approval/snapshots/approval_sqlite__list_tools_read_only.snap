@@ -8,8 +8,6 @@ expression: tools
     "title": "Explain Query",
     "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery or writeQuery\n- Checking table structure → use listTables with `detailed: true`\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explainQuery\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n</what_it_returns>",
     "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `explainQuery` tool.",
       "properties": {
         "query": {
           "description": "The SQL query to explain.",
@@ -19,12 +17,9 @@ expression: tools
       "required": [
         "query"
       ],
-      "title": "ExplainQueryRequest",
       "type": "object"
     },
     "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `writeQuery` and `explainQuery` tools.",
       "properties": {
         "rows": {
           "description": "Result rows, each a JSON object keyed by a column name.",
@@ -35,7 +30,6 @@ expression: tools
       "required": [
         "rows"
       ],
-      "title": "QueryResponse",
       "type": "object"
     },
     "annotations": {
@@ -50,8 +44,6 @@ expression: tools
     "title": "List Tables",
     "description": "List tables in the connected database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` workflow.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in this database?\" → listTables()\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"main\", \"kind\": \"TABLE\", ...}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `SQLite` `listTables` tool — supports optional search filter and detailed mode.",
       "properties": {
         "cursor": {
           "default": null,
@@ -75,12 +67,18 @@ expression: tools
           ]
         }
       },
-      "title": "ListTablesRequest",
       "type": "object"
     },
     "outputSchema": {
-      "$defs": {
-        "ListEntries": {
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tables": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -95,28 +93,12 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `listTables` tool.",
-      "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tables": {
-          "$ref": "#/$defs/ListEntries",
           "description": "Page of matching tables. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [
         "tables"
       ],
-      "title": "ListTablesResponse",
       "type": "object"
     },
     "annotations": {
@@ -131,8 +113,6 @@ expression: tools
     "title": "List Triggers",
     "description": "List triggers in the connected SQLite database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Auditing trigger coverage across a database (brief mode, default).\n- Searching for a trigger by partial name (pass `search`).\n- Inspecting a trigger's table and full `CREATE TRIGGER` text before reasoning about side-effects (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `sqlite_schema`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on trigger names via `LIKE` (SQLite's `LIKE` is ASCII-case-insensitive by default). `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by trigger name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What triggers are in this database?\" → listTriggers()\n✓ \"Find the audit triggers\" → listTriggers(search=\"audit\")\n✓ \"What does orders_audit_after_insert do?\" → listTriggers(search=\"orders_audit_after_insert\", detailed=true)\n✗ \"Show me a trigger's body\" → use detailed mode; the `definition` field carries the full `CREATE TRIGGER` text\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of trigger-name strings, e.g. `[\"customers_audit_after_insert\", \"orders_audit_after_insert\"]`.\nDetailed mode: a JSON object keyed by trigger name; each value carries exactly three fields — `schema` (always `\"main\"`), `table` (`sqlite_schema.tbl_name` — may be a view name for `INSTEAD OF` triggers), and `definition` (the original `CREATE TRIGGER` text from `sqlite_schema.sql`, byte-for-byte). Internal `sqlite_*` triggers are excluded.\nThe detailed payload deliberately diverges from the Postgres and MySQL/MariaDB `listTriggers` detailed payloads — `timing`, `events`, `activationLevel`, `status`, `functionName`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`, and `created` are absent. SQLite's catalogue does not expose those concepts as columns, and this tool deliberately avoids parsing the stored DDL to derive them; clients that need the timing or event keyword can read it off the prefix of `definition`.\nTriggers whose stored `sqlite_schema.sql` is `NULL` (rare; produced by extension-generated rows or hand-edited catalogues) are silently omitted from detailed mode but still listed by name in brief mode.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `SQLite` `listTriggers` tool — supports optional search filter and detailed mode.",
       "properties": {
         "cursor": {
           "default": null,
@@ -156,12 +136,18 @@ expression: tools
           ]
         }
       },
-      "title": "ListTriggersRequest",
       "type": "object"
     },
     "outputSchema": {
-      "$defs": {
-        "ListEntries": {
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggers": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -176,28 +162,12 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `listTriggers` tool.",
-      "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "triggers": {
-          "$ref": "#/$defs/ListEntries",
           "description": "Page of matching triggers. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [
         "triggers"
       ],
-      "title": "ListTriggersResponse",
       "type": "object"
     },
     "annotations": {
@@ -216,8 +186,15 @@ expression: tools
       "type": "object"
     },
     "outputSchema": {
-      "$defs": {
-        "ListEntries": {
+      "properties": {
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "views": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -232,28 +209,12 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.\n\nShared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:\nbrief mode → JSON array of strings, detailed mode → JSON object whose keys are\nentity names and whose values are the per-entity metadata."
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `listViews` tool.",
-      "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "views": {
-          "$ref": "#/$defs/ListEntries",
           "description": "Page of matching views. Shape depends on the request's `detailed` flag."
         }
       },
       "required": [
         "views"
       ],
-      "title": "ListViewsResponse",
       "type": "object"
     },
     "annotations": {
@@ -268,8 +229,6 @@ expression: tools
     "title": "Read Query",
     "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass `detailed: true` for columns)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>",
     "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Request for the `readQuery` tool.",
       "properties": {
         "cursor": {
           "default": null,
@@ -287,12 +246,9 @@ expression: tools
       "required": [
         "query"
       ],
-      "title": "ReadQueryRequest",
       "type": "object"
     },
     "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Response for the `readQuery` tool.",
       "properties": {
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
@@ -310,7 +266,6 @@ expression: tools
       "required": [
         "rows"
       ],
-      "title": "ReadQueryResponse",
       "type": "object"
     },
     "annotations": {
