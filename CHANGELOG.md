@@ -2,6 +2,15 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.13.2](https://github.com/haymon-ai/dbmcp/compare/6fd85824148d5ca4040e838ab52092a9bd820cdb..v0.13.2) - 2026-05-29
+#### Refactoring
+- (**server**) unify pinned/unpinned request structs (#190) - ([15270df](https://github.com/haymon-ai/dbmcp/commit/15270dfcd9cdc21811fa7854b54e11d9fb23fcba)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**server**) unify list-tool responses into ListEntriesResponse (#189) - ([c3b24c9](https://github.com/haymon-ai/dbmcp/commit/c3b24c98718d54b39788e834047a6d41405b7ab2)) - [@athopen](https://github.com/athopen)
+- (**server**) generate slim tool schemas via schemars Transform (#188) - ([5bbb631](https://github.com/haymon-ai/dbmcp/commit/5bbb631fefe8d79d729b7f49a98c5ebac60f74f8)) - [@athopen](https://github.com/athopen)
+- centralize shared imports into prelude modules (#186) - ([6fd8582](https://github.com/haymon-ai/dbmcp/commit/6fd85824148d5ca4040e838ab52092a9bd820cdb)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.13.1](https://github.com/haymon-ai/dbmcp/compare/b9b095dcb6f6fe1632e324fb1e14ed4ed44adcb2..v0.13.1) - 2026-05-25
 #### Continuous Integration
 - (**release**) build aarch64-linux natively and pin runner images - ([b9b095d](https://github.com/haymon-ai/dbmcp/commit/b9b095dcb6f6fe1632e324fb1e14ed4ed44adcb2)) - athopen
