@@ -1,7 +1,7 @@
 //! MCP tool: `listTriggers`.
 
 use dbmcp_server::pagination::Pager;
-use dbmcp_server::types::ListTriggersResponse;
+use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
 use crate::types::ListTriggersRequest;
@@ -15,7 +15,7 @@ pub(crate) struct ListTriggersTool;
 
 impl ToolBase for ListTriggersTool {
     type Parameter = ListTriggersRequest;
-    type Output = ListTriggersResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -112,7 +112,7 @@ impl SqliteHandler {
             search,
             detailed,
         }: ListTriggersRequest,
-    ) -> Result<ListTriggersResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);
 
@@ -128,7 +128,7 @@ impl SqliteHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListTriggersResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -145,6 +145,6 @@ impl SqliteHandler {
             )
             .await?;
         let (triggers, next_cursor) = pager.paginate(rows);
-        Ok(ListTriggersResponse::brief(triggers, next_cursor))
+        Ok(ListEntriesResponse::brief(triggers, next_cursor))
     }
 }

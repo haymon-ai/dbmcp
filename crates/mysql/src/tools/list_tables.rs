@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListTablesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
+use crate::types::{ListEntriesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
 
 /// Brief-mode SQL: `information_schema.TABLES` filtered to `BASE TABLE` rows.
 ///
@@ -302,7 +302,7 @@ pub(crate) struct PinnedListTablesTool;
 
 impl ToolBase for PinnedListTablesTool {
     type Parameter = PinnedListTablesRequest;
-    type Output = ListTablesResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -343,7 +343,7 @@ pub(crate) struct UnpinnedListTablesTool;
 
 impl ToolBase for UnpinnedListTablesTool {
     type Parameter = UnpinnedListTablesRequest;
-    type Output = ListTablesResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -398,7 +398,7 @@ impl MysqlHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListTablesResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database
             .as_deref()
             .map(str::trim)
@@ -423,7 +423,7 @@ impl MysqlHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListTablesResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -442,6 +442,6 @@ impl MysqlHandler {
             )
             .await?;
         let (tables, next_cursor) = pager.paginate(rows);
-        Ok(ListTablesResponse::brief(tables, next_cursor))
+        Ok(ListEntriesResponse::brief(tables, next_cursor))
     }
 }

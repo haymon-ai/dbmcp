@@ -1,6 +1,9 @@
 //! Request and response types for MCP tool parameters.
 //!
-//! Each struct maps to the JSON input or output schema of one MCP tool.
+//! Most structs map to the input or output schema of a single MCP tool;
+//! [`ListEntriesResponse`] is the shared output for every `list*` tool
+//! (`listTables`, `listViews`, `listTriggers`, `listFunctions`,
+//! `listProcedures`, `listMaterializedViews`).
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -11,7 +14,7 @@ use crate::pagination::Cursor;
 
 /// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///
-/// Shared by [`ListTablesResponse`] and [`ListTriggersResponse`]. Serialises untagged:
+/// Embedded as the `entries` field of [`ListEntriesResponse`]. Serialises untagged:
 /// brief mode → JSON array of strings, detailed mode → JSON object whose keys are
 /// entity names and whose values are the per-entity metadata.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -58,31 +61,32 @@ impl ListEntries {
     }
 }
 
-/// Response for the `listTables` tool.
+/// Response for list-style tools (`listTables`, `listViews`, `listTriggers`,
+/// `listFunctions`, `listProcedures`, `listMaterializedViews`).
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct ListTablesResponse {
-    /// Page of matching tables. Shape depends on the request's `detailed` flag.
-    pub tables: ListEntries,
+pub struct ListEntriesResponse {
+    /// Page of matching entries. Shape depends on the request's `detailed` flag.
+    pub entries: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
 
-impl ListTablesResponse {
-    /// Builds a brief-mode response from a page of bare table names.
+impl ListEntriesResponse {
+    /// Builds a brief-mode response from a page of bare entity names.
     #[must_use]
-    pub fn brief(tables: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+    pub fn brief(entries: Vec<String>, next_cursor: Option<Cursor>) -> Self {
         Self {
-            tables: ListEntries::Brief(tables),
+            entries: ListEntries::Brief(entries),
             next_cursor,
         }
     }
 
     /// Builds a detailed-mode response from a page of name → metadata entries.
     #[must_use]
-    pub fn detailed(tables: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+    pub fn detailed(entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
         Self {
-            tables: ListEntries::Detailed(tables),
+            entries: ListEntries::Detailed(entries),
             next_cursor,
         }
     }
@@ -145,36 +149,6 @@ pub struct UnpinnedListViewsRequest {
     pub database: Option<String>,
 }
 
-/// Response for the `listViews` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListViewsResponse {
-    /// Page of matching views. Shape depends on the request's `detailed` flag.
-    pub views: ListEntries,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-impl ListViewsResponse {
-    /// Builds a brief-mode response from a page of bare view names.
-    #[must_use]
-    pub fn brief(views: Vec<String>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            views: ListEntries::Brief(views),
-            next_cursor,
-        }
-    }
-
-    /// Builds a detailed-mode response from a page of name → metadata entries.
-    #[must_use]
-    pub fn detailed(views: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            views: ListEntries::Detailed(views),
-            next_cursor,
-        }
-    }
-}
-
 /// Request for the `listTriggers` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct PinnedListTriggersRequest {
@@ -202,36 +176,6 @@ pub struct UnpinnedListTriggersRequest {
     pub database: Option<String>,
 }
 
-/// Response for the `listTriggers` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListTriggersResponse {
-    /// Page of matching triggers. Shape depends on the request's `detailed` flag.
-    pub triggers: ListEntries,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-impl ListTriggersResponse {
-    /// Builds a brief-mode response from a page of bare trigger names.
-    #[must_use]
-    pub fn brief(triggers: Vec<String>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            triggers: ListEntries::Brief(triggers),
-            next_cursor,
-        }
-    }
-
-    /// Builds a detailed-mode response from a page of name → metadata entries.
-    #[must_use]
-    pub fn detailed(triggers: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            triggers: ListEntries::Detailed(triggers),
-            next_cursor,
-        }
-    }
-}
-
 /// Request for the `listFunctions` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct PinnedListFunctionsRequest {
@@ -248,66 +192,6 @@ pub struct UnpinnedListFunctionsRequest {
     /// Database to list functions from. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
-}
-
-/// Response for the `listFunctions` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListFunctionsResponse {
-    /// Page of matching functions. Shape depends on the request's `detailed` flag.
-    pub functions: ListEntries,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-impl ListFunctionsResponse {
-    /// Builds a brief-mode response from a page of bare function names.
-    #[must_use]
-    pub fn brief(functions: Vec<String>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            functions: ListEntries::Brief(functions),
-            next_cursor,
-        }
-    }
-
-    /// Builds a detailed-mode response from a page of signature → metadata entries.
-    #[must_use]
-    pub fn detailed(functions: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            functions: ListEntries::Detailed(functions),
-            next_cursor,
-        }
-    }
-}
-
-/// Response for the `listProcedures` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListProceduresResponse {
-    /// Page of matching procedures. Shape depends on the request's `detailed` flag.
-    pub procedures: ListEntries,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-impl ListProceduresResponse {
-    /// Builds a brief-mode response from a page of bare procedure names.
-    #[must_use]
-    pub fn brief(procedures: Vec<String>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            procedures: ListEntries::Brief(procedures),
-            next_cursor,
-        }
-    }
-
-    /// Builds a detailed-mode response from a page of signature → metadata entries.
-    #[must_use]
-    pub fn detailed(procedures: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            procedures: ListEntries::Detailed(procedures),
-            next_cursor,
-        }
-    }
 }
 
 /// Request for the `writeQuery` tool.
@@ -388,10 +272,7 @@ pub struct UnpinnedExplainQueryRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        IndexMap, ListEntries, ListFunctionsResponse, ListTablesResponse, ListTriggersResponse,
-        PinnedListTriggersRequest, UnpinnedListTriggersRequest,
-    };
+    use super::{IndexMap, ListEntries, ListEntriesResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
     use serde_json::{Value, json};
 
     #[test]
@@ -459,21 +340,29 @@ mod tests {
     }
 
     #[test]
-    fn list_tables_response_brief_matches_legacy_wire_shape() {
-        let response = ListTablesResponse {
-            tables: ListEntries::Brief(vec!["a".into()]),
-            next_cursor: None,
-        };
-        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"tables": ["a"]}));
+    fn list_entries_response_brief_serializes_with_entries_key() {
+        let response = ListEntriesResponse::brief(vec!["a".into()], None);
+        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"entries": ["a"]}));
     }
 
     #[test]
-    fn list_triggers_response_brief_matches_legacy_wire_shape() {
-        let response = ListTriggersResponse {
-            triggers: ListEntries::Brief(vec!["t1".into()]),
-            next_cursor: None,
-        };
-        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"triggers": ["t1"]}));
+    fn list_entries_response_detailed_serializes_with_entries_key() {
+        let map = IndexMap::from([("a".into(), json!({"kind": "TABLE"}))]);
+        let response = ListEntriesResponse::detailed(map, None);
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({"entries": {"a": {"kind": "TABLE"}}})
+        );
+    }
+
+    #[test]
+    fn list_entries_response_omits_next_cursor_when_none() {
+        let response = ListEntriesResponse::brief(vec!["a".into()], None);
+        let value = serde_json::to_value(&response).unwrap();
+        assert!(
+            value.get("nextCursor").is_none(),
+            "nextCursor must be omitted when None"
+        );
     }
 
     #[test]
@@ -525,74 +414,5 @@ mod tests {
         let new_len = serde_json::to_vec(&ListEntries::Detailed(new_map)).unwrap().len();
         let old_len = serde_json::to_vec(&old).unwrap().len();
         assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
-    }
-
-    #[test]
-    fn list_functions_response_brief_constructor_wraps_vec() {
-        let response = ListFunctionsResponse::brief(vec!["calc_total".into()], None);
-        assert!(matches!(response.functions, ListEntries::Brief(ref v) if v == &["calc_total"]));
-        assert!(response.next_cursor.is_none());
-    }
-
-    #[test]
-    fn list_functions_response_detailed_constructor_wraps_indexmap() {
-        let map = IndexMap::from([("calc_total(integer)".into(), json!({"language": "sql"}))]);
-        let response = ListFunctionsResponse::detailed(map, None);
-        assert!(matches!(response.functions, ListEntries::Detailed(_)));
-    }
-
-    #[test]
-    fn list_functions_response_brief_matches_legacy_wire_shape() {
-        let response = ListFunctionsResponse::brief(vec!["audit_user_login".into()], None);
-        assert_eq!(
-            serde_json::to_value(&response).unwrap(),
-            json!({"functions": ["audit_user_login"]})
-        );
-    }
-
-    #[test]
-    fn list_procedures_response_brief_constructor_wraps_vec() {
-        let response = super::ListProceduresResponse::brief(vec!["archive_order".into()], None);
-        assert!(matches!(response.procedures, ListEntries::Brief(ref v) if v == &["archive_order"]));
-        assert!(response.next_cursor.is_none());
-    }
-
-    #[test]
-    fn list_procedures_response_detailed_constructor_wraps_indexmap() {
-        let map = IndexMap::from([("archive_order(integer)".into(), json!({"language": "plpgsql"}))]);
-        let response = super::ListProceduresResponse::detailed(map, None);
-        assert!(matches!(response.procedures, ListEntries::Detailed(_)));
-    }
-
-    #[test]
-    fn list_procedures_response_brief_matches_legacy_wire_shape() {
-        let response = super::ListProceduresResponse::brief(vec!["archive_order".into()], None);
-        assert_eq!(
-            serde_json::to_value(&response).unwrap(),
-            json!({"procedures": ["archive_order"]})
-        );
-    }
-
-    #[test]
-    fn list_views_response_brief_constructor_wraps_vec() {
-        let response = super::ListViewsResponse::brief(vec!["active_users".into()], None);
-        assert!(matches!(response.views, ListEntries::Brief(ref v) if v == &["active_users"]));
-        assert!(response.next_cursor.is_none());
-    }
-
-    #[test]
-    fn list_views_response_detailed_constructor_wraps_indexmap() {
-        let map = IndexMap::from([("active_users".into(), json!({"schema": "public"}))]);
-        let response = super::ListViewsResponse::detailed(map, None);
-        assert!(matches!(response.views, ListEntries::Detailed(_)));
-    }
-
-    #[test]
-    fn list_views_response_brief_matches_legacy_wire_shape() {
-        let response = super::ListViewsResponse::brief(vec!["active_users".into()], None);
-        assert_eq!(
-            serde_json::to_value(&response).unwrap(),
-            json!({"views": ["active_users"]})
-        );
     }
 }

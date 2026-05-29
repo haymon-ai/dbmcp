@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListFunctionsResponse, PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
+use crate::types::{ListEntriesResponse, PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
 
 const NAME: &str = "listFunctions";
 const TITLE: &str = "List Functions";
@@ -23,7 +23,7 @@ pub(crate) struct PinnedListFunctionsTool;
 
 impl ToolBase for PinnedListFunctionsTool {
     type Parameter = PinnedListFunctionsRequest;
-    type Output = ListFunctionsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -64,7 +64,7 @@ pub(crate) struct UnpinnedListFunctionsTool;
 
 impl ToolBase for UnpinnedListFunctionsTool {
     type Parameter = UnpinnedListFunctionsRequest;
-    type Output = ListFunctionsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -190,7 +190,7 @@ impl PostgresHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListFunctionsResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);
@@ -207,7 +207,7 @@ impl PostgresHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListFunctionsResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(key, json)| (key, json.0)).collect(),
                 next_cursor,
             ));
@@ -224,6 +224,6 @@ impl PostgresHandler {
             )
             .await?;
         let (functions, next_cursor) = pager.paginate(rows);
-        Ok(ListFunctionsResponse::brief(functions, next_cursor))
+        Ok(ListEntriesResponse::brief(functions, next_cursor))
     }
 }

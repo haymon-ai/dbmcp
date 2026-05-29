@@ -3,7 +3,7 @@
 //! Unlike `MySQL` and `PostgreSQL`, `SQLite` operates on a single file and
 //! has no database selection, so these types omit the `database` field
 //! present in the shared server types. `ListEntries` and
-//! `ListTablesResponse` live in the shared `dbmcp-server` crate; they are
+//! `ListEntriesResponse` live in the shared `dbmcp-server` crate; they are
 //! re-exported here so call sites can keep importing them from
 //! `crate::types`.
 
@@ -11,7 +11,7 @@ use dbmcp_server::pagination::Cursor;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-pub use dbmcp_server::types::{ListEntries, ListTablesResponse};
+pub use dbmcp_server::types::{ListEntries, ListEntriesResponse};
 
 /// Request for the `dropTable` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]

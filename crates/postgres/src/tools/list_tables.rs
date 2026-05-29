@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListTablesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
+use crate::types::{ListEntriesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
 
 const NAME: &str = "listTables";
 const TITLE: &str = "List Tables";
@@ -23,7 +23,7 @@ pub(crate) struct PinnedListTablesTool;
 
 impl ToolBase for PinnedListTablesTool {
     type Parameter = PinnedListTablesRequest;
-    type Output = ListTablesResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -64,7 +64,7 @@ pub(crate) struct UnpinnedListTablesTool;
 
 impl ToolBase for UnpinnedListTablesTool {
     type Parameter = UnpinnedListTablesRequest;
-    type Output = ListTablesResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -276,7 +276,7 @@ impl PostgresHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListTablesResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         // Identifier validation runs inside the connection pool — passing the
         // trimmed name straight through avoids a redundant round-trip check.
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -295,7 +295,7 @@ impl PostgresHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListTablesResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -312,6 +312,6 @@ impl PostgresHandler {
             )
             .await?;
         let (tables, next_cursor) = pager.paginate(rows);
-        Ok(ListTablesResponse::brief(tables, next_cursor))
+        Ok(ListEntriesResponse::brief(tables, next_cursor))
     }
 }

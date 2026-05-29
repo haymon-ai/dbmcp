@@ -1,7 +1,7 @@
 //! MCP tool: `listFunctions`.
 
 use dbmcp_server::pagination::{Cursor, Pager};
-use dbmcp_server::types::ListFunctionsResponse;
+use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
 use crate::types::{PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
@@ -24,7 +24,7 @@ pub(crate) struct PinnedListFunctionsTool;
 
 impl ToolBase for PinnedListFunctionsTool {
     type Parameter = PinnedListFunctionsRequest;
-    type Output = ListFunctionsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -65,7 +65,7 @@ pub(crate) struct UnpinnedListFunctionsTool;
 
 impl ToolBase for UnpinnedListFunctionsTool {
     type Parameter = UnpinnedListFunctionsRequest;
-    type Output = ListFunctionsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -227,7 +227,7 @@ impl MysqlHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListFunctionsResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database
             .as_deref()
             .map(str::trim)
@@ -251,7 +251,7 @@ impl MysqlHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListFunctionsResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -270,6 +270,6 @@ impl MysqlHandler {
             )
             .await?;
         let (functions, next_cursor) = pager.paginate(rows);
-        Ok(ListFunctionsResponse::brief(functions, next_cursor))
+        Ok(ListEntriesResponse::brief(functions, next_cursor))
     }
 }

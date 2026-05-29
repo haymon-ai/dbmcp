@@ -1,19 +1,16 @@
 //! PostgreSQL-specific MCP tool request types.
 //!
-//! Shared `listTriggers` types (`UnpinnedListTriggersRequest`, `PinnedListTriggersRequest`,
-//! `ListTriggersResponse`) and the shared brief/detailed payload (`ListEntries`,
-//! `ListTablesResponse`) live in the `dbmcp-server` crate; they are re-exported
-//! here so call sites can keep importing them from `crate::types`.
+//! Shared `listTriggers` types (`UnpinnedListTriggersRequest`, `PinnedListTriggersRequest`)
+//! and the shared brief/detailed payload (`ListEntries`, `ListEntriesResponse`) live in
+//! the `dbmcp-server` crate; they are re-exported here so call sites can keep importing
+//! them from `crate::types`.
 
 use dbmcp_server::pagination::Cursor;
-use indexmap::IndexMap;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
 
 pub use dbmcp_server::types::{
-    ListEntries, ListFunctionsResponse, ListProceduresResponse, ListTablesResponse, ListTriggersResponse,
-    ListViewsResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest,
+    ListEntries, ListEntriesResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest,
 };
 
 /// Request for the `dropTable` tool.
@@ -145,37 +142,6 @@ pub struct UnpinnedListMaterializedViewsRequest {
     pub database: Option<String>,
 }
 
-/// Response for the `listMaterializedViews` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListMaterializedViewsResponse {
-    /// Page of matching materialized views. Shape depends on the request's `detailed` flag.
-    #[serde(rename = "materializedViews")]
-    pub materialized_views: ListEntries,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-impl ListMaterializedViewsResponse {
-    /// Builds a brief-mode response from a page of bare matview names.
-    #[must_use]
-    pub fn brief(materialized_views: Vec<String>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            materialized_views: ListEntries::Brief(materialized_views),
-            next_cursor,
-        }
-    }
-
-    /// Builds a detailed-mode response from a page of name → metadata entries.
-    #[must_use]
-    pub fn detailed(materialized_views: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        Self {
-            materialized_views: ListEntries::Detailed(materialized_views),
-            next_cursor,
-        }
-    }
-}
-
 /// Request for the Postgres `listProcedures` tool — extends the shared shape with `search` and `detailed`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct PinnedListProceduresRequest {
@@ -205,12 +171,9 @@ pub struct UnpinnedListProceduresRequest {
 
 #[cfg(test)]
 mod tests {
-    use indexmap::IndexMap;
-    use serde_json::json;
-
     use super::{
-        ListEntries, ListMaterializedViewsResponse, PinnedListFunctionsRequest, PinnedListMaterializedViewsRequest,
-        PinnedListProceduresRequest, PinnedListTablesRequest, PinnedListViewsRequest, UnpinnedListFunctionsRequest,
+        PinnedListFunctionsRequest, PinnedListMaterializedViewsRequest, PinnedListProceduresRequest,
+        PinnedListTablesRequest, PinnedListViewsRequest, UnpinnedListFunctionsRequest,
         UnpinnedListMaterializedViewsRequest, UnpinnedListProceduresRequest, UnpinnedListTablesRequest,
         UnpinnedListViewsRequest,
     };
@@ -322,28 +285,5 @@ mod tests {
     fn pinned_list_materialized_views_request_accepts_database() {
         let req: UnpinnedListMaterializedViewsRequest = serde_json::from_str(r#"{"database": "mydb"}"#).expect("parse");
         assert_eq!(req.database.as_deref(), Some("mydb"));
-    }
-
-    #[test]
-    fn list_materialized_views_response_brief_constructor_wraps_vec() {
-        let response = ListMaterializedViewsResponse::brief(vec!["mv_recent_orders".into()], None);
-        assert!(matches!(response.materialized_views, ListEntries::Brief(ref v) if v == &["mv_recent_orders"]));
-        assert!(response.next_cursor.is_none());
-    }
-
-    #[test]
-    fn list_materialized_views_response_detailed_constructor_wraps_indexmap() {
-        let map = IndexMap::from([("mv_recent_orders".into(), json!({"populated": true}))]);
-        let response = ListMaterializedViewsResponse::detailed(map, None);
-        assert!(matches!(response.materialized_views, ListEntries::Detailed(_)));
-    }
-
-    #[test]
-    fn list_materialized_views_response_brief_matches_legacy_wire_shape() {
-        let response = ListMaterializedViewsResponse::brief(vec!["mv_recent_orders".into()], None);
-        assert_eq!(
-            serde_json::to_value(&response).unwrap(),
-            json!({"materializedViews": ["mv_recent_orders"]})
-        );
     }
 }

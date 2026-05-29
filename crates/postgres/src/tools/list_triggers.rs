@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListTriggersResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
+use crate::types::{ListEntriesResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
 
 const NAME: &str = "listTriggers";
 const TITLE: &str = "List Triggers";
@@ -23,7 +23,7 @@ pub(crate) struct PinnedListTriggersTool;
 
 impl ToolBase for PinnedListTriggersTool {
     type Parameter = PinnedListTriggersRequest;
-    type Output = ListTriggersResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -64,7 +64,7 @@ pub(crate) struct UnpinnedListTriggersTool;
 
 impl ToolBase for UnpinnedListTriggersTool {
     type Parameter = UnpinnedListTriggersRequest;
-    type Output = ListTriggersResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -187,7 +187,7 @@ impl PostgresHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListTriggersResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);
@@ -204,7 +204,7 @@ impl PostgresHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListTriggersResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -221,6 +221,6 @@ impl PostgresHandler {
             )
             .await?;
         let (triggers, next_cursor) = pager.paginate(rows);
-        Ok(ListTriggersResponse::brief(triggers, next_cursor))
+        Ok(ListEntriesResponse::brief(triggers, next_cursor))
     }
 }

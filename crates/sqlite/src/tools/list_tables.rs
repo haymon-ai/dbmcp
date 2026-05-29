@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::Pager;
 
 use super::prelude::*;
-use crate::types::{ListTablesRequest, ListTablesResponse};
+use crate::types::{ListEntriesResponse, ListTablesRequest};
 
 const NAME: &str = "listTables";
 const TITLE: &str = "List Tables";
@@ -14,7 +14,7 @@ pub(crate) struct ListTablesTool;
 
 impl ToolBase for ListTablesTool {
     type Parameter = ListTablesRequest;
-    type Output = ListTablesResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -256,7 +256,7 @@ impl SqliteHandler {
             search,
             detailed,
         }: ListTablesRequest,
-    ) -> Result<ListTablesResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);
 
@@ -272,7 +272,7 @@ impl SqliteHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListTablesResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -289,6 +289,6 @@ impl SqliteHandler {
             )
             .await?;
         let (tables, next_cursor) = pager.paginate(rows);
-        Ok(ListTablesResponse::brief(tables, next_cursor))
+        Ok(ListEntriesResponse::brief(tables, next_cursor))
     }
 }

@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListViewsResponse, PinnedListViewsRequest, UnpinnedListViewsRequest};
+use crate::types::{ListEntriesResponse, PinnedListViewsRequest, UnpinnedListViewsRequest};
 
 const NAME: &str = "listViews";
 const TITLE: &str = "List Views";
@@ -23,7 +23,7 @@ pub(crate) struct PinnedListViewsTool;
 
 impl ToolBase for PinnedListViewsTool {
     type Parameter = PinnedListViewsRequest;
-    type Output = ListViewsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -64,7 +64,7 @@ pub(crate) struct UnpinnedListViewsTool;
 
 impl ToolBase for UnpinnedListViewsTool {
     type Parameter = UnpinnedListViewsRequest;
-    type Output = ListViewsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -164,7 +164,7 @@ impl MysqlHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListViewsResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database
             .as_deref()
             .map(str::trim)
@@ -188,7 +188,7 @@ impl MysqlHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListViewsResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
                 next_cursor,
             ));
@@ -208,6 +208,6 @@ impl MysqlHandler {
             .await?;
         let (views, next_cursor) = pager.paginate(rows);
 
-        Ok(ListViewsResponse::brief(views, next_cursor))
+        Ok(ListEntriesResponse::brief(views, next_cursor))
     }
 }

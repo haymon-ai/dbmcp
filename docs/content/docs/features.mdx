@@ -69,7 +69,7 @@ In **brief mode** (default) the response shape is:
 
 ```json
 {
-  "tables": ["customers", "orders", "products"],
+  "entries": ["customers", "orders", "products"],
   "nextCursor": "<opaque or absent>"
 }
 ```
@@ -78,7 +78,7 @@ In **detailed mode** the response is keyed by table name:
 
 ```json
 {
-  "tables": {
+  "entries": {
     "orders": {
       "schema": "public",
       "kind": "TABLE",
@@ -108,7 +108,7 @@ In **brief mode** (default) the response is a sorted JSON array of view-name str
 
 ```json
 {
-  "views": ["active_users", "monthly_revenue"],
+  "entries": ["active_users", "monthly_revenue"],
   "nextCursor": "<opaque or absent>"
 }
 ```
@@ -124,7 +124,7 @@ The PostgreSQL payload carries owner and comment plus the SELECT body:
 
 ```json
 {
-  "views": {
+  "entries": {
     "active_users": {
       "schema": "public",
       "owner": "app_user",
@@ -140,7 +140,7 @@ The MySQL/MariaDB payload carries definer / security / check-option / updatabili
 
 ```json
 {
-  "views": {
+  "entries": {
     "active_users": {
       "schema": "app",
       "definer": "root@%",
@@ -177,7 +177,7 @@ In **brief mode** (default) the response shape is:
 
 ```json
 {
-  "triggers": ["customers_audit_after_insert", "orders_audit_after_insert", "set_updated_at"],
+  "entries": ["customers_audit_after_insert", "orders_audit_after_insert", "set_updated_at"],
   "nextCursor": "<opaque or absent>"
 }
 ```
@@ -186,7 +186,7 @@ In **detailed mode** the response is keyed by trigger name. The PostgreSQL paylo
 
 ```json
 {
-  "triggers": {
+  "entries": {
     "orders_audit_after_iu": {
       "schema": "public",
       "table": "orders",
@@ -222,7 +222,7 @@ In **brief mode** (default) the response is a sorted JSON array of function-name
 
 ```json
 {
-  "functions": ["calc_order_subtotal", "calc_order_total", "calc_order_total"],
+  "entries": ["calc_order_subtotal", "calc_order_total", "calc_order_total"],
   "nextCursor": null
 }
 ```
@@ -231,7 +231,7 @@ In **detailed mode** the response is keyed by function signature. The PostgreSQL
 
 ```json
 {
-  "functions": {
+  "entries": {
     "calc_order_total(order_id integer, tax_rate numeric)": {
       "schema": "public",
       "name": "calc_order_total",
@@ -264,7 +264,7 @@ In **brief mode** (default) the response is a sorted JSON array of procedure-nam
 
 ```json
 {
-  "procedures": ["archive_order", "archive_order_history", "archive_order_history"],
+  "entries": ["archive_order", "archive_order_history", "archive_order_history"],
   "nextCursor": null
 }
 ```
@@ -273,7 +273,7 @@ In **detailed mode** the response is keyed by procedure signature. The PostgreSQ
 
 ```json
 {
-  "procedures": {
+  "entries": {
     "archive_order(order_id integer)": {
       "schema": "public",
       "name": "archive_order",
@@ -308,7 +308,7 @@ In **brief mode** (default) the response is a sorted JSON array of matview-name 
 
 ```json
 {
-  "materializedViews": ["mv_archived_orders", "mv_orders_by_region", "mv_recent_orders"],
+  "entries": ["mv_archived_orders", "mv_orders_by_region", "mv_recent_orders"],
   "nextCursor": null
 }
 ```
@@ -317,7 +317,7 @@ In **detailed mode** the response is keyed by **bare matview name** — matviews
 
 ```json
 {
-  "materializedViews": {
+  "entries": {
     "mv_orders_by_region": {
       "schema": "public",
       "owner": "app_user",

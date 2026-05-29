@@ -111,7 +111,7 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
-        "functions": {
+        "entries": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -126,7 +126,7 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Page of matching functions. Shape depends on the request's `detailed` flag."
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
         },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
@@ -137,7 +137,7 @@ expression: tools
         }
       },
       "required": [
-        "functions"
+        "entries"
       ],
       "type": "object"
     },
@@ -180,14 +180,7 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "procedures": {
+        "entries": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -202,11 +195,18 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Page of matching procedures. Shape depends on the request's `detailed` flag."
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "procedures"
+        "entries"
       ],
       "type": "object"
     },
@@ -249,14 +249,7 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tables": {
+        "entries": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -271,11 +264,18 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Page of matching tables. Shape depends on the request's `detailed` flag."
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "tables"
+        "entries"
       ],
       "type": "object"
     },
@@ -318,14 +318,7 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "triggers": {
+        "entries": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -340,11 +333,18 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Page of matching triggers. Shape depends on the request's `detailed` flag."
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "triggers"
+        "entries"
       ],
       "type": "object"
     },
@@ -387,14 +387,7 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "views": {
+        "entries": {
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
@@ -409,11 +402,18 @@ expression: tools
               "type": "object"
             }
           ],
-          "description": "Page of matching views. Shape depends on the request's `detailed` flag."
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "views"
+        "entries"
       ],
       "type": "object"
     },

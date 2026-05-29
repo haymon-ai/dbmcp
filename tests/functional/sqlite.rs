@@ -132,7 +132,7 @@ async fn test_lists_tables() {
     let handler = handler(false);
 
     let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.tables.as_brief().expect("brief mode");
+    let tables = response.entries.as_brief().expect("brief mode");
 
     for expected in ["users", "posts", "tags", "post_tags"] {
         assert!(
@@ -228,7 +228,7 @@ async fn test_drop_table_success() {
 
     // Verify it's gone
     let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.tables.as_brief().expect("brief mode");
+    let tables = response.entries.as_brief().expect("brief mode");
     assert!(
         !tables.iter().any(|t| t == "drop_test_simple"),
         "Table should not exist after drop"
@@ -364,7 +364,7 @@ async fn test_write_query_create_table() {
 
     // Verify it appears in list_tables
     let response = handler.list_tables(ListTablesRequest::default()).await.unwrap();
-    let tables = response.tables.as_brief().expect("brief mode");
+    let tables = response.entries.as_brief().expect("brief mode");
     assert!(
         tables.iter().any(|t| t == "write_test_create"),
         "Created table should appear in list"
@@ -534,7 +534,7 @@ async fn test_create_drop_table_with_spaces() {
         })
         .await
         .expect("detailed listTables with spaced name");
-    let entries = response.tables.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     assert!(
         entries.contains_key("table with spaces"),
         "spaced-name table must surface as a keyed entry: {entries:?}"
@@ -555,7 +555,7 @@ async fn collect_all_paged(handler: &SqliteHandler) -> Vec<String> {
             ..Default::default()
         };
         let response = handler.list_tables(request).await.expect("list page");
-        let page = response.tables.as_brief().expect("brief mode").to_vec();
+        let page = response.entries.as_brief().expect("brief mode").to_vec();
         all.extend(page);
         match response.next_cursor {
             Some(c) => cursor = Some(c),
@@ -576,7 +576,7 @@ async fn test_list_tables_pagination_traverses_pages() {
         .list_tables(ListTablesRequest::default())
         .await
         .expect("single page");
-    let single_page_vec = single_page.tables.as_brief().expect("brief mode").to_vec();
+    let single_page_vec = single_page.entries.as_brief().expect("brief mode").to_vec();
 
     assert_eq!(
         collected, single_page_vec,
@@ -603,7 +603,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
         .list_tables(ListTablesRequest::default())
         .await
         .expect("discover total")
-        .tables
+        .entries
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
@@ -613,7 +613,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
         .await
         .unwrap();
     assert_eq!(
-        response.tables.len(),
+        response.entries.len(),
         total,
         "page_size equal to total must return everything on one page"
     );
@@ -635,9 +635,9 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
     let response = handler.list_tables(request).await.unwrap();
 
     assert!(
-        response.tables.is_empty(),
+        response.entries.is_empty(),
         "off-the-end cursor must return empty tables, got {:?}",
-        response.tables
+        response.entries
     );
     assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }
@@ -649,7 +649,7 @@ async fn test_list_tables_respects_configured_page_size() {
         .list_tables(ListTablesRequest::default())
         .await
         .expect("first page");
-    assert_eq!(first.tables.len(), 2, "configured page_size=2 must cap page 1");
+    assert_eq!(first.entries.len(), 2, "configured page_size=2 must cap page 1");
     assert!(
         first.next_cursor.is_some(),
         "page 1 must emit nextCursor when total > page_size"
@@ -663,7 +663,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
         .list_tables(ListTablesRequest::default())
         .await
         .expect("first page");
-    assert_eq!(first.tables.len(), 1, "page_size=1 must return one table per page");
+    assert_eq!(first.entries.len(), 1, "page_size=1 must return one table per page");
     assert!(first.next_cursor.is_some(), "page 1 must emit nextCursor");
 }
 
@@ -943,7 +943,7 @@ async fn test_list_views_returns_seeded_views() {
         .await
         .expect("list_views");
 
-    let names = response.views.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         names.contains(&"active_users".to_string()),
         "expected seeded active_users view, got {names:?}"
@@ -962,7 +962,7 @@ async fn test_list_views_excludes_base_tables() {
         .await
         .expect("list_views");
 
-    let names = response.views.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     for table in ["users", "posts", "tags", "post_tags", "temporal"] {
         assert!(
             !names.contains(&table.to_string()),
@@ -983,7 +983,7 @@ async fn test_list_views_pagination_traverses_pages() {
             .list_views(ListViewsRequest { cursor })
             .await
             .expect("paged list_views");
-        all.extend(response.views.as_brief().expect("brief").iter().cloned());
+        all.extend(response.entries.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -995,7 +995,7 @@ async fn test_list_views_pagination_traverses_pages() {
         .await
         .expect("single-page list_views");
 
-    let single_names = single.views.as_brief().expect("brief").to_vec();
+    let single_names = single.entries.as_brief().expect("brief").to_vec();
     assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
@@ -1008,7 +1008,7 @@ async fn test_list_views_works_in_read_only_mode() {
         .expect("list_views in read-only mode");
 
     assert!(
-        !response.views.as_brief().expect("brief").is_empty(),
+        !response.entries.as_brief().expect("brief").is_empty(),
         "read-only mode must still allow listViews"
     );
 }
@@ -1021,7 +1021,7 @@ async fn test_list_triggers_returns_seeded_triggers() {
         .await
         .expect("list_triggers");
 
-    let names = response.triggers.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         names.contains(&"users_before_insert".to_string()),
         "expected seeded users_before_insert trigger, got {names:?}"
@@ -1041,7 +1041,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
         .expect("list_triggers in read-only mode");
 
     assert!(
-        !response.triggers.is_empty(),
+        !response.entries.is_empty(),
         "read-only mode must still allow listTriggers"
     );
 }
@@ -1056,7 +1056,7 @@ async fn test_list_tables_search_filter_returns_only_matches() {
         })
         .await
         .expect("brief + search");
-    let names = response.tables.as_brief().expect("brief").to_vec();
+    let names = response.entries.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["post_tags", "posts", "posts_fts"],
@@ -1074,7 +1074,7 @@ async fn test_list_tables_search_is_case_insensitive() {
         })
         .await
         .expect("brief + search");
-    let names = response.tables.as_brief().expect("brief").to_vec();
+    let names = response.entries.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["post_tags", "posts", "posts_fts"],
@@ -1092,7 +1092,7 @@ async fn test_list_tables_search_no_match_returns_empty() {
         })
         .await
         .expect("brief + search");
-    assert!(response.tables.as_brief().expect("brief").is_empty());
+    assert!(response.entries.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -1107,7 +1107,7 @@ async fn test_list_tables_search_supports_like_wildcards() {
         })
         .await
         .expect("brief + search");
-    let names = response.tables.as_brief().expect("brief").to_vec();
+    let names = response.entries.as_brief().expect("brief").to_vec();
     assert!(
         names.iter().any(|n| n == "posts"),
         "'_' wildcard should match 'posts': {names:?}"
@@ -1133,8 +1133,8 @@ async fn test_list_tables_search_empty_is_same_as_no_filter() {
         .await
         .expect("no search");
     assert_eq!(
-        whitespace.tables.as_brief().expect("brief"),
-        unfiltered.tables.as_brief().expect("brief"),
+        whitespace.entries.as_brief().expect("brief"),
+        unfiltered.entries.as_brief().expect("brief"),
         "whitespace-only search must be equivalent to no filter"
     );
 }
@@ -1150,14 +1150,19 @@ async fn test_list_tables_search_sql_meta_payloads_are_safe() {
         })
         .await
         .expect("bound payload must not error");
-    assert!(response.tables.as_brief().expect("brief").is_empty());
+    assert!(response.entries.as_brief().expect("brief").is_empty());
 
     let follow_up = handler
         .list_tables(ListTablesRequest::default())
         .await
         .expect("users still present");
     assert!(
-        follow_up.tables.as_brief().expect("brief").iter().any(|n| n == "users"),
+        follow_up
+            .entries
+            .as_brief()
+            .expect("brief")
+            .iter()
+            .any(|n| n == "users"),
         "users table must survive any bind-based SQL meta payload"
     );
 }
@@ -1176,7 +1181,7 @@ async fn test_list_tables_search_paginates_filtered_results() {
             })
             .await
             .expect("paged brief + search");
-        collected.extend(response.tables.as_brief().expect("brief").to_vec());
+        collected.extend(response.entries.as_brief().expect("brief").to_vec());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1198,7 +1203,7 @@ async fn detailed_entries(handler: &SqliteHandler, search: &str) -> indexmap::In
         })
         .await
         .expect("detailed + search");
-    response.tables.as_detailed().expect("detailed mode").clone()
+    response.entries.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -1369,7 +1374,7 @@ async fn test_list_tables_detailed_paginates() {
             })
             .await
             .expect("paged detailed");
-        let page = response.tables.as_detailed().expect("detailed");
+        let page = response.entries.as_detailed().expect("detailed");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -1422,7 +1427,7 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
         .await
         .expect("brief + search");
     let detailed = detailed_entries(&handler, "post").await;
-    let brief_names: Vec<String> = brief.tables.as_brief().expect("brief mode").to_vec();
+    let brief_names: Vec<String> = brief.entries.as_brief().expect("brief mode").to_vec();
     let detailed_keys: Vec<String> = detailed.keys().cloned().collect();
     assert_eq!(
         brief_names, detailed_keys,
@@ -1451,7 +1456,7 @@ async fn test_list_triggers_search_filter_returns_only_matches() {
         })
         .await
         .expect("brief + search");
-    let names = response.triggers.as_brief().expect("brief mode").to_vec();
+    let names = response.entries.as_brief().expect("brief mode").to_vec();
     let expected: Vec<String> = AUDIT_TRIGGERS.iter().map(|s| (*s).to_string()).collect();
     assert_eq!(
         names, expected,
@@ -1477,8 +1482,8 @@ async fn test_list_triggers_search_is_case_insensitive() {
         .await
         .expect("upper");
     assert_eq!(
-        lower.triggers.as_brief().expect("brief"),
-        upper.triggers.as_brief().expect("brief"),
+        lower.entries.as_brief().expect("brief"),
+        upper.entries.as_brief().expect("brief"),
         "case-insensitive (SQLite `LIKE` is ASCII-case-insensitive by default)"
     );
 }
@@ -1493,7 +1498,7 @@ async fn test_list_triggers_search_no_match_returns_empty() {
         })
         .await
         .expect("brief + search");
-    assert!(response.triggers.as_brief().expect("brief").is_empty());
+    assert!(response.entries.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -1516,8 +1521,8 @@ async fn test_list_triggers_search_supports_wildcard_semantics() {
         .await
         .expect("wildcards");
     assert_eq!(
-        bare.triggers.as_brief().expect("brief"),
-        wildcards.triggers.as_brief().expect("brief"),
+        bare.entries.as_brief().expect("brief"),
+        wildcards.entries.as_brief().expect("brief"),
         "%/_ retain LIKE wildcard semantics consistent with listTables"
     );
 }
@@ -1534,7 +1539,7 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
             .await
             .unwrap_or_else(|e| panic!("payload {payload:?} must not error: {e:?}"));
         // Bound payload — no SQL parse error, possibly empty result.
-        let _ = response.triggers.as_brief().expect("brief").to_vec();
+        let _ = response.entries.as_brief().expect("brief").to_vec();
     }
     // Users table must survive every adversarial payload.
     let follow_up = handler
@@ -1542,7 +1547,12 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
         .await
         .expect("users table check");
     assert!(
-        follow_up.tables.as_brief().expect("brief").iter().any(|n| n == "users"),
+        follow_up
+            .entries
+            .as_brief()
+            .expect("brief")
+            .iter()
+            .any(|n| n == "users"),
         "users table must survive every adversarial search payload"
     );
 }
@@ -1561,7 +1571,7 @@ async fn test_list_triggers_search_paginates_filtered_results() {
             })
             .await
             .expect("paged brief + search");
-        let page = response.triggers.as_brief().expect("brief").to_vec();
+        let page = response.entries.as_brief().expect("brief").to_vec();
         assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
         collected.extend(page);
         match response.next_cursor {
@@ -1585,7 +1595,7 @@ async fn detailed_trigger_entries(handler: &SqliteHandler, search: &str) -> inde
         })
         .await
         .expect("detailed + search");
-    response.triggers.as_detailed().expect("detailed mode").clone()
+    response.entries.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -1679,7 +1689,7 @@ async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
         .list_triggers(ListTriggersRequest::default())
         .await
         .expect("brief default");
-    let names = response.triggers.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         names.iter().all(|n| !n.is_empty()),
         "brief response is a flat array of bare strings: {names:?}"
@@ -1723,7 +1733,7 @@ async fn test_list_triggers_detailed_paginates() {
             })
             .await
             .expect("paged detailed + search");
-        let page = response.triggers.as_detailed().expect("detailed mode");
+        let page = response.entries.as_detailed().expect("detailed mode");
         assert!(page.len() <= 2, "page exceeds page_size=2: {page:?}");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -1772,7 +1782,7 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
         })
         .await
         .expect("brief search");
-    let names = brief.triggers.as_brief().expect("brief").to_vec();
+    let names = brief.entries.as_brief().expect("brief").to_vec();
     assert_eq!(
         names,
         vec!["orphan_trigger"],
@@ -1787,7 +1797,7 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
         })
         .await
         .expect("detailed search");
-    let keyed = detailed.triggers.as_detailed().expect("detailed");
+    let keyed = detailed.entries.as_detailed().expect("detailed");
     assert!(
         keyed.is_empty(),
         "detailed mode silently omits NULL-sql triggers (FR-018 / Clarification Q2): {keyed:?}"

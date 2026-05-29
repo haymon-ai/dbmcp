@@ -182,7 +182,7 @@ async fn test_lists_tables() {
         .list_tables(Some("app".into()), None, None, false)
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.entries else {
         panic!("expected brief-mode tables");
     };
 
@@ -310,7 +310,7 @@ async fn test_lists_tables_cross_database() {
         .list_tables(Some("analytics".into()), None, None, false)
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.entries else {
         panic!("expected brief-mode tables");
     };
 
@@ -378,7 +378,7 @@ async fn test_uses_default_pool_for_matching_database() {
         .list_tables(Some("app".into()), None, None, false)
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.entries else {
         panic!("expected brief-mode tables");
     };
 
@@ -464,7 +464,7 @@ async fn test_drop_table_success() {
         .list_tables(Some("app".into()), None, None, false)
         .await
         .unwrap();
-    let ListEntries::Brief(tables) = response.tables else {
+    let ListEntries::Brief(tables) = response.entries else {
         panic!("expected brief-mode tables");
     };
     assert!(
@@ -552,9 +552,9 @@ async fn test_list_tables_nonexistent_database_returns_empty() {
         .await
         .unwrap();
     assert!(
-        response.tables.is_empty(),
+        response.entries.is_empty(),
         "Nonexistent database should return empty table list, got: {:?}",
-        response.tables
+        response.entries
     );
 }
 
@@ -566,7 +566,7 @@ async fn test_list_tables_empty_database_falls_back_to_default() {
         .list_tables(Some(String::new()), None, None, false)
         .await
         .expect("empty db should default to --db-name");
-    let tables = response.tables.as_brief().expect("brief-mode tables");
+    let tables = response.entries.as_brief().expect("brief-mode tables");
     assert!(
         tables.iter().any(|t| t == "users"),
         "expected default-database tables, got {tables:?}",
@@ -581,7 +581,7 @@ async fn test_list_tables_omitted_database_falls_back_to_default() {
         .list_tables(None, None, None, false)
         .await
         .expect("omitted db should default to --db-name");
-    let tables = response.tables.as_brief().expect("brief-mode tables");
+    let tables = response.entries.as_brief().expect("brief-mode tables");
     assert!(
         tables.iter().any(|t| t == "users"),
         "expected default-database tables, got {tables:?}",
@@ -1133,7 +1133,7 @@ async fn collect_all_paged(handler: &MysqlHandler) -> Vec<String> {
             .list_tables(Some(MY_DB.into()), cursor.take(), None, false)
             .await
             .expect("list page");
-        all.extend(response.tables.into_brief().expect("brief-mode page"));
+        all.extend(response.entries.into_brief().expect("brief-mode page"));
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1154,7 +1154,7 @@ async fn test_list_tables_pagination_traverses_pages() {
         .await
         .expect("single page");
 
-    let single_page_tables = single_page.tables.into_brief().expect("brief-mode page");
+    let single_page_tables = single_page.entries.into_brief().expect("brief-mode page");
     assert_eq!(
         collected, single_page_tables,
         "paged traversal must yield identical results (and ordering) to a single full page"
@@ -1183,7 +1183,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
         .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("discover total")
-        .tables
+        .entries
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
@@ -1193,7 +1193,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
         .await
         .unwrap();
     assert_eq!(
-        response.tables.len(),
+        response.entries.len(),
         total,
         "page_size equal to total must return everything on one page"
     );
@@ -1214,9 +1214,9 @@ async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
         .unwrap();
 
     assert!(
-        response.tables.is_empty(),
+        response.entries.is_empty(),
         "off-the-end cursor must return empty tables, got {:?}",
-        response.tables
+        response.entries
     );
     assert!(response.next_cursor.is_none(), "off-the-end must not emit nextCursor");
 }
@@ -1228,7 +1228,7 @@ async fn test_list_tables_respects_configured_page_size() {
         .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("first page");
-    assert_eq!(first.tables.len(), 2, "configured page_size=2 must cap page 1");
+    assert_eq!(first.entries.len(), 2, "configured page_size=2 must cap page 1");
     assert!(
         first.next_cursor.is_some(),
         "page 1 must emit nextCursor when total > page_size"
@@ -1242,7 +1242,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
         .list_tables(Some(MY_DB.into()), None, None, false)
         .await
         .expect("first page");
-    assert_eq!(first.tables.len(), 1, "page_size=1 must return one table per page");
+    assert_eq!(first.entries.len(), 1, "page_size=1 must return one table per page");
     assert!(first.next_cursor.is_some(), "page 1 must emit nextCursor");
 }
 
@@ -1570,7 +1570,7 @@ async fn test_list_views_returns_seeded_views() {
         .await
         .expect("list_views");
 
-    let names = response.views.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         names.contains(&"active_users".to_string()),
         "expected seeded active_users view in {names:?}"
@@ -1589,7 +1589,7 @@ async fn test_list_views_excludes_base_tables() {
         .await
         .expect("list_views");
 
-    let names = response.views.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         !names.contains(&"users".to_string()),
         "base table `users` must not appear in listViews, got {names:?}"
@@ -1609,9 +1609,9 @@ async fn test_list_views_empty_for_view_less_database() {
         .expect("list_views");
 
     assert!(
-        response.views.as_brief().expect("brief").is_empty(),
+        response.entries.as_brief().expect("brief").is_empty(),
         "analytics has no views, got {:?}",
-        response.views
+        response.entries
     );
 }
 
@@ -1623,9 +1623,9 @@ async fn test_list_views_empty_database_falls_back_to_default() {
         .await
         .expect("empty db should default to --db-name");
     assert!(
-        !response.views.as_brief().expect("brief").is_empty(),
+        !response.entries.as_brief().expect("brief").is_empty(),
         "default db has seeded views, got {:?}",
-        response.views
+        response.entries
     );
 }
 
@@ -1637,9 +1637,9 @@ async fn test_list_views_omitted_database_falls_back_to_default() {
         .await
         .expect("omitted db should default to --db-name");
     assert!(
-        !response.views.as_brief().expect("brief").is_empty(),
+        !response.entries.as_brief().expect("brief").is_empty(),
         "default db has seeded views, got {:?}",
-        response.views
+        response.entries
     );
 }
 
@@ -1655,7 +1655,7 @@ async fn test_list_views_pagination_traverses_pages() {
             .list_views(Some("app".into()), cursor.take(), None, false)
             .await
             .expect("paged list_views");
-        all.extend(response.views.as_brief().expect("brief").iter().cloned());
+        all.extend(response.entries.as_brief().expect("brief").iter().cloned());
         match response.next_cursor {
             Some(c) => cursor = Some(c),
             None => break,
@@ -1667,7 +1667,7 @@ async fn test_list_views_pagination_traverses_pages() {
         .await
         .expect("single-page list_views");
 
-    let single_names = single.views.as_brief().expect("brief").to_vec();
+    let single_names = single.entries.as_brief().expect("brief").to_vec();
     assert_eq!(all, single_names, "paginated traversal should equal single page");
 }
 
@@ -1680,7 +1680,7 @@ async fn test_list_views_works_in_read_only_mode() {
         .expect("list_views in read-only mode");
 
     assert!(
-        !response.views.as_brief().expect("brief").is_empty(),
+        !response.entries.as_brief().expect("brief").is_empty(),
         "read-only mode must still allow listViews"
     );
 }
@@ -1693,7 +1693,7 @@ async fn test_list_triggers_returns_seeded_triggers() {
         .await
         .expect("list_triggers");
 
-    let names = response.triggers.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(
         names.contains(&"users_before_insert".to_string()),
         "expected seeded users_before_insert trigger, got {names:?}"
@@ -1712,7 +1712,7 @@ async fn test_list_triggers_empty_for_trigger_less_database() {
         .await
         .expect("list_triggers");
 
-    let names = response.triggers.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     assert!(names.is_empty(), "analytics has no triggers, got {names:?}");
 }
 
@@ -1724,9 +1724,9 @@ async fn test_list_triggers_empty_database_falls_back_to_default() {
         .await
         .expect("empty db should default to --db-name");
     assert!(
-        !response.triggers.is_empty(),
+        !response.entries.is_empty(),
         "default db has seeded triggers, got {:?}",
-        response.triggers
+        response.entries
     );
 }
 
@@ -1738,9 +1738,9 @@ async fn test_list_triggers_omitted_database_falls_back_to_default() {
         .await
         .expect("omitted db should default to --db-name");
     assert!(
-        !response.triggers.is_empty(),
+        !response.entries.is_empty(),
         "default db has seeded triggers, got {:?}",
-        response.triggers
+        response.entries
     );
 }
 
@@ -1753,7 +1753,7 @@ async fn test_list_triggers_works_in_read_only_mode() {
         .expect("list_triggers in read-only mode");
 
     assert!(
-        !response.triggers.is_empty(),
+        !response.entries.is_empty(),
         "read-only mode must still allow listTriggers"
     );
 }
@@ -1766,7 +1766,7 @@ async fn test_list_triggers_search_filter_returns_only_matches() {
         .await
         .expect("list_triggers");
 
-    let names = response.triggers.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     let expected = [
         "posts_audit_after_delete".to_string(),
         "posts_audit_after_insert".to_string(),
@@ -1787,7 +1787,7 @@ async fn test_list_triggers_search_is_case_insensitive() {
         .list_triggers(Some("app".into()), None, Some("audit".into()), false)
         .await
         .expect("lower");
-    assert_eq!(upper.triggers.as_brief(), lower.triggers.as_brief());
+    assert_eq!(upper.entries.as_brief(), lower.entries.as_brief());
 }
 
 #[tokio::test]
@@ -1798,7 +1798,7 @@ async fn test_list_triggers_search_no_match_returns_empty() {
         .await
         .expect("list_triggers");
 
-    assert!(response.triggers.as_brief().expect("brief").is_empty());
+    assert!(response.entries.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -1816,7 +1816,7 @@ async fn test_list_triggers_search_supports_wildcard_semantics() {
         .list_triggers(Some("app".into()), None, Some("%audit%".into()), false)
         .await
         .expect("wildcard");
-    assert_eq!(plain.triggers.as_brief(), with_wildcard.triggers.as_brief());
+    assert_eq!(plain.entries.as_brief(), with_wildcard.entries.as_brief());
 }
 
 #[tokio::test]
@@ -1829,7 +1829,7 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
             .unwrap_or_else(|e| panic!("list_triggers failed for payload {payload:?}: {e:?}"));
 
         assert!(
-            response.triggers.as_brief().is_some(),
+            response.entries.as_brief().is_some(),
             "payload {payload:?} returned non-brief shape"
         );
     }
@@ -1845,7 +1845,7 @@ async fn test_list_triggers_search_paginates_filtered_results() {
             .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), false)
             .await
             .expect("list_triggers paginated");
-        let names = response.triggers.as_brief().expect("brief").to_vec();
+        let names = response.entries.as_brief().expect("brief").to_vec();
         all.extend(names);
         cursor = response.next_cursor;
         if cursor.is_none() {
@@ -1859,7 +1859,7 @@ async fn test_list_triggers_search_paginates_filtered_results() {
         .expect("single-page list_triggers");
     assert_eq!(
         all,
-        single.triggers.as_brief().expect("brief"),
+        single.entries.as_brief().expect("brief"),
         "paginated traversal should equal single-page result"
     );
 }
@@ -1880,8 +1880,8 @@ async fn test_list_triggers_search_empty_is_same_as_no_filter() {
         .await
         .expect("whitespace");
 
-    assert_eq!(no_filter.triggers.as_brief(), empty.triggers.as_brief());
-    assert_eq!(no_filter.triggers.as_brief(), whitespace.triggers.as_brief());
+    assert_eq!(no_filter.entries.as_brief(), empty.entries.as_brief());
+    assert_eq!(no_filter.entries.as_brief(), whitespace.entries.as_brief());
 }
 
 #[tokio::test]
@@ -1897,9 +1897,9 @@ async fn test_list_triggers_arbitrary_database_identifier_is_bound_as_literal() 
             .await
             .unwrap_or_else(|e| panic!("expected bound-literal handling, got error: {e:?} for {bound:?}"));
         assert!(
-            result.triggers.as_brief().expect("brief").is_empty(),
+            result.entries.as_brief().expect("brief").is_empty(),
             "non-existent schema {bound:?} should return empty list, got {:?}",
-            result.triggers
+            result.entries
         );
     }
 }
@@ -1912,7 +1912,7 @@ async fn test_list_triggers_detailed_returns_keyed_object_with_all_fields() {
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     assert_eq!(entries.len(), 1, "expected one match, got {entries:?}");
     let entry = entries
         .get("posts_audit_after_insert")
@@ -1969,7 +1969,7 @@ async fn test_list_triggers_detailed_definition_uses_canonical_definer_form() {
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     let entry = entries.get("posts_audit_after_insert").expect("entry present");
     let definition = entry
         .get("definition")
@@ -2013,7 +2013,7 @@ async fn test_list_triggers_detailed_definition_matches_canonical_create_trigger
         .list_triggers(Some("app".into()), None, Some("posts_audit_after_insert".into()), true)
         .await
         .expect("list_triggers");
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     let definition = entries
         .get("posts_audit_after_insert")
         .and_then(|e| e.get("definition"))
@@ -2044,7 +2044,7 @@ async fn test_list_triggers_detailed_per_event_returns_single_element_events_arr
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     let cases = [
         ("posts_audit_after_delete", "DELETE"),
         ("posts_audit_after_insert", "INSERT"),
@@ -2073,7 +2073,7 @@ async fn test_list_triggers_detailed_session_context_fields_are_populated() {
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     assert!(!entries.is_empty(), "expected at least one audit trigger");
     for (name, entry) in entries {
         for field in [
@@ -2102,7 +2102,7 @@ async fn test_list_triggers_detailed_definition_round_trips_multiline_body() {
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     let definition = entries
         .get("users_audit_after_insert")
         .and_then(|e| e.get("definition"))
@@ -2133,7 +2133,7 @@ async fn test_list_triggers_brief_mode_wire_shape_unchanged() {
         .expect("list_triggers");
 
     let payload = serde_json::to_value(&response).expect("serialize");
-    let triggers = payload.get("triggers").expect("triggers field");
+    let triggers = payload.get("entries").expect("entries field");
     assert!(triggers.is_array(), "expected array, got {triggers:?}");
     assert!(
         triggers.as_array().unwrap().iter().all(Value::is_string),
@@ -2149,7 +2149,7 @@ async fn test_list_triggers_detailed_search_narrows_payload() {
         .await
         .expect("list_triggers");
 
-    let entries = response.triggers.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     for name in entries.keys() {
         assert!(
             name.contains("audit"),
@@ -2175,7 +2175,7 @@ async fn test_list_triggers_detailed_paginates() {
             .list_triggers(Some("app".into()), cursor.take(), Some("audit".into()), true)
             .await
             .expect("list_triggers paginated");
-        let entries = response.triggers.as_detailed().expect("detailed");
+        let entries = response.entries.as_detailed().expect("detailed");
         assert!(entries.len() <= 2, "page exceeds page_size: {}", entries.len());
         all.extend(entries.keys().cloned());
         cursor = response.next_cursor;
@@ -2189,7 +2189,7 @@ async fn test_list_triggers_detailed_paginates() {
         .await
         .expect("single-page list_triggers");
     let single_keys: Vec<String> = single
-        .triggers
+        .entries
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -2217,7 +2217,7 @@ async fn test_list_triggers_detailed_sort_is_deterministic() {
             .await
             .expect("list_triggers");
         let keys: Vec<String> = response
-            .triggers
+            .entries
             .as_detailed()
             .expect("detailed")
             .keys()
@@ -2242,7 +2242,7 @@ async fn test_list_tables_detailed_triggers_use_canonical_definer_form() {
         .await
         .expect("list_tables");
 
-    let entries = response.tables.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     let posts = entries.get("posts").expect("posts table present");
     let triggers = posts.get("triggers").and_then(Value::as_array).expect("triggers array");
     assert!(!triggers.is_empty(), "posts has at least one seeded trigger");
@@ -2271,7 +2271,7 @@ async fn test_list_functions_returns_seeded_functions() {
         .await
         .expect("list_functions");
 
-    let names = response.functions.as_brief().expect("brief mode").to_vec();
+    let names = response.entries.as_brief().expect("brief mode").to_vec();
     assert!(
         names.contains(&"calc_total".to_string()),
         "expected calc_total, got {names:?}"
@@ -2290,7 +2290,7 @@ async fn test_list_functions_excludes_procedures() {
         .await
         .expect("list_functions");
 
-    let names = response.functions.as_brief().expect("brief mode").to_vec();
+    let names = response.entries.as_brief().expect("brief mode").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
             !names.contains(&proc_name.to_string()),
@@ -2307,7 +2307,7 @@ async fn test_list_procedures_returns_seeded_procedures() {
         .await
         .expect("list_procedures");
 
-    let names = response.procedures.as_brief().expect("brief mode").to_vec();
+    let names = response.entries.as_brief().expect("brief mode").to_vec();
     assert!(
         names.contains(&"archive_user".to_string()),
         "expected seeded archive_user procedure, got {names:?}"
@@ -2326,7 +2326,7 @@ async fn test_list_procedures_excludes_functions() {
         .await
         .expect("list_procedures");
 
-    let names = response.procedures.as_brief().expect("brief mode").to_vec();
+    let names = response.entries.as_brief().expect("brief mode").to_vec();
     for func_name in ["calc_total", "double_it"] {
         assert!(
             !names.contains(&func_name.to_string()),
@@ -2343,9 +2343,9 @@ async fn test_list_routines_empty_for_empty_database() {
         .await
         .expect("list_functions");
     assert!(
-        functions.functions.is_empty(),
+        functions.entries.is_empty(),
         "analytics has no functions, got {:?}",
-        functions.functions
+        functions.entries
     );
 
     let procedures = handler
@@ -2353,9 +2353,9 @@ async fn test_list_routines_empty_for_empty_database() {
         .await
         .expect("list_procedures");
     assert!(
-        procedures.procedures.is_empty(),
+        procedures.entries.is_empty(),
         "analytics has no procedures, got {:?}",
-        procedures.procedures
+        procedures.entries
     );
 }
 
@@ -2366,7 +2366,7 @@ async fn brief_tables(handler: &MysqlHandler, search: Option<&str>) -> Vec<Strin
         .list_tables(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_tables");
-    response.tables.into_brief().expect("brief mode")
+    response.entries.into_brief().expect("brief mode")
 }
 
 async fn detailed_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
@@ -2374,7 +2374,7 @@ async fn detailed_entries(handler: &MysqlHandler, search: &str) -> indexmap::Ind
         .list_tables(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_tables");
-    response.tables.as_detailed().expect("detailed mode").clone()
+    response.entries.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -2446,7 +2446,7 @@ async fn list_tables_brief_pagination_under_search() {
             .list_tables(Some("app".into()), cursor.take(), Some("post".into()), false)
             .await
             .expect("paged brief search");
-        let page = response.tables.into_brief().expect("brief mode");
+        let page = response.entries.into_brief().expect("brief mode");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page);
         match response.next_cursor {
@@ -2656,7 +2656,7 @@ async fn list_tables_detailed_search_preserves_filter_across_pages() {
             .list_tables(Some("app".into()), cursor.take(), Some("post".into()), true)
             .await
             .expect("paged detailed search");
-        let page = response.tables.as_detailed().expect("detailed mode");
+        let page = response.entries.as_detailed().expect("detailed mode");
         assert!(page.len() <= 1, "page_size=1 caps to 1 per page");
         collected.extend(page.keys().cloned());
         match response.next_cursor {
@@ -2684,7 +2684,7 @@ async fn list_tables_detailed_excludes_system_schemas_passes_through_validation(
         .list_tables(Some("information_schema".into()), None, None, true)
         .await
         .expect("information_schema is identifier-valid");
-    let entries = response.tables.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     for (name, value) in entries {
         assert_eq!(
             value["schema"], "information_schema",
@@ -2738,7 +2738,7 @@ async fn test_list_functions_search_filter_returns_only_matches() {
         .await
         .expect("list_functions");
 
-    let names = response.functions.as_brief().expect("brief mode");
+    let names = response.entries.as_brief().expect("brief mode");
     let expected = [
         "calc_order_subtotal".to_string(),
         "calc_order_total".to_string(),
@@ -2758,7 +2758,7 @@ async fn test_list_functions_search_is_case_insensitive() {
         .list_functions(Some("app".into()), None, Some("order".into()), false)
         .await
         .expect("lower");
-    assert_eq!(upper.functions.as_brief(), lower.functions.as_brief());
+    assert_eq!(upper.entries.as_brief(), lower.entries.as_brief());
 }
 
 #[tokio::test]
@@ -2769,7 +2769,7 @@ async fn test_list_functions_search_no_match_returns_empty() {
         .await
         .expect("list_functions");
 
-    assert!(response.functions.as_brief().expect("brief").is_empty());
+    assert!(response.entries.as_brief().expect("brief").is_empty());
     assert!(response.next_cursor.is_none());
 }
 
@@ -2784,7 +2784,7 @@ async fn test_list_functions_search_supports_wildcard_semantics() {
         .list_functions(Some("app".into()), None, Some("%order%".into()), false)
         .await
         .expect("wildcard");
-    assert_eq!(plain.functions.as_brief(), with_wildcard.functions.as_brief());
+    assert_eq!(plain.entries.as_brief(), with_wildcard.entries.as_brief());
 }
 
 #[tokio::test]
@@ -2805,7 +2805,7 @@ async fn test_list_functions_search_sql_meta_payloads_are_safe() {
             .unwrap_or_else(|e| panic!("list_functions failed for payload {payload:?}: {e:?}"));
 
         assert!(
-            response.functions.as_brief().is_some(),
+            response.entries.as_brief().is_some(),
             "payload {payload:?} returned non-brief shape"
         );
     }
@@ -2821,7 +2821,7 @@ async fn test_list_functions_search_paginates_filtered_results() {
             .list_functions(Some("app".into()), cursor.take(), Some("order".into()), false)
             .await
             .expect("list_functions paginated");
-        let names = response.functions.as_brief().expect("brief").to_vec();
+        let names = response.entries.as_brief().expect("brief").to_vec();
         all.extend(names);
         cursor = response.next_cursor;
         if cursor.is_none() {
@@ -2835,7 +2835,7 @@ async fn test_list_functions_search_paginates_filtered_results() {
         .expect("single-page list_functions");
     assert_eq!(
         all,
-        single.functions.as_brief().expect("brief"),
+        single.entries.as_brief().expect("brief"),
         "paginated traversal should equal single-page result"
     );
 }
@@ -2848,17 +2848,17 @@ async fn test_list_functions_brief_mode_wire_shape_unchanged() {
         .await
         .expect("list_functions");
 
-    let names = response.functions.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     // Must serialise as a flat array of strings (no object wrapping).
     let json = serde_json::to_value(&response).expect("serialize");
-    let functions = json.get("functions").expect("functions key");
+    let functions = json.get("entries").expect("entries key");
     assert!(
         functions.is_array(),
-        "brief mode `functions` must be a JSON array, got {functions:?}"
+        "brief mode `entries` must be a JSON array, got {functions:?}"
     );
 }
 
@@ -2870,7 +2870,7 @@ async fn test_list_functions_detailed_returns_keyed_object_with_all_fields() {
         .await
         .expect("list_functions");
 
-    let entries = response.functions.as_detailed().expect("detailed mode");
+    let entries = response.entries.as_detailed().expect("detailed mode");
     // Search "calc_order_total" matches both `calc_order_total` and
     // `recalc_order_total_v2` because the latter contains the former as a
     // substring. Field-shape assertions only need the calc_order_total entry.
@@ -2927,7 +2927,7 @@ async fn test_list_functions_detailed_definition_uses_canonical_definer_form() {
         .await
         .expect("list_functions");
 
-    let entries = response.functions.as_detailed().expect("detailed");
+    let entries = response.entries.as_detailed().expect("detailed");
     let definition = entries
         .get("calc_order_total")
         .and_then(|e| e.get("definition"))
@@ -2975,7 +2975,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("recalc_order_total_v2")
@@ -2994,7 +2994,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("current_pricing_version")
@@ -3010,7 +3010,7 @@ async fn test_list_functions_detailed_two_field_safety_split() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("double_it")
@@ -3029,7 +3029,7 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("calc_order_subtotal")
@@ -3064,7 +3064,7 @@ async fn test_list_functions_detailed_arguments_field_round_trips_dtd() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("current_pricing_version")
@@ -3088,7 +3088,7 @@ async fn test_list_functions_detailed_description_null_coercion() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("double_it")
@@ -3106,7 +3106,7 @@ async fn test_list_functions_detailed_description_null_coercion() {
         .await
         .expect("list_functions");
     let entry = resp
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("calc_order_total")
@@ -3126,7 +3126,7 @@ async fn test_list_functions_detailed_session_context_fields_are_populated() {
         .await
         .expect("list_functions");
 
-    let entries = response.functions.as_detailed().expect("detailed");
+    let entries = response.entries.as_detailed().expect("detailed");
     assert!(!entries.is_empty(), "expected order matches");
     for (name, value) in entries {
         for key in [
@@ -3153,7 +3153,7 @@ async fn test_list_functions_detailed_definition_round_trips_multiline_body() {
         .expect("list_functions");
 
     let definition = response
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("format_audit_note")
@@ -3178,7 +3178,7 @@ async fn test_list_functions_detailed_search_narrows_payload() {
         .expect("list_functions");
 
     let keys: Vec<String> = response
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -3210,7 +3210,7 @@ async fn test_list_functions_detailed_paginates() {
             .list_functions(Some("app".into()), cursor.take(), None, true)
             .await
             .expect("list_functions paginated");
-        let entries = response.functions.as_detailed().expect("detailed");
+        let entries = response.entries.as_detailed().expect("detailed");
         assert!(entries.len() <= 2, "page exceeded page_size: {entries:?}");
         all_keys.extend(entries.keys().cloned());
         cursor = response.next_cursor;
@@ -3224,7 +3224,7 @@ async fn test_list_functions_detailed_paginates() {
         .await
         .expect("single-page list_functions");
     let single_keys: Vec<String> = single
-        .functions
+        .entries
         .as_detailed()
         .expect("detailed")
         .keys()
@@ -3243,7 +3243,7 @@ async fn test_list_functions_excludes_loadable_udfs_and_procedures() {
         .await
         .expect("list_functions");
 
-    let names = response.functions.as_brief().expect("brief").to_vec();
+    let names = response.entries.as_brief().expect("brief").to_vec();
     for proc_name in ["archive_user", "touch_post"] {
         assert!(
             !names.contains(&proc_name.to_string()),
@@ -3265,7 +3265,7 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
         .await
         .expect("list_triggers detailed");
     let trigger_def = triggers
-        .triggers
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("posts_audit_after_insert")
@@ -3286,7 +3286,7 @@ async fn test_list_triggers_and_tables_definer_form_unchanged_after_extraction()
         .await
         .expect("list_tables detailed");
     let posts = tables
-        .tables
+        .entries
         .as_detailed()
         .expect("detailed")
         .get("posts")
@@ -3314,7 +3314,7 @@ async fn brief_procedures(handler: &MysqlHandler, search: Option<&str>) -> Vec<S
         .list_procedures(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_procedures");
-    response.procedures.into_brief().expect("brief mode")
+    response.entries.into_brief().expect("brief mode")
 }
 
 async fn detailed_procedure_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
@@ -3322,7 +3322,7 @@ async fn detailed_procedure_entries(handler: &MysqlHandler, search: &str) -> ind
         .list_procedures(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_procedures");
-    response.procedures.as_detailed().expect("detailed mode").clone()
+    response.entries.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -3393,16 +3393,16 @@ async fn test_list_procedures_brief_wire_shape_unchanged() {
         .await
         .expect("list_procedures");
 
-    let names = response.procedures.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     let json = serde_json::to_value(&response).expect("serialize");
-    let procedures = json.get("procedures").expect("procedures key");
+    let procedures = json.get("entries").expect("entries key");
     assert!(
         procedures.is_array(),
-        "brief mode `procedures` must be a JSON array, got {procedures:?}"
+        "brief mode `entries` must be a JSON array, got {procedures:?}"
     );
 }
 
@@ -3685,7 +3685,7 @@ async fn brief_views(handler: &MysqlHandler, search: Option<&str>) -> Vec<String
         .list_views(Some("app".into()), None, search.map(str::to_owned), false)
         .await
         .expect("brief list_views");
-    response.views.into_brief().expect("brief mode")
+    response.entries.into_brief().expect("brief mode")
 }
 
 async fn detailed_view_entries(handler: &MysqlHandler, search: &str) -> indexmap::IndexMap<String, Value> {
@@ -3693,7 +3693,7 @@ async fn detailed_view_entries(handler: &MysqlHandler, search: &str) -> indexmap
         .list_views(Some("app".into()), None, Some(search.into()), true)
         .await
         .expect("detailed list_views");
-    response.views.as_detailed().expect("detailed mode").clone()
+    response.entries.as_detailed().expect("detailed mode").clone()
 }
 
 #[tokio::test]
@@ -3759,16 +3759,16 @@ async fn test_list_views_brief_wire_shape_unchanged() {
         .await
         .expect("list_views");
 
-    let names = response.views.as_brief().expect("brief mode (Vec<String>)");
+    let names = response.entries.as_brief().expect("brief mode (Vec<String>)");
     assert!(
         names.iter().all(|s| !s.is_empty()),
         "brief mode names must be non-empty strings, got {names:?}"
     );
     let json = serde_json::to_value(&response).expect("serialize");
-    let views = json.get("views").expect("views key");
+    let views = json.get("entries").expect("entries key");
     assert!(
         views.is_array(),
-        "brief mode `views` must be a JSON array, got {views:?}"
+        "brief mode `entries` must be a JSON array, got {views:?}"
     );
 }
 

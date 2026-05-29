@@ -3,9 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{
-    ListMaterializedViewsResponse, PinnedListMaterializedViewsRequest, UnpinnedListMaterializedViewsRequest,
-};
+use crate::types::{ListEntriesResponse, PinnedListMaterializedViewsRequest, UnpinnedListMaterializedViewsRequest};
 
 const NAME: &str = "listMaterializedViews";
 const TITLE: &str = "List Materialized Views";
@@ -25,7 +23,7 @@ pub(crate) struct PinnedListMaterializedViewsTool;
 
 impl ToolBase for PinnedListMaterializedViewsTool {
     type Parameter = PinnedListMaterializedViewsRequest;
-    type Output = ListMaterializedViewsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -66,7 +64,7 @@ pub(crate) struct UnpinnedListMaterializedViewsTool;
 
 impl ToolBase for UnpinnedListMaterializedViewsTool {
     type Parameter = UnpinnedListMaterializedViewsRequest;
-    type Output = ListMaterializedViewsResponse;
+    type Output = ListEntriesResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -166,7 +164,7 @@ impl PostgresHandler {
         cursor: Option<Cursor>,
         search: Option<String>,
         detailed: bool,
-    ) -> Result<ListMaterializedViewsResponse, ErrorData> {
+    ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let pager = Pager::new(cursor, self.config.page_size);
@@ -183,7 +181,7 @@ impl PostgresHandler {
                 )
                 .await?;
             let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListMaterializedViewsResponse::detailed(
+            return Ok(ListEntriesResponse::detailed(
                 rows.into_iter().map(|(key, json)| (key, json.0)).collect(),
                 next_cursor,
             ));
@@ -200,6 +198,6 @@ impl PostgresHandler {
             )
             .await?;
         let (materialized_views, next_cursor) = pager.paginate(rows);
-        Ok(ListMaterializedViewsResponse::brief(materialized_views, next_cursor))
+        Ok(ListEntriesResponse::brief(materialized_views, next_cursor))
     }
 }
