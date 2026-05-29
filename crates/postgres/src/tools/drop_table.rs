@@ -5,7 +5,7 @@ use dbmcp_sql::SqlError;
 
 use super::prelude::*;
 use crate::connection::quote_ident;
-use crate::types::{PinnedDropTableRequest, UnpinnedDropTableRequest};
+use crate::types::DropTableRequest;
 
 const NAME: &str = "dropTable";
 const TITLE: &str = "Drop Table";
@@ -24,7 +24,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedDropTableTool;
 
 impl ToolBase for PinnedDropTableTool {
-    type Parameter = PinnedDropTableRequest;
+    type Parameter = DropTableRequest;
     type Output = MessageResponse;
     type Error = ErrorData;
 
@@ -45,7 +45,7 @@ impl ToolBase for PinnedDropTableTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<PostgresHandler> for PinnedDropTableTool {
 pub(crate) struct UnpinnedDropTableTool;
 
 impl ToolBase for UnpinnedDropTableTool {
-    type Parameter = UnpinnedDropTableRequest;
+    type Parameter = DropTableRequest;
     type Output = MessageResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedDropTableTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -94,9 +94,7 @@ impl ToolBase for UnpinnedDropTableTool {
 
 impl AsyncTool<PostgresHandler> for UnpinnedDropTableTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .drop_table(params.database, params.inner.table, params.inner.cascade)
-            .await
+        handler.drop_table(params.database, params.table, params.cascade).await
     }
 }
 

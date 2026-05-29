@@ -1,7 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::{PinnedQueryRequest, QueryResponse, UnpinnedQueryRequest};
+use dbmcp_server::types::{QueryRequest, QueryResponse};
 
 use super::prelude::*;
 
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedWriteQueryTool;
 
 impl ToolBase for PinnedWriteQueryTool {
-    type Parameter = PinnedQueryRequest;
+    type Parameter = QueryRequest;
     type Output = QueryResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedWriteQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -61,7 +61,7 @@ impl AsyncTool<PostgresHandler> for PinnedWriteQueryTool {
 pub(crate) struct UnpinnedWriteQueryTool;
 
 impl ToolBase for UnpinnedWriteQueryTool {
-    type Parameter = UnpinnedQueryRequest;
+    type Parameter = QueryRequest;
     type Output = QueryResponse;
     type Error = ErrorData;
 
@@ -82,7 +82,7 @@ impl ToolBase for UnpinnedWriteQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -92,7 +92,7 @@ impl ToolBase for UnpinnedWriteQueryTool {
 
 impl AsyncTool<PostgresHandler> for UnpinnedWriteQueryTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.write_query(params.inner.query, params.database).await
+        handler.write_query(params.query, params.database).await
     }
 }
 

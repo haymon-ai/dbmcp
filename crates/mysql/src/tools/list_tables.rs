@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListEntriesResponse, PinnedListTablesRequest, UnpinnedListTablesRequest};
+use crate::types::{ListEntriesResponse, ListTablesRequest};
 
 /// Brief-mode SQL: `information_schema.TABLES` filtered to `BASE TABLE` rows.
 ///
@@ -301,7 +301,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListTablesTool;
 
 impl ToolBase for PinnedListTablesTool {
-    type Parameter = PinnedListTablesRequest;
+    type Parameter = ListTablesRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -322,7 +322,7 @@ impl ToolBase for PinnedListTablesTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -342,7 +342,7 @@ impl AsyncTool<MysqlHandler> for PinnedListTablesTool {
 pub(crate) struct UnpinnedListTablesTool;
 
 impl ToolBase for UnpinnedListTablesTool {
-    type Parameter = UnpinnedListTablesRequest;
+    type Parameter = ListTablesRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -363,7 +363,7 @@ impl ToolBase for UnpinnedListTablesTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -374,12 +374,7 @@ impl ToolBase for UnpinnedListTablesTool {
 impl AsyncTool<MysqlHandler> for UnpinnedListTablesTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_tables(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_tables(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }

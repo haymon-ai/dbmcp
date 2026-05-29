@@ -1370,7 +1370,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
     let bad_cursors = ["!!!not-base64", "bm90LWpzb24", "eyJ4IjoxfQ", "eyJvZmZzZXQiOi0xfQ"];
 
     for bad in bad_cursors {
-        let err = serde_json::from_value::<dbmcp_server::types::UnpinnedReadQueryRequest>(json!({
+        let err = serde_json::from_value::<dbmcp_server::types::ReadQueryRequest>(json!({
             "query": "SELECT 1",
             "database": "app",
             "cursor": bad,

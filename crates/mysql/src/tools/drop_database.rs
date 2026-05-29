@@ -41,7 +41,7 @@ impl ToolBase for DropDatabaseTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {

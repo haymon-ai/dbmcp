@@ -1,7 +1,7 @@
 //! MCP tool: `explainQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::{PinnedExplainQueryRequest, QueryResponse, UnpinnedExplainQueryRequest};
+use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::validation::validate_read_only;
 
 use super::prelude::*;
@@ -23,7 +23,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedExplainQueryTool;
 
 impl ToolBase for PinnedExplainQueryTool {
-    type Parameter = PinnedExplainQueryRequest;
+    type Parameter = ExplainQueryRequest;
     type Output = QueryResponse;
     type Error = ErrorData;
 
@@ -44,7 +44,7 @@ impl ToolBase for PinnedExplainQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -62,7 +62,7 @@ impl AsyncTool<MysqlHandler> for PinnedExplainQueryTool {
 pub(crate) struct UnpinnedExplainQueryTool;
 
 impl ToolBase for UnpinnedExplainQueryTool {
-    type Parameter = UnpinnedExplainQueryRequest;
+    type Parameter = ExplainQueryRequest;
     type Output = QueryResponse;
     type Error = ErrorData;
 
@@ -83,7 +83,7 @@ impl ToolBase for UnpinnedExplainQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -94,7 +94,7 @@ impl ToolBase for UnpinnedExplainQueryTool {
 impl AsyncTool<MysqlHandler> for UnpinnedExplainQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .explain_query(params.database, params.inner.query, params.inner.analyze)
+            .explain_query(params.database, params.query, params.analyze)
             .await
     }
 }

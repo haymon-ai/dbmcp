@@ -133,17 +133,10 @@ pub struct DropDatabaseRequest {
 
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedListViewsRequest {
+pub struct ListViewsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
-}
-
-/// Request for the `listViews` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedListViewsRequest {
-    #[serde(flatten)]
-    pub inner: PinnedListViewsRequest,
     /// Database to list views from. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -151,7 +144,7 @@ pub struct UnpinnedListViewsRequest {
 
 /// Request for the `listTriggers` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedListTriggersRequest {
+pub struct ListTriggersRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
@@ -164,13 +157,6 @@ pub struct PinnedListTriggersRequest {
     /// omitted, each entry is the bare trigger-name string.
     #[serde(default)]
     pub detailed: bool,
-}
-
-/// Request for the `listTriggers` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedListTriggersRequest {
-    #[serde(flatten)]
-    pub inner: PinnedListTriggersRequest,
     /// Database to list triggers from. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -178,17 +164,10 @@ pub struct UnpinnedListTriggersRequest {
 
 /// Request for the `listFunctions` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedListFunctionsRequest {
+pub struct ListFunctionsRequest {
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
-}
-
-/// Request for the `listFunctions` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedListFunctionsRequest {
-    #[serde(flatten)]
-    pub inner: PinnedListFunctionsRequest,
     /// Database to list functions from. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -196,16 +175,9 @@ pub struct UnpinnedListFunctionsRequest {
 
 /// Request for the `writeQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedQueryRequest {
+pub struct QueryRequest {
     /// The SQL query to execute.
     pub query: String,
-}
-
-/// Request for the `writeQuery` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedQueryRequest {
-    #[serde(flatten)]
-    pub inner: PinnedQueryRequest,
     /// Database to run the query against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -213,19 +185,12 @@ pub struct UnpinnedQueryRequest {
 
 /// Request for the `readQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedReadQueryRequest {
+pub struct ReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
-}
-
-/// Request for the `readQuery` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedReadQueryRequest {
-    #[serde(flatten)]
-    pub inner: PinnedReadQueryRequest,
     /// Database to run the query against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -252,19 +217,12 @@ pub struct ReadQueryResponse {
 
 /// Request for the `explainQuery` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct PinnedExplainQueryRequest {
+pub struct ExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,
     /// If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.
     #[serde(default)]
     pub analyze: bool,
-}
-
-/// Request for the `explainQuery` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct UnpinnedExplainQueryRequest {
-    #[serde(flatten)]
-    pub inner: PinnedExplainQueryRequest,
     /// Database to explain against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
@@ -272,31 +230,31 @@ pub struct UnpinnedExplainQueryRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexMap, ListEntries, ListEntriesResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
+    use super::{IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest};
     use serde_json::{Value, json};
 
     #[test]
-    fn unpinned_list_triggers_request_defaults_to_brief_mode_without_search() {
-        let req: PinnedListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
+    fn list_triggers_request_defaults_to_brief_mode_without_search() {
+        let req: ListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
         assert!(req.search.is_none());
         assert!(!req.detailed, "detailed must default to false");
+        assert!(req.database.is_none());
     }
 
     #[test]
-    fn unpinned_list_triggers_request_accepts_search_and_detailed() {
-        let req: PinnedListTriggersRequest =
-            serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
+    fn list_triggers_request_accepts_search_and_detailed() {
+        let req: ListTriggersRequest = serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
         assert_eq!(req.search.as_deref(), Some("audit"));
         assert!(req.detailed);
     }
 
     #[test]
-    fn pinned_list_triggers_request_accepts_database_and_inner_fields() {
-        let req: UnpinnedListTriggersRequest =
+    fn list_triggers_request_accepts_database_and_inner_fields() {
+        let req: ListTriggersRequest =
             serde_json::from_str(r#"{"database": "mydb", "search": "audit", "detailed": true}"#).expect("parse");
         assert_eq!(req.database.as_deref(), Some("mydb"));
-        assert_eq!(req.inner.search.as_deref(), Some("audit"));
-        assert!(req.inner.detailed);
+        assert_eq!(req.search.as_deref(), Some("audit"));
+        assert!(req.detailed);
     }
 
     #[test]

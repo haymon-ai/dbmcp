@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListEntriesResponse, PinnedListMaterializedViewsRequest, UnpinnedListMaterializedViewsRequest};
+use crate::types::{ListEntriesResponse, ListMaterializedViewsRequest};
 
 const NAME: &str = "listMaterializedViews";
 const TITLE: &str = "List Materialized Views";
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListMaterializedViewsTool;
 
 impl ToolBase for PinnedListMaterializedViewsTool {
-    type Parameter = PinnedListMaterializedViewsRequest;
+    type Parameter = ListMaterializedViewsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedListMaterializedViewsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<PostgresHandler> for PinnedListMaterializedViewsTool {
 pub(crate) struct UnpinnedListMaterializedViewsTool;
 
 impl ToolBase for UnpinnedListMaterializedViewsTool {
-    type Parameter = UnpinnedListMaterializedViewsRequest;
+    type Parameter = ListMaterializedViewsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedListMaterializedViewsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -95,12 +95,7 @@ impl ToolBase for UnpinnedListMaterializedViewsTool {
 impl AsyncTool<PostgresHandler> for UnpinnedListMaterializedViewsTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_materialized_views(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_materialized_views(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }

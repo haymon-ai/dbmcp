@@ -2,7 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::pagination::{Cursor, Pager};
-use dbmcp_server::types::{PinnedReadQueryRequest, ReadQueryResponse, UnpinnedReadQueryRequest};
+use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
 use dbmcp_sql::validation::validate_read_only;
@@ -26,7 +26,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedReadQueryTool;
 
 impl ToolBase for PinnedReadQueryTool {
-    type Parameter = PinnedReadQueryRequest;
+    type Parameter = ReadQueryRequest;
     type Output = ReadQueryResponse;
     type Error = ErrorData;
 
@@ -47,7 +47,7 @@ impl ToolBase for PinnedReadQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -65,7 +65,7 @@ impl AsyncTool<PostgresHandler> for PinnedReadQueryTool {
 pub(crate) struct UnpinnedReadQueryTool;
 
 impl ToolBase for UnpinnedReadQueryTool {
-    type Parameter = UnpinnedReadQueryRequest;
+    type Parameter = ReadQueryRequest;
     type Output = ReadQueryResponse;
     type Error = ErrorData;
 
@@ -86,7 +86,7 @@ impl ToolBase for UnpinnedReadQueryTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -96,9 +96,7 @@ impl ToolBase for UnpinnedReadQueryTool {
 
 impl AsyncTool<PostgresHandler> for UnpinnedReadQueryTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .read_query(params.inner.query, params.database, params.inner.cursor)
-            .await
+        handler.read_query(params.query, params.database, params.cursor).await
     }
 }
 

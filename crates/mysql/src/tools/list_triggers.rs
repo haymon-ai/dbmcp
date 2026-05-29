@@ -1,7 +1,7 @@
 //! MCP tool: `listTriggers`.
 
 use dbmcp_server::pagination::{Cursor, Pager};
-use dbmcp_server::types::{ListEntriesResponse, PinnedListTriggersRequest, UnpinnedListTriggersRequest};
+use dbmcp_server::types::{ListEntriesResponse, ListTriggersRequest};
 
 use super::prelude::*;
 
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListTriggersTool;
 
 impl ToolBase for PinnedListTriggersTool {
-    type Parameter = PinnedListTriggersRequest;
+    type Parameter = ListTriggersRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedListTriggersTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<MysqlHandler> for PinnedListTriggersTool {
 pub(crate) struct UnpinnedListTriggersTool;
 
 impl ToolBase for UnpinnedListTriggersTool {
-    type Parameter = UnpinnedListTriggersRequest;
+    type Parameter = ListTriggersRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedListTriggersTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -95,12 +95,7 @@ impl ToolBase for UnpinnedListTriggersTool {
 impl AsyncTool<MysqlHandler> for UnpinnedListTriggersTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_triggers(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_triggers(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }

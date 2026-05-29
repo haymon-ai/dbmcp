@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListEntriesResponse, PinnedListViewsRequest, UnpinnedListViewsRequest};
+use crate::types::{ListEntriesResponse, ListViewsRequest};
 
 const NAME: &str = "listViews";
 const TITLE: &str = "List Views";
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListViewsTool;
 
 impl ToolBase for PinnedListViewsTool {
-    type Parameter = PinnedListViewsRequest;
+    type Parameter = ListViewsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedListViewsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<MysqlHandler> for PinnedListViewsTool {
 pub(crate) struct UnpinnedListViewsTool;
 
 impl ToolBase for UnpinnedListViewsTool {
-    type Parameter = UnpinnedListViewsRequest;
+    type Parameter = ListViewsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedListViewsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -95,12 +95,7 @@ impl ToolBase for UnpinnedListViewsTool {
 impl AsyncTool<MysqlHandler> for UnpinnedListViewsTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_views(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_views(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }

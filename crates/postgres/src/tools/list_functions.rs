@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListEntriesResponse, PinnedListFunctionsRequest, UnpinnedListFunctionsRequest};
+use crate::types::{ListEntriesResponse, ListFunctionsRequest};
 
 const NAME: &str = "listFunctions";
 const TITLE: &str = "List Functions";
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListFunctionsTool;
 
 impl ToolBase for PinnedListFunctionsTool {
-    type Parameter = PinnedListFunctionsRequest;
+    type Parameter = ListFunctionsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedListFunctionsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<PostgresHandler> for PinnedListFunctionsTool {
 pub(crate) struct UnpinnedListFunctionsTool;
 
 impl ToolBase for UnpinnedListFunctionsTool {
-    type Parameter = UnpinnedListFunctionsRequest;
+    type Parameter = ListFunctionsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedListFunctionsTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -95,12 +95,7 @@ impl ToolBase for UnpinnedListFunctionsTool {
 impl AsyncTool<PostgresHandler> for UnpinnedListFunctionsTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_functions(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_functions(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }

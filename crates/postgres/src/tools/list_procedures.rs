@@ -3,7 +3,7 @@
 use dbmcp_server::pagination::{Cursor, Pager};
 
 use super::prelude::*;
-use crate::types::{ListEntriesResponse, PinnedListProceduresRequest, UnpinnedListProceduresRequest};
+use crate::types::{ListEntriesResponse, ListProceduresRequest};
 
 const NAME: &str = "listProcedures";
 const TITLE: &str = "List Procedures";
@@ -22,7 +22,7 @@ fn annotations() -> ToolAnnotations {
 pub(crate) struct PinnedListProceduresTool;
 
 impl ToolBase for PinnedListProceduresTool {
-    type Parameter = PinnedListProceduresRequest;
+    type Parameter = ListProceduresRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -43,7 +43,7 @@ impl ToolBase for PinnedListProceduresTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(true))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -63,7 +63,7 @@ impl AsyncTool<PostgresHandler> for PinnedListProceduresTool {
 pub(crate) struct UnpinnedListProceduresTool;
 
 impl ToolBase for UnpinnedListProceduresTool {
-    type Parameter = UnpinnedListProceduresRequest;
+    type Parameter = ListProceduresRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
 
@@ -84,7 +84,7 @@ impl ToolBase for UnpinnedListProceduresTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>())
+        Some(input_schema::<Self::Parameter>(false))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -95,12 +95,7 @@ impl ToolBase for UnpinnedListProceduresTool {
 impl AsyncTool<PostgresHandler> for UnpinnedListProceduresTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .list_procedures(
-                params.database,
-                params.inner.cursor,
-                params.inner.search,
-                params.inner.detailed,
-            )
+            .list_procedures(params.database, params.cursor, params.search, params.detailed)
             .await
     }
 }
