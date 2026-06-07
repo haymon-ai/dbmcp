@@ -44,6 +44,13 @@ impl SqliteConnection {
     pub(crate) async fn pool(&self, _target: Option<&str>) -> Result<SqlitePool, SqlError> {
         Ok(self.pool.clone())
     }
+
+    /// Closes the single pool, awaiting a clean shutdown.
+    ///
+    /// Idempotent — `SqlitePool::close` is safe to call more than once.
+    pub(crate) async fn shutdown(&self) {
+        self.pool.close().await;
+    }
 }
 
 impl Connection for SqliteConnection {
@@ -123,5 +130,12 @@ mod tests {
             .pool(Some("anything"))
             .await
             .expect("any target should return the same single pool");
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_noop_and_idempotent_on_lazy_pool() {
+        let connection = SqliteConnection::new(&base_config());
+        connection.shutdown().await;
+        connection.shutdown().await;
     }
 }

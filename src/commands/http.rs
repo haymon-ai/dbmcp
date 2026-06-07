@@ -150,7 +150,7 @@ impl HttpCommand {
         let server = common::create_server(&config)?;
         let cancel_token = CancellationToken::new();
 
-        let router = build_http_router(http_config, server, &cancel_token);
+        let router = build_http_router(http_config, server.clone(), &cancel_token);
 
         let bind_addr = format!("{}:{}", http_config.host, http_config.port);
         info!("Starting MCP server via HTTP transport on {bind_addr}...");
@@ -160,10 +160,13 @@ impl HttpCommand {
 
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
-                shutdown_signal().await;
+                common::shutdown_signal().await;
                 cancel_token.cancel();
             })
             .await?;
+
+        server.shutdown().await;
+        info!("All connection pools closed.");
 
         Ok(())
     }
@@ -211,34 +214,6 @@ fn build_cors_layer(http_config: &HttpConfig) -> CorsLayer {
             axum::http::Method::OPTIONS,
         ])
         .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT])
-}
-
-/// Future that resolves when the process should shut down.
-///
-/// Listens for Ctrl-C on all platforms and `SIGTERM` on Unix, which
-/// is the signal `docker stop`, `systemctl stop`, and Kubernetes
-/// send to request graceful termination. Whichever arrives first
-/// wins.
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("failed to install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => info!("Ctrl-C received, shutting down..."),
-        () = terminate => info!("SIGTERM received, shutting down..."),
-    }
 }
 
 #[cfg(test)]

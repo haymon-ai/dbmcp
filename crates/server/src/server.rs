@@ -5,12 +5,13 @@
 //! [`ServerHandler`](rmcp::ServerHandler) implementations.
 
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::RoleServer;
 use rmcp::Service;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
-use rmcp::service::{DynService, NotificationContext, RequestContext, ServiceExt};
+use rmcp::service::{DynService, NotificationContext, RequestContext};
 
 /// Hardcoded product name matching the root binary crate.
 const NAME: &str = "dbmcp";
@@ -28,9 +29,26 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 ///
 /// Wraps any backend adapter behind an [`Arc`] using rmcp's [`DynService`]
 /// for type erasure. All database backends produce the same concrete
-/// type, eliminating the need for enum dispatch.
+/// type, eliminating the need for enum dispatch. The same `Arc` is held
+/// a second time as a [`Shutdown`] view so transports can drain pools
+/// via [`Server::shutdown`].
 #[derive(Clone)]
-pub struct Server(Arc<dyn DynService<RoleServer>>);
+pub struct Server {
+    service: Arc<dyn DynService<RoleServer>>,
+    shutdown: Arc<dyn Shutdown>,
+}
+
+/// Boxed `Send` future returned by [`Shutdown::shutdown`].
+pub type ShutdownFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+/// Closes every live connection pool the server owns.
+///
+/// Implemented by each backend handler so transports can drain pools
+/// gracefully on shutdown, separate from the type-erased [`Server`].
+pub trait Shutdown: Send + Sync {
+    /// Awaits a clean close of all pools. Idempotent.
+    fn shutdown(&self) -> ShutdownFuture<'_>;
+}
 
 impl fmt::Debug for Server {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -40,8 +58,24 @@ impl fmt::Debug for Server {
 
 impl Server {
     /// Creates a new server from any backend adapter.
-    pub fn new(server: impl ServiceExt<RoleServer>) -> Self {
-        Self(Arc::from(server.into_dyn()))
+    ///
+    /// One [`Arc`] is shared as two trait-object views — [`DynService`]
+    /// for request handling and [`Shutdown`] for pool draining — so the
+    /// adapter itself is never cloned.
+    pub fn new<S>(handler: S) -> Self
+    where
+        S: Service<RoleServer> + Shutdown + 'static,
+    {
+        let handler = Arc::new(handler);
+        Self {
+            service: handler.clone(),
+            shutdown: handler,
+        }
+    }
+
+    /// Closes every live connection pool. Idempotent.
+    pub async fn shutdown(&self) {
+        self.shutdown.shutdown().await;
     }
 }
 
@@ -52,7 +86,7 @@ impl Service<RoleServer> for Server {
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<<RoleServer as rmcp::service::ServiceRole>::Resp, rmcp::ErrorData>> + Send + '_
     {
-        DynService::handle_request(self.0.as_ref(), request, context)
+        DynService::handle_request(self.service.as_ref(), request, context)
     }
 
     fn handle_notification(
@@ -60,11 +94,11 @@ impl Service<RoleServer> for Server {
         notification: <RoleServer as rmcp::service::ServiceRole>::PeerNot,
         context: NotificationContext<RoleServer>,
     ) -> impl Future<Output = Result<(), rmcp::ErrorData>> + Send + '_ {
-        DynService::handle_notification(self.0.as_ref(), notification, context)
+        DynService::handle_notification(self.service.as_ref(), notification, context)
     }
 
     fn get_info(&self) -> <RoleServer as rmcp::service::ServiceRole>::Info {
-        DynService::get_info(self.0.as_ref())
+        DynService::get_info(self.service.as_ref())
     }
 }
 

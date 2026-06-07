@@ -69,6 +69,15 @@ impl MysqlConnection {
         self.pools.invalidate(name).await;
     }
 
+    /// Closes every cached pool, awaiting each clean shutdown.
+    ///
+    /// Idempotent — `MySqlPool::close` is safe to call more than once.
+    pub(crate) async fn shutdown(&self) {
+        for (_name, pool) in &self.pools {
+            pool.close().await;
+        }
+    }
+
     /// Resolves the cached pool for `target`, creating it lazily on miss.
     ///
     /// Kept crate-private so every tool path goes through the unified
@@ -248,6 +257,15 @@ mod tests {
             .pool(Some("any_db"))
             .await
             .expect("any database should be permitted");
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_noop_and_idempotent_on_lazy_pools() {
+        let connection = MysqlConnection::new(&base_config());
+        connection.pool(Some("a")).await.expect("pool a");
+        connection.pool(Some("b")).await.expect("pool b");
+        connection.shutdown().await;
+        connection.shutdown().await;
     }
 
     #[tokio::test]
