@@ -13,5 +13,5 @@ pub mod types;
 
 pub use pagination::{Cursor, Pager};
 pub use schema::{input_schema, output_schema};
-pub use server::{Server, server_info};
+pub use server::{Server, Shutdown, ShutdownFuture, server_info};
 pub use tool::{ToolRouterExt, ToolSpec};

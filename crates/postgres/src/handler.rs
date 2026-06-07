@@ -7,7 +7,7 @@
 
 use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::Redactor;
-use dbmcp_server::{Server, ToolRouterExt, ToolSpec, server_info};
+use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolRouterExt, ToolSpec, server_info};
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
@@ -121,6 +121,12 @@ impl From<PostgresHandler> for Server {
     /// Wraps a [`PostgresHandler`] in the type-erased MCP server.
     fn from(handler: PostgresHandler) -> Self {
         Self::new(handler)
+    }
+}
+
+impl Shutdown for PostgresHandler {
+    fn shutdown(&self) -> ShutdownFuture<'_> {
+        Box::pin(async move { self.connection.shutdown().await })
     }
 }
 
