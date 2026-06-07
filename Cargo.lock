@@ -888,6 +888,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbmcp-sql-lineage"
+version = "0.13.2"
+dependencies = [
+ "serde",
+ "sqlparser",
+ "thiserror",
+]
+
+[[package]]
 name = "dbmcp-sqlite"
 version = "0.13.2"
 dependencies = [
