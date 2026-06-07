@@ -1,0 +1,16 @@
+[package]
+name = "dbmcp-sql-lineage"
+description = "Column-level SQL lineage extraction for dbmcp"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+sqlparser = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

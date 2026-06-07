@@ -28,6 +28,7 @@ dbmcp-pii = { path = "crates/pii", version = "0.13.2" }
 dbmcp-postgres = { path = "crates/postgres", version = "0.13.2" }
 dbmcp-server = { path = "crates/server", version = "0.13.2" }
 dbmcp-sql = { path = "crates/sql", version = "0.13.2" }
+dbmcp-sql-lineage = { path = "crates/sql-lineage", version = "0.13.2" }
 dbmcp-sqlite = { path = "crates/sqlite", version = "0.13.2" }
 sqlx-json = { path = "crates/sqlx-json", version = "0.13.2" }
 
