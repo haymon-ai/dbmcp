@@ -249,6 +249,34 @@ where
         .map_err(|e| crate::error::Error::Init(e.to_string()))
 }
 
+/// Future that resolves when the process should shut down.
+///
+/// Listens for Ctrl-C on all platforms and `SIGTERM` on Unix, which
+/// is the signal `docker stop`, `systemctl stop`, and Kubernetes
+/// send to request graceful termination. Whichever arrives first
+/// wins. Shared by both transports.
+pub(crate) async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => info!("Ctrl-C received, shutting down..."),
+        () = terminate => info!("SIGTERM received, shutting down..."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, Parser};

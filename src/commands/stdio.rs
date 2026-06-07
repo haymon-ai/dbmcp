@@ -63,10 +63,22 @@ impl StdioCommand {
 
         info!("Starting MCP server via stdio transport...");
         let transport = rmcp::transport::io::stdio();
-        let running = server.serve(transport).await?;
-        if let Err(join_error) = running.waiting().await {
-            error!("stdio server task terminated abnormally: {join_error}");
+        let running = server.clone().serve(transport).await?;
+
+        // Exit on stdin EOF (client disconnect) or Ctrl-C/SIGTERM. On a
+        // signal the losing `waiting()` future drops, cancelling the
+        // service via `RunningService`'s `Drop`.
+        tokio::select! {
+            res = running.waiting() => {
+                if let Err(join_error) = res {
+                    error!("stdio server task terminated abnormally: {join_error}");
+                }
+            }
+            () = common::shutdown_signal() => {}
         }
+
+        server.shutdown().await;
+        info!("All connection pools closed.");
         Ok(())
     }
 }
