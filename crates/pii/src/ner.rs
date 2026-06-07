@@ -371,7 +371,7 @@ impl NerEngine {
             .map_err(|e| NerError::Load(format!("session builder: {e}")))?
             .commit_from_file(model_dir.join("model.onnx"))
             .map_err(|e| NerError::Load(format!("model.onnx: {e}")))?;
-        let needs_token_type_ids = session.inputs.iter().any(|i| i.name == "token_type_ids");
+        let needs_token_type_ids = session.inputs().iter().any(|i| i.name() == "token_type_ids");
 
         Ok(Self {
             session: Mutex::new(session),
