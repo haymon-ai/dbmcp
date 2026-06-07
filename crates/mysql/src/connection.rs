@@ -73,7 +73,7 @@ impl MysqlConnection {
     ///
     /// Idempotent — `MySqlPool::close` is safe to call more than once.
     pub(crate) async fn shutdown(&self) {
-        for (_name, pool) in &self.pools {
+        for (_, pool) in &self.pools {
             pool.close().await;
         }
     }
