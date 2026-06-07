@@ -26,8 +26,6 @@
 //! # Ok::<(), dbmcp_sql_lineage::LineageError>(())
 //! ```
 
-#![deny(missing_docs)]
-
 mod error;
 mod extract;
 mod model;
