@@ -68,7 +68,8 @@ impl SqliteHandler {
     /// a server-controlled `LIMIT`/`OFFSET`; `NonSelect` (`EXPLAIN` under
     /// the `SQLite` dialect) is executed as-is and returned in a single
     /// page. A malformed `cursor` is rejected by the serde deserializer
-    /// before this method is called, producing JSON-RPC `-32602`.
+    /// before this method is called, which rmcp reports as a tool result
+    /// with `isError: true`.
     ///
     /// # Errors
     ///
