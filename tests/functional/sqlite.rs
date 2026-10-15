@@ -399,6 +399,31 @@ async fn test_read_query_explain_write_blocked() {
 }
 
 #[tokio::test]
+async fn test_read_query_dangerous_functions_blocked() {
+    let handler = handler(false);
+    for sql in [
+        "SELECT load_extension('/tmp/evil.so')",
+        "SELECT writefile('/tmp/x', 'data')",
+    ] {
+        let request = ReadQueryRequest {
+            query: sql.into(),
+            cursor: None,
+        };
+        let err_msg = format!(
+            "{:?}",
+            handler
+                .read_query(request)
+                .await
+                .expect_err("Expected dangerous function to be blocked")
+        );
+        assert!(
+            err_msg.contains("is not allowed"),
+            "Unexpected error for {sql:?}: {err_msg}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_read_query_with_join() {
     let handler = handler(false);
     let request = ReadQueryRequest {

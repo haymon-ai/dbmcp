@@ -3,7 +3,7 @@
 use crate::SqlError;
 use std::ops::ControlFlow;
 
-use sqlparser::ast::{Expr, Function, Select, Statement, Visit, Visitor};
+use sqlparser::ast::{Expr, Function, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
 
@@ -25,7 +25,7 @@ pub enum StatementKind {
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, USE, EXPLAIN)
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
-/// 5. No dangerous functions (`LOAD_FILE`)
+/// 5. No dangerous functions (file access, large objects, sequences, extensions)
 /// 6. No INTO OUTFILE/DUMPFILE clauses
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
@@ -141,6 +141,29 @@ impl Visitor for DataModifyingQueryChecker {
     }
 }
 
+/// Functions that read or write server files, mutate state, or reach the network.
+///
+/// Matched case-insensitively against the last segment of the function name.
+const DANGEROUS_FUNCTIONS: &[&str] = &[
+    // MySQL / MariaDB
+    "load_file",
+    // PostgreSQL
+    "pg_read_file",
+    "pg_read_binary_file",
+    "pg_ls_dir",
+    "pg_stat_file",
+    "lo_import",
+    "lo_export",
+    "setval",
+    // SQLite (CLI / extension functions)
+    "readfile",
+    "writefile",
+    "load_extension",
+];
+
+/// Function name prefixes blocked in addition to [`DANGEROUS_FUNCTIONS`].
+const DANGEROUS_FUNCTION_PREFIXES: &[&str] = &["dblink"];
+
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
 fn check_dangerous_functions(stmt: &Statement) -> Result<(), SqlError> {
     let mut checker = DangerousFunctionChecker { found: None };
@@ -151,8 +174,37 @@ fn check_dangerous_functions(stmt: &Statement) -> Result<(), SqlError> {
     Ok(())
 }
 
+/// Returns the error for a call to `name` if it is a dangerous function.
+fn dangerous_function(name: &ObjectName) -> Option<SqlError> {
+    // Match the last segment so quoting (`LOAD_FILE`) or schema prefixes (pg_catalog.) don't evade it.
+    let last = name.0.last()?;
+    let func = last
+        .as_ident()
+        .map_or_else(|| last.to_string(), |ident| ident.value.clone());
+    let func = func.to_ascii_lowercase();
+
+    if func == "load_file" {
+        return Some(SqlError::LoadFileBlocked);
+    }
+    let blocked = DANGEROUS_FUNCTIONS.contains(&func.as_str())
+        || DANGEROUS_FUNCTION_PREFIXES
+            .iter()
+            .any(|prefix| func.starts_with(prefix));
+    blocked.then_some(SqlError::DangerousFunctionBlocked(func))
+}
+
 struct DangerousFunctionChecker {
     found: Option<SqlError>,
+}
+
+impl DangerousFunctionChecker {
+    fn check(&mut self, name: &ObjectName) -> ControlFlow<()> {
+        if let Some(err) = dangerous_function(name) {
+            self.found = Some(err);
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
 }
 
 impl Visitor for DangerousFunctionChecker {
@@ -160,13 +212,20 @@ impl Visitor for DangerousFunctionChecker {
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
         if let Expr::Function(Function { name, .. }) = expr {
-            let func_name = name.to_string().to_uppercase();
-            if func_name == "LOAD_FILE" {
-                self.found = Some(SqlError::LoadFileBlocked);
-                return ControlFlow::Break(());
-            }
+            return self.check(name);
         }
         ControlFlow::Continue(())
+    }
+
+    fn pre_visit_table_factor(&mut self, table_factor: &TableFactor) -> ControlFlow<Self::Break> {
+        // Set-returning calls in FROM, e.g. `SELECT * FROM pg_ls_dir('/')`.
+        match table_factor {
+            TableFactor::Table {
+                name, args: Some(_), ..
+            }
+            | TableFactor::Function { name, .. } => self.check(name),
+            _ => ControlFlow::Continue(()),
+        }
     }
 }
 
@@ -603,6 +662,76 @@ mod tests {
             result.is_err() || validate_read_only(sql, &MYSQL).is_ok(),
             "fullwidth semicolon is a single token, not a statement separator"
         );
+    }
+
+    // === Dangerous function deny list ===
+
+    #[test]
+    fn dangerous_functions_blocked_all_dialects() {
+        for sql in [
+            "SELECT pg_read_file('/etc/passwd')",
+            "SELECT pg_read_binary_file('/etc/passwd')",
+            "SELECT * FROM pg_ls_dir('/')",
+            "SELECT pg_ls_dir('/')",
+            "SELECT pg_stat_file('/etc/passwd')",
+            "SELECT lo_import('/etc/passwd')",
+            "SELECT lo_export(1, '/tmp/x')",
+            "SELECT setval('s', 1)",
+            "SELECT dblink_connect('host=attacker.example')",
+            "SELECT * FROM dblink('host=x', 'SELECT 1') AS t(a int)",
+            "SELECT readfile('/etc/passwd')",
+            "SELECT writefile('/tmp/x', 'data')",
+            "SELECT load_extension('/tmp/evil.so')",
+            "SELECT PG_READ_FILE('/etc/passwd')",
+            "SELECT pg_catalog.pg_read_file('/etc/passwd')",
+            "SELECT \"pg_read_file\"('/etc/passwd')",
+            "SELECT 1 FROM users WHERE id IN (SELECT setval('s', 1))",
+        ] {
+            for (name, result) in [
+                ("MySQL", validate_read_only(sql, &MYSQL)),
+                ("Postgres", validate_read_only(sql, &POSTGRES)),
+                ("SQLite", validate_read_only(sql, &SQLITE)),
+            ] {
+                // Some dialects can't parse every form; a parse error is also a rejection.
+                assert!(result.is_err(), "{name} should block {sql:?}, got {result:?}");
+                assert!(
+                    !matches!(result, Err(SqlError::ReadOnlyViolation)),
+                    "{name} should flag the function in {sql:?}"
+                );
+            }
+        }
+        assert!(matches!(
+            validate_read_only("SELECT pg_read_file('/etc/passwd')", &POSTGRES),
+            Err(SqlError::DangerousFunctionBlocked(f)) if f == "pg_read_file"
+        ));
+    }
+
+    #[test]
+    fn load_file_quoted_or_qualified_blocked() {
+        for sql in [
+            "SELECT `LOAD_FILE`('/etc/passwd')",
+            "SELECT mysql.LOAD_FILE('/etc/passwd')",
+        ] {
+            assert!(
+                matches!(validate_read_only(sql, &MYSQL), Err(SqlError::LoadFileBlocked)),
+                "expected LoadFileBlocked for {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dangerous_function_names_in_strings_or_columns_allowed() {
+        for sql in [
+            "SELECT 'pg_read_file(/etc/passwd)'",
+            "SELECT setval_count FROM users",
+            "SELECT * FROM generate_series(1, 10)",
+            "SELECT nextval_hint, upper(name) FROM users",
+        ] {
+            assert!(
+                validate_read_only(sql, &POSTGRES).is_ok(),
+                "expected {sql:?} to be allowed"
+            );
+        }
     }
 
     // === EXPLAIN wraps (GHSA-mw95-r87r-7ggf) ===

@@ -794,6 +794,23 @@ async fn test_read_query_explain_select_allowed() {
 }
 
 #[tokio::test]
+async fn test_read_query_dangerous_functions_blocked() {
+    let handler = handler(false);
+    for sql in [
+        "SELECT pg_read_file('/etc/passwd')",
+        "SELECT * FROM pg_ls_dir('/')",
+        "SELECT lo_import('/etc/passwd')",
+    ] {
+        let response = handler.read_query(sql.into(), Some("app".into()), None).await;
+        let err_msg = format!("{:?}", response.expect_err("Expected dangerous function to be blocked"));
+        assert!(
+            err_msg.contains("is not allowed"),
+            "Unexpected error for {sql:?}: {err_msg}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_drop_table_cross_database() {
     let handler = handler(false);
 
