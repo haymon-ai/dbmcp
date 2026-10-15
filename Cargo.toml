@@ -48,7 +48,7 @@ ort = { version = "=2.0.0-rc.14", default-features = false, features = [
     "std",
     "tls-rustls",
 ] }
-rmcp = { version = "1.7", features = [
+rmcp = { version = "3.5", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",

@@ -11,7 +11,9 @@ use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolRouterExt, ToolSpec, se
 use rmcp::RoleServer;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
-use rmcp::model::{CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, ServerInfo, Tool};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams, ServerConfig, Tool,
+};
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, ServerHandler};
 
@@ -125,7 +127,7 @@ impl Shutdown for MysqlHandler {
 }
 
 impl ServerHandler for MysqlHandler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut info = server_info();
         info.server_info.description = Some(DESCRIPTION.into());
         info.instructions = Some(
@@ -144,7 +146,7 @@ impl ServerHandler for MysqlHandler {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         let tcc = ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -154,11 +156,7 @@ impl ServerHandler for MysqlHandler {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult {
-            tools: self.tool_router.list_all(),
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
