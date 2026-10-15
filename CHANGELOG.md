@@ -2,6 +2,19 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.14.0](https://github.com/haymon-ai/dbmcp/compare/29f4efa5955c10be6e9b86ab5452d86d133ddb7a..v0.14.0) - 2026-10-15
+#### Features
+- (**server**) drain connection pools on graceful shutdown (#192) - ([866dd9b](https://github.com/haymon-ai/dbmcp/commit/866dd9bf957599c0214e291eaa6ff6ae105aaf82)) - [@athopen](https://github.com/athopen)
+- (**sql-lineage**) add column-level SQL lineage extraction crate (#193) - ([52bf45c](https://github.com/haymon-ai/dbmcp/commit/52bf45c5cd8700004b565258f6e39735c20c9d8a)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**deps**) pin ort to 2.0.0-rc.10 to fix macOS release build - ([94269d5](https://github.com/haymon-ai/dbmcp/commit/94269d5d44ff23e0a632ecc6eb5f12b1288977eb)) - athopen
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**security**) require bearer token for non-loopback HTTP binds - ([3d620f3](https://github.com/haymon-ai/dbmcp/commit/3d620f316c8b7d56a0806ac7508e2010de5f18b2)) - athopen
+- (**security**) extend dangerous function deny list - ([2ffc5bc](https://github.com/haymon-ai/dbmcp/commit/2ffc5bc173e219c941ff874b5e205d093b1fc95d)) - athopen
+- (**security**) validate statement inside EXPLAIN in readQuery - ([f25da70](https://github.com/haymon-ai/dbmcp/commit/f25da70a7a63d52efe8fff06d075efd09761ee43)) - athopen
+- (**security**) enforce single statement in explainQuery - ([eca36f5](https://github.com/haymon-ai/dbmcp/commit/eca36f51dbe7d6b47547136031fdd749f9664307)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.13.2](https://github.com/haymon-ai/dbmcp/compare/6fd85824148d5ca4040e838ab52092a9bd820cdb..v0.13.2) - 2026-05-29
 #### Refactoring
 - (**server**) unify pinned/unpinned request structs (#190) - ([15270df](https://github.com/haymon-ai/dbmcp/commit/15270dfcd9cdc21811fa7854b54e11d9fb23fcba)) - [@athopen](https://github.com/athopen)
