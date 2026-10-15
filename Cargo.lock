@@ -814,7 +814,7 @@ dependencies = [
 name = "dbmcp-pii"
 version = "0.13.2"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bech32",
  "bs58",
  "criterion",
@@ -856,7 +856,7 @@ dependencies = [
 name = "dbmcp-server"
 version = "0.13.2"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "indexmap",
  "rmcp",
  "schemars",
@@ -2840,7 +2840,7 @@ dependencies = [
 name = "sqlx-json"
 version = "0.13.2"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bigdecimal",
  "serde_json",
  "sqlx",
