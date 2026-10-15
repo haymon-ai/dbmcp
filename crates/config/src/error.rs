@@ -29,6 +29,17 @@ pub enum ConfigError {
     #[error("HTTP_HOST must not be empty")]
     EmptyHttpHost,
 
+    /// HTTP bearer token was supplied but is empty or whitespace.
+    #[error("HTTP_AUTH_TOKEN must not be empty when set")]
+    EmptyHttpAuthToken,
+
+    /// HTTP bind host is not loopback and no bearer token is configured.
+    #[error(
+        "refusing to bind HTTP transport to non-loopback host '{0}' without authentication; \
+         set HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
+    )]
+    UnauthenticatedNonLoopbackBind(String),
+
     /// `PII_CATEGORIES` was supplied but the resolved list is empty.
     #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
     PiiCategoriesEmpty,

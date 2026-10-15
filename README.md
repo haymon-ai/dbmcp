@@ -88,6 +88,24 @@ dbmcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 
 > **Note:** The `"type": "http"` field is required for HTTP transport. Without it, clients like Claude Code will reject the config.
 
+To require a bearer token, start the server with `HTTP_AUTH_TOKEN` and send it from the client:
+
+```bash
+HTTP_AUTH_TOKEN="$(openssl rand -hex 32)" dbmcp http --db-backend mysql --db-user root --db-name mydb
+```
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer ${DBMCP_TOKEN}" }
+    }
+  }
+}
+```
+
 ### Using CLI flags
 
 ```bash
@@ -100,9 +118,14 @@ dbmcp stdio --db-backend postgres --db-host localhost --db-user postgres --db-na
 # SQLite
 dbmcp stdio --db-backend sqlite --db-name ./data.db
 
-# HTTP transport
-dbmcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
+# HTTP transport (loopback only, no token required)
+dbmcp http --db-backend mysql --db-user root --db-name mydb --port 9001
+
+# HTTP transport on all interfaces — a bearer token is REQUIRED
+HTTP_AUTH_TOKEN=change-me dbmcp http --db-backend mysql --db-user root --db-name mydb --host 0.0.0.0 --port 9001
 ```
+
+> **Warning:** Binding a non-loopback address (e.g. `--host 0.0.0.0`) exposes the database to anyone who can reach the port. `dbmcp` refuses to start in that case unless `HTTP_AUTH_TOKEN` is set. The Host/Origin allowlists protect against browser DNS rebinding only — they are **not** authentication.
 
 ### Using environment variables
 
@@ -174,6 +197,8 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 | `--port` | `9001` | Bind port |
 | `--allowed-origins` | localhost variants | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side Origin rejection. |
 | `--allowed-hosts` | `localhost,127.0.0.1,::1` | Trusted Host headers (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
+| `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Prefer the `HTTP_AUTH_TOKEN` env var — CLI args are visible in `ps`. Required for non-loopback binds. |
+| `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token (`HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Only behind a reverse proxy that authenticates callers. |
 
 ## MCP Tools 🧩
 
@@ -289,7 +314,8 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **Single-statement enforcement** — multi-statement injection blocked at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings
-- **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport
+- **HTTP bearer authentication** — `HTTP_AUTH_TOKEN` enforces `Authorization: Bearer <token>` (constant-time compare, 401 on failure); non-loopback binds refuse to start without a token
+- **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport. Defends against browser DNS rebinding — not a substitute for authentication
 - **SSL/TLS** — configured via individual `DB_SSL_*` variables
 - **PII redaction** *(opt-in, off by default)* — when enabled, query tool output passes through a regex-based redactor that rewrites detected PII spans across **46 built-in entity types** spanning seven categories: personal (email), financial (cards, IBAN, UK bank accounts, sort and US ABA routing codes, CVV), government IDs (SSN, ITIN, EIN, UK/US passports, NHS, NINO, SIN, VAT), contact (phone), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Toggle: `--pii` / `PII_ENABLE`. Operator: `--pii-operator` / `PII_OPERATOR` — one of `replace` (default, entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop), `hash` (SHA-256 hex). Optional subset via `--pii-categories` / `PII_CATEGORIES` (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: query tool output payloads only. See [PII configuration](https://dbmcp.haymon.ai/docs/configuration#pii) for the full surface.
 - **ML/NER redaction** *(opt-in at runtime, off by default)* — adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection that regex cannot catch, enabled via the `--pii-ner` / `PII_NER_ENABLE` toggle plus a user-supplied model directory. Which entities are produced depends on the model's labels (CoNLL models give person/location/organization; OntoNotes-class models add NRP and facility). Inference uses **ONNX Runtime** (model directory holds `config.json`, `tokenizer.json`, `model.onnx`; recommended: the MIT-licensed [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) exported to ONNX, int8-quantized for speed). Fail-closed: a model that cannot load aborts startup and an inference error fails the request — never a silent fallback. Respects `--pii-categories`. English for v1.
