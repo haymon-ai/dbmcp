@@ -762,6 +762,38 @@ async fn test_read_query_into_outfile_blocked() {
 }
 
 #[tokio::test]
+async fn test_read_query_explain_analyze_write_blocked() {
+    let handler = handler(false);
+    for sql in [
+        "EXPLAIN ANALYZE DELETE FROM users WHERE id < 0",
+        "EXPLAIN (ANALYZE) UPDATE users SET name = name WHERE id < 0",
+        "EXPLAIN ANALYZE WITH x AS (DELETE FROM users WHERE id < 0 RETURNING *) SELECT * FROM x",
+        "WITH x AS (DELETE FROM users WHERE id < 0 RETURNING *) SELECT * FROM x",
+    ] {
+        let response = handler.read_query(sql.into(), Some("app".into()), None).await;
+        let err_msg = format!(
+            "{:?}",
+            response.expect_err("Expected EXPLAIN ANALYZE write to be blocked")
+        );
+        assert!(
+            err_msg.contains("read-only mode"),
+            "Unexpected error for {sql:?}: {err_msg}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_read_query_explain_select_allowed() {
+    let handler = handler(false);
+
+    let response = handler
+        .read_query("EXPLAIN SELECT * FROM users".into(), Some("app".into()), None)
+        .await
+        .unwrap();
+    assert!(!response.rows.is_empty(), "Expected a query plan");
+}
+
+#[tokio::test]
 async fn test_drop_table_cross_database() {
     let handler = handler(false);
 
