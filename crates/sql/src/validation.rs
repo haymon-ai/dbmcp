@@ -1,7 +1,9 @@
 //! AST-based SQL validation for read-only mode enforcement.
 
 use crate::SqlError;
-use sqlparser::ast::{Expr, Function, Statement, Visit, Visitor};
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{Expr, Function, Select, Statement, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
 
@@ -21,8 +23,10 @@ pub enum StatementKind {
 /// Parses the query using the given dialect and checks:
 /// 1. Exactly one statement (multi-statement injection blocked)
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, USE, EXPLAIN)
-/// 3. No dangerous functions (`LOAD_FILE`)
-/// 4. No INTO OUTFILE/DUMPFILE clauses
+/// 3. The statement wrapped by `EXPLAIN` is itself read-only
+/// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
+/// 5. No dangerous functions (`LOAD_FILE`)
+/// 6. No INTO OUTFILE/DUMPFILE clauses
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
 /// paginate can dispatch `Select` to a subquery-wrapped fetch and route
@@ -46,12 +50,21 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<Statement
     // Must be exactly one statement
     let stmt = parse_single(trimmed, dialect)?.ok_or(SqlError::ReadOnlyViolation)?;
 
-    // Check statement type is read-only and classify it.
-    match &stmt {
+    classify(&stmt)
+}
+
+/// Checks that `stmt` is read-only and classifies it for pagination.
+fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
+    match stmt {
         Statement::Query(_) => {
-            // SELECT — but check for dangerous functions
-            check_dangerous_functions(&stmt)?;
+            check_data_modifying_queries(stmt)?;
+            check_dangerous_functions(stmt)?;
             Ok(StatementKind::Select)
+        }
+        // `EXPLAIN ANALYZE` executes the wrapped statement, so it must be read-only too.
+        Statement::Explain { statement, .. } => {
+            classify(statement)?;
+            Ok(StatementKind::NonSelect)
         }
         Statement::ShowTables { .. }
         | Statement::ShowColumns { .. }
@@ -66,7 +79,6 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<Statement
         | Statement::ShowViews { .. }
         | Statement::ShowObjects(_)
         | Statement::ExplainTable { .. }
-        | Statement::Explain { .. }
         | Statement::Use(_) => Ok(StatementKind::NonSelect),
         _ => Err(SqlError::ReadOnlyViolation),
     }
@@ -98,6 +110,37 @@ fn parse_single(sql: &str, dialect: &impl Dialect) -> Result<Option<Statement>, 
     Ok(statements.pop())
 }
 
+/// Rejects data-modifying CTEs and `SELECT ... INTO` anywhere inside a query.
+fn check_data_modifying_queries(stmt: &Statement) -> Result<(), SqlError> {
+    if stmt.visit(&mut DataModifyingQueryChecker).is_break() {
+        return Err(SqlError::ReadOnlyViolation);
+    }
+    Ok(())
+}
+
+struct DataModifyingQueryChecker;
+
+impl Visitor for DataModifyingQueryChecker {
+    type Break = ();
+
+    fn pre_visit_statement(&mut self, stmt: &Statement) -> ControlFlow<Self::Break> {
+        // Nested statements (e.g. `WITH x AS (DELETE ... RETURNING *)`) must be queries.
+        if matches!(stmt, Statement::Query(_)) {
+            ControlFlow::Continue(())
+        } else {
+            ControlFlow::Break(())
+        }
+    }
+
+    fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<Self::Break> {
+        // `SELECT ... INTO new_table` creates a table on PostgreSQL.
+        if select.into.is_some() {
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+}
+
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
 fn check_dangerous_functions(stmt: &Statement) -> Result<(), SqlError> {
     let mut checker = DangerousFunctionChecker { found: None };
@@ -115,15 +158,15 @@ struct DangerousFunctionChecker {
 impl Visitor for DangerousFunctionChecker {
     type Break = ();
 
-    fn pre_visit_expr(&mut self, expr: &Expr) -> std::ops::ControlFlow<Self::Break> {
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
         if let Expr::Function(Function { name, .. }) = expr {
             let func_name = name.to_string().to_uppercase();
             if func_name == "LOAD_FILE" {
                 self.found = Some(SqlError::LoadFileBlocked);
-                return std::ops::ControlFlow::Break(());
+                return ControlFlow::Break(());
             }
         }
-        std::ops::ControlFlow::Continue(())
+        ControlFlow::Continue(())
     }
 }
 
@@ -560,6 +603,82 @@ mod tests {
             result.is_err() || validate_read_only(sql, &MYSQL).is_ok(),
             "fullwidth semicolon is a single token, not a statement separator"
         );
+    }
+
+    // === EXPLAIN wraps (GHSA-mw95-r87r-7ggf) ===
+
+    #[test]
+    fn explain_of_write_blocked_all_dialects() {
+        for sql in [
+            "EXPLAIN DELETE FROM users",
+            "EXPLAIN ANALYZE DELETE FROM users",
+            "EXPLAIN ANALYZE INSERT INTO users VALUES (1)",
+            "EXPLAIN ANALYZE UPDATE users SET admin = true",
+            "EXPLAIN ANALYZE DROP TABLE users",
+        ] {
+            for result in [
+                validate_read_only(sql, &MYSQL),
+                validate_read_only(sql, &POSTGRES),
+                validate_read_only(sql, &SQLITE),
+            ] {
+                assert!(result.is_err(), "expected {sql:?} to be blocked, got {result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn postgres_explain_options_of_write_blocked() {
+        for sql in [
+            "EXPLAIN (ANALYZE) UPDATE users SET admin = true",
+            "EXPLAIN (ANALYZE TRUE, FORMAT JSON) DELETE FROM users",
+            "EXPLAIN ANALYZE WITH x AS (DELETE FROM users RETURNING *) SELECT * FROM x",
+            "EXPLAIN ANALYZE SELECT * INTO evil FROM users",
+        ] {
+            assert!(
+                matches!(validate_read_only(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
+                "expected ReadOnlyViolation for {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explain_of_read_allowed() {
+        for sql in ["EXPLAIN SELECT 1", "EXPLAIN ANALYZE SELECT * FROM users"] {
+            assert_eq!(validate_read_only(sql, &MYSQL).unwrap(), StatementKind::NonSelect);
+            assert_eq!(validate_read_only(sql, &POSTGRES).unwrap(), StatementKind::NonSelect);
+        }
+        assert_eq!(
+            validate_read_only("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1", &POSTGRES).unwrap(),
+            StatementKind::NonSelect,
+        );
+        assert_eq!(
+            validate_read_only("EXPLAIN QUERY PLAN SELECT 1", &SQLITE).unwrap(),
+            StatementKind::NonSelect,
+        );
+    }
+
+    #[test]
+    fn explain_checks_dangerous_functions() {
+        assert!(matches!(
+            validate_read_only("EXPLAIN ANALYZE SELECT LOAD_FILE('/etc/passwd')", &MYSQL),
+            Err(SqlError::LoadFileBlocked)
+        ));
+    }
+
+    #[test]
+    fn postgres_data_modifying_query_blocked() {
+        for sql in [
+            "WITH x AS (DELETE FROM users RETURNING *) SELECT * FROM x",
+            "WITH x AS (UPDATE users SET a = 1 RETURNING *) SELECT * FROM x",
+            "WITH x AS (INSERT INTO users VALUES (1) RETURNING *) SELECT 1",
+            "SELECT * FROM (WITH x AS (DELETE FROM users RETURNING *) SELECT * FROM x) AS t",
+            "SELECT * INTO evil FROM users",
+        ] {
+            assert!(
+                matches!(validate_read_only(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
+                "expected ReadOnlyViolation for {sql:?}"
+            );
+        }
     }
 
     #[test]

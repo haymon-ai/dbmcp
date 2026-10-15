@@ -365,6 +365,40 @@ async fn test_read_query_into_outfile_blocked() {
 }
 
 #[tokio::test]
+async fn test_read_query_explain_write_blocked() {
+    let handler = handler(false);
+    for sql in [
+        "EXPLAIN DELETE FROM users WHERE id < 0",
+        "EXPLAIN QUERY PLAN DELETE FROM users WHERE id < 0",
+    ] {
+        let request = ReadQueryRequest {
+            query: sql.into(),
+            cursor: None,
+        };
+        let err_msg = format!(
+            "{:?}",
+            handler
+                .read_query(request)
+                .await
+                .expect_err("Expected EXPLAIN write to be blocked")
+        );
+        assert!(
+            err_msg.contains("read-only mode"),
+            "Unexpected error for {sql:?}: {err_msg}"
+        );
+    }
+
+    let request = ReadQueryRequest {
+        query: "EXPLAIN QUERY PLAN SELECT * FROM users".into(),
+        cursor: None,
+    };
+    assert!(
+        handler.read_query(request).await.is_ok(),
+        "EXPLAIN of a read must still work"
+    );
+}
+
+#[tokio::test]
 async fn test_read_query_with_join() {
     let handler = handler(false);
     let request = ReadQueryRequest {
