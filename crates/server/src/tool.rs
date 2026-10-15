@@ -4,8 +4,17 @@
 //! row carrying the gating flags for that tool. [`ToolRouterExt::from_specs`]
 //! folds the slice into a [`ToolRouter`], skipping tools the current mode forbids.
 //! This keeps the read-only / pinned gating matrix as data, not control flow.
+//!
+//! Tools are registered so that an error returned by a tool's `invoke` reaches
+//! the client as a tool result with `isError: true`, not a JSON-RPC error. The
+//! caller sees the message (e.g. a database error) and can self-correct.
 
-use rmcp::handler::server::router::tool::{AsyncTool, ToolRouter};
+use std::pin::Pin;
+
+use rmcp::handler::server::common::schema_for_empty_input;
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase, ToolRouter};
+use rmcp::handler::server::wrapper::{Json, Parameters};
+use rmcp::model::{CallToolResult, ContentBlock, Tool};
 
 /// Declarative registration entry for one MCP tool.
 ///
@@ -33,11 +42,61 @@ impl<H: Send + Sync + 'static> ToolSpec<H> {
     #[must_use]
     pub const fn async_tool<T: AsyncTool<H> + 'static>(pinned: bool, read_only: bool) -> Self {
         Self {
-            register: ToolRouter::with_async_tool::<T>,
+            register: register::<H, T>,
             pinned,
             read_only,
         }
     }
+}
+
+/// Registers tool `T` on `router`, reporting its errors in-band.
+///
+/// Tools without an input schema take no arguments and are invoked with
+/// `T::Parameter::default()`, matching rmcp's own registration.
+fn register<H: Send + Sync + 'static, T: AsyncTool<H> + 'static>(router: ToolRouter<H>) -> ToolRouter<H> {
+    if T::input_schema().is_some() {
+        router.with_route((attribute::<T>(), invoke::<H, T>))
+    } else {
+        router.with_route((attribute::<T>(), invoke_without_params::<H, T>))
+    }
+}
+
+/// Builds the [`Tool`] metadata advertised for `T` in `tools/list`.
+fn attribute<T: ToolBase>() -> Tool {
+    let input_schema = T::input_schema().unwrap_or_else(schema_for_empty_input);
+    let mut tool = Tool::new_with_raw(T::name(), T::description(), input_schema);
+    tool.title = T::title();
+    tool.output_schema = T::output_schema();
+    tool.annotations = T::annotations();
+    tool.icons = T::icons();
+    tool.meta = T::meta();
+    tool
+}
+
+/// Boxed future returned by [`invoke`].
+type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<Json<T>, CallToolResult>> + Send + 'a>>;
+
+/// Runs tool `T` with arguments extracted from the request.
+fn invoke<H: Send + Sync + 'static, T: AsyncTool<H>>(
+    handler: &H,
+    Parameters(params): Parameters<T::Parameter>,
+) -> ToolFuture<'_, T::Output> {
+    run::<H, T>(handler, params)
+}
+
+/// Runs argument-less tool `T` with its default parameter value.
+fn invoke_without_params<H: Send + Sync + 'static, T: AsyncTool<H>>(handler: &H) -> ToolFuture<'_, T::Output> {
+    run::<H, T>(handler, T::Parameter::default())
+}
+
+/// Runs tool `T`, mapping its error to a [`CallToolResult`] with `isError: true`.
+fn run<H: Send + Sync + 'static, T: AsyncTool<H>>(handler: &H, params: T::Parameter) -> ToolFuture<'_, T::Output> {
+    Box::pin(async move {
+        T::invoke(handler, params)
+            .await
+            .map(Json)
+            .map_err(|error| CallToolResult::error(vec![ContentBlock::text(error.into().message)]))
+    })
 }
 
 /// Extends [`ToolRouter`] with declarative construction from a [`ToolSpec`] table.
@@ -56,5 +115,112 @@ impl<H: Send + Sync + 'static> ToolRouterExt<H> for ToolRouter<H> {
             .iter()
             .filter(|spec| (!spec.read_only || !read_only) && spec.pinned == pinned)
             .fold(ToolRouter::new(), |router, spec| (spec.register)(router))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use rmcp::ErrorData;
+    use rmcp::handler::server::tool::IntoCallToolResult;
+    use std::sync::Arc;
+
+    use rmcp::model::{CallToolResponse, JsonObject, ToolAnnotations};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    struct Handler;
+
+    #[derive(Default, Deserialize, JsonSchema)]
+    struct Request {}
+
+    #[derive(Serialize, JsonSchema)]
+    struct Response {
+        ok: bool,
+    }
+
+    struct FailingTool;
+
+    impl ToolBase for FailingTool {
+        type Parameter = Request;
+        type Output = Response;
+        type Error = ErrorData;
+
+        fn name() -> Cow<'static, str> {
+            "failing".into()
+        }
+
+        fn title() -> Option<String> {
+            Some("Failing".into())
+        }
+
+        fn description() -> Option<Cow<'static, str>> {
+            Some("Always fails.".into())
+        }
+
+        fn annotations() -> Option<ToolAnnotations> {
+            Some(ToolAnnotations::new().read_only(true))
+        }
+    }
+
+    impl AsyncTool<Handler> for FailingTool {
+        async fn invoke(_: &Handler, _: Request) -> Result<Response, ErrorData> {
+            Err(ErrorData::internal_error("syntax error near FROM", None))
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_error_becomes_tool_result_with_is_error() {
+        let response = invoke::<Handler, FailingTool>(&Handler, Parameters(Request::default()))
+            .await
+            .into_call_tool_result();
+
+        let Ok(CallToolResponse::Complete(result)) = response else {
+            panic!("expected a completed tool result, got {response:?}");
+        };
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].as_text().expect("text content");
+        assert_eq!(text.text, "syntax error near FROM");
+    }
+
+    struct NoInputTool;
+
+    impl ToolBase for NoInputTool {
+        type Parameter = Request;
+        type Output = Response;
+        type Error = ErrorData;
+
+        fn name() -> Cow<'static, str> {
+            "no_input".into()
+        }
+
+        fn input_schema() -> Option<Arc<JsonObject>> {
+            None
+        }
+    }
+
+    impl AsyncTool<Handler> for NoInputTool {
+        async fn invoke(_: &Handler, _: Request) -> Result<Response, ErrorData> {
+            Ok(Response { ok: true })
+        }
+    }
+
+    #[test]
+    fn no_input_attribute_matches_rmcp_registration() {
+        let rmcp = ToolRouter::<Handler>::new().with_async_tool::<NoInputTool>();
+        let ours = register::<Handler, NoInputTool>(ToolRouter::new());
+
+        assert_eq!(ours.get("no_input"), rmcp.get("no_input"));
+    }
+
+    #[test]
+    fn attribute_matches_rmcp_registration() {
+        let rmcp = ToolRouter::<Handler>::new().with_async_tool::<FailingTool>();
+        let ours = register::<Handler, FailingTool>(ToolRouter::new());
+
+        assert_eq!(ours.get("failing"), rmcp.get("failing"));
     }
 }

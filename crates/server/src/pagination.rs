@@ -1,10 +1,9 @@
 //! Opaque cursor pagination helpers for MCP tool responses.
 //!
 //! Implements the cursor conventions described in the MCP specification
-//! (`cursor` / `nextCursor`, opaque tokens, an error on invalid
-//! input). Cursors are base64url-encoded JSON objects of the form
-//! `{"offset": <offset>}`. The encoding is an implementation detail —
-//! clients MUST treat cursors as opaque strings.
+//! (`cursor` / `nextCursor`, opaque tokens). Cursors are base64url-encoded
+//! JSON objects of the form `{"offset": <offset>}`. The encoding is an
+//! implementation detail — clients MUST treat cursors as opaque strings.
 //!
 //! Tool requests declare their cursor as [`Option<Cursor>`]; the custom
 //! `Serialize`/`Deserialize` impls encode to / decode from the base64url
