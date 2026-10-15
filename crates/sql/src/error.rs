@@ -11,6 +11,10 @@ pub enum SqlError {
     #[error("Operation forbidden: LOAD_FILE() is not allowed for security reasons")]
     LoadFileBlocked,
 
+    /// Dangerous function (file access, large objects, sequences, extensions) blocked.
+    #[error("Operation forbidden: {0}() is not allowed for security reasons")]
+    DangerousFunctionBlocked(String),
+
     /// INTO OUTFILE/DUMPFILE blocked for security.
     #[error("Operation forbidden: SELECT INTO OUTFILE/DUMPFILE is not allowed for security reasons")]
     IntoOutfileBlocked,
