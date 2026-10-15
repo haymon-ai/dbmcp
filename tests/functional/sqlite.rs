@@ -282,6 +282,32 @@ async fn test_explain_query_invalid_sql() {
 }
 
 #[tokio::test]
+async fn test_explain_query_multi_statement_blocked() {
+    let handler = handler(true);
+    let request = ExplainQueryRequest {
+        query: "SELECT 1; CREATE TABLE readonly_probe_explain(i int)".into(),
+    };
+
+    let response = handler.explain_query(request).await;
+    let err_msg = format!(
+        "{:?}",
+        response.expect_err("Expected multi-statement EXPLAIN to be blocked")
+    );
+    assert!(
+        err_msg.contains("single statements"),
+        "Expected multi-statement error, got: {err_msg}"
+    );
+
+    let select = ReadQueryRequest {
+        query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'readonly_probe_explain'"
+            .into(),
+        cursor: None,
+    };
+    let rows = handler.read_query(select).await.unwrap();
+    assert_eq!(rows.rows[0]["n"], 0, "Second statement must not have executed");
+}
+
+#[tokio::test]
 async fn test_drop_table_invalid_identifier() {
     let handler = handler(false);
     let drop_request = DropTableRequest { table: String::new() };
