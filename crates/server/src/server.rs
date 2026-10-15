@@ -9,8 +9,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerConfig, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorCode, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
@@ -34,6 +34,10 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 /// type, eliminating the need for enum dispatch. The same `Arc` is held
 /// a second time as a [`Shutdown`] view so transports can drain pools
 /// via [`Server::shutdown`].
+///
+/// Tool execution failures (internal errors raised by a tool) are returned
+/// to the client as a tool result with `isError: true` rather than a
+/// JSON-RPC error, so the caller sees the message and can self-correct.
 #[derive(Clone)]
 pub struct Server {
     handler: Arc<dyn DynHandler>,
@@ -143,7 +147,7 @@ impl ServerHandler for Server {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        self.handler.call_tool(request, context).await
+        into_tool_error(self.handler.call_tool(request, context).await)
     }
 
     async fn list_tools(
@@ -156,6 +160,20 @@ impl ServerHandler for Server {
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.handler.get_tool(name)
+    }
+}
+
+/// Converts a tool's internal error into an in-band `isError` tool result.
+///
+/// Mirrors rmcp's handling of argument errors: the tool was routed and ran,
+/// so its failure belongs in the result. Every other error code (e.g. an
+/// unknown tool) stays a JSON-RPC protocol error.
+fn into_tool_error(result: Result<CallToolResponse, ErrorData>) -> Result<CallToolResponse, ErrorData> {
+    match result {
+        Err(error) if error.code == ErrorCode::INTERNAL_ERROR => {
+            Ok(CallToolResult::error(vec![ContentBlock::text(error.message)]).into())
+        }
+        other => other,
     }
 }
 
@@ -173,4 +191,39 @@ pub fn server_info() -> ServerConfig {
         .with_website_url(HOMEPAGE);
 
     ServerConfig::new(capabilities).with_server_info(server_info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_error_becomes_tool_result_with_is_error() {
+        let result = into_tool_error(Err(ErrorData::internal_error("syntax error near FROM", None)));
+
+        let Ok(CallToolResponse::Complete(result)) = result else {
+            panic!("expected a completed tool result, got {result:?}");
+        };
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].as_text().expect("text content");
+        assert_eq!(text.text, "syntax error near FROM");
+    }
+
+    #[test]
+    fn other_errors_stay_protocol_errors() {
+        let result = into_tool_error(Err(ErrorData::invalid_params("tool not found", None)));
+
+        let error = result.expect_err("invalid params must stay a protocol error");
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn success_passes_through() {
+        let result = into_tool_error(Ok(CallToolResult::success(vec![]).into()));
+
+        let Ok(CallToolResponse::Complete(result)) = result else {
+            panic!("expected a completed tool result, got {result:?}");
+        };
+        assert_ne!(result.is_error, Some(true));
+    }
 }
