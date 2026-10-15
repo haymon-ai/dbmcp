@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use sqlparser::ast::{
     Assignment, AssignmentTarget, CreateTable, Delete, FromTable, Insert, Merge, MergeAction, MergeInsertKind,
-    ObjectName, TableFactor, TableObject, Update, UpdateTableFromKind,
+    MergeUpdateKind, ObjectName, TableFactor, TableObject, Update, UpdateTableFromKind,
 };
 
 use crate::error::LineageError;
@@ -127,9 +127,11 @@ pub(crate) fn extract_merge(merge: &Merge) -> Result<Lineage, LineageError> {
     for clause in &merge.clauses {
         match &clause.action {
             MergeAction::Update(update) => {
-                for assignment in &update.assignments {
-                    let (name, sources) = resolve_assignment(assignment, &scope)?;
-                    union_column(&mut columns, Some(name), sources);
+                if let MergeUpdateKind::Set(assignments) = &update.kind {
+                    for assignment in assignments {
+                        let (name, sources) = resolve_assignment(assignment, &scope)?;
+                        union_column(&mut columns, Some(name), sources);
+                    }
                 }
             }
             MergeAction::Insert(insert) => {
@@ -143,7 +145,7 @@ pub(crate) fn extract_merge(merge: &Merge) -> Result<Lineage, LineageError> {
                     }
                 }
             }
-            MergeAction::Delete { .. } => {}
+            MergeAction::Delete { .. } | MergeAction::DoNothing { .. } => {}
         }
     }
 
