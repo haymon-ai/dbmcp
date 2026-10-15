@@ -3,10 +3,6 @@ ignore = [
     # rsa: Marvin timing side-channel (PKCS#1 v1.5). Transitive dep via
     # sqlx-mysql; no fixed release upstream.
     "RUSTSEC-2023-0071",
-    # rand: unsound only with a custom `log` logger that calls `rand::rng()`
-    # during reseed. Not applicable here; rand 0.8.5 is a transitive dep and
-    # we don't ship such a logger.
-    "RUSTSEC-2026-0097",
     # paste: unmaintained (archived), not a vulnerability. Transitive,
     # compile-time-only dep via tokenizers -> macro_rules_attribute -> paste.
     # No source uses it directly and there is no upstream fix to take.
