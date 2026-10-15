@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Mutex;
 
+use ort::environment::Environment;
 use ort::session::Session;
 use ort::value::Tensor;
 use tokenizers::{Tokenizer, TruncationParams};
@@ -50,6 +51,29 @@ pub enum NerError {
     /// A tokenization or model forward-pass step failed.
     #[error("NER inference failed: {0}")]
     Inference(String),
+}
+
+/// Returns the process-wide ONNX Runtime environment, creating it on first use.
+///
+/// # Errors
+///
+/// Returns [`NerError::Load`] when the environment cannot be built or its lock
+/// is poisoned.
+fn environment() -> Result<Environment, NerError> {
+    // ONNX Runtime allows one live environment per process, so every engine
+    // shares this one; the lock serializes first-time creation.
+    static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
+    let mut slot = ENVIRONMENT
+        .lock()
+        .map_err(|_| NerError::Load("environment lock poisoned".to_owned()))?;
+    if let Some(environment) = slot.as_ref() {
+        return Ok(environment.clone());
+    }
+    let environment = ort::init()
+        .build()
+        .map_err(|e| NerError::Load(format!("environment: {e}")))?;
+    *slot = Some(environment.clone());
+    Ok(environment)
 }
 
 /// Parses a Hugging Face `config.json` `id2label` object into an indexed list.
@@ -367,7 +391,7 @@ impl NerEngine {
                 .unwrap_or(0),
         );
 
-        let session = Session::builder()
+        let session = Session::builder(&environment()?)
             .map_err(|e| NerError::Load(format!("session builder: {e}")))?
             .commit_from_file(model_dir.join("model.onnx"))
             .map_err(|e| NerError::Load(format!("model.onnx: {e}")))?;

@@ -174,7 +174,7 @@ impl HttpCommand {
 
 /// Builds the axum router that serves MCP over Streamable HTTP.
 ///
-/// Wires the configured allowed-origins list into BOTH the rmcp 1.6.0
+/// Wires the configured allowed-origins list into BOTH the rmcp
 /// server-side Origin validator and the tower-http CORS preflight layer
 /// so the two layers cannot disagree by accident.
 fn build_http_router(
@@ -186,7 +186,7 @@ fn build_http_router(
         move || Ok(server.clone()),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
-            .with_stateful_mode(false)
+            .with_legacy_session_mode(false)
             .with_json_response(true)
             .with_cancellation_token(cancel_token.child_token())
             .with_allowed_hosts(http_config.allowed_hosts.clone())
@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_origin_non_utf8_returns_400() {
+    async fn malformed_origin_non_utf8_returns_403() {
         let router = router_with_origins(HttpConfig::default_allowed_origins());
         let mut request = mcp_post("/mcp/").body(Body::from("{}")).expect("build request");
         request.headers_mut().insert(
@@ -382,20 +382,20 @@ mod tests {
             HeaderValue::from_bytes(&[0xFF, 0xFE]).expect("non-utf8 header value"),
         );
         let (status, body) = send(router, request).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
-        assert_eq!(body, "Bad Request: Invalid Origin header encoding");
+        assert_eq!(status, StatusCode::FORBIDDEN, "body={body}");
+        assert_eq!(body, "Forbidden: Invalid Origin header encoding");
     }
 
     #[tokio::test]
-    async fn malformed_origin_unparseable_returns_400() {
+    async fn malformed_origin_unparseable_returns_403() {
         let router = router_with_origins(HttpConfig::default_allowed_origins());
         let request = mcp_post("/mcp/")
             .header(header::ORIGIN, "not a url")
             .body(Body::from("{}"))
             .expect("build request");
         let (status, body) = send(router, request).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
-        assert_eq!(body, "Bad Request: Invalid Origin header");
+        assert_eq!(status, StatusCode::FORBIDDEN, "body={body}");
+        assert_eq!(body, "Forbidden: Invalid Origin header");
     }
 
     #[tokio::test]
