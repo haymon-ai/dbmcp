@@ -43,24 +43,14 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<Statement
         return Err(SqlError::IntoOutfileBlocked);
     }
 
-    let statements =
-        Parser::parse_sql(dialect, trimmed).map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
-
     // Must be exactly one statement
-    if statements.is_empty() {
-        return Err(SqlError::ReadOnlyViolation);
-    }
-    if statements.len() > 1 {
-        return Err(SqlError::MultiStatement);
-    }
-
-    let stmt = &statements[0];
+    let stmt = parse_single(trimmed, dialect)?.ok_or(SqlError::ReadOnlyViolation)?;
 
     // Check statement type is read-only and classify it.
-    match stmt {
+    match &stmt {
         Statement::Query(_) => {
             // SELECT — but check for dangerous functions
-            check_dangerous_functions(stmt)?;
+            check_dangerous_functions(&stmt)?;
             Ok(StatementKind::Select)
         }
         Statement::ShowTables { .. }
@@ -80,6 +70,32 @@ pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<Statement
         | Statement::Use(_) => Ok(StatementKind::NonSelect),
         _ => Err(SqlError::ReadOnlyViolation),
     }
+}
+
+/// Validates that a SQL string contains exactly one statement.
+///
+/// Unlike [`validate_read_only`], any statement type is accepted. Use this
+/// where the input is embedded into a wrapper (e.g. `EXPLAIN {query}`) that
+/// must never smuggle additional statements past the driver.
+///
+/// # Errors
+///
+/// Returns [`SqlError::MultiStatement`] if the input holds more than one
+/// statement, or [`SqlError::Query`] if it is empty or fails to parse.
+pub fn validate_single_statement(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
+    parse_single(sql.trim(), dialect)?.ok_or_else(|| SqlError::Query("Query must contain a statement".into()))?;
+    Ok(())
+}
+
+/// Parses `sql` and returns its only statement, `None` if it has none.
+fn parse_single(sql: &str, dialect: &impl Dialect) -> Result<Option<Statement>, SqlError> {
+    let mut statements =
+        Parser::parse_sql(dialect, sql).map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
+
+    if statements.len() > 1 {
+        return Err(SqlError::MultiStatement);
+    }
+    Ok(statements.pop())
 }
 
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
@@ -414,6 +430,49 @@ mod tests {
     #[test]
     fn create_blocked_all_dialects() {
         assert_blocked_all_dialects("CREATE TABLE test (id INT)");
+    }
+
+    // === Single-statement guard (explainQuery) ===
+
+    fn assert_single_statement_rules(dialect: &impl Dialect) {
+        for sql in [
+            "SELECT 1",
+            "SELECT 1;",
+            "INSERT INTO t (a) VALUES (1)",
+            "DELETE FROM t WHERE a = 1",
+        ] {
+            assert!(
+                validate_single_statement(sql, dialect).is_ok(),
+                "expected {sql:?} to be accepted"
+            );
+        }
+        for sql in [
+            "SELECT 1; CREATE TABLE readonly_probe(i int)",
+            "SELECT 1; /* x */ DROP TABLE t",
+            "INSERT INTO t (a) VALUES (1); DELETE FROM t",
+        ] {
+            assert!(
+                matches!(validate_single_statement(sql, dialect), Err(SqlError::MultiStatement)),
+                "expected MultiStatement for {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_statement_rules_all_dialects() {
+        assert_single_statement_rules(&MYSQL);
+        assert_single_statement_rules(&POSTGRES);
+        assert_single_statement_rules(&SQLITE);
+    }
+
+    #[test]
+    fn single_statement_rejects_empty_input() {
+        for sql in ["", "   ", ";"] {
+            assert!(
+                matches!(validate_single_statement(sql, &POSTGRES), Err(SqlError::Query(_))),
+                "expected error for {sql:?}"
+            );
+        }
     }
 
     #[test]

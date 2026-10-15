@@ -2,7 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
-use dbmcp_sql::validation::validate_read_only;
+use dbmcp_sql::validation::{validate_read_only, validate_single_statement};
 
 use super::prelude::*;
 
@@ -102,11 +102,13 @@ impl AsyncTool<MysqlHandler> for UnpinnedExplainQueryTool {
 impl MysqlHandler {
     /// Returns the execution plan for a query.
     ///
-    /// When `analyze` is true and read-only mode is enabled, the inner
-    /// query is validated to be read-only before executing.
+    /// The inner query must be a single statement. When `analyze` is true
+    /// and read-only mode is enabled, it must also be read-only.
     ///
     /// # Errors
     ///
+    /// Returns [`SqlError::MultiStatement`] if the query holds more than
+    /// one statement.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error.
@@ -118,6 +120,8 @@ impl MysqlHandler {
     ) -> Result<QueryResponse, ErrorData> {
         if analyze && self.config.read_only {
             let _ = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
+        } else {
+            validate_single_statement(&query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());

@@ -2,6 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::QueryResponse;
+use dbmcp_sql::validation::validate_single_statement;
 
 use super::prelude::*;
 use crate::types::ExplainQueryRequest;
@@ -63,11 +64,15 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
+    /// Returns [`SqlError::MultiStatement`] if the query holds more than
+    /// one statement.
     /// Returns [`SqlError::Query`] if the backend reports an error.
     pub async fn explain_query(
         &self,
         ExplainQueryRequest { query }: ExplainQueryRequest,
     ) -> Result<QueryResponse, ErrorData> {
+        validate_single_statement(&query, &sqlparser::dialect::SQLiteDialect {})?;
+
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
 
         let rows = self.connection.fetch_json(explain_sql.as_str(), None).await?;

@@ -656,6 +656,39 @@ async fn test_explain_query_plain_write_allowed_in_read_only() {
 }
 
 #[tokio::test]
+async fn test_explain_query_multi_statement_blocked_read_only() {
+    let handler = handler(true);
+
+    let response = handler
+        .explain_query(
+            Some("app".into()),
+            "SELECT 1; CREATE TABLE readonly_probe_explain(i int)".into(),
+            false,
+        )
+        .await;
+    let err_msg = format!(
+        "{:?}",
+        response.expect_err("Expected multi-statement EXPLAIN to be blocked")
+    );
+    assert!(
+        err_msg.contains("single statements"),
+        "Expected multi-statement error, got: {err_msg}"
+    );
+
+    let rows = handler
+        .read_query(
+            "SELECT COUNT(*) AS n FROM information_schema.tables \
+             WHERE table_schema = 'app' AND table_name = 'readonly_probe_explain'"
+                .into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.rows[0]["n"], 0, "Second statement must not have executed");
+}
+
+#[tokio::test]
 async fn test_explain_query_invalid_query() {
     let handler = handler(false);
 
