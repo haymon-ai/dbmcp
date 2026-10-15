@@ -1,18 +1,24 @@
 //! HTTP transport command.
 //!
-//! Runs the MCP server over Streamable HTTP with CORS support.
-//! Each HTTP session clones the internally-built handler, sharing
-//! the underlying connection pools.
+//! Runs the MCP server over Streamable HTTP with CORS support and
+//! optional bearer-token authentication. Each HTTP session clones the
+//! internally-built handler, sharing the underlying connection pools.
 
+use axum::extract::{Request, State};
+use axum::http::{StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use clap::{Args, Parser};
 use dbmcp_config::{Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::commands::common::{self, DatabaseArguments, PiiArguments};
 use crate::error::Error;
@@ -22,7 +28,7 @@ use crate::error::Error;
 /// `host` and `port` use explicit `id = "http-*"` overrides so their
 /// clap argument ids don't collide with the `host`/`port` fields in
 /// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
-#[derive(Debug, Args)]
+#[derive(Args)]
 #[command(next_help_heading = "HTTP Transport")]
 struct HttpArguments {
     /// Bind host for HTTP transport.
@@ -66,6 +72,44 @@ struct HttpArguments {
         default_values_t = HttpConfig::default_allowed_hosts()
     )]
     allowed_hosts: Vec<String>,
+
+    /// Bearer token clients MUST send as `Authorization: Bearer <token>`.
+    ///
+    /// Required when binding a non-loopback host. Prefer the env var:
+    /// command-line arguments are visible to other local users.
+    #[arg(
+        long = "auth-token",
+        env = "HTTP_AUTH_TOKEN",
+        value_name = "TOKEN",
+        hide_env_values = true
+    )]
+    auth_token: Option<String>,
+
+    /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
+    ///
+    /// Only for deployments where a reverse proxy authenticates callers.
+    /// Anyone who can reach the port gets full access to the database.
+    #[arg(
+        long = "dangerously-allow-unauthenticated",
+        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
+    )]
+    dangerously_allow_unauthenticated: bool,
+}
+
+impl std::fmt::Debug for HttpArguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpArguments")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("allowed_origins", &self.allowed_origins)
+            .field("allowed_hosts", &self.allowed_hosts)
+            .field("auth_token", &self.auth_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "dangerously_allow_unauthenticated",
+                &self.dangerously_allow_unauthenticated,
+            )
+            .finish()
+    }
 }
 
 impl TryFrom<&HttpArguments> for HttpConfig {
@@ -77,6 +121,8 @@ impl TryFrom<&HttpArguments> for HttpConfig {
             port: http.port,
             allowed_origins: http.allowed_origins.clone(),
             allowed_hosts: http.allowed_hosts.clone(),
+            auth_token: http.auth_token.clone(),
+            allow_unauthenticated: http.dangerously_allow_unauthenticated,
         };
         candidate.validate()?;
         Ok(candidate)
@@ -157,6 +203,16 @@ impl HttpCommand {
 
         let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
         info!("Listening on http://{bind_addr}/mcp");
+        if http_config.auth_token.is_some() {
+            info!("Bearer token authentication enabled");
+        } else if http_config.is_loopback() {
+            info!("Bearer token authentication disabled (loopback bind)");
+        } else {
+            warn!(
+                "Bearer token authentication DISABLED on non-loopback bind {bind_addr}; \
+                 anyone who can reach this port can access the database"
+            );
+        }
 
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
@@ -176,7 +232,10 @@ impl HttpCommand {
 ///
 /// Wires the configured allowed-origins list into BOTH the rmcp
 /// server-side Origin validator and the tower-http CORS preflight layer
-/// so the two layers cannot disagree by accident.
+/// so the two layers cannot disagree by accident. When an auth token is
+/// configured, every request must pass [`require_bearer`] before it
+/// reaches the MCP service. CORS stays outermost so browser preflights,
+/// which never carry credentials, are answered without authentication.
 fn build_http_router(
     http_config: &HttpConfig,
     server: common::Server,
@@ -193,9 +252,53 @@ fn build_http_router(
             .with_allowed_origins(http_config.allowed_origins.clone()),
     );
 
-    axum::Router::new()
-        .nest_service("/mcp", service)
-        .layer(build_cors_layer(http_config))
+    let mut router = axum::Router::new().nest_service("/mcp", service);
+    if let Some(token) = &http_config.auth_token {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            BearerAuth::new(token),
+            require_bearer,
+        ));
+    }
+    router.layer(build_cors_layer(http_config))
+}
+
+/// SHA-256 digest of the expected bearer token.
+///
+/// Comparing fixed-length digests in constant time hides both the token
+/// contents and its length from timing side channels.
+#[derive(Clone)]
+struct BearerAuth(Arc<[u8]>);
+
+impl BearerAuth {
+    fn new(token: &str) -> Self {
+        Self(Sha256::digest(token.trim().as_bytes()).to_vec().into())
+    }
+
+    fn matches(&self, presented: &str) -> bool {
+        Sha256::digest(presented.as_bytes()).as_slice().ct_eq(&self.0).into()
+    }
+}
+
+/// Rejects requests lacking a valid `Authorization: Bearer <token>` header.
+async fn require_bearer(State(auth): State<BearerAuth>, request: Request, next: Next) -> Response {
+    let presented = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, token)| token.trim());
+
+    if presented.is_some_and(|token| auth.matches(token)) {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, r#"Bearer realm="dbmcp""#)],
+            "Unauthorized",
+        )
+            .into_response()
+    }
 }
 
 /// Builds a CORS layer from the configured allowed origins.
@@ -213,7 +316,7 @@ fn build_cors_layer(http_config: &HttpConfig) -> CorsLayer {
             axum::http::Method::POST,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT])
+        .allow_headers([header::CONTENT_TYPE, header::ACCEPT, header::AUTHORIZATION])
 }
 
 #[cfg(test)]
@@ -221,7 +324,7 @@ mod tests {
     use super::*;
 
     use axum::body::{Body, to_bytes};
-    use axum::http::{HeaderValue, Method, Request, StatusCode, header, request::Builder};
+    use axum::http::{HeaderValue, Method, Request, request::Builder};
     use clap::Parser;
     use dbmcp_config::DatabaseBackend;
     use tower::ServiceExt;
@@ -238,6 +341,8 @@ mod tests {
         unsafe {
             std::env::remove_var("HTTP_ALLOWED_ORIGINS");
             std::env::remove_var("HTTP_ALLOWED_HOSTS");
+            std::env::remove_var("HTTP_AUTH_TOKEN");
+            std::env::remove_var("HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED");
         }
         TestCli::try_parse_from(args).expect("clap parse").http
     }
@@ -250,12 +355,24 @@ mod tests {
         }
     }
 
+    const TEST_TOKEN: &str = "test-token-123";
+
     fn router_with_origins(origins: Vec<String>) -> axum::Router {
+        router_with(origins, None)
+    }
+
+    fn router_with_token() -> axum::Router {
+        router_with(HttpConfig::default_allowed_origins(), Some(TEST_TOKEN.into()))
+    }
+
+    fn router_with(origins: Vec<String>, auth_token: Option<String>) -> axum::Router {
         let http_config = HttpConfig {
             host: HttpConfig::DEFAULT_HOST.into(),
             port: HttpConfig::DEFAULT_PORT,
             allowed_origins: origins,
             allowed_hosts: HttpConfig::default_allowed_hosts(),
+            auth_token,
+            allow_unauthenticated: false,
         };
         let config = Config {
             database: sqlite_memory_db_config(),
@@ -290,6 +407,8 @@ mod tests {
             std::env::remove_var("HTTP_PORT");
             std::env::remove_var("HTTP_ALLOWED_ORIGINS");
             std::env::remove_var("HTTP_ALLOWED_HOSTS");
+            std::env::remove_var("HTTP_AUTH_TOKEN");
+            std::env::remove_var("HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED");
         }
     }
 
@@ -428,5 +547,124 @@ mod tests {
             .expect("build request");
         let (status, _body) = send(router, request).await;
         assert_ne!(status, StatusCode::FORBIDDEN, "empty allowlist must not reject Origin");
+    }
+
+    #[test]
+    fn try_from_rejects_non_loopback_without_token() {
+        let args = parse_http_args(&["--host", "0.0.0.0"]);
+        let errors = HttpConfig::try_from(&args).expect_err("0.0.0.0 without token must be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::UnauthenticatedNonLoopbackBind(_)))
+        );
+    }
+
+    #[test]
+    fn try_from_accepts_non_loopback_with_token() {
+        let args = parse_http_args(&["--host", "0.0.0.0", "--auth-token", TEST_TOKEN]);
+        let config = HttpConfig::try_from(&args).expect("token must allow non-loopback bind");
+        assert_eq!(config.auth_token.as_deref(), Some(TEST_TOKEN));
+    }
+
+    #[test]
+    fn try_from_accepts_non_loopback_with_opt_out() {
+        let args = parse_http_args(&["--host", "0.0.0.0", "--dangerously-allow-unauthenticated"]);
+        let config = HttpConfig::try_from(&args).expect("opt-out must allow non-loopback bind");
+        assert!(config.allow_unauthenticated);
+        assert!(config.auth_token.is_none());
+    }
+
+    #[test]
+    fn http_arguments_debug_redacts_token() {
+        let args = parse_http_args(&["--auth-token", TEST_TOKEN]);
+        let rendered = format!("{args:?}");
+        assert!(!rendered.contains(TEST_TOKEN), "{rendered}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+    }
+
+    async fn assert_unauthorized(request: Request<Body>) {
+        let response = router_with_token().oneshot(request).await.expect("oneshot");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::WWW_AUTHENTICATE),
+            Some(&HeaderValue::from_static(r#"Bearer realm="dbmcp""#))
+        );
+    }
+
+    #[tokio::test]
+    async fn token_missing_header_returns_401() {
+        assert_unauthorized(mcp_post("/mcp/").body(Body::from("{}")).expect("build request")).await;
+    }
+
+    #[tokio::test]
+    async fn token_wrong_value_returns_401() {
+        let request = mcp_post("/mcp/")
+            .header(header::AUTHORIZATION, "Bearer garbage")
+            .body(Body::from("{}"))
+            .expect("build request");
+        assert_unauthorized(request).await;
+    }
+
+    #[tokio::test]
+    async fn token_wrong_scheme_returns_401() {
+        let request = mcp_post("/mcp/")
+            .header(header::AUTHORIZATION, format!("Basic {TEST_TOKEN}"))
+            .body(Body::from("{}"))
+            .expect("build request");
+        assert_unauthorized(request).await;
+    }
+
+    #[tokio::test]
+    async fn token_prefix_of_expected_returns_401() {
+        let request = mcp_post("/mcp/")
+            .header(header::AUTHORIZATION, "Bearer test-token")
+            .body(Body::from("{}"))
+            .expect("build request");
+        assert_unauthorized(request).await;
+    }
+
+    #[tokio::test]
+    async fn token_valid_passes_auth() {
+        for scheme in ["Bearer", "bearer"] {
+            let request = mcp_post("/mcp/")
+                .header(header::AUTHORIZATION, format!("{scheme} {TEST_TOKEN}"))
+                .body(Body::from("{}"))
+                .expect("build request");
+            let (status, body) = send(router_with_token(), request).await;
+            assert_ne!(status, StatusCode::UNAUTHORIZED, "scheme={scheme} body={body}");
+            assert_ne!(status, StatusCode::FORBIDDEN, "scheme={scheme} body={body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn token_valid_still_enforces_host_allowlist() {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/mcp/")
+            .header(header::HOST, "evil.example")
+            .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .body(Body::from("{}"))
+            .expect("build request");
+        let (status, body) = send(router_with_token(), request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body={body}");
+        assert_eq!(body, "Forbidden: Host header is not allowed");
+    }
+
+    #[tokio::test]
+    async fn token_cors_preflight_skips_auth() {
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/mcp/")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "http://localhost")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization, content-type")
+            .body(Body::empty())
+            .expect("build request");
+        let response = router_with_token().oneshot(request).await.expect("oneshot");
+        assert!(response.status().is_success(), "status={}", response.status());
     }
 }

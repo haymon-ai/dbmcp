@@ -147,9 +147,12 @@ docker run --rm \
   # -e PII_ENABLE=true \
   # -e PII_OPERATOR=replace \
   # -e PII_CATEGORIES=financial,government \
+  -e HTTP_AUTH_TOKEN=change-me \
   -p 9001:9001 \
   ghcr.io/haymon-ai/dbmcp http --host 0.0.0.0
 ```
+
+Binding `0.0.0.0` requires `HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`).
 
 **SQLite with a mounted volume**:
 

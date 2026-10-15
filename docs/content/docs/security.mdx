@@ -52,6 +52,15 @@ User-provided values are never interpolated into SQL strings. All values are pas
 
 Database and table names are validated to contain only alphanumeric characters and underscores. Names are then properly quoted using each database backend's native quoting mechanism, preventing injection through crafted identifiers.
 
+## HTTP Transport Authentication
+
+The `http` transport serves the database to any caller that can reach the port, using the server's own database credentials. Set `HTTP_AUTH_TOKEN` (or `--auth-token`) to require `Authorization: Bearer <token>` on every request. Missing or wrong tokens get `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dbmcp"`; tokens are compared in constant time and never logged.
+
+- **Loopback binds** (the default `127.0.0.1`, `::1`, `localhost`) work without a token.
+- **Non-loopback binds** (e.g. `--host 0.0.0.0`) refuse to start without a token. `--dangerously-allow-unauthenticated` overrides this — use it only behind a reverse proxy that authenticates callers.
+
+The `Origin` and `Host` allowlists remain enforced alongside the token. They stop browser-driven DNS-rebinding attacks, but a direct HTTP client can send any header value, so they are **not** authentication.
+
 ## PII Redaction
 
 Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `--pii` / `PII_ENABLE`. Detection can be scoped to a subset of categories via `--pii-categories` / `PII_CATEGORIES`.

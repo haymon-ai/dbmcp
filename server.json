@@ -63,6 +63,11 @@
           "name": "--allowed-hosts",
           "description": "Allowed host names (comma-separated)",
           "isRepeated": true
+        },
+        {
+          "type": "named",
+          "name": "--dangerously-allow-unauthenticated",
+          "description": "Allow a non-loopback bind without HTTP_AUTH_TOKEN (only behind an authenticating reverse proxy)"
         }
       ],
       "environmentVariables": [
@@ -84,6 +89,11 @@
         {
           "name": "HTTP_ALLOWED_HOSTS",
           "description": "Allowed host names (comma-separated)"
+        },
+        {
+          "name": "HTTP_AUTH_TOKEN",
+          "description": "Bearer token required on every request; mandatory for non-loopback binds",
+          "isSecret": true
         }
       ]
     }
