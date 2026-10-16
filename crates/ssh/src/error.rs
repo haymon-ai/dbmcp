@@ -191,6 +191,24 @@ pub enum SshError {
         target: String,
     },
 
+    /// An established SSH session was lost.
+    #[error("SSH session to {target} lost: {cause}")]
+    SessionLost {
+        /// `host:port` of the SSH server.
+        target: String,
+        /// Why the session ended.
+        cause: String,
+    },
+
+    /// A concurrent connect attempt failed while this caller waited for it.
+    ///
+    /// Carries that attempt's message so it is not dialled again.
+    #[error("{cause}")]
+    Unavailable {
+        /// Message of the failed attempt.
+        cause: String,
+    },
+
     /// The SSH server refused to open a `direct-tcpip` channel.
     #[error("failed to open SSH channel to {target}: {source}")]
     ChannelOpen {

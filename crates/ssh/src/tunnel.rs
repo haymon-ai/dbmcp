@@ -4,10 +4,11 @@ use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use dbmcp_config::{SshConfig, StrictHostKeyChecking};
+use russh::client::DisconnectReason;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Preferred, client};
 use tokio::net::{TcpListener, TcpStream};
@@ -21,6 +22,9 @@ use crate::known_hosts::{self, Check, KnownHosts};
 
 /// Deadline for TCP dial, SSH handshake, and authentication together.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Unanswered keepalives tolerated before the session is considered dead.
+const KEEPALIVE_MAX: usize = 3;
 
 /// Pause after a failed `accept` before retrying.
 const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
@@ -41,6 +45,9 @@ impl Tunnel {
     /// kept in memory for every later connect. Authentication tries the
     /// key first, then the password. The host key is verified against
     /// `config.known_hosts`, which is re-read on every connect.
+    ///
+    /// A closed or lost session is reopened on the next accepted socket.
+    /// Concurrent sockets share one connect attempt and its outcome.
     ///
     /// # Errors
     ///
@@ -96,10 +103,14 @@ impl Tunnel {
             key,
             known_hosts: config.known_hosts.clone(),
             strict_host_key_checking: config.strict_host_key_checking,
+            keepalive_interval: config.keepalive_interval,
             db_target: format!("{db_host}:{db_port}"),
             db_host: db_host.to_owned(),
             db_port,
-            session: Mutex::new(None),
+            session: Mutex::default(),
+            failures: AtomicU64::new(0),
+            last_error: LastError::default(),
+            closing: Arc::default(),
         });
 
         info!(
@@ -134,13 +145,60 @@ impl TunnelHandle {
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
+
+    /// Returns the tunnel's most recent failure, shared with observers.
+    ///
+    /// Clone it to read the failure after this handle has moved.
+    #[must_use]
+    pub fn last_error(&self) -> &LastError {
+        &self.inner.last_error
+    }
+}
+
+/// Most recent tunnel failure, shared between the tunnel and its observers.
+///
+/// Set when a connect, authentication, host-key check, or channel open
+/// fails, or an established session is lost; cleared when a connect or
+/// channel open succeeds.
+#[derive(Clone, Debug, Default)]
+pub struct LastError(Arc<std::sync::Mutex<Option<String>>>);
+
+impl LastError {
+    /// Returns the message of the most recent failure, if still unresolved.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding the lock.
+    #[must_use]
+    pub fn get(&self) -> Option<String> {
+        self.0.lock().expect("last error lock is not poisoned").clone()
+    }
+
+    /// Records `error` with its full cause chain and returns the message.
+    fn set(&self, error: &SshError) -> String {
+        let message = error_chain(error);
+        *self.0.lock().expect("last error lock is not poisoned") = Some(message.clone());
+        message
+    }
+
+    /// Marks the tunnel healthy again.
+    fn clear(&self) {
+        *self.0.lock().expect("last error lock is not poisoned") = None;
+    }
 }
 
 impl Drop for TunnelHandle {
     fn drop(&mut self) {
         self.accept_task.abort();
+        // The disconnect below is ours, not a lost session.
+        self.inner.closing.store(true, Ordering::Release);
 
-        let session = self.inner.session.try_lock().ok().and_then(|mut guard| guard.take());
+        let session = self
+            .inner
+            .session
+            .try_lock()
+            .ok()
+            .and_then(|mut slot| slot.session.take());
         if let Some(session) = session
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
@@ -164,10 +222,24 @@ struct Inner {
     key: Option<Arc<PrivateKey>>,
     known_hosts: Option<PathBuf>,
     strict_host_key_checking: StrictHostKeyChecking,
+    keepalive_interval: Duration,
     db_target: String,
     db_host: String,
     db_port: u16,
-    session: Mutex<Option<Arc<client::Handle<Client>>>>,
+    session: Mutex<Slot>,
+    /// Connect attempts that failed; lets waiters detect a failure.
+    failures: AtomicU64,
+    last_error: LastError,
+    /// Set once the handle is dropped, so the final disconnect is not a loss.
+    closing: Arc<AtomicBool>,
+}
+
+/// SSH session state guarded by the single-flight lock.
+#[derive(Default)]
+struct Slot {
+    session: Option<Arc<client::Handle<Client>>>,
+    /// Message of the latest failed connect, shared with waiting callers.
+    failure: String,
 }
 
 impl std::fmt::Debug for Inner {
@@ -179,37 +251,65 @@ impl std::fmt::Debug for Inner {
             .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
             .field("known_hosts", &self.known_hosts)
             .field("strict_host_key_checking", &self.strict_host_key_checking)
+            .field("keepalive_interval", &self.keepalive_interval)
             .field("db_target", &self.db_target)
             .finish_non_exhaustive()
     }
 }
 
 impl Inner {
-    /// Returns the shared SSH session, opening it on first use.
+    /// Returns the shared SSH session, (re)opening it when absent or closed.
+    ///
+    /// Single-flight: callers queue on the session lock. A caller that waited
+    /// while another's connect failed returns [`SshError::Unavailable`]
+    /// instead of dialling again.
     async fn session(&self) -> Result<Arc<client::Handle<Client>>, SshError> {
-        let mut guard = self.session.lock().await;
-        if let Some(session) = guard.as_ref() {
-            return Ok(Arc::clone(session));
+        let seen = self.failures.load(Ordering::Acquire);
+        let mut slot = self.session.lock().await;
+        match slot.session.as_ref() {
+            Some(session) if !session.is_closed() => return Ok(Arc::clone(session)),
+            // The loss itself is logged by `Client::disconnected`.
+            Some(_) => info!("Reconnecting SSH session to {}@{}", self.user, self.ssh_target),
+            None if self.failures.load(Ordering::Acquire) != seen => {
+                return Err(SshError::Unavailable {
+                    cause: slot.failure.clone(),
+                });
+            }
+            None => {}
         }
+        slot.session = None;
 
-        let session = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
-            .await
-            .map_err(|_| SshError::Timeout {
+        let connected = match tokio::time::timeout(CONNECT_TIMEOUT, self.connect()).await {
+            Ok(connected) => connected,
+            Err(_) => Err(SshError::Timeout {
                 target: self.ssh_target.clone(),
                 secs: CONNECT_TIMEOUT.as_secs(),
-            })??;
+            }),
+        };
+        let (session, established) = match connected {
+            Ok(connected) => connected,
+            Err(e) => {
+                slot.failure = self.last_error.set(&e);
+                self.failures.fetch_add(1, Ordering::AcqRel);
+                error!("SSH tunnel unavailable: {}", slot.failure);
+                return Err(e);
+            }
+        };
+        established.store(true, Ordering::Release);
+        self.last_error.clear();
         info!("SSH session established to {}@{}", self.user, self.ssh_target);
 
         let session = Arc::new(session);
-        *guard = Some(Arc::clone(&session));
+        slot.session = Some(Arc::clone(&session));
         Ok(session)
     }
 
     /// Dials the SSH server, verifies its host key, and authenticates.
     ///
     /// Runs under the session lock, which also serialises `accept-new`
-    /// appends to `known_hosts`.
-    async fn connect(&self) -> Result<client::Handle<Client>, SshError> {
+    /// appends to `known_hosts`. Also returns the session's `established`
+    /// flag, which the caller sets once the session is in use.
+    async fn connect(&self) -> Result<(client::Handle<Client>, Arc<AtomicBool>), SshError> {
         let known_hosts = match &self.known_hosts {
             None => KnownHosts::default(),
             Some(path) => match blocking({
@@ -242,16 +342,15 @@ impl Inner {
             )),
             ..Preferred::DEFAULT
         };
-        let config = client::Config {
-            preferred,
-            inactivity_timeout: None,
-            nodelay: true,
-            ..client::Config::default()
-        };
+        let config = client_config(self.keepalive_interval, preferred);
         let key_changed = Arc::new(AtomicBool::new(false));
+        let established = Arc::new(AtomicBool::new(false));
         let client = Client {
             known_hosts,
             key_changed: Arc::clone(&key_changed),
+            established: Arc::clone(&established),
+            closing: Arc::clone(&self.closing),
+            last_error: self.last_error.clone(),
             host,
             ssh_host: self.ssh_host.clone(),
             ssh_port: self.ssh_port,
@@ -280,7 +379,7 @@ impl Inner {
 
         if let Some(key) = &self.key {
             match self.authenticate_key(&mut session, key).await {
-                Ok(true) => return Ok(session),
+                Ok(true) => return Ok((session, established)),
                 Ok(false) => debug!("SSH key rejected for {}@{}", self.user, self.ssh_target),
                 Err(e) if self.password.is_some() => warn!(
                     "SSH key authentication for {}@{} failed: {e}; trying password",
@@ -307,7 +406,7 @@ impl Inner {
                 .await
                 .map_err(auth_error)?;
             if auth.success() {
-                return Ok(session);
+                return Ok((session, established));
             }
         }
 
@@ -334,6 +433,21 @@ impl Inner {
             .authenticate_publickey(self.user.as_str(), PrivateKeyWithHashAlg::new(Arc::clone(key), hash))
             .await?;
         Ok(auth.success())
+    }
+}
+
+/// Builds the russh client config with keepalive and no inactivity timeout.
+///
+/// A zero `keepalive_interval` disables keepalive. The inactivity timeout
+/// stays off so idle pooled connections never tear the session down.
+fn client_config(keepalive_interval: Duration, preferred: Preferred) -> client::Config {
+    client::Config {
+        preferred,
+        keepalive_interval: (!keepalive_interval.is_zero()).then_some(keepalive_interval),
+        keepalive_max: KEEPALIVE_MAX,
+        inactivity_timeout: None,
+        nodelay: true,
+        ..client::Config::default()
     }
 }
 
@@ -364,8 +478,9 @@ async fn accept_loop(listener: TcpListener, inner: Arc<Inner>) {
 async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
     let session = match inner.session().await {
         Ok(session) => session,
+        // `Inner::session` already logged the failed attempt.
         Err(e) => {
-            error!("SSH tunnel unavailable: {e}");
+            debug!("SSH tunnel unavailable for {peer}: {e}");
             return;
         }
     };
@@ -385,10 +500,12 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
                 target: inner.db_target.clone(),
                 source,
             };
-            error!("{e}");
+            let message = inner.last_error.set(&e);
+            error!("{message}");
             return;
         }
     };
+    inner.last_error.clear();
     debug!("SSH channel opened for {peer} to {}", inner.db_target);
 
     let mut stream = channel.into_stream();
@@ -398,6 +515,22 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
         }
         Err(e) => debug!("SSH channel for {peer} closed with error: {e}"),
     }
+}
+
+/// Renders `error` followed by every source its message does not end with.
+///
+/// Many messages already end in `: {source}`; those sources are not repeated.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut rendered = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let suffix = format!(": {cause}");
+        if !rendered.ends_with(&suffix) {
+            rendered.push_str(&suffix);
+        }
+        source = cause.source();
+    }
+    rendered
 }
 
 /// Errors raised during the SSH handshake.
@@ -423,6 +556,11 @@ struct Client {
     ssh_target: String,
     /// Set when a changed host key was accepted under `no`.
     key_changed: Arc<AtomicBool>,
+    /// Set once the session is authenticated and in use.
+    established: Arc<AtomicBool>,
+    /// Set when the tunnel shuts down.
+    closing: Arc<AtomicBool>,
+    last_error: LastError,
     /// `known_hosts` path; empty only when checking is `no`.
     path: PathBuf,
     mode: StrictHostKeyChecking,
@@ -514,6 +652,33 @@ impl client::Handler for Client {
             }),
         };
         result.map(|()| true).map_err(|e| ClientError::HostKey(Box::new(e)))
+    }
+
+    /// Records the loss of an established session in the tunnel's last error.
+    ///
+    /// Sessions that never finished authenticating and the shutdown
+    /// disconnect are ignored.
+    async fn disconnected(&mut self, reason: DisconnectReason<Self::Error>) -> Result<(), Self::Error> {
+        if self.established.load(Ordering::Acquire) && !self.closing.load(Ordering::Acquire) {
+            let cause = match &reason {
+                DisconnectReason::ReceivedDisconnect(info) if info.message.is_empty() => {
+                    format!("disconnected by server ({:?})", info.reason_code)
+                }
+                DisconnectReason::ReceivedDisconnect(info) => {
+                    format!("disconnected by server ({:?}): {}", info.reason_code, info.message)
+                }
+                DisconnectReason::Error(e) => error_chain(e),
+            };
+            let message = self.last_error.set(&SshError::SessionLost {
+                target: self.ssh_target.clone(),
+                cause,
+            });
+            warn!("{message}");
+        }
+        match reason {
+            DisconnectReason::ReceivedDisconnect(_) => Ok(()),
+            DisconnectReason::Error(e) => Err(e),
+        }
     }
 }
 
@@ -618,15 +783,15 @@ mod tests {
 
     /// Starts the SSH test server on an ephemeral loopback port.
     async fn start_ssh_server() -> (SocketAddr, TestServer) {
-        start_ssh_server_with(vec![host_key()]).await
+        start_ssh_server_with(vec![host_key()], Duration::from_millis(10)).await
     }
 
-    /// Starts the SSH test server offering `host_keys`.
-    async fn start_ssh_server_with(host_keys: Vec<PrivateKey>) -> (SocketAddr, TestServer) {
+    /// Starts the SSH test server offering `host_keys`, rejecting auth after `rejection`.
+    async fn start_ssh_server_with(host_keys: Vec<PrivateKey>, rejection: Duration) -> (SocketAddr, TestServer) {
         let config = Arc::new(server::Config {
             keys: host_keys,
             methods: MethodSet::from(&[MethodKind::PublicKey, MethodKind::Password][..]),
-            auth_rejection_time: Duration::from_millis(10),
+            auth_rejection_time: rejection,
             auth_rejection_time_initial: Some(Duration::ZERO),
             ..server::Config::default()
         });
@@ -1060,6 +1225,9 @@ mod tests {
             let client = Client {
                 known_hosts: KnownHosts::parse(text),
                 key_changed: Arc::default(),
+                established: Arc::default(),
+                closing: Arc::default(),
+                last_error: LastError::default(),
                 host: "bastion".into(),
                 ssh_host: "bastion".into(),
                 ssh_port: 22,
@@ -1126,7 +1294,8 @@ mod tests {
     async fn connects_to_host_recorded_only_with_ecdsa_or_rsa() {
         for name in ["openssh_ecdsa", "openssh_rsa"] {
             let recorded = load_secret_key(fixture(name), None).expect("host key");
-            let (ssh, _server) = start_ssh_server_with(vec![host_key(), recorded.clone()]).await;
+            let (ssh, _server) =
+                start_ssh_server_with(vec![host_key(), recorded.clone()], Duration::from_millis(10)).await;
             let dir = tempfile::tempdir().expect("tempdir");
             let path = dir.path().join("known_hosts");
             std::fs::write(&path, known_hosts_line(ssh, recorded.public_key())).expect("seed");
@@ -1170,6 +1339,236 @@ mod tests {
         tunnel.inner.connect().await.expect("recorded host connects");
     }
 
+    /// Accepts TCP connections and never speaks SSH.
+    async fn start_silent_server() -> SocketAddr {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("bind silent");
+        let addr = listener.local_addr().expect("silent addr");
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        addr
+    }
+
+    /// Connects `count` sockets at once and round-trips a byte on each.
+    async fn concurrent_round_trips(addr: SocketAddr, count: usize) -> Vec<std::io::Result<Vec<u8>>> {
+        let mut set = JoinSet::new();
+        for _ in 0..count {
+            set.spawn(round_trip(addr, b"x"));
+        }
+        set.join_all().await
+    }
+
+    #[tokio::test]
+    async fn concurrent_sockets_share_one_connect() {
+        let (ssh, server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let tunnel = Tunnel::start(&ssh_config(ssh), "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+
+        for echoed in concurrent_round_trips(tunnel.local_addr(), 8).await {
+            assert_eq!(echoed.expect("echo"), b"x");
+        }
+        assert_eq!(server.sessions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_sockets_trigger_one_reconnect_after_session_loss() {
+        let (ssh, server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let tunnel = Tunnel::start(&ssh_config(ssh), "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+        round_trip(tunnel.local_addr(), b"x").await.expect("echo");
+
+        let session = tunnel.inner.session().await.expect("live session");
+        session
+            .disconnect(russh::Disconnect::ByApplication, "test", "en")
+            .await
+            .expect("disconnect");
+        for _ in 0..100 {
+            if session.is_closed() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(session.is_closed(), "session must close");
+
+        for echoed in concurrent_round_trips(tunnel.local_addr(), 8).await {
+            assert_eq!(echoed.expect("echo after reconnect"), b"x");
+        }
+        assert_eq!(server.sessions.load(Ordering::SeqCst), 2, "exactly one reconnect");
+    }
+
+    #[tokio::test]
+    async fn concurrent_sockets_share_one_failed_connect() {
+        // A slow rejection keeps every socket queued behind the one attempt.
+        let (ssh, server) = start_ssh_server_with(vec![host_key()], Duration::from_millis(500)).await;
+        let config = SshConfig {
+            password: Some("wrong".into()),
+            ..ssh_config(ssh)
+        };
+        let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
+
+        for read in concurrent_round_trips(tunnel.local_addr(), 8).await {
+            assert!(read.is_err(), "rejected auth must not forward: {read:?}");
+        }
+        assert_eq!(server.sessions.load(Ordering::SeqCst), 1, "one connect for all sockets");
+        assert_eq!(server.attempts(), vec!["password:false"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_deadline_is_enforced() {
+        let silent = start_silent_server().await;
+        let tunnel = Tunnel::start(&ssh_config(silent), "127.0.0.1", 5432)
+            .await
+            .expect("tunnel starts");
+
+        let err = tunnel.inner.session().await.map(drop).expect_err("silent server");
+        assert!(matches!(err, SshError::Timeout { secs: 10, .. }), "{err:?}");
+        assert_eq!(tunnel.last_error().get(), Some(err.to_string()));
+    }
+
+    #[tokio::test]
+    async fn last_error_is_set_on_failure_and_cleared_on_connect() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        let config = verifying_config(ssh, &path, StrictHostKeyChecking::Yes);
+        let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
+        assert_eq!(tunnel.last_error().get(), None, "unset before any connect");
+
+        let err = tunnel.inner.session().await.map(drop).expect_err("unknown host");
+        assert_eq!(tunnel.last_error().get(), Some(err.to_string()));
+
+        std::fs::write(&path, known_hosts_line(ssh, host_key().public_key())).expect("seed");
+        tunnel.inner.session().await.expect("recorded host connects");
+        assert_eq!(tunnel.last_error().get(), None, "cleared by a successful connect");
+    }
+
+    #[tokio::test]
+    async fn last_error_is_set_on_channel_open_failure() {
+        let (ssh, _server) = start_ssh_server().await;
+        let closed = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind")
+            .local_addr()
+            .expect("addr");
+        let tunnel = Tunnel::start(&ssh_config(ssh), "127.0.0.1", closed.port())
+            .await
+            .expect("tunnel starts");
+
+        let read = round_trip(tunnel.local_addr(), b"x").await;
+        assert!(read.is_err(), "unreachable database must not forward: {read:?}");
+        let last = tunnel.last_error().get().expect("channel failure recorded");
+        assert!(last.starts_with("failed to open SSH channel to 127.0.0.1:"), "{last}");
+    }
+
+    /// Waits up to 1s for `condition`.
+    async fn eventually(mut condition: impl FnMut() -> bool) -> bool {
+        for _ in 0..100 {
+            if condition() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        condition()
+    }
+
+    #[tokio::test]
+    async fn lost_session_is_recorded_until_reconnect() {
+        let (ssh, _server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let tunnel = Tunnel::start(&ssh_config(ssh), "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+        let session = tunnel.inner.session().await.expect("live session");
+
+        session
+            .disconnect(russh::Disconnect::ByApplication, "test", "en")
+            .await
+            .expect("disconnect");
+        assert!(
+            eventually(|| tunnel.last_error().get().is_some()).await,
+            "loss must be recorded"
+        );
+        let last = tunnel.last_error().get().expect("loss recorded");
+        assert!(last.starts_with(&format!("SSH session to {ssh} lost: ")), "{last}");
+
+        round_trip(tunnel.local_addr(), b"x")
+            .await
+            .expect("echo after reconnect");
+        assert_eq!(tunnel.last_error().get(), None, "cleared by the reconnect");
+    }
+
+    #[tokio::test]
+    async fn failed_authentication_is_not_reported_as_lost_session() {
+        let (ssh, _server) = start_ssh_server().await;
+        let config = SshConfig {
+            password: Some("wrong".into()),
+            ..ssh_config(ssh)
+        };
+        let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
+
+        let err = tunnel.inner.session().await.map(drop).expect_err("rejected");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(tunnel.last_error().get(), Some(err.to_string()));
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_not_reported_as_lost_session() {
+        let (ssh, _server) = start_ssh_server().await;
+        let tunnel = Tunnel::start(&ssh_config(ssh), "127.0.0.1", 5432)
+            .await
+            .expect("tunnel starts");
+        let session = tunnel.inner.session().await.expect("live session");
+        let last_error = tunnel.last_error().clone();
+
+        drop(tunnel);
+        assert!(eventually(|| session.is_closed()).await, "session must close");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(last_error.get(), None);
+    }
+
+    #[test]
+    fn error_chain_appends_only_sources_missing_from_the_message() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("{message}")]
+        struct Layer {
+            message: &'static str,
+            #[source]
+            source: Option<Box<Layer>>,
+        }
+        let leaf = |message| Layer { message, source: None };
+
+        let included = Layer {
+            message: "connect failed: refused",
+            source: Some(Box::new(leaf("refused"))),
+        };
+        assert_eq!(error_chain(&included), "connect failed: refused");
+
+        let omitted = Layer {
+            message: "SSH connection to host timed out",
+            source: Some(Box::new(leaf("timed out"))),
+        };
+        assert_eq!(error_chain(&omitted), "SSH connection to host timed out: timed out");
+    }
+
+    #[test]
+    fn client_config_applies_keepalive() {
+        let config = client_config(Duration::from_secs(30), Preferred::DEFAULT);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(30)));
+        assert_eq!(config.keepalive_max, 3);
+        assert_eq!(config.inactivity_timeout, None);
+
+        let disabled = client_config(Duration::ZERO, Preferred::DEFAULT);
+        assert_eq!(disabled.keepalive_interval, None, "0 disables keepalive");
+        assert_eq!(disabled.inactivity_timeout, None);
+    }
+
     #[test]
     fn inner_debug_redacts_password() {
         let inner = Inner {
@@ -1181,10 +1580,14 @@ mod tests {
             key: None,
             known_hosts: None,
             strict_host_key_checking: StrictHostKeyChecking::No,
+            keepalive_interval: Duration::ZERO,
             db_target: "db:5432".into(),
             db_host: "db".into(),
             db_port: 5432,
-            session: Mutex::new(None),
+            session: Mutex::default(),
+            failures: AtomicU64::new(0),
+            last_error: LastError::default(),
+            closing: Arc::default(),
         };
         let debug = format!("{inner:?}");
         assert!(!debug.contains("hunter2"), "{debug}");

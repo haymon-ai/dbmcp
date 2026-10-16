@@ -124,6 +124,7 @@ jobs:
           DB_SSH_USER: dbmcp
           DB_SSH_PASSWORD: dbmcp
           DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   mysql:
     name: MySQL
@@ -174,9 +175,12 @@ jobs:
           DB_PORT: 3306
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
+      - name: Export MySQL CA certificate
+        run: docker exec ${{ job.services.mysql.id }} cat /var/lib/mysql/ca.pem > "$RUNNER_TEMP/mysql_ca.pem"
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
+          TLS_TEST_CA: ${{ runner.temp }}/mysql_ca.pem
           DB_BACKEND: mysql
           DB_HOST: mysql
           DB_PORT: 3306
@@ -185,6 +189,7 @@ jobs:
           DB_SSH_USER: dbmcp
           DB_SSH_PASSWORD: dbmcp
           DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   postgres:
     name: PostgreSQL
@@ -246,6 +251,7 @@ jobs:
           DB_SSH_USER: dbmcp
           DB_SSH_PASSWORD: dbmcp
           DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   sqlite:
     name: SQLite
