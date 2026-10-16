@@ -962,6 +962,7 @@ dependencies = [
  "dbmcp-mysql",
  "dbmcp-postgres",
  "dbmcp-server",
+ "dbmcp-sql",
  "dbmcp-sqlite",
  "dbmcp-ssh",
  "indexmap",

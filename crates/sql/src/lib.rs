@@ -14,5 +14,5 @@ pub mod timeout;
 pub mod validation;
 
 pub use connection::Connection;
-pub use error::SqlError;
+pub use error::{SqlError, is_connection_error};
 pub use validation::StatementKind;

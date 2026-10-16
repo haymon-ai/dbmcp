@@ -228,14 +228,25 @@ run_entry() {
                     test_exit=1
                     continue
                 fi
+                # MySQL generates a CA on first boot; its TLS tests skip without one.
+                local tls_ca
+                local tls_env=()
+                tls_ca=$(mktemp)
+                if docker compose -f "$COMPOSE_FILE" exec -T "$service" \
+                    cat /var/lib/mysql/ca.pem > "$tls_ca" 2>/dev/null && [ -s "$tls_ca" ]; then
+                    tls_env=("TLS_TEST_CA=$tls_ca")
+                fi
                 # DB_HOST is the compose service name: only sshd can resolve it.
                 test_output=$(
-                    DB_BACKEND="$db_type" DB_HOST="$service" DB_PORT="$container_port" \
+                    env DB_BACKEND="$db_type" DB_HOST="$service" DB_PORT="$container_port" \
                     DB_SSH_HOST=127.0.0.1 DB_SSH_PORT="$SSHD_PORT" \
                     DB_SSH_USER=dbmcp DB_SSH_PASSWORD=dbmcp \
                     DB_SSH_STRICT_HOST_KEY_CHECKING=no \
+                    SSHD_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q sshd)" \
+                    ${tls_env[@]+"${tls_env[@]}"} \
                     cargo test --test "$bin" -- --test-threads=1 2>&1
                 ) || test_exit=$?
+                rm -f "$tls_ca"
             else
                 test_output=$(
                     DB_HOST=127.0.0.1 DB_PORT="$host_port" \
