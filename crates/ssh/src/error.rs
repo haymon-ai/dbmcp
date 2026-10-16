@@ -1,5 +1,7 @@
 //! Errors raised while starting or running the SSH tunnel.
 
+use std::path::PathBuf;
+
 /// Errors produced by the SSH tunnel.
 ///
 /// Messages never embed passwords, passphrases, or key material.
@@ -9,9 +11,60 @@ pub enum SshError {
     #[error("{0} is not yet implemented")]
     NotImplemented(String),
 
-    /// No password is configured for the SSH user.
-    #[error("DB_SSH_PASSWORD is required for SSH authentication")]
-    MissingPassword,
+    /// Neither a password nor a private key is configured.
+    #[error("DB_SSH_PASSWORD or DB_SSH_KEY is required for SSH authentication")]
+    MissingCredentials,
+
+    /// The private key file could not be read.
+    #[error("failed to read SSH key {}: {source}", path.display())]
+    KeyRead {
+        /// Path of the key file.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The unencrypted private key could not be parsed.
+    #[error("failed to parse SSH key {}: {source}", path.display())]
+    KeyParse {
+        /// Path of the key file.
+        path: PathBuf,
+        /// Underlying key error.
+        #[source]
+        source: russh::keys::Error,
+    },
+
+    /// The private key is encrypted but no passphrase is configured.
+    #[error("SSH key {} is encrypted; set DB_SSH_KEY_PASSPHRASE", path.display())]
+    KeyEncrypted {
+        /// Path of the key file.
+        path: PathBuf,
+    },
+
+    /// The private key uses encryption that cannot be decrypted.
+    #[error(
+        "SSH key {} uses an unsupported encryption format; re-encrypt it with `ssh-keygen -p -f {}`",
+        path.display(),
+        path.display()
+    )]
+    KeyUnsupportedEncryption {
+        /// Path of the key file.
+        path: PathBuf,
+    },
+
+    /// Decrypting the private key with the passphrase failed.
+    ///
+    /// The source is kept for debugging; the message is the same for every
+    /// key format so a wrong passphrase is recognisable.
+    #[error("could not decrypt SSH key {} (wrong passphrase or unsupported format)", path.display())]
+    KeyDecrypt {
+        /// Path of the key file.
+        path: PathBuf,
+        /// Underlying key error.
+        #[source]
+        source: russh::keys::Error,
+    },
 
     /// The local tunnel listener could not be bound.
     #[error("failed to bind SSH tunnel listener on {addr}: {source}")]

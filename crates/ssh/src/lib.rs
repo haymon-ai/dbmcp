@@ -7,6 +7,7 @@
 //! unaware of SSH.
 
 mod error;
+mod key;
 mod tunnel;
 
 pub use error::SshError;

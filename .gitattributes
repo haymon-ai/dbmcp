@@ -1,0 +1,3 @@
+# Key fixtures must keep LF endings on Windows checkouts.
+crates/ssh/testdata/** -text
+tests/ssh/** -text
