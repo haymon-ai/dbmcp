@@ -15,6 +15,8 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 
+use crate::tool::ErrorContext;
+
 /// Hardcoded product name matching the root binary crate.
 const NAME: &str = "dbmcp";
 
@@ -38,6 +40,7 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 pub struct Server {
     handler: Arc<dyn DynHandler>,
     shutdown: Arc<dyn Shutdown>,
+    error_context: Option<ErrorContext>,
 }
 
 /// Boxed `Send` future returned by [`DynHandler`] request methods.
@@ -124,7 +127,15 @@ impl Server {
         Self {
             handler: handler.clone(),
             shutdown: handler,
+            error_context: None,
         }
+    }
+
+    /// Appends `context` to every tool error message before redaction.
+    #[must_use]
+    pub fn with_error_context(mut self, context: ErrorContext) -> Self {
+        self.error_context = Some(context);
+        self
     }
 
     /// Closes every live connection pool. Idempotent.
@@ -141,8 +152,11 @@ impl ServerHandler for Server {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
+        mut context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if let Some(error_context) = &self.error_context {
+            context.extensions.insert(error_context.clone());
+        }
         self.handler.call_tool(request, context).await
     }
 

@@ -8,6 +8,11 @@
 //! Host-key tests point `DB_SSH_KNOWN_HOSTS` at a temporary file; the H4
 //! tests seed it with `ssh-keyscan`, which must be on `PATH`.
 //!
+//! The reconnect test restarts the sshd container named by `SSHD_CONTAINER`
+//! with `docker restart`. The DB TLS tests run only when `TLS_TEST_CA` names
+//! the database's CA certificate (`mysql:9` generates one on first boot) and
+//! are skipped otherwise.
+//!
 //! ```bash
 //! ./tests/run.sh --filter mysql      # MySQL/MariaDB via sshd
 //! ./tests/run.sh --filter postgres   # PostgreSQL via sshd
@@ -15,6 +20,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
@@ -23,6 +29,9 @@ use serde_json::{Value, json};
 
 /// Passphrase of the encrypted fixture key.
 const PASSPHRASE: &str = "secret";
+
+/// Overall deadline for queries to recover after an sshd restart.
+const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Returns the path of a fixture key in `crates/ssh/testdata`.
 fn key(name: &str) -> String {
@@ -271,4 +280,100 @@ async fn host_recorded_only_as_ecdsa_or_rsa_connects() {
 
         assert_query_succeeds(verifying_command(&known_hosts, "yes")).await;
     }
+}
+
+#[tokio::test]
+async fn tool_error_names_ssh_failure() {
+    let mut command = command();
+    command
+        .env("DB_SSH_PASSWORD", "wrong")
+        .env_remove("DB_SSH_KEY")
+        .env("DB_CONNECTION_TIMEOUT", "5");
+    let client = connect(command).await;
+
+    let result = call_read_query(&client, "SELECT 1").await;
+    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
+    let text = &result.content[0].as_text().expect("text content").text;
+    let (host, port) = ssh_endpoint();
+    assert!(
+        text.ends_with(&format!(
+            "(SSH tunnel: SSH authentication failed for dbmcp@{host}:{port})"
+        )),
+        "{text}"
+    );
+
+    client.cancel().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn queries_recover_after_sshd_restart() {
+    let container = std::env::var("SSHD_CONTAINER").expect("SSHD_CONTAINER must be set (run via ./tests/run.sh)");
+    let mut command = command();
+    command.env("DB_CONNECTION_TIMEOUT", "5");
+    let client = connect(command).await;
+    read_query(&client, "SELECT name FROM users WHERE id = 1").await;
+
+    let status = tokio::process::Command::new("docker")
+        .args(["restart", &container])
+        .status()
+        .await
+        .expect("run docker restart");
+    assert!(status.success(), "docker restart {container} failed");
+
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    loop {
+        let result = call_read_query(&client, "SELECT name FROM users WHERE id = 1").await;
+        if result.is_error != Some(true) {
+            let rows = &result.structured_content.expect("structured content")["rows"];
+            assert_eq!(rows, &json!([{ "name": "Alice Johnson" }]));
+            break;
+        }
+        assert!(Instant::now() < deadline, "queries did not recover: {result:?}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    client.cancel().await.expect("shutdown");
+}
+
+/// Builds `dbmcp stdio` requiring DB TLS verified against `ca`.
+fn tls_command(ca: &str) -> tokio::process::Command {
+    let mut command = command();
+    command
+        .env("DB_SSL", "true")
+        .env("DB_SSL_VERIFY_CERT", "true")
+        .env("DB_SSL_CA", ca)
+        .env("DB_CONNECTION_TIMEOUT", "5");
+    command
+}
+
+/// Returns `TLS_TEST_CA`, or `None` when the database has no test CA.
+fn tls_test_ca() -> Option<String> {
+    let ca = std::env::var("TLS_TEST_CA").ok();
+    if ca.is_none() {
+        eprintln!("skipped: TLS_TEST_CA is not set");
+    }
+    ca
+}
+
+/// `DB_SSL_VERIFY_CERT` ignores the hostname, so `127.0.0.1` verifies.
+#[tokio::test]
+async fn tls_database_verifies_through_ssh_tunnel() {
+    let Some(ca) = tls_test_ca() else { return };
+    assert_query_succeeds(tls_command(&ca)).await;
+}
+
+#[tokio::test]
+async fn tls_database_with_wrong_ca_fails_through_ssh_tunnel() {
+    if tls_test_ca().is_none() {
+        return;
+    }
+    let wrong = format!("{}/tests/tls/wrong_ca.pem", env!("CARGO_MANIFEST_DIR"));
+    let client = connect(tls_command(&wrong)).await;
+
+    let result = call_read_query(&client, "SELECT 1").await;
+    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
+    let text = &result.content[0].as_text().expect("text content").text;
+    assert!(text.contains("invalid peer certificate"), "{text}");
+
+    client.cancel().await.expect("shutdown");
 }

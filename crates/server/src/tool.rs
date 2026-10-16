@@ -9,14 +9,16 @@
 //! the client as a tool result with `isError: true`, not a JSON-RPC error. The
 //! caller sees the message (e.g. a database error) and can self-correct. The
 //! message first passes through [`ToolHandler::redact_error`], so a backend can
-//! apply PII redaction like it does to any other tool output.
+//! apply PII redaction like it does to any other tool output. When the request
+//! carries an [`ErrorContext`], its text is appended before redaction.
 
 use std::pin::Pin;
+use std::sync::Arc;
 
 use rmcp::handler::server::common::schema_for_empty_input;
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase, ToolRouter};
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{CallToolResult, ContentBlock, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, Extensions, Tool};
 
 /// Backend handler hooks the tool registry calls at tool-call time.
 pub trait ToolHandler: Send + Sync + 'static {
@@ -25,6 +27,32 @@ pub trait ToolHandler: Send + Sync + 'static {
     /// Backends use this to apply PII redaction to error text. The returned
     /// string is sent verbatim, so implementations must fail closed.
     fn redact_error(&self, message: &str) -> String;
+}
+
+/// Supplies extra context appended to every tool error message.
+///
+/// [`crate::Server`] places it in each request's extensions. When the
+/// callback returns `Some(context)`, the error becomes `<message> (<context>)`
+/// before [`ToolHandler::redact_error`] runs, so the context is redacted too.
+#[derive(Clone)]
+pub struct ErrorContext(Arc<dyn Fn() -> Option<String> + Send + Sync>);
+
+impl ErrorContext {
+    /// Creates a context from a callback evaluated on every tool error.
+    pub fn new(context: impl Fn() -> Option<String> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(context))
+    }
+
+    /// Appends ` (<context>)` to `message` when context is available.
+    fn annotate(&self, message: &str) -> Option<String> {
+        (self.0)().map(|context| format!("{message} ({context})"))
+    }
+}
+
+impl std::fmt::Debug for ErrorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ErrorContext").finish_non_exhaustive()
+    }
 }
 
 /// Declarative registration entry for one MCP tool.
@@ -91,20 +119,32 @@ type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<Json<T>, CallToolRes
 fn invoke<H: ToolHandler, T: AsyncTool<H>>(
     handler: &H,
     Parameters(params): Parameters<T::Parameter>,
+    extensions: Extensions,
 ) -> ToolFuture<'_, T::Output> {
-    run::<H, T>(handler, params)
+    run::<H, T>(handler, params, extensions)
 }
 
 /// Runs argument-less tool `T` with its default parameter value.
-fn invoke_without_params<H: ToolHandler, T: AsyncTool<H>>(handler: &H) -> ToolFuture<'_, T::Output> {
-    run::<H, T>(handler, T::Parameter::default())
+fn invoke_without_params<H: ToolHandler, T: AsyncTool<H>>(
+    handler: &H,
+    extensions: Extensions,
+) -> ToolFuture<'_, T::Output> {
+    run::<H, T>(handler, T::Parameter::default(), extensions)
 }
 
 /// Runs tool `T`, mapping its error to a [`CallToolResult`] with `isError: true`.
-fn run<H: ToolHandler, T: AsyncTool<H>>(handler: &H, params: T::Parameter) -> ToolFuture<'_, T::Output> {
+fn run<H: ToolHandler, T: AsyncTool<H>>(
+    handler: &H,
+    params: T::Parameter,
+    extensions: Extensions,
+) -> ToolFuture<'_, T::Output> {
     Box::pin(async move {
         T::invoke(handler, params).await.map(Json).map_err(|error| {
-            let message = handler.redact_error(&error.into().message);
+            let message = error.into().message;
+            let annotated = extensions
+                .get::<ErrorContext>()
+                .and_then(|context| context.annotate(&message));
+            let message = handler.redact_error(annotated.as_deref().unwrap_or(&message));
             CallToolResult::error(vec![ContentBlock::text(message)])
         })
     })
@@ -132,7 +172,6 @@ impl<H: ToolHandler> ToolRouterExt<H> for ToolRouter<H> {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-    use std::sync::Arc;
 
     use rmcp::ErrorData;
     use rmcp::handler::server::tool::IntoCallToolResult;
@@ -237,10 +276,17 @@ mod tests {
         result.content[0].as_text().expect("text content").text.clone()
     }
 
+    /// Returns request extensions carrying `context`, as [`crate::Server`] does.
+    fn extensions_with(context: ErrorContext) -> Extensions {
+        let mut extensions = Extensions::new();
+        extensions.insert(context);
+        extensions
+    }
+
     #[tokio::test]
     async fn tool_error_becomes_tool_result_with_is_error() {
         let handler = Handler { redact: false };
-        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
+        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default()), Extensions::new()).await;
 
         assert_eq!(error_text(output), ERROR);
     }
@@ -248,15 +294,50 @@ mod tests {
     #[tokio::test]
     async fn tool_error_passes_through_redact_error_hook() {
         let handler = Handler { redact: true };
-        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
+        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default()), Extensions::new()).await;
 
         assert_eq!(error_text(output), REDACTED);
     }
 
     #[tokio::test]
+    async fn error_context_is_appended_before_redaction() {
+        let handler = Handler { redact: true };
+        let context = ErrorContext::new(|| Some("SSH tunnel: auth failed for jane@doe.com".into()));
+        let output =
+            invoke::<Handler, FailingTool>(&handler, Parameters(Request::default()), extensions_with(context)).await;
+
+        assert_eq!(
+            error_text(output),
+            format!("{REDACTED} (SSH tunnel: auth failed for <EMAIL_ADDRESS>)")
+        );
+    }
+
+    #[tokio::test]
+    async fn error_context_without_cause_leaves_message_unchanged() {
+        let handler = Handler { redact: false };
+        let output = invoke::<Handler, FailingTool>(
+            &handler,
+            Parameters(Request::default()),
+            extensions_with(ErrorContext::new(|| None)),
+        )
+        .await;
+
+        assert_eq!(error_text(output), ERROR);
+    }
+
+    #[tokio::test]
+    async fn error_context_applies_to_tools_without_input() {
+        let handler = Handler { redact: false };
+        let context = ErrorContext::new(|| Some("SSH tunnel: down".into()));
+        let output = invoke_without_params::<Handler, NoInputTool>(&handler, extensions_with(context)).await;
+
+        assert_eq!(error_text(output), format!("{ERROR} (SSH tunnel: down)"));
+    }
+
+    #[tokio::test]
     async fn no_input_tool_runs_with_default_parameter() {
         let handler = Handler { redact: false };
-        let output = invoke_without_params::<Handler, NoInputTool>(&handler).await;
+        let output = invoke_without_params::<Handler, NoInputTool>(&handler, Extensions::new()).await;
 
         assert_eq!(error_text(output), ERROR);
     }

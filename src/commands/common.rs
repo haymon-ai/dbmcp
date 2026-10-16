@@ -22,6 +22,7 @@ use dbmcp_sqlite::SqliteHandler;
 use dbmcp_ssh::{Tunnel, TunnelHandle};
 use tracing::info;
 
+use dbmcp_server::ErrorContext;
 pub(crate) use dbmcp_server::Server;
 
 /// Shared database connection flags embedded in transport subcommands.
@@ -402,7 +403,8 @@ impl SshArguments {
 /// adapter at its loopback address. The returned [`TunnelHandle`] must
 /// outlive the [`Server`] so pool shutdown traffic reaches the database;
 /// binding the tuple in order (`let (tunnel, server)`) drops the server
-/// first on every return path.
+/// first on every return path. While the tunnel reports a failure, every
+/// tool error gains a `(SSH tunnel: <cause>)` suffix before PII redaction.
 ///
 /// # Errors
 ///
@@ -425,7 +427,11 @@ pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandl
     let mut tunnelled = config.clone();
     tunnelled.database.host = local_addr.ip().to_string();
     tunnelled.database.port = local_addr.port();
-    Ok((Some(tunnel), build_server(&tunnelled)?))
+    let last_error = tunnel.last_error().clone();
+    let server = build_server(&tunnelled)?.with_error_context(ErrorContext::new(move || {
+        last_error.get().map(|cause| format!("SSH tunnel: {cause}"))
+    }));
+    Ok((Some(tunnel), server))
 }
 
 /// Builds the backend adapter selected by `config.database.backend`.

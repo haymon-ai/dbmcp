@@ -12,4 +12,4 @@ mod known_hosts;
 mod tunnel;
 
 pub use error::SshError;
-pub use tunnel::{Tunnel, TunnelHandle};
+pub use tunnel::{LastError, Tunnel, TunnelHandle};
