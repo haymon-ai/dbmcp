@@ -60,6 +60,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --lib --bins
 
+  test-windows:
+    name: Unit Tests (Windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --lib --bins
+
   mariadb:
     name: MariaDB
     runs-on: ubuntu-24.04
