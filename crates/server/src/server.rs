@@ -146,12 +146,20 @@ impl ServerHandler for Server {
         self.handler.call_tool(request, context).await
     }
 
+    /// Lists the backend's tools without cache hints.
+    ///
+    /// rmcp's `tool_handler` default advertises `cacheScope: public` for a
+    /// tool list that depends on server config. Clearing the hints lets rmcp
+    /// fill the conservative `ttlMs: 0` / `cacheScope: private` instead.
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        self.handler.list_tools(request, context).await
+        let mut result = self.handler.list_tools(request, context).await?;
+        result.ttl_ms = None;
+        result.cache_scope = None;
+        Ok(result)
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {

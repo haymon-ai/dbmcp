@@ -60,8 +60,7 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorData`] with code `-32602` if `cursor` is malformed,
-    /// or an internal-error [`ErrorData`] if the underlying query fails.
+    /// Returns an internal-error [`ErrorData`] if the underlying query fails.
     pub async fn list_views(
         &self,
         ListViewsRequest { cursor }: ListViewsRequest,

@@ -6,16 +6,11 @@
 //! implementations call.
 
 use dbmcp_config::{Config, DatabaseConfig};
-use dbmcp_pii::Redactor;
-use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolRouterExt, ToolSpec, server_info};
-use rmcp::RoleServer;
+use dbmcp_pii::{MaybeRedact, Redactor};
+use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::tool::ToolCallContext;
-use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams, ServerConfig, Tool,
-};
-use rmcp::service::RequestContext;
-use rmcp::{ErrorData, ServerHandler};
+use rmcp::model::ServerConfig;
+use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::MysqlConnection;
 use crate::tools::{
@@ -120,12 +115,19 @@ impl From<MysqlHandler> for Server {
     }
 }
 
+impl ToolHandler for MysqlHandler {
+    fn redact_error(&self, message: &str) -> String {
+        self.redactor.redact_message(message)
+    }
+}
+
 impl Shutdown for MysqlHandler {
     fn shutdown(&self) -> ShutdownFuture<'_> {
         Box::pin(async move { self.connection.shutdown().await })
     }
 }
 
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for MysqlHandler {
     fn get_info(&self) -> ServerConfig {
         let mut info = server_info();
@@ -140,27 +142,6 @@ impl ServerHandler for MysqlHandler {
             .into(),
         );
         info
-    }
-
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResponse, ErrorData> {
-        let tcc = ToolCallContext::new(self, request, context);
-        self.tool_router.call(tcc).await
-    }
-
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
-    }
-
-    fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.tool_router.get(name).cloned()
     }
 }
 

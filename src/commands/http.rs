@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use clap::{Args, Parser};
 use dbmcp_config::{Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -243,7 +243,7 @@ fn build_http_router(
 ) -> axum::Router {
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
-        Arc::new(LocalSessionManager::default()),
+        Arc::new(NeverSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_legacy_session_mode(false)
             .with_json_response(true)
