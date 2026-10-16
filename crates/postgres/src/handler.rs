@@ -176,6 +176,7 @@ mod tests {
             },
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
+            ssh: None,
         })
         .expect("handler builds in test")
     }
@@ -190,6 +191,7 @@ mod tests {
             },
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
+            ssh: None,
         })
         .expect("handler builds in test")
     }
@@ -203,6 +205,7 @@ mod tests {
             },
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
+            ssh: None,
         })
         .expect("handler builds in test");
         assert_eq!(handler.connection.default_database_name(), "mydb");

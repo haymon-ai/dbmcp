@@ -5,11 +5,12 @@
 //! `Error` type for every per-section `TryFrom<&FooArguments> for FooConfig`
 //! impl in the binary crate, and as the return type of every
 //! [`DatabaseConfig::validate`] / [`HttpConfig::validate`] /
-//! [`PiiConfig::validate`] call.
+//! [`PiiConfig::validate`] / [`SshConfig::validate`] call.
 //!
 //! [`DatabaseConfig::validate`]: crate::DatabaseConfig::validate
 //! [`HttpConfig::validate`]: crate::HttpConfig::validate
 //! [`PiiConfig::validate`]: crate::PiiConfig::validate
+//! [`SshConfig::validate`]: crate::SshConfig::validate
 
 /// Errors produced by the `Arguments`-to-`Config` conversions.
 ///
@@ -21,9 +22,9 @@ pub enum ConfigError {
     #[error("DB_NAME (file path) is required for SQLite")]
     MissingSqliteDbName,
 
-    /// SSL certificate file not found.
+    /// A configured file (SSL certificate, SSH key) was not found.
     #[error("{0} file not found: {1}")]
-    SslCertNotFound(String, String),
+    FileNotFound(String, String),
 
     /// HTTP bind host is empty or whitespace.
     #[error("HTTP_HOST must not be empty")]
@@ -54,6 +55,34 @@ pub enum ConfigError {
     /// `--pii-ner` was enabled without a `--pii-ner-model` path.
     #[error("PII_NER_MODEL (model directory) is required when PII_NER_ENABLE is set")]
     PiiNerModelMissing,
+
+    /// SSH tunnelling was requested for the `SQLite` backend.
+    #[error("DB_SSH_HOST is not supported with the sqlite backend")]
+    SshSqliteUnsupported,
+
+    /// Other `DB_SSH_*` options were set without `DB_SSH_HOST`.
+    #[error("DB_SSH_HOST is required when other DB_SSH_* options are set")]
+    MissingSshHost,
+
+    /// `DB_SSH_HOST` was set to an empty string.
+    #[error("DB_SSH_HOST must not be empty")]
+    EmptySshHost,
+
+    /// `DB_SSH_HOST` was set without `DB_SSH_USER`.
+    #[error("DB_SSH_USER is required when DB_SSH_HOST is set")]
+    MissingSshUser,
+
+    /// `DB_SSH_HOST` was set without a password or key.
+    #[error("DB_SSH_PASSWORD or DB_SSH_KEY is required when DB_SSH_HOST is set")]
+    MissingSshAuth,
+
+    /// `DB_SSH_KEY_PASSPHRASE` was set without `DB_SSH_KEY`.
+    #[error("DB_SSH_KEY_PASSPHRASE requires DB_SSH_KEY")]
+    SshKeyPassphraseWithoutKey,
+
+    /// `known_hosts` could not be resolved and host-key checking is on.
+    #[error("DB_SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    MissingSshKnownHosts,
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.
@@ -126,7 +155,7 @@ mod tests {
     }
 
     fn missing_ca() -> ConfigError {
-        ConfigError::SslCertNotFound("DB_SSL_CA".into(), "/nope/ca.pem".into())
+        ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope/ca.pem".into())
     }
 
     #[test]
@@ -139,7 +168,7 @@ mod tests {
         let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
         assert_eq!(errors.len(), 2);
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(errors[1], ConfigError::SslCertNotFound(_, _)));
+        assert!(matches!(errors[1], ConfigError::FileNotFound(_, _)));
     }
 
     #[test]
@@ -172,6 +201,6 @@ mod tests {
         let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
         let collected: Vec<ConfigError> = errors.into_iter().collect();
         assert!(matches!(collected[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(collected[1], ConfigError::SslCertNotFound(_, _)));
+        assert!(matches!(collected[1], ConfigError::FileNotFound(_, _)));
     }
 }

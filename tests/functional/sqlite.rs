@@ -32,6 +32,7 @@ fn handler(read_only: bool) -> SqliteHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -45,6 +46,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -177,6 +179,7 @@ async fn test_query_timeout_fast_query_succeeds() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -198,6 +201,7 @@ async fn test_query_timeout_disabled_with_none() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -1918,6 +1922,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -1931,6 +1936,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
             operator,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }

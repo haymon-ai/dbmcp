@@ -38,6 +38,7 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -48,6 +49,7 @@ fn handler(read_only: bool) -> PostgresHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -399,6 +401,7 @@ async fn test_query_timeout_cancels_slow_query() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
 
@@ -431,6 +434,7 @@ async fn test_query_timeout_disabled_with_none() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
 
@@ -3683,6 +3687,7 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -3696,6 +3701,7 @@ fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
             operator,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }

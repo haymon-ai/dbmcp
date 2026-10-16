@@ -49,7 +49,7 @@ mod tests {
     fn config_error_display_bullets_each_error() {
         let errors = ConfigErrors::from_vec(vec![
             ConfigError::MissingSqliteDbName,
-            ConfigError::SslCertNotFound("DB_SSL_CA".into(), "/nope".into()),
+            ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope".into()),
         ])
         .expect("non-empty");
         let error = Error::Config(errors);
