@@ -1,5 +1,10 @@
 //! SQL-layer error types for validation, timeout, and query failures.
 
+use rmcp::model::ErrorData;
+
+/// `ErrorData::data` marker identifying [`SqlError::Connection`] failures.
+const CONNECTION_KIND: &str = "connection";
+
 /// Errors produced by SQL validation, identifier checking, and query execution.
 #[derive(Debug, thiserror::Error)]
 pub enum SqlError {
@@ -40,13 +45,48 @@ pub enum SqlError {
     #[error("Database error: {0}")]
     Query(String),
 
+    /// The database could not be reached (I/O, TLS, protocol, or pool failure).
+    ///
+    /// Renders like [`SqlError::Query`]; only the classification differs.
+    #[error("Database error: {0}")]
+    Connection(String),
+
     /// Table not found in database.
     #[error("Table not found: {0}")]
     TableNotFound(String),
 }
 
-impl From<SqlError> for rmcp::model::ErrorData {
+impl From<SqlError> for ErrorData {
+    /// Converts to an internal error; connection failures carry a `kind` marker.
     fn from(e: SqlError) -> Self {
-        Self::internal_error(e.to_string(), None)
+        let data = matches!(e, SqlError::Connection(_)).then(|| serde_json::json!({ "kind": CONNECTION_KIND }));
+        Self::internal_error(e.to_string(), data)
+    }
+}
+
+/// Returns whether `error` came from a [`SqlError::Connection`].
+#[must_use]
+pub fn is_connection_error(error: &ErrorData) -> bool {
+    error
+        .data
+        .as_ref()
+        .and_then(|data| data.get("kind"))
+        .is_some_and(|kind| kind == CONNECTION_KIND)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_connection_errors_are_marked() {
+        let connection = ErrorData::from(SqlError::Connection("reset".into()));
+        assert_eq!(connection.message, "Database error: reset");
+        assert!(is_connection_error(&connection));
+
+        for error in [SqlError::Query("syntax".into()), SqlError::ReadOnlyViolation] {
+            assert!(!is_connection_error(&ErrorData::from(error)));
+        }
+        assert!(!is_connection_error(&ErrorData::internal_error("other", None)));
     }
 }

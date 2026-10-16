@@ -26,8 +26,10 @@ use crate::SqlError;
 ///
 /// * [`SqlError::QueryTimeout`] — the query exceeded the configured
 ///   timeout.
-/// * [`SqlError::Query`] — the underlying query failed for a
-///   non-timeout reason (e.g. syntax error, connection loss).
+/// * [`SqlError::Connection`] — the database could not be reached
+///   (I/O, TLS, protocol, or connection pool failure).
+/// * [`SqlError::Query`] — the underlying query failed for any other
+///   reason (e.g. syntax error).
 pub async fn execute_with_timeout<T>(
     timeout_secs: Option<u64>,
     sql: SqlStr,
@@ -46,7 +48,15 @@ pub async fn execute_with_timeout<T>(
         }
         _ => op(sql).await,
     };
-    result.map_err(|e| SqlError::Query(e.to_string()))
+    result.map_err(|e| match e {
+        sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_)
+        | sqlx::Error::Protocol(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => SqlError::Connection(e.to_string()),
+        e => SqlError::Query(e.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -70,6 +80,25 @@ mod tests {
             matches!(err, SqlError::Query(ref msg) if msg.contains("syntax error")),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn connectivity_errors_become_connection_errors() {
+        for error in [
+            sqlx::Error::Io(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset")),
+            sqlx::Error::Tls("bad certificate".into()),
+            sqlx::Error::Protocol("unexpected eof".into()),
+            sqlx::Error::PoolTimedOut,
+            sqlx::Error::PoolClosed,
+            sqlx::Error::WorkerCrashed,
+        ] {
+            let message = error.to_string();
+            let result: Result<i32, SqlError> =
+                execute_with_timeout(None, SqlStr::from_static("SELECT 1"), |_| async { Err(error) }).await;
+            let err = result.expect_err("should fail");
+            assert!(matches!(err, SqlError::Connection(ref m) if *m == message), "{err:?}");
+            assert_eq!(err.to_string(), format!("Database error: {message}"));
+        }
     }
 
     #[tokio::test]

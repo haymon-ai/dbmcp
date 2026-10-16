@@ -30,25 +30,29 @@ pub trait ToolHandler: Send + Sync + 'static {
     fn redact_error(&self, message: &str) -> String;
 }
 
-/// Supplies extra context appended to every tool error message.
+/// Supplies extra context appended to selected tool error messages.
 ///
-/// [`crate::Server`] places it in each request's extensions. When the
-/// callback returns `Some(context)`, the error becomes `<message> (<context>)`
-/// before [`ToolHandler::redact_error`] runs, so the context is redacted too.
+/// [`crate::Server`] places it in each request's extensions. The callback
+/// sees each tool error; when it returns `Some(context)`, the message becomes
+/// `<message> (<context>)` before [`ToolHandler::redact_error`] runs, so the
+/// context is redacted too.
 #[derive(Clone)]
-pub struct ErrorContext(Arc<dyn Fn() -> Option<String> + Send + Sync>);
+pub struct ErrorContext(Arc<ContextFn>);
+
+/// Callback behind [`ErrorContext`]: returns context for a tool error, if any.
+type ContextFn = dyn Fn(&ErrorData) -> Option<String> + Send + Sync;
 
 impl ErrorContext {
     /// Creates a context from a callback evaluated on every tool error.
-    pub fn new(context: impl Fn() -> Option<String> + Send + Sync + 'static) -> Self {
+    pub fn new(context: impl Fn(&ErrorData) -> Option<String> + Send + Sync + 'static) -> Self {
         Self(Arc::new(context))
     }
 
-    /// Appends ` (<context>)` to `message` when context is available.
-    fn annotate(&self, message: String) -> String {
-        match (self.0)() {
-            Some(context) => format!("{message} ({context})"),
-            None => message,
+    /// Returns `error`'s message, with ` (<context>)` appended when available.
+    fn annotate(&self, error: ErrorData) -> String {
+        match (self.0)(&error) {
+            Some(context) => format!("{} ({context})", error.message),
+            None => error.message.into_owned(),
         }
     }
 }
@@ -157,10 +161,10 @@ fn run<H: ToolHandler, T: AsyncTool<H>>(
 ) -> ToolFuture<'_, T::Output> {
     Box::pin(async move {
         T::invoke(handler, params).await.map(Json).map_err(|error| {
-            let message = error.into().message.into_owned();
+            let error = error.into();
             let message = match &context {
-                Some(context) => context.annotate(message),
-                None => message,
+                Some(context) => context.annotate(error),
+                None => error.message.into_owned(),
             };
             let message = handler.redact_error(&message);
             CallToolResult::error(vec![ContentBlock::text(message)])
@@ -314,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn error_context_is_appended_before_redaction() {
         let handler = Handler { redact: true };
-        let context = ErrorContext::new(|| Some("SSH tunnel: auth failed for jane@doe.com".into()));
+        let context = ErrorContext::new(|_| Some("SSH tunnel: auth failed for jane@doe.com".into()));
         let output = invoke::<Handler, FailingTool>(
             &handler,
             Parameters(Request::default()),
@@ -334,7 +338,7 @@ mod tests {
         let output = invoke::<Handler, FailingTool>(
             &handler,
             Parameters(Request::default()),
-            ErrorContextPart(Some(ErrorContext::new(|| None))),
+            ErrorContextPart(Some(ErrorContext::new(|_| None))),
         )
         .await;
 
@@ -342,9 +346,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn error_context_callback_sees_the_error() {
+        let handler = Handler { redact: false };
+        let context = ErrorContext::new(|error| error.message.contains("Duplicate").then(|| "seen".into()));
+        let output = invoke::<Handler, FailingTool>(
+            &handler,
+            Parameters(Request::default()),
+            ErrorContextPart(Some(context)),
+        )
+        .await;
+
+        assert_eq!(error_text(output), format!("{ERROR} (seen)"));
+    }
+
+    #[tokio::test]
     async fn error_context_applies_to_tools_without_input() {
         let handler = Handler { redact: false };
-        let context = ErrorContext::new(|| Some("SSH tunnel: down".into()));
+        let context = ErrorContext::new(|_| Some("SSH tunnel: down".into()));
         let output = invoke_without_params::<Handler, NoInputTool>(&handler, ErrorContextPart(Some(context))).await;
 
         assert_eq!(error_text(output), format!("{ERROR} (SSH tunnel: down)"));

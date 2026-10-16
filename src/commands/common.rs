@@ -18,6 +18,7 @@ use dbmcp_config::{
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
+use dbmcp_sql::is_connection_error;
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_ssh::{Tunnel, TunnelHandle};
 use tracing::info;
@@ -403,8 +404,9 @@ impl SshArguments {
 /// adapter at its loopback address. The returned [`TunnelHandle`] must
 /// outlive the [`Server`] so pool shutdown traffic reaches the database;
 /// binding the tuple in order (`let (tunnel, server)`) drops the server
-/// first on every return path. While the tunnel reports a failure, every
-/// tool error gains a `(SSH tunnel: <cause>)` suffix before PII redaction.
+/// first on every return path. While the tunnel reports a failure, tool
+/// errors caused by an unreachable database gain a `(SSH tunnel: <cause>)`
+/// suffix before PII redaction; other errors are left alone.
 ///
 /// # Errors
 ///
@@ -428,9 +430,13 @@ pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandl
     tunnelled.database.host = local_addr.ip().to_string();
     tunnelled.database.port = local_addr.port();
     let last_error = tunnel.last_error().clone();
-    let server = build_server(&tunnelled)?.with_error_context(ErrorContext::new(move || {
-        last_error.get().map(|cause| format!("SSH tunnel: {cause}"))
-    }));
+    let context = ErrorContext::new(move |error| {
+        is_connection_error(error)
+            .then(|| last_error.get())
+            .flatten()
+            .map(|cause| format!("SSH tunnel: {cause}"))
+    });
+    let server = build_server(&tunnelled)?.with_error_context(context);
     Ok((Some(tunnel), server))
 }
 

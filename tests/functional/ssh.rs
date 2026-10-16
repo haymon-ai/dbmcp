@@ -8,8 +8,8 @@
 //! Host-key tests point `DB_SSH_KNOWN_HOSTS` at a temporary file; the H4
 //! tests seed it with `ssh-keyscan`, which must be on `PATH`.
 //!
-//! The reconnect test restarts the sshd container named by `SSHD_CONTAINER`
-//! with `docker restart`. The DB TLS tests run only when `TLS_TEST_CA` names
+//! The reconnect test restarts sshd inside the container named by
+//! `SSHD_CONTAINER` with `docker exec … pkill sshd`. The DB TLS tests run only when `TLS_TEST_CA` names
 //! the database's CA certificate (`mysql:9` generates one on first boot) and
 //! are skipped otherwise.
 //!
@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 const PASSPHRASE: &str = "secret";
 
 /// Overall deadline for queries to recover after an sshd restart.
-const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
+const RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Returns the path of a fixture key in `crates/ssh/testdata`.
 fn key(name: &str) -> String {
@@ -185,8 +185,13 @@ async fn assert_query_succeeds(command: tokio::process::Command) {
     client.cancel().await.expect("shutdown");
 }
 
-/// Runs one query, asserts it fails, and returns the captured stderr.
-async fn assert_query_fails(command: tokio::process::Command) -> String {
+/// Connects like [`connect`], collecting the child's stderr until it exits.
+async fn connect_with_logs(
+    command: tokio::process::Command,
+) -> (
+    rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    tokio::task::JoinHandle<String>,
+) {
     let (transport, stderr) = TokioChildProcess::builder(command)
         .stderr(Stdio::piped())
         .spawn()
@@ -197,7 +202,12 @@ async fn assert_query_fails(command: tokio::process::Command) -> String {
         let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut logs).await;
         logs
     });
-    let client = ().serve(transport).await.expect("mcp handshake");
+    (().serve(transport).await.expect("mcp handshake"), logs)
+}
+
+/// Runs one query, asserts it fails, and returns the captured stderr.
+async fn assert_query_fails(command: tokio::process::Command) -> String {
+    let (client, logs) = connect_with_logs(command).await;
 
     let result = call_read_query(&client, "SELECT 1").await;
     assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
@@ -210,12 +220,16 @@ async fn assert_query_fails(command: tokio::process::Command) -> String {
 async fn query_error_text(command: tokio::process::Command) -> String {
     let client = connect(command).await;
 
-    let result = call_read_query(&client, "SELECT 1").await;
-    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
-    let text = result.content[0].as_text().expect("text content").text.clone();
+    let text = tool_error_text(&call_read_query(&client, "SELECT 1").await);
 
     client.cancel().await.expect("shutdown");
     text
+}
+
+/// Asserts `result` is a tool error and returns its text.
+fn tool_error_text(result: &CallToolResult) -> String {
+    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
+    result.content[0].as_text().expect("text content").text.clone()
 }
 
 /// Records the sshd host key of `key_type` in `known_hosts` via `ssh-keyscan`.
@@ -301,7 +315,9 @@ async fn tool_error_names_ssh_failure() {
         .env("DB_SSH_PASSWORD", "wrong")
         .env_remove("DB_SSH_KEY")
         .env("DB_CONNECTION_TIMEOUT", "5");
-    let text = query_error_text(command).await;
+    let client = connect(command).await;
+
+    let text = tool_error_text(&call_read_query(&client, "SELECT 1").await);
     let (host, port) = ssh_endpoint();
     assert!(
         text.ends_with(&format!(
@@ -309,6 +325,13 @@ async fn tool_error_names_ssh_failure() {
         )),
         "{text}"
     );
+
+    // Errors unrelated to reaching the database carry no SSH suffix.
+    let text = tool_error_text(&call_read_query(&client, "DELETE FROM users").await);
+    assert!(text.starts_with("Query blocked"), "{text}");
+    assert!(!text.contains("SSH tunnel"), "{text}");
+
+    client.cancel().await.expect("shutdown");
 }
 
 #[tokio::test]
@@ -316,15 +339,17 @@ async fn queries_recover_after_sshd_restart() {
     let container = std::env::var("SSHD_CONTAINER").expect("SSHD_CONTAINER must be set (run via ./tests/run.sh)");
     let mut command = command();
     command.env("DB_CONNECTION_TIMEOUT", "5");
-    let client = connect(command).await;
+    let (client, logs) = connect_with_logs(command).await;
     read_query(&client, "SELECT name FROM users WHERE id = 1").await;
 
+    // Kills the listener and every session process; s6 restarts the listener
+    // without re-running container init, unlike `docker restart`.
     let status = tokio::process::Command::new("docker")
-        .args(["restart", &container])
+        .args(["exec", &container, "pkill", "sshd"])
         .status()
         .await
-        .expect("run docker restart");
-    assert!(status.success(), "docker restart {container} failed");
+        .expect("run docker exec");
+    assert!(status.success(), "pkill sshd in {container} failed");
 
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     loop {
@@ -339,6 +364,9 @@ async fn queries_recover_after_sshd_restart() {
     }
 
     client.cancel().await.expect("shutdown");
+    let logs = logs.await.expect("stderr reader");
+    assert!(logs.contains("lost: "), "session loss must be observed: {logs}");
+    assert!(logs.contains("Reconnecting SSH session"), "{logs}");
 }
 
 /// Builds `dbmcp stdio` requiring DB TLS verified against `ca`.

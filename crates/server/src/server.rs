@@ -131,7 +131,7 @@ impl Server {
         }
     }
 
-    /// Appends `context` to every tool error message before redaction.
+    /// Appends `context` to tool error messages it selects, before redaction.
     #[must_use]
     pub fn with_error_context(mut self, context: ErrorContext) -> Self {
         self.error_context = Some(context);
