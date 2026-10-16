@@ -39,7 +39,10 @@ services:
             PASSWORD_ACCESS: "true"
             USER_NAME: dbmcp
             USER_PASSWORD: dbmcp
+            PUBLIC_KEY_FILE: /keys/authorized_keys
             DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
+        volumes:
+            - "./ssh/authorized_keys:/keys/authorized_keys:ro,z"
         # sshd starts only after the ssh-tunnel mod is installed on first boot.
         healthcheck:
             test: ["CMD", "nc", "-z", "127.0.0.1", "2222"]
