@@ -40,6 +40,12 @@ services:
             USER_NAME: dbmcp
             USER_PASSWORD: dbmcp
             DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
+        # sshd starts only after the ssh-tunnel mod is installed on first boot.
+        healthcheck:
+            test: ["CMD", "nc", "-z", "127.0.0.1", "2222"]
+            interval: 1s
+            timeout: 2s
+            retries: 120
 
     sqlite:
         image: alpine/sqlite

@@ -422,14 +422,9 @@ pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandl
         .await
         .map_err(|e| crate::error::Error::Init(e.to_string()))?;
     let local_addr = tunnel.local_addr();
-    let tunnelled = Config {
-        database: DatabaseConfig {
-            host: local_addr.ip().to_string(),
-            port: local_addr.port(),
-            ..config.database.clone()
-        },
-        ..config.clone()
-    };
+    let mut tunnelled = config.clone();
+    tunnelled.database.host = local_addr.ip().to_string();
+    tunnelled.database.port = local_addr.port();
     Ok((Some(tunnel), build_server(&tunnelled)?))
 }
 

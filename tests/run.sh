@@ -122,35 +122,19 @@ wait_for_ready() {
     return 1
 }
 
-# Starts the sshd service once and waits for its SSH banner.
+# Starts the sshd service once and waits for its healthcheck.
 SSHD_PORT=""
 ensure_sshd() {
     [ -n "$SSHD_PORT" ] && return 0
 
     echo -n "  Starting sshd..."
-    if ! docker compose -f "$COMPOSE_FILE" up -d sshd 2>/dev/null; then
+    if ! docker compose -f "$COMPOSE_FILE" up -d --wait sshd 2>/dev/null; then
         echo " FAILED"
+        docker compose -f "$COMPOSE_FILE" logs sshd 2>/dev/null | tail -20
         return 1
     fi
-    local port
-    port=$(docker compose -f "$COMPOSE_FILE" port sshd 2222 2>/dev/null | cut -d: -f2)
-
-    local elapsed=0
-    # The ssh-tunnel mod is installed on first boot, so allow extra time.
-    local timeout=$((TIMEOUT * 4))
-    while [ $elapsed -lt "$timeout" ]; do
-        if [ "$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 4 <&3" 2>/dev/null)" = "SSH-" ]; then
-            echo " OK (${elapsed}s)"
-            SSHD_PORT="$port"
-            return 0
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-
-    echo " TIMEOUT after ${timeout}s"
-    docker compose -f "$COMPOSE_FILE" logs sshd 2>/dev/null | tail -20
-    return 1
+    SSHD_PORT=$(docker compose -f "$COMPOSE_FILE" port sshd 2222 2>/dev/null | cut -d: -f2)
+    echo " OK"
 }
 
 # Returns space-separated list of test binaries for a given db_type

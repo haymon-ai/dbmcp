@@ -90,6 +90,11 @@ jobs:
           DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
         ports:
           - 2222:2222
+        options: >-
+          --health-cmd="nc -z 127.0.0.1 2222"
+          --health-interval=2s
+          --health-timeout=2s
+          --health-retries=60
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -106,13 +111,6 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
-      - name: Wait for sshd
-        run: |
-          for _ in $(seq 1 120); do
-            if [ "$(timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222 && head -c 4 <&3' 2>/dev/null)" = "SSH-" ]; then exit 0; fi
-            sleep 1
-          done
-          echo "sshd not ready"; exit 1
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
@@ -151,6 +149,11 @@ jobs:
           DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
         ports:
           - 2222:2222
+        options: >-
+          --health-cmd="nc -z 127.0.0.1 2222"
+          --health-interval=2s
+          --health-timeout=2s
+          --health-retries=60
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -167,13 +170,6 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
-      - name: Wait for sshd
-        run: |
-          for _ in $(seq 1 120); do
-            if [ "$(timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222 && head -c 4 <&3' 2>/dev/null)" = "SSH-" ]; then exit 0; fi
-            sleep 1
-          done
-          echo "sshd not ready"; exit 1
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
@@ -212,6 +208,11 @@ jobs:
           DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
         ports:
           - 2222:2222
+        options: >-
+          --health-cmd="nc -z 127.0.0.1 2222"
+          --health-interval=2s
+          --health-timeout=2s
+          --health-retries=60
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -228,13 +229,6 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 5432
-      - name: Wait for sshd
-        run: |
-          for _ in $(seq 1 120); do
-            if [ "$(timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222 && head -c 4 <&3' 2>/dev/null)" = "SSH-" ]; then exit 0; fi
-            sleep 1
-          done
-          echo "sshd not ready"; exit 1
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:

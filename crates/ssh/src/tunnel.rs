@@ -76,6 +76,7 @@ impl Tunnel {
             ssh_port: config.port,
             user: config.user.clone(),
             password,
+            db_target: format!("{db_host}:{db_port}"),
             db_host: db_host.to_owned(),
             db_port,
             session: Mutex::new(None),
@@ -141,6 +142,7 @@ struct Inner {
     ssh_port: u16,
     user: String,
     password: String,
+    db_target: String,
     db_host: String,
     db_port: u16,
     session: Mutex<Option<Arc<client::Handle<Client>>>>,
@@ -152,8 +154,7 @@ impl std::fmt::Debug for Inner {
             .field("ssh_target", &self.ssh_target)
             .field("user", &self.user)
             .field("password", &"[REDACTED]")
-            .field("db_host", &self.db_host)
-            .field("db_port", &self.db_port)
+            .field("db_target", &self.db_target)
             .finish_non_exhaustive()
     }
 }
@@ -243,7 +244,6 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
         }
     };
 
-    let target = format!("{}:{}", inner.db_host, inner.db_port);
     let channel = match session
         .channel_open_direct_tcpip(
             inner.db_host.as_str(),
@@ -255,12 +255,15 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
     {
         Ok(channel) => channel,
         Err(source) => {
-            let e = SshError::ChannelOpen { target, source };
+            let e = SshError::ChannelOpen {
+                target: inner.db_target.clone(),
+                source,
+            };
             error!("{e}");
             return;
         }
     };
-    debug!("SSH channel opened for {peer} to {target}");
+    debug!("SSH channel opened for {peer} to {}", inner.db_target);
 
     let mut stream = channel.into_stream();
     match tokio::io::copy_bidirectional(&mut socket, &mut stream).await {
@@ -577,6 +580,7 @@ mod tests {
             ssh_port: 22,
             user: USER.into(),
             password: "hunter2".into(),
+            db_target: "db:5432".into(),
             db_host: "db".into(),
             db_port: 5432,
             session: Mutex::new(None),
