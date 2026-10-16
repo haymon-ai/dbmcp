@@ -9,9 +9,8 @@ use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::{MaybeRedact, Redactor};
 use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerConfig};
-use rmcp::service::RequestContext;
-use rmcp::{ErrorData, RoleServer, ServerHandler, tool_handler};
+use rmcp::model::ServerConfig;
+use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::MysqlConnection;
 use crate::tools::{
@@ -143,19 +142,6 @@ impl ServerHandler for MysqlHandler {
             .into(),
         );
         info
-    }
-
-    /// Lists the registered tools without cache hints.
-    ///
-    /// Overrides the `tool_handler` default, which advertises `cacheScope:
-    /// public` for a tool list that depends on server config; rmcp fills the
-    /// conservative `ttlMs: 0` / `cacheScope: private` hints instead.
-    async fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
     }
 }
 

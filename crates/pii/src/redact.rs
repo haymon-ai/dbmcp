@@ -279,7 +279,7 @@ impl Redactor {
         if let Some(e) = infer_err {
             return Err(RedactionError::Internal(format!("NER inference failed: {e}")));
         }
-        log_redactions(&stats, rows.len());
+        log_redactions(&stats, Some(rows.len()));
         Ok(stats)
     }
 
@@ -326,14 +326,7 @@ impl Redactor {
             apply_spans(&mut out, results, &self.operator, &mut stats);
         }))
         .map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
-        if stats.total > 0 {
-            tracing::info!(
-                target: "dbmcp::pii",
-                redactions = stats.total,
-                by_entity = ?stats.by_entity,
-                "pii.redacted_text"
-            );
-        }
+        log_redactions(&stats, None);
         Ok(out)
     }
 }
@@ -375,15 +368,28 @@ impl MaybeRedact for Option<Redactor> {
 }
 
 /// Emits one `tracing::info!` event when at least one span was rewritten.
-fn log_redactions(stats: &RedactionStats, row_count: usize) {
-    if stats.total > 0 {
+///
+/// `row_count` is `Some` for row payloads (`pii.redacted`) and `None` for
+/// free text such as error messages (`pii.redacted_text`).
+fn log_redactions(stats: &RedactionStats, row_count: Option<usize>) {
+    if stats.total == 0 {
+        return;
+    }
+    if let Some(rows) = row_count {
         tracing::info!(
             target: "dbmcp::pii",
             redactions = stats.total,
             by_entity = ?stats.by_entity,
-            rows = row_count,
+            rows,
             string_leaves_scanned = stats.string_leaves_scanned,
             "pii.redacted"
+        );
+    } else {
+        tracing::info!(
+            target: "dbmcp::pii",
+            redactions = stats.total,
+            by_entity = ?stats.by_entity,
+            "pii.redacted_text"
         );
     }
 }

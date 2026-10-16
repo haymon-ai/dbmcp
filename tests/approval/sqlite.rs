@@ -9,7 +9,7 @@ use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
 use dbmcp_server::Server;
 use dbmcp_sqlite::SqliteHandler;
 use rmcp::RoleClient;
-use rmcp::model::{CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ProtocolVersion};
+use rmcp::model::{CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, JsonObject, ProtocolVersion};
 use rmcp::service::{ClientLifecycleMode, Peer, ServiceError};
 use serde_json::json;
 
@@ -37,15 +37,23 @@ fn server_with_pii(read_only: bool, pii: PiiConfig) -> Server {
 async fn call_tool(
     peer: &Peer<RoleClient>,
     name: &'static str,
-    arguments: Option<serde_json::Value>,
+    arguments: Option<JsonObject>,
 ) -> Result<CallToolResult, ServiceError> {
     let mut params = CallToolRequestParams::new(name);
-    if let Some(serde_json::Value::Object(arguments)) = arguments {
+    if let Some(arguments) = arguments {
         params = params.with_arguments(arguments);
     }
     match peer.call_tool_once(params).await? {
         CallToolResponse::Complete(result) => Ok(result),
         other => panic!("expected a completed tool result, got {other:?}"),
+    }
+}
+
+/// Unwraps a `json!` object literal into tool arguments.
+fn object(value: serde_json::Value) -> JsonObject {
+    match value {
+        serde_json::Value::Object(map) => map,
+        other => panic!("tool arguments must be a JSON object, got {other}"),
     }
 }
 
@@ -113,7 +121,7 @@ async fn test_call_tool_error_is_returned_in_band() {
         let result = call_tool(
             &peer,
             "readQuery",
-            Some(json!({"query": "SELECT * FROM missing_table"})),
+            Some(object(json!({"query": "SELECT * FROM missing_table"}))),
         )
         .await
         .expect("tool error must not be a protocol error");
@@ -133,7 +141,7 @@ async fn test_call_tool_error_is_redacted_when_pii_enabled() {
         let result = call_tool(
             &peer,
             "readQuery",
-            Some(json!({"query": "SELECT * FROM \"jane@doe.com\""})),
+            Some(object(json!({"query": "SELECT * FROM \"jane@doe.com\""}))),
         )
         .await
         .expect("tool error must not be a protocol error");
@@ -156,7 +164,7 @@ async fn test_call_tool_without_arguments() {
 #[tokio::test]
 async fn test_call_unknown_tool_is_protocol_error() {
     common::run_with_client(server(true), |peer| async move {
-        let result = call_tool(&peer, "noSuchTool", Some(json!({}))).await;
+        let result = call_tool(&peer, "noSuchTool", Some(object(json!({})))).await;
         assert!(result.is_err(), "unknown tool must be a protocol error, got {result:?}");
     })
     .await;

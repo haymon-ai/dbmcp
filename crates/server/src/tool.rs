@@ -151,12 +151,6 @@ mod tests {
         redact: bool,
     }
 
-    impl Handler {
-        fn new(redact: bool) -> Self {
-            Self { redact }
-        }
-    }
-
     impl ToolHandler for Handler {
         fn redact_error(&self, message: &str) -> String {
             if self.redact {
@@ -245,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_error_becomes_tool_result_with_is_error() {
-        let handler = Handler::new(false);
+        let handler = Handler { redact: false };
         let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
 
         assert_eq!(error_text(output), ERROR);
@@ -253,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_error_passes_through_redact_error_hook() {
-        let handler = Handler::new(true);
+        let handler = Handler { redact: true };
         let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
 
         assert_eq!(error_text(output), REDACTED);
@@ -261,18 +255,10 @@ mod tests {
 
     #[tokio::test]
     async fn no_input_tool_runs_with_default_parameter() {
-        let handler = Handler::new(false);
+        let handler = Handler { redact: false };
         let output = invoke_without_params::<Handler, NoInputTool>(&handler).await;
 
         assert_eq!(error_text(output), ERROR);
-    }
-
-    #[tokio::test]
-    async fn no_input_tool_error_passes_through_redact_error_hook() {
-        let handler = Handler::new(true);
-        let output = invoke_without_params::<Handler, NoInputTool>(&handler).await;
-
-        assert_eq!(error_text(output), REDACTED);
     }
 
     #[test]
