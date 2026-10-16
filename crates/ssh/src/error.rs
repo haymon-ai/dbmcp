@@ -7,10 +7,6 @@ use std::path::PathBuf;
 /// Messages never embed passwords, passphrases, or key material.
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
-    /// A configured option is not supported by this build yet.
-    #[error("{0} is not yet implemented")]
-    NotImplemented(String),
-
     /// Neither a password nor a private key is configured.
     #[error("DB_SSH_PASSWORD or DB_SSH_KEY is required for SSH authentication")]
     MissingCredentials,
@@ -114,6 +110,85 @@ pub enum SshError {
         /// Underlying SSH error.
         #[source]
         source: russh::Error,
+    },
+
+    /// The `known_hosts` file exists but could not be read.
+    #[error("failed to read known_hosts {}: {source}", path.display())]
+    KnownHostsRead {
+        /// Path of the `known_hosts` file.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The host key could not be added to `known_hosts` under `accept-new`.
+    #[error("failed to add SSH host key for {host} to {}: {source}", path.display())]
+    KnownHostsWrite {
+        /// Host as recorded in `known_hosts` (`host` or `[host]:port`).
+        host: String,
+        /// Path of the `known_hosts` file.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The host key is not in `known_hosts` and checking is `yes`.
+    #[error(
+        "SSH host key for {host} ({fingerprint}) is not in {}; verify the fingerprint, then run \
+         `ssh-keyscan -p {port} {ssh_host} >> {}`",
+        path.display(),
+        path.display()
+    )]
+    HostKeyUnknown {
+        /// Host as recorded in `known_hosts` (`host` or `[host]:port`).
+        host: String,
+        /// SSH server host as configured.
+        ssh_host: String,
+        /// SSH server port.
+        port: u16,
+        /// SHA-256 fingerprint of the presented key.
+        fingerprint: String,
+        /// Path of the `known_hosts` file.
+        path: PathBuf,
+    },
+
+    /// The host key differs from the one recorded in `known_hosts`.
+    #[error(
+        "SSH host key for {host} ({fingerprint}) does not match {}:{line}; \
+         the server may be impersonated",
+        path.display()
+    )]
+    HostKeyChanged {
+        /// Host as recorded in `known_hosts` (`host` or `[host]:port`).
+        host: String,
+        /// SHA-256 fingerprint of the presented key.
+        fingerprint: String,
+        /// Path of the `known_hosts` file.
+        path: PathBuf,
+        /// Line of the recorded key.
+        line: usize,
+    },
+
+    /// The host key is marked `@revoked` in `known_hosts`.
+    #[error("SSH host key for {host} ({fingerprint}) is revoked in {}:{line}", path.display())]
+    HostKeyRevoked {
+        /// Host as recorded in `known_hosts` (`host` or `[host]:port`).
+        host: String,
+        /// SHA-256 fingerprint of the presented key.
+        fingerprint: String,
+        /// Path of the `known_hosts` file.
+        path: PathBuf,
+        /// Line of the `@revoked` entry.
+        line: usize,
+    },
+
+    /// The SSH server presented a host certificate, which is unsupported.
+    #[error("SSH server {target} presented a host certificate, which is not supported")]
+    HostCertificate {
+        /// `host:port` of the SSH server.
+        target: String,
     },
 
     /// The SSH server refused to open a `direct-tcpip` channel.

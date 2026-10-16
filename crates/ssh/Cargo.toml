@@ -10,12 +10,14 @@ repository.workspace = true
 [dependencies]
 base64 = { workspace = true }
 dbmcp-config = { workspace = true }
+ring = { workspace = true }
 russh = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [lints]
