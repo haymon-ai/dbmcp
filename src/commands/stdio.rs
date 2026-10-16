@@ -8,7 +8,7 @@ use dbmcp_config::{Config, ConfigError, ConfigErrors, DatabaseConfig, PiiConfig}
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments};
 use crate::error::Error;
 
 /// Runs the MCP server in stdio mode.
@@ -21,24 +21,36 @@ pub(crate) struct StdioCommand {
     /// Shared PII flags.
     #[command(flatten)]
     pii: PiiArguments,
+
+    /// Shared SSH tunnel flags.
+    #[command(flatten)]
+    ssh: SshArguments,
 }
 
 impl TryFrom<&StdioCommand> for Config {
     type Error = ConfigErrors;
 
     fn try_from(cmd: &StdioCommand) -> Result<Self, Self::Error> {
-        match (DatabaseConfig::try_from(&cmd.database), PiiConfig::try_from(&cmd.pii)) {
-            (Ok(database), Ok(pii)) => Ok(Self {
+        match (
+            DatabaseConfig::try_from(&cmd.database),
+            PiiConfig::try_from(&cmd.pii),
+            cmd.ssh.to_config(cmd.database.backend),
+        ) {
+            (Ok(database), Ok(pii), Ok(ssh)) => Ok(Self {
                 database,
                 http: None,
                 pii,
+                ssh,
             }),
-            (database, pii) => {
+            (database, pii, ssh) => {
                 let mut errors: Vec<ConfigError> = Vec::new();
                 if let Err(e) = database {
                     errors.extend(e);
                 }
                 if let Err(e) = pii {
+                    errors.extend(e);
+                }
+                if let Err(e) = ssh {
                     errors.extend(e);
                 }
                 Err(ConfigErrors::from_vec(errors).expect("non-Ok branch implies at least one Err"))
@@ -59,7 +71,7 @@ impl StdioCommand {
     /// protocol error.
     pub(crate) async fn execute(&self) -> Result<(), Error> {
         let config = Config::try_from(self)?;
-        let server = common::create_server(&config)?;
+        let (tunnel, server) = common::create_server(&config).await?;
 
         info!("Starting MCP server via stdio transport...");
         let transport = rmcp::transport::io::stdio();
@@ -79,6 +91,10 @@ impl StdioCommand {
 
         server.shutdown().await;
         info!("All connection pools closed.");
+
+        // Pools close through the tunnel, so it must outlive the server.
+        drop(server);
+        drop(tunnel);
         Ok(())
     }
 }
@@ -148,8 +164,8 @@ mod tests {
         let errors = Config::try_from(&cmd).expect_err("multi-section misconfig must fail");
         assert_eq!(errors.len(), 4);
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(&errors[1], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[2], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[3], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
+        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
+        assert!(matches!(&errors[3], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
     }
 }

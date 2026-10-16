@@ -29,6 +29,18 @@ services:
             POSTGRES_USER: postgres
             POSTGRES_HOST_AUTH_METHOD: trust
 
+    # SSH bastion for functional_ssh. Tests reach databases by service name,
+    # which only resolves inside the compose network, i.e. through sshd.
+    sshd:
+        image: lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls239
+        ports:
+            - "12222:2222"
+        environment:
+            PASSWORD_ACCESS: "true"
+            USER_NAME: dbmcp
+            USER_PASSWORD: dbmcp
+            DOCKER_MODS: linuxserver/mods:openssh-server-ssh-tunnel
+
     sqlite:
         image: alpine/sqlite
         user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"

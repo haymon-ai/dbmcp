@@ -1,18 +1,25 @@
 //! Common building blocks reused across transport subcommands.
 //!
-//! Hosts [`DatabaseArguments`] and [`PiiArguments`] — clap argument groups
-//! bundling every `--db-*` and `--pii-*` flag so each is defined exactly
-//! once and embedded via `#[command(flatten)]` wherever needed — and
-//! [`create_server`], the backend-selection factory that maps a
-//! configured [`DatabaseBackend`] onto the matching concrete adapter.
+//! Hosts [`DatabaseArguments`], [`PiiArguments`], and [`SshArguments`] —
+//! clap argument groups bundling every `--db-*`, `--pii-*`, and `--ssh-*`
+//! flag so each is defined exactly once and embedded via
+//! `#[command(flatten)]` wherever needed — and [`create_server`], the
+//! backend-selection factory that maps a configured [`DatabaseBackend`]
+//! onto the matching concrete adapter, tunnelling through SSH when
+//! configured.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::Args;
-use dbmcp_config::{Config, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator};
+use dbmcp_config::{
+    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
+    StrictHostKeyChecking, ssh,
+};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_sqlite::SqliteHandler;
+use dbmcp_ssh::{Tunnel, TunnelHandle};
 use tracing::info;
 
 pub(crate) use dbmcp_server::Server;
@@ -25,7 +32,7 @@ pub(crate) struct DatabaseArguments {
     #[arg(long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND)]
     pub(crate) backend: DatabaseBackend,
 
-    /// Database host
+    /// Database host (as seen from the SSH server when tunnelling)
     #[arg(long = "db-host", env = "DB_HOST", default_value = DatabaseConfig::DEFAULT_HOST)]
     pub(crate) host: String,
 
@@ -213,6 +220,176 @@ impl TryFrom<&PiiArguments> for PiiConfig {
     }
 }
 
+/// Shared SSH tunnel flags embedded in transport subcommands.
+///
+/// Every argument uses an explicit `id = "ssh-*"` so its clap id doesn't
+/// collide with the same-named fields in [`DatabaseArguments`]. `port`, `strict_host_key_checking`, and `keepalive_interval` stay
+/// `Option` so [`SshArguments::to_config`] can tell whether they were set;
+/// their defaults are applied there.
+#[derive(Args)]
+#[command(next_help_heading = "SSH")]
+pub(crate) struct SshArguments {
+    /// SSH server host; enables the tunnel when set
+    #[arg(id = "ssh-host", long = "ssh-host", value_name = "HOST", env = "DB_SSH_HOST")]
+    pub(crate) host: Option<String>,
+
+    /// SSH server port
+    #[arg(
+        id = "ssh-port",
+        long = "ssh-port",
+        value_name = "PORT",
+        env = "DB_SSH_PORT",
+        value_parser = clap::value_parser!(u16).range(1..),
+    )]
+    pub(crate) port: Option<u16>,
+
+    /// SSH user
+    #[arg(id = "ssh-user", long = "ssh-user", value_name = "USER", env = "DB_SSH_USER")]
+    pub(crate) user: Option<String>,
+
+    /// SSH password
+    #[arg(
+        id = "ssh-password",
+        long = "ssh-password",
+        value_name = "PASSWORD",
+        env = "DB_SSH_PASSWORD",
+        hide_env_values = true
+    )]
+    pub(crate) password: Option<String>,
+
+    /// Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)
+    #[arg(id = "ssh-key", long = "ssh-key", value_name = "PATH", env = "DB_SSH_KEY")]
+    pub(crate) key: Option<PathBuf>,
+
+    /// Passphrase for the SSH private key
+    #[arg(
+        id = "ssh-key-passphrase",
+        long = "ssh-key-passphrase",
+        value_name = "PASSPHRASE",
+        env = "DB_SSH_KEY_PASSPHRASE",
+        hide_env_values = true
+    )]
+    pub(crate) key_passphrase: Option<String>,
+
+    /// Path to known_hosts file (default: ~/.ssh/known_hosts)
+    #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
+    #[arg(
+        id = "ssh-known-hosts",
+        long = "ssh-known-hosts",
+        value_name = "PATH",
+        env = "DB_SSH_KNOWN_HOSTS"
+    )]
+    pub(crate) known_hosts: Option<PathBuf>,
+
+    /// Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure)
+    #[arg(
+        id = "ssh-strict-host-key-checking",
+        long = "ssh-strict-host-key-checking",
+        value_name = "MODE",
+        env = "DB_SSH_STRICT_HOST_KEY_CHECKING"
+    )]
+    pub(crate) strict_host_key_checking: Option<StrictHostKeyChecking>,
+
+    /// SSH keepalive interval in seconds (0 disables)
+    #[arg(
+        id = "ssh-keepalive-interval",
+        long = "ssh-keepalive-interval",
+        value_name = "SECONDS",
+        env = "DB_SSH_KEEPALIVE_INTERVAL"
+    )]
+    pub(crate) keepalive_interval: Option<u64>,
+
+    /// Local tunnel port (default: ephemeral)
+    #[arg(
+        id = "ssh-local-port",
+        long = "ssh-local-port",
+        value_name = "PORT",
+        env = "DB_SSH_LOCAL_PORT",
+        value_parser = clap::value_parser!(u16).range(1..),
+    )]
+    pub(crate) local_port: Option<u16>,
+}
+
+impl std::fmt::Debug for SshArguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshArguments")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("key", &self.key)
+            .field("key_passphrase", &self.key_passphrase.as_ref().map(|_| "[REDACTED]"))
+            .field("known_hosts", &self.known_hosts)
+            .field("strict_host_key_checking", &self.strict_host_key_checking)
+            .field("keepalive_interval", &self.keepalive_interval)
+            .field("local_port", &self.local_port)
+            .finish()
+    }
+}
+
+impl SshArguments {
+    /// Resolves the tunnel settings; `Ok(None)` when `DB_SSH_HOST` is unset.
+    ///
+    /// Uses the process home directory for `~` expansion and the default
+    /// `known_hosts` path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigErrors`] when other `DB_SSH_*` options are set
+    /// without a host, or when [`SshConfig::validate`] fails.
+    pub(crate) fn to_config(&self, backend: DatabaseBackend) -> Result<Option<SshConfig>, ConfigErrors> {
+        self.resolve(backend, ssh::home_dir().as_deref())
+    }
+
+    /// Resolves the tunnel settings against an explicit `home` directory.
+    fn resolve(&self, backend: DatabaseBackend, home: Option<&Path>) -> Result<Option<SshConfig>, ConfigErrors> {
+        let Some(host) = &self.host else {
+            return if self.any_set() {
+                Err(ConfigError::MissingSshHost.into())
+            } else {
+                Ok(None)
+            };
+        };
+
+        let known_hosts = match &self.known_hosts {
+            Some(path) => Some(ssh::expand_tilde(path, home)),
+            None => home.map(|home| home.join(".ssh").join("known_hosts")),
+        };
+        let candidate = SshConfig {
+            host: host.clone(),
+            port: self.port.unwrap_or(SshConfig::DEFAULT_PORT),
+            user: self.user.clone().unwrap_or_default(),
+            password: self.password.clone(),
+            key: self.key.as_deref().map(|key| ssh::expand_tilde(key, home)),
+            key_passphrase: self.key_passphrase.clone(),
+            known_hosts,
+            strict_host_key_checking: self
+                .strict_host_key_checking
+                .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
+            keepalive_interval: Duration::from_secs(
+                self.keepalive_interval
+                    .unwrap_or(SshConfig::DEFAULT_KEEPALIVE_INTERVAL_SECS),
+            ),
+            local_port: self.local_port,
+        };
+        candidate.validate(backend)?;
+        Ok(Some(candidate))
+    }
+
+    /// Returns `true` when any option other than `host` is set.
+    fn any_set(&self) -> bool {
+        self.port.is_some()
+            || self.user.is_some()
+            || self.password.is_some()
+            || self.key.is_some()
+            || self.key_passphrase.is_some()
+            || self.known_hosts.is_some()
+            || self.strict_host_key_checking.is_some()
+            || self.keepalive_interval.is_some()
+            || self.local_port.is_some()
+    }
+}
+
 /// Logs the read-only banner and builds a [`Server`] for `config`.
 ///
 /// Does **not** establish a database connection. Each adapter defers
@@ -220,16 +397,45 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 /// server to start and respond to protocol messages even when the
 /// database is unreachable. The caller is expected to pass a fully
 /// validated [`Config`].
+///
+/// When `config.ssh` is set, starts the SSH tunnel first and points the
+/// adapter at its loopback address. The returned [`TunnelHandle`] must
+/// outlive the [`Server`] so pool shutdown traffic reaches the database;
+/// binding the tuple in order (`let (tunnel, server)`) drops the server
+/// first on every return path.
+///
 /// # Errors
 ///
-/// Returns [`crate::error::Error::Init`] when a handler fails to initialise
-/// (e.g. a fail-closed NER model load).
+/// Returns [`crate::error::Error::Init`] when the SSH tunnel cannot start
+/// or a handler fails to initialise (e.g. a fail-closed NER model load).
 #[allow(clippy::result_large_err)]
-pub(crate) fn create_server(config: &Config) -> Result<Server, crate::error::Error> {
+pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandle>, Server), crate::error::Error> {
     if config.database.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
 
+    let Some(ssh) = &config.ssh else {
+        return Ok((None, build_server(config)?));
+    };
+
+    let tunnel = Tunnel::start(ssh, &config.database.host, config.database.port)
+        .await
+        .map_err(|e| crate::error::Error::Init(e.to_string()))?;
+    let local_addr = tunnel.local_addr();
+    let tunnelled = Config {
+        database: DatabaseConfig {
+            host: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            ..config.database.clone()
+        },
+        ..config.clone()
+    };
+    Ok((Some(tunnel), build_server(&tunnelled)?))
+}
+
+/// Builds the backend adapter selected by `config.database.backend`.
+#[allow(clippy::result_large_err)]
+pub(crate) fn build_server(config: &Config) -> Result<Server, crate::error::Error> {
     match config.database.backend {
         DatabaseBackend::Sqlite => init(SqliteHandler::new(config)),
         DatabaseBackend::Postgres => init(PostgresHandler::new(config)),
@@ -281,8 +487,14 @@ pub(crate) async fn shutdown_signal() {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{DatabaseArguments, PiiArguments};
-    use dbmcp_config::{ConfigError, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use super::{DatabaseArguments, PiiArguments, SshArguments};
+    use dbmcp_config::{
+        ConfigError, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
+        StrictHostKeyChecking,
+    };
 
     #[derive(Debug, Parser)]
     #[command(no_binary_name = true)]
@@ -291,6 +503,8 @@ mod tests {
         db: DatabaseArguments,
         #[command(flatten)]
         pii: PiiArguments,
+        #[command(flatten)]
+        ssh: SshArguments,
     }
 
     fn try_parse_with_page_size(value: &str) -> Result<u16, clap::Error> {
@@ -424,9 +638,9 @@ mod tests {
         let errors = DatabaseConfig::try_from(&cli.db).expect_err("missing ssl cert files must fail");
         let cert_errors = errors
             .iter()
-            .filter(|e| matches!(e, ConfigError::SslCertNotFound(_, _)))
+            .filter(|e| matches!(e, ConfigError::FileNotFound(_, _)))
             .count();
-        assert_eq!(cert_errors, 3, "expected three SslCertNotFound errors, got {errors:?}");
+        assert_eq!(cert_errors, 3, "expected three FileNotFound errors, got {errors:?}");
     }
 
     #[test]
@@ -445,7 +659,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ConfigError::SslCertNotFound(name, path) if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"))
+                .any(|e| matches!(e, ConfigError::FileNotFound(name, path) if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"))
         );
     }
 
@@ -544,5 +758,237 @@ mod tests {
         let cli = TestCli::try_parse_from(["--pii-ner", "true"]).expect("clap parse");
         let errors = PiiConfig::try_from(&cli.pii).expect_err("ner without model must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::PiiNerModelMissing)));
+    }
+
+    const SSH_ENV: [&str; 10] = [
+        "DB_SSH_HOST",
+        "DB_SSH_PORT",
+        "DB_SSH_USER",
+        "DB_SSH_PASSWORD",
+        "DB_SSH_KEY",
+        "DB_SSH_KEY_PASSPHRASE",
+        "DB_SSH_KNOWN_HOSTS",
+        "DB_SSH_STRICT_HOST_KEY_CHECKING",
+        "DB_SSH_KEEPALIVE_INTERVAL",
+        "DB_SSH_LOCAL_PORT",
+    ];
+
+    fn parse_ssh(args: &[&str]) -> SshArguments {
+        // SAFETY: tests in this file do not write DB_SSH_* env vars concurrently.
+        unsafe {
+            for name in SSH_ENV {
+                std::env::remove_var(name);
+            }
+        }
+        TestCli::try_parse_from(args).expect("clap parse").ssh
+    }
+
+    fn home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\deploy")
+        } else {
+            PathBuf::from("/home/deploy")
+        }
+    }
+
+    fn resolve(args: &[&str], home: Option<&Path>) -> Result<Option<SshConfig>, dbmcp_config::ConfigErrors> {
+        parse_ssh(args).resolve(DatabaseBackend::Postgres, home)
+    }
+
+    #[test]
+    fn ssh_disabled_without_any_option() {
+        assert!(resolve(&[], Some(&home())).expect("valid").is_none());
+    }
+
+    #[test]
+    fn ssh_options_without_host_are_rejected() {
+        for args in [
+            &["--ssh-port", "2222"][..],
+            &["--ssh-user", "deploy"],
+            &["--ssh-password", "pw"],
+            &["--ssh-key", "/k"],
+            &["--ssh-key-passphrase", "pp"],
+            &["--ssh-known-hosts", "/kh"],
+            &["--ssh-strict-host-key-checking", "no"],
+            &["--ssh-keepalive-interval", "0"],
+            &["--ssh-local-port", "4000"],
+        ] {
+            let errors = resolve(args, Some(&home())).expect_err("orphan option must fail");
+            assert_eq!(errors.len(), 1, "{args:?}");
+            assert_eq!(
+                errors[0].to_string(),
+                "DB_SSH_HOST is required when other DB_SSH_* options are set",
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_defaults_are_resolved() {
+        let config = resolve(
+            &["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"],
+            Some(&home()),
+        )
+        .expect("valid")
+        .expect("tunnel enabled");
+        assert_eq!(config.host, "bastion");
+        assert_eq!(config.port, 22);
+        assert_eq!(config.user, "deploy");
+        assert_eq!(config.password.as_deref(), Some("pw"));
+        assert_eq!(config.known_hosts, Some(home().join(".ssh").join("known_hosts")));
+        assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::Yes);
+        assert_eq!(config.keepalive_interval, Duration::from_secs(30));
+        assert_eq!(config.local_port, None);
+    }
+
+    #[test]
+    fn ssh_explicit_values_override_defaults() {
+        let config = resolve(
+            &[
+                "--ssh-host",
+                "bastion",
+                "--ssh-port",
+                "2222",
+                "--ssh-user",
+                "deploy",
+                "--ssh-password",
+                "pw",
+                "--ssh-known-hosts",
+                "~/.ssh/custom_hosts",
+                "--ssh-strict-host-key-checking",
+                "accept-new",
+                "--ssh-keepalive-interval",
+                "0",
+                "--ssh-local-port",
+                "4000",
+            ],
+            Some(&home()),
+        )
+        .expect("valid")
+        .expect("tunnel enabled");
+        assert_eq!(config.port, 2222);
+        assert_eq!(config.known_hosts, Some(home().join(".ssh").join("custom_hosts")));
+        assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::AcceptNew);
+        assert_eq!(config.keepalive_interval, Duration::ZERO);
+        assert_eq!(config.local_port, Some(4000));
+    }
+
+    #[test]
+    fn ssh_key_path_is_tilde_expanded() {
+        let errors = resolve(
+            &[
+                "--ssh-host",
+                "bastion",
+                "--ssh-user",
+                "deploy",
+                "--ssh-key",
+                "~/.ssh/missing_key",
+            ],
+            Some(&home()),
+        )
+        .expect_err("missing key file must fail");
+        let expected = home().join(".ssh").join("missing_key");
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                ConfigError::FileNotFound(name, path) if name == "DB_SSH_KEY" && *path == expected.display().to_string()
+            )),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn ssh_known_hosts_unresolved_without_home() {
+        let errors = resolve(
+            &["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"],
+            None,
+        )
+        .expect_err("no home must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshKnownHosts)));
+
+        let config = resolve(
+            &[
+                "--ssh-host",
+                "bastion",
+                "--ssh-user",
+                "deploy",
+                "--ssh-password",
+                "pw",
+                "--ssh-strict-host-key-checking",
+                "no",
+            ],
+            None,
+        )
+        .expect("mode no needs no known_hosts")
+        .expect("tunnel enabled");
+        assert_eq!(config.known_hosts, None);
+    }
+
+    #[test]
+    fn ssh_missing_user_and_auth_accumulate() {
+        let errors = resolve(&["--ssh-host", "bastion"], Some(&home())).expect_err("must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshUser)));
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshAuth)));
+    }
+
+    #[test]
+    fn ssh_rejected_for_sqlite_backend() {
+        let errors = parse_ssh(&["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"])
+            .resolve(DatabaseBackend::Sqlite, Some(&home()))
+            .expect_err("sqlite must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::SshSqliteUnsupported)));
+    }
+
+    #[test]
+    fn ssh_empty_host_is_rejected() {
+        let errors = resolve(
+            &["--ssh-host", "", "--ssh-user", "deploy", "--ssh-password", "pw"],
+            Some(&home()),
+        )
+        .expect_err("empty host must fail");
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptySshHost)));
+    }
+
+    #[test]
+    fn clap_rejects_ssh_port_zero_and_local_port_zero() {
+        parse_ssh(&[]);
+        assert!(TestCli::try_parse_from(["--ssh-port", "0"]).is_err());
+        assert!(TestCli::try_parse_from(["--ssh-local-port", "0"]).is_err());
+    }
+
+    #[test]
+    fn clap_strict_host_key_checking_rejects_openssh_aliases() {
+        parse_ssh(&[]);
+        for value in ["ask", "off"] {
+            assert!(
+                TestCli::try_parse_from(["--ssh-strict-host-key-checking", value]).is_err(),
+                "{value} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_arguments_debug_redacts_secrets() {
+        let args = parse_ssh(&["--ssh-password", "hunter2-pw", "--ssh-key-passphrase", "hunter2-pp"]);
+        let debug = format!("{args:?}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
+    }
+
+    #[test]
+    fn clap_ssh_flags_grouped_under_ssh_heading() {
+        let help = TestCli::command().render_help().to_string();
+        let ssh_pos = help.find("SSH:").expect("SSH heading must be present in --help");
+        let flag_pos = help.find("--ssh-host").expect("--ssh-host must be present in --help");
+        assert!(ssh_pos < flag_pos, "SSH heading must precede --ssh-host:\n{help}");
+    }
+
+    #[test]
+    fn db_host_help_mentions_ssh_tunnel() {
+        let help = TestCli::command().render_help().to_string();
+        assert!(
+            help.contains("Database host (as seen from the SSH server when tunnelling)"),
+            "{help}"
+        );
     }
 }

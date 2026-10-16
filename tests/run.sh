@@ -30,6 +30,7 @@ TEST_TYPE="${TEST_TYPE:-all}"
 # Test binary names are derived by convention:
 #   functional → functional_$type (e.g. "functional_mysql", "functional_sqlite")
 #   approval   → approval_$type   (e.g. "approval_mysql", "approval_sqlite")
+#   ssh        → functional_ssh for mysql/postgres, run through the sshd service
 MATRIX=(
     "mariadb_12:mysql:3306"
     "mysql_9:mysql:3306"
@@ -121,12 +122,46 @@ wait_for_ready() {
     return 1
 }
 
+# Starts the sshd service once and waits for its SSH banner.
+SSHD_PORT=""
+ensure_sshd() {
+    [ -n "$SSHD_PORT" ] && return 0
+
+    echo -n "  Starting sshd..."
+    if ! docker compose -f "$COMPOSE_FILE" up -d sshd 2>/dev/null; then
+        echo " FAILED"
+        return 1
+    fi
+    local port
+    port=$(docker compose -f "$COMPOSE_FILE" port sshd 2222 2>/dev/null | cut -d: -f2)
+
+    local elapsed=0
+    # The ssh-tunnel mod is installed on first boot, so allow extra time.
+    local timeout=$((TIMEOUT * 4))
+    while [ $elapsed -lt "$timeout" ]; do
+        if [ "$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 4 <&3" 2>/dev/null)" = "SSH-" ]; then
+            echo " OK (${elapsed}s)"
+            SSHD_PORT="$port"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    echo " TIMEOUT after ${timeout}s"
+    docker compose -f "$COMPOSE_FILE" logs sshd 2>/dev/null | tail -20
+    return 1
+}
+
 # Returns space-separated list of test binaries for a given db_type
 test_bins_for() {
     local db_type="$1"
     local bins=""
     if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "functional" ]; then
         bins="functional_${db_type}"
+        if [ "$db_type" != "sqlite" ]; then
+            bins="$bins functional_ssh"
+        fi
     fi
     if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "approval" ]; then
         bins="${bins:+$bins }approval_${db_type}"
@@ -204,10 +239,25 @@ run_entry() {
 
         echo "  Running cargo test..."
         for bin in $test_bins; do
-            test_output=$(
-                DB_HOST=127.0.0.1 DB_PORT="$host_port" \
-                cargo test --test "$bin" -- --test-threads=1 2>&1
-            ) || test_exit=$?
+            if [ "$bin" = "functional_ssh" ]; then
+                if ! ensure_sshd; then
+                    test_exit=1
+                    continue
+                fi
+                # DB_HOST is the compose service name: only sshd can resolve it.
+                test_output=$(
+                    DB_BACKEND="$db_type" DB_HOST="$service" DB_PORT="$container_port" \
+                    DB_SSH_HOST=127.0.0.1 DB_SSH_PORT="$SSHD_PORT" \
+                    DB_SSH_USER=dbmcp DB_SSH_PASSWORD=dbmcp \
+                    DB_SSH_STRICT_HOST_KEY_CHECKING=no \
+                    cargo test --test "$bin" -- --test-threads=1 2>&1
+                ) || test_exit=$?
+            else
+                test_output=$(
+                    DB_HOST=127.0.0.1 DB_PORT="$host_port" \
+                    cargo test --test "$bin" -- --test-threads=1 2>&1
+                ) || test_exit=$?
+            fi
             echo "$test_output" | grep -E "^(test |test result:)" || true
             local count
             count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")

@@ -1,0 +1,18 @@
+[package]
+name = "dbmcp-ssh"
+description = "SSH tunnel for dbmcp"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dbmcp-config = { workspace = true }
+russh = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

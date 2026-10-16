@@ -130,6 +130,7 @@ mod tests {
             },
             http: None,
             pii: dbmcp_config::PiiConfig::default(),
+            ssh: None,
         })
         .expect("handler builds in test")
     }

@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments};
 use crate::error::Error;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -153,6 +153,10 @@ pub(crate) struct HttpCommand {
     /// Shared PII flags.
     #[command(flatten)]
     pii: PiiArguments,
+
+    /// Shared SSH tunnel flags.
+    #[command(flatten)]
+    ssh: SshArguments,
 }
 
 impl TryFrom<&HttpCommand> for Config {
@@ -163,13 +167,15 @@ impl TryFrom<&HttpCommand> for Config {
             DatabaseConfig::try_from(&cmd.database),
             HttpConfig::try_from(&cmd.http),
             PiiConfig::try_from(&cmd.pii),
+            cmd.ssh.to_config(cmd.database.backend),
         ) {
-            (Ok(database), Ok(http), Ok(pii)) => Ok(Self {
+            (Ok(database), Ok(http), Ok(pii), Ok(ssh)) => Ok(Self {
                 database,
                 http: Some(http),
                 pii,
+                ssh,
             }),
-            (database, http, pii) => {
+            (database, http, pii, ssh) => {
                 let mut errors: Vec<ConfigError> = Vec::new();
                 if let Err(e) = database {
                     errors.extend(e);
@@ -178,6 +184,9 @@ impl TryFrom<&HttpCommand> for Config {
                     errors.extend(e);
                 }
                 if let Err(e) = pii {
+                    errors.extend(e);
+                }
+                if let Err(e) = ssh {
                     errors.extend(e);
                 }
                 Err(ConfigErrors::from_vec(errors).expect("non-Ok branch implies at least one Err"))
@@ -203,7 +212,7 @@ impl HttpCommand {
         let config = Config::try_from(self)?;
         let http_config = config.http.as_ref().expect("http config set by TryFrom impl");
 
-        let server = common::create_server(&config)?;
+        let (tunnel, server) = common::create_server(&config).await?;
         let cancel_token = CancellationToken::new();
 
         let router = build_http_router(http_config, server.clone(), &cancel_token);
@@ -234,6 +243,9 @@ impl HttpCommand {
         server.shutdown().await;
         info!("All connection pools closed.");
 
+        // Pools close through the tunnel, so it must outlive the server.
+        drop(server);
+        drop(tunnel);
         Ok(())
     }
 }
@@ -388,8 +400,9 @@ mod tests {
             database: sqlite_memory_db_config(),
             http: Some(http_config.clone()),
             pii: PiiConfig::default(),
+            ssh: None,
         };
-        let server = common::create_server(&config).expect("server builds in test");
+        let server = common::build_server(&config).expect("server builds in test");
         let cancel = CancellationToken::new();
         build_http_router(&http_config, server, &cancel)
     }
