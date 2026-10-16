@@ -111,6 +111,8 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
+      - name: Authorize SSH test keys
+        run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
@@ -170,6 +172,8 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
+      - name: Authorize SSH test keys
+        run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
@@ -229,6 +233,8 @@ jobs:
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 5432
+      - name: Authorize SSH test keys
+        run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:

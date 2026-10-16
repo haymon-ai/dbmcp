@@ -1107,11 +1107,13 @@ dependencies = [
 name = "dbmcp-ssh"
 version = "0.14.0"
 dependencies = [
+ "base64 0.23.1",
  "dbmcp-config",
  "russh",
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

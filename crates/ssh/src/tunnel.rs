@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use dbmcp_config::{SshConfig, StrictHostKeyChecking};
 use russh::client;
-use russh::keys::PublicKeyOrCertificate;
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{debug, error, info, warn};
 
 use crate::error::SshError;
+use crate::key;
 
 /// Deadline for TCP dial, SSH handshake, and authentication together.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,25 +33,46 @@ impl Tunnel {
     /// unreachable SSH server does not fail startup. `db_host` is resolved
     /// by the SSH server, not locally.
     ///
+    /// The private key, when configured, is loaded and decrypted here and
+    /// kept in memory for every later connect. Authentication tries the
+    /// key first, then the password.
+    ///
     /// # Errors
     ///
-    /// - [`SshError::NotImplemented`] for key authentication or host-key
-    ///   checking other than `no`.
-    /// - [`SshError::MissingPassword`] when no password is configured.
+    /// - [`SshError::NotImplemented`] for host-key checking other than `no`.
+    /// - [`SshError::MissingCredentials`] when neither password nor key is set.
+    /// - `SshError::Key*` when the private key cannot be read, parsed, or
+    ///   decrypted.
     /// - [`SshError::Bind`] when the local listener cannot be bound.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the blocking key-loading task panics.
     pub async fn start(config: &SshConfig, db_host: &str, db_port: u16) -> Result<TunnelHandle, SshError> {
-        if config.key.is_some() {
-            return Err(SshError::NotImplemented(
-                "SSH private-key authentication (DB_SSH_KEY)".into(),
-            ));
-        }
         if config.strict_host_key_checking != StrictHostKeyChecking::No {
             return Err(SshError::NotImplemented(format!(
                 "SSH host-key verification (DB_SSH_STRICT_HOST_KEY_CHECKING={})",
                 config.strict_host_key_checking
             )));
         }
-        let password = config.password.clone().ok_or(SshError::MissingPassword)?;
+        if config.password.is_none() && config.key.is_none() {
+            return Err(SshError::MissingCredentials);
+        }
+        let key = match &config.key {
+            Some(path) => {
+                // Key derivation (bcrypt-pbkdf, PBKDF2) is CPU-bound.
+                let (path, passphrase) = (path.clone(), config.key_passphrase.clone());
+                #[allow(clippy::result_large_err)]
+                let key = tokio::task::spawn_blocking(move || {
+                    key::warn_if_key_exposed(&path);
+                    key::load_private_key(&path, passphrase.as_deref())
+                })
+                .await
+                .expect("key loading task does not panic")?;
+                Some(Arc::new(key))
+            }
+            None => None,
+        };
 
         warn!(
             "SSH host-key verification is DISABLED (DB_SSH_STRICT_HOST_KEY_CHECKING=no); \
@@ -75,7 +97,8 @@ impl Tunnel {
             ssh_host: config.host.clone(),
             ssh_port: config.port,
             user: config.user.clone(),
-            password,
+            password: config.password.clone(),
+            key,
             db_target: format!("{db_host}:{db_port}"),
             db_host: db_host.to_owned(),
             db_port,
@@ -141,7 +164,8 @@ struct Inner {
     ssh_host: String,
     ssh_port: u16,
     user: String,
-    password: String,
+    password: Option<String>,
+    key: Option<Arc<PrivateKey>>,
     db_target: String,
     db_host: String,
     db_port: u16,
@@ -153,7 +177,8 @@ impl std::fmt::Debug for Inner {
         f.debug_struct("Inner")
             .field("ssh_target", &self.ssh_target)
             .field("user", &self.user)
-            .field("password", &"[REDACTED]")
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
             .field("db_target", &self.db_target)
             .finish_non_exhaustive()
     }
@@ -180,7 +205,7 @@ impl Inner {
         Ok(session)
     }
 
-    /// Dials the SSH server and authenticates with the password.
+    /// Dials the SSH server and authenticates with the key, then the password.
     async fn connect(&self) -> Result<client::Handle<Client>, SshError> {
         let mut session = client::connect(
             Arc::clone(&self.client_config),
@@ -193,21 +218,57 @@ impl Inner {
             source,
         })?;
 
-        let auth = session
-            .authenticate_password(self.user.as_str(), self.password.as_str())
-            .await
-            .map_err(|source| SshError::Auth {
-                user: self.user.clone(),
-                target: self.ssh_target.clone(),
-                source,
-            })?;
-        if !auth.success() {
-            return Err(SshError::AuthRejected {
-                user: self.user.clone(),
-                target: self.ssh_target.clone(),
-            });
+        let auth_error = |source| SshError::Auth {
+            user: self.user.clone(),
+            target: self.ssh_target.clone(),
+            source,
+        };
+
+        if let Some(key) = &self.key {
+            match self.authenticate_key(&mut session, key).await {
+                Ok(true) => return Ok(session),
+                Ok(false) => debug!("SSH key rejected for {}@{}", self.user, self.ssh_target),
+                Err(e) if self.password.is_some() => warn!(
+                    "SSH key authentication for {}@{} failed: {e}; trying password",
+                    self.user, self.ssh_target
+                ),
+                Err(e) => return Err(auth_error(e)),
+            }
         }
-        Ok(session)
+
+        if let Some(password) = &self.password {
+            let auth = session
+                .authenticate_password(self.user.as_str(), password.as_str())
+                .await
+                .map_err(auth_error)?;
+            if auth.success() {
+                return Ok(session);
+            }
+        }
+
+        Err(SshError::AuthRejected {
+            user: self.user.clone(),
+            target: self.ssh_target.clone(),
+        })
+    }
+
+    /// Offers `key` and returns whether the server accepted it.
+    async fn authenticate_key(
+        &self,
+        session: &mut client::Handle<Client>,
+        key: &Arc<PrivateKey>,
+    ) -> Result<bool, russh::Error> {
+        // `None` would mean SHA-1 `ssh-rsa`, which OpenSSH 8.8+ rejects.
+        // Skip the lookup for other keys: it can wait up to 1s.
+        let hash = if key.algorithm().is_rsa() {
+            session.best_supported_rsa_hash().await?.flatten()
+        } else {
+            None
+        };
+        let auth = session
+            .authenticate_publickey(self.user.as_str(), PrivateKeyWithHashAlg::new(Arc::clone(key), hash))
+            .await?;
+        Ok(auth.success())
     }
 }
 
@@ -292,8 +353,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use russh::keys::PrivateKey;
     use russh::keys::ssh_key::private::Ed25519Keypair;
+    use russh::keys::{PublicKey, load_public_key};
     use russh::server::{self, Auth, ChannelOpenHandle, Msg, Server as _, Session};
     use russh::{Channel, MethodKind, MethodSet};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -303,11 +364,34 @@ mod tests {
     const USER: &str = "tunnel";
     const PASSWORD: &str = "s3cret";
 
-    /// In-process SSH server accepting password auth and `direct-tcpip`.
+    /// Public keys the test server accepts for [`USER`].
+    const AUTHORIZED_KEYS: &[&str] = &["openssh_ed25519.pub", "openssh_ed25519_enc.pub", "openssh_rsa.pub"];
+
+    fn fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name)
+    }
+
+    /// In-process SSH server accepting password/key auth and `direct-tcpip`.
     #[derive(Clone, Default)]
     struct TestServer {
         sessions: Arc<AtomicUsize>,
         targets: Arc<std::sync::Mutex<Vec<(String, u32)>>>,
+        /// Authentication attempts in order, as `method:accepted`.
+        attempts: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl TestServer {
+        fn record(&self, method: &str, accepted: bool) -> Auth {
+            self.attempts
+                .lock()
+                .expect("attempts lock")
+                .push(format!("{method}:{accepted}"));
+            if accepted { Auth::Accept } else { Auth::reject() }
+        }
+
+        fn attempts(&self) -> Vec<String> {
+            self.attempts.lock().expect("attempts lock").clone()
+        }
     }
 
     impl server::Server for TestServer {
@@ -323,11 +407,14 @@ mod tests {
         type Error = russh::Error;
 
         async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-            if user == USER && password == PASSWORD {
-                Ok(Auth::Accept)
-            } else {
-                Ok(Auth::reject())
-            }
+            Ok(self.record("password", user == USER && password == PASSWORD))
+        }
+
+        async fn auth_publickey(&mut self, user: &str, public_key: &PublicKey) -> Result<Auth, Self::Error> {
+            let authorized = AUTHORIZED_KEYS.iter().any(|name| {
+                load_public_key(fixture(name)).expect("authorized key").key_data() == public_key.key_data()
+            });
+            Ok(self.record("publickey", user == USER && authorized))
         }
 
         async fn channel_open_direct_tcpip(
@@ -360,7 +447,7 @@ mod tests {
         let host_key = PrivateKey::from(Ed25519Keypair::from_seed(&[7; 32]));
         let config = Arc::new(server::Config {
             keys: vec![host_key],
-            methods: MethodSet::from(&[MethodKind::Password][..]),
+            methods: MethodSet::from(&[MethodKind::PublicKey, MethodKind::Password][..]),
             auth_rejection_time: Duration::from_millis(10),
             auth_rejection_time_initial: Some(Duration::ZERO),
             ..server::Config::default()
@@ -538,19 +625,97 @@ mod tests {
         panic!("listener on {addr} still accepting after drop");
     }
 
+    fn key_config(ssh: SocketAddr, key: &str, passphrase: Option<&str>) -> SshConfig {
+        SshConfig {
+            password: None,
+            key: Some(fixture(key)),
+            key_passphrase: passphrase.map(Into::into),
+            ..ssh_config(ssh)
+        }
+    }
+
     #[tokio::test]
-    async fn key_auth_is_not_yet_implemented() {
+    async fn authenticates_with_private_keys() {
+        for (key, passphrase) in [
+            ("openssh_ed25519", None),
+            ("openssh_ed25519_enc", Some("secret")),
+            ("openssh_rsa", None),
+        ] {
+            let (ssh, server) = start_ssh_server().await;
+            let echo = start_echo_server().await;
+            let tunnel = Tunnel::start(&key_config(ssh, key, passphrase), "127.0.0.1", echo.port())
+                .await
+                .unwrap_or_else(|e| panic!("{key}: {e}"));
+
+            let echoed = round_trip(tunnel.local_addr(), b"ping").await;
+            assert_eq!(echoed.expect(key), b"ping", "{key}");
+            assert_eq!(server.attempts(), vec!["publickey:true"], "{key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_password_when_key_is_rejected() {
+        let (ssh, server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
         let config = SshConfig {
-            key: Some(PathBuf::from("/home/deploy/.ssh/id_ed25519")),
+            password: Some(PASSWORD.into()),
+            ..key_config(ssh, "openssh_ecdsa", None)
+        };
+        let tunnel = Tunnel::start(&config, "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+
+        assert_eq!(round_trip(tunnel.local_addr(), b"ping").await.expect("echo"), b"ping");
+        assert_eq!(server.attempts(), vec!["publickey:false", "password:true"]);
+    }
+
+    #[tokio::test]
+    async fn tries_key_before_password() {
+        let (ssh, server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let config = SshConfig {
+            password: Some(PASSWORD.into()),
+            ..key_config(ssh, "openssh_ed25519", None)
+        };
+        let tunnel = Tunnel::start(&config, "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+
+        round_trip(tunnel.local_addr(), b"x").await.expect("echo");
+        assert_eq!(server.attempts(), vec!["publickey:true"]);
+    }
+
+    #[tokio::test]
+    async fn closes_socket_when_key_is_rejected_without_password() {
+        let (ssh, server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let tunnel = Tunnel::start(&key_config(ssh, "openssh_ecdsa", None), "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+
+        let read = round_trip(tunnel.local_addr(), b"ping").await;
+        assert!(read.is_err(), "rejected key must not forward: {read:?}");
+        assert_eq!(server.attempts(), vec!["publickey:false"]);
+    }
+
+    #[tokio::test]
+    async fn key_errors_fail_startup() {
+        let (ssh, server) = start_ssh_server().await;
+        let err = Tunnel::start(&key_config(ssh, "openssh_ed25519_enc", Some("wrong")), "db", 5432)
+            .await
+            .expect_err("wrong passphrase");
+        assert!(matches!(err, SshError::KeyDecrypt { .. }), "{err:?}");
+        assert_eq!(server.sessions.load(Ordering::SeqCst), 0, "fails before connecting");
+    }
+
+    #[tokio::test]
+    async fn missing_credentials_fail_startup() {
+        let config = SshConfig {
+            password: None,
             ..ssh_config(SocketAddr::from((Ipv4Addr::LOCALHOST, 22)))
         };
-        let err = Tunnel::start(&config, "db", 5432)
-            .await
-            .expect_err("key auth unsupported");
-        assert_eq!(
-            err.to_string(),
-            "SSH private-key authentication (DB_SSH_KEY) is not yet implemented"
-        );
+        let err = Tunnel::start(&config, "db", 5432).await.expect_err("no credentials");
+        assert!(matches!(err, SshError::MissingCredentials), "{err:?}");
     }
 
     #[tokio::test]
@@ -579,7 +744,8 @@ mod tests {
             ssh_host: "bastion".into(),
             ssh_port: 22,
             user: USER.into(),
-            password: "hunter2".into(),
+            password: Some("hunter2".into()),
+            key: None,
             db_target: "db:5432".into(),
             db_host: "db".into(),
             db_port: 5432,
