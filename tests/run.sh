@@ -98,16 +98,16 @@ wait_for_ready() {
         case "$db_type" in
             mysql)
                 if docker compose -f "$COMPOSE_FILE" exec -T "$service" \
-                    mariadb -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1 \
+                    mariadb -h 127.0.0.1 --protocol=TCP -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1 \
                 || docker compose -f "$COMPOSE_FILE" exec -T "$service" \
-                    mysql -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1; then
+                    mysql -h 127.0.0.1 --protocol=TCP -u root app -e "SELECT 1 FROM post_tags LIMIT 1" &>/dev/null 2>&1; then
                     echo " OK (${elapsed}s)"
                     return 0
                 fi
                 ;;
             postgres)
                 if docker compose -f "$COMPOSE_FILE" exec -T "$service" \
-                    pg_isready -U postgres &>/dev/null 2>&1; then
+                    pg_isready -h 127.0.0.1 -p 5432 -U postgres &>/dev/null 2>&1; then
                     echo " OK (${elapsed}s)"
                     return 0
                 fi
