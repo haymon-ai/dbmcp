@@ -48,7 +48,7 @@ All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTri
 
 To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
 
-Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a JSON-RPC error (code `-32602`); the server does not silently restart from the beginning.
+Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a tool result with `isError: true` describing the problem; the server does not silently restart from the beginning.
 
 Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, `USE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
@@ -446,7 +446,7 @@ See [PII configuration](/docs/configuration#pii) for the flag, env var, and the 
 
 ### What gets filtered
 
-Redaction applies only to **query tool output payloads** — `readQuery` results today, and any future query tools that route through the same redactor. Logs, error messages, schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
+Redaction applies to **query tool output payloads** — `readQuery` results today, and any future query tools that route through the same redactor — and to **tool error messages** from every tool. Error messages run through the regex recognizers only; the optional NER pass is skipped so table, column, and schema names in database errors stay intact. Logs, successful schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
 
 ### How spans are rewritten
 

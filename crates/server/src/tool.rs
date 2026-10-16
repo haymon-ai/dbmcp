@@ -7,7 +7,9 @@
 //!
 //! Tools are registered so that an error returned by a tool's `invoke` reaches
 //! the client as a tool result with `isError: true`, not a JSON-RPC error. The
-//! caller sees the message (e.g. a database error) and can self-correct.
+//! caller sees the message (e.g. a database error) and can self-correct. The
+//! message first passes through [`ToolHandler::redact_error`], so a backend can
+//! apply PII redaction like it does to any other tool output.
 
 use std::pin::Pin;
 
@@ -16,10 +18,19 @@ use rmcp::handler::server::router::tool::{AsyncTool, ToolBase, ToolRouter};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Tool};
 
+/// Backend handler hooks the tool registry calls at tool-call time.
+pub trait ToolHandler: Send + Sync + 'static {
+    /// Rewrites a tool error message before it is returned to the client.
+    ///
+    /// Backends use this to apply PII redaction to error text. The returned
+    /// string is sent verbatim, so implementations must fail closed.
+    fn redact_error(&self, message: &str) -> String;
+}
+
 /// Declarative registration entry for one MCP tool.
 ///
 /// Pairs the tool's router-registration function with its mode gates.
-pub struct ToolSpec<H: Send + Sync + 'static> {
+pub struct ToolSpec<H: ToolHandler> {
     /// Registers the tool on a router, returning the extended router.
     register: fn(ToolRouter<H>) -> ToolRouter<H>,
     /// Whether the tool registers only when a database name is pinned in config.
@@ -28,7 +39,7 @@ pub struct ToolSpec<H: Send + Sync + 'static> {
     read_only: bool,
 }
 
-impl<H: Send + Sync + 'static> std::fmt::Debug for ToolSpec<H> {
+impl<H: ToolHandler> std::fmt::Debug for ToolSpec<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolSpec")
             .field("pinned", &self.pinned)
@@ -37,7 +48,7 @@ impl<H: Send + Sync + 'static> std::fmt::Debug for ToolSpec<H> {
     }
 }
 
-impl<H: Send + Sync + 'static> ToolSpec<H> {
+impl<H: ToolHandler> ToolSpec<H> {
     /// Creates a spec for an async tool `T` with its pinned and read-only gates.
     #[must_use]
     pub const fn async_tool<T: AsyncTool<H> + 'static>(pinned: bool, read_only: bool) -> Self {
@@ -53,7 +64,7 @@ impl<H: Send + Sync + 'static> ToolSpec<H> {
 ///
 /// Tools without an input schema take no arguments and are invoked with
 /// `T::Parameter::default()`, matching rmcp's own registration.
-fn register<H: Send + Sync + 'static, T: AsyncTool<H> + 'static>(router: ToolRouter<H>) -> ToolRouter<H> {
+fn register<H: ToolHandler, T: AsyncTool<H> + 'static>(router: ToolRouter<H>) -> ToolRouter<H> {
     if T::input_schema().is_some() {
         router.with_route((attribute::<T>(), invoke::<H, T>))
     } else {
@@ -73,11 +84,11 @@ fn attribute<T: ToolBase>() -> Tool {
     tool
 }
 
-/// Boxed future returned by [`invoke`].
+/// Boxed future returned by the tool invoke wrappers.
 type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<Json<T>, CallToolResult>> + Send + 'a>>;
 
 /// Runs tool `T` with arguments extracted from the request.
-fn invoke<H: Send + Sync + 'static, T: AsyncTool<H>>(
+fn invoke<H: ToolHandler, T: AsyncTool<H>>(
     handler: &H,
     Parameters(params): Parameters<T::Parameter>,
 ) -> ToolFuture<'_, T::Output> {
@@ -85,22 +96,22 @@ fn invoke<H: Send + Sync + 'static, T: AsyncTool<H>>(
 }
 
 /// Runs argument-less tool `T` with its default parameter value.
-fn invoke_without_params<H: Send + Sync + 'static, T: AsyncTool<H>>(handler: &H) -> ToolFuture<'_, T::Output> {
+fn invoke_without_params<H: ToolHandler, T: AsyncTool<H>>(handler: &H) -> ToolFuture<'_, T::Output> {
     run::<H, T>(handler, T::Parameter::default())
 }
 
 /// Runs tool `T`, mapping its error to a [`CallToolResult`] with `isError: true`.
-fn run<H: Send + Sync + 'static, T: AsyncTool<H>>(handler: &H, params: T::Parameter) -> ToolFuture<'_, T::Output> {
+fn run<H: ToolHandler, T: AsyncTool<H>>(handler: &H, params: T::Parameter) -> ToolFuture<'_, T::Output> {
     Box::pin(async move {
-        T::invoke(handler, params)
-            .await
-            .map(Json)
-            .map_err(|error| CallToolResult::error(vec![ContentBlock::text(error.into().message)]))
+        T::invoke(handler, params).await.map(Json).map_err(|error| {
+            let message = handler.redact_error(&error.into().message);
+            CallToolResult::error(vec![ContentBlock::text(message)])
+        })
     })
 }
 
 /// Extends [`ToolRouter`] with declarative construction from a [`ToolSpec`] table.
-pub trait ToolRouterExt<H: Send + Sync + 'static>: Sized {
+pub trait ToolRouterExt<H: ToolHandler>: Sized {
     /// Builds a router from `specs`, skipping mode-gated tools.
     ///
     /// A spec is skipped when its `read_only` gate coincides with `read_only`
@@ -109,7 +120,7 @@ pub trait ToolRouterExt<H: Send + Sync + 'static>: Sized {
     fn from_specs(specs: &[ToolSpec<H>], read_only: bool, pinned: bool) -> Self;
 }
 
-impl<H: Send + Sync + 'static> ToolRouterExt<H> for ToolRouter<H> {
+impl<H: ToolHandler> ToolRouterExt<H> for ToolRouter<H> {
     fn from_specs(specs: &[ToolSpec<H>], read_only: bool, pinned: bool) -> Self {
         specs
             .iter()
@@ -121,21 +132,45 @@ impl<H: Send + Sync + 'static> ToolRouterExt<H> for ToolRouter<H> {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
+    use std::sync::Arc;
 
     use rmcp::ErrorData;
     use rmcp::handler::server::tool::IntoCallToolResult;
-    use std::sync::Arc;
-
     use rmcp::model::{CallToolResponse, JsonObject, ToolAnnotations};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
     use super::*;
 
-    struct Handler;
+    const ERROR: &str = "Duplicate entry 'jane@doe.com' for key 'email'";
+
+    const REDACTED: &str = "Duplicate entry '<EMAIL_ADDRESS>' for key 'email'";
+
+    /// Test handler whose hook optionally masks the email in [`ERROR`].
+    struct Handler {
+        redact: bool,
+    }
+
+    impl Handler {
+        fn new(redact: bool) -> Self {
+            Self { redact }
+        }
+    }
+
+    impl ToolHandler for Handler {
+        fn redact_error(&self, message: &str) -> String {
+            if self.redact {
+                message.replace("jane@doe.com", "<EMAIL_ADDRESS>")
+            } else {
+                message.to_owned()
+            }
+        }
+    }
 
     #[derive(Default, Deserialize, JsonSchema)]
-    struct Request {}
+    struct Request {
+        marker: Option<String>,
+    }
 
     #[derive(Serialize, JsonSchema)]
     struct Response {
@@ -168,24 +203,11 @@ mod tests {
 
     impl AsyncTool<Handler> for FailingTool {
         async fn invoke(_: &Handler, _: Request) -> Result<Response, ErrorData> {
-            Err(ErrorData::internal_error("syntax error near FROM", None))
+            Err(ErrorData::internal_error(ERROR, None))
         }
     }
 
-    #[tokio::test]
-    async fn tool_error_becomes_tool_result_with_is_error() {
-        let response = invoke::<Handler, FailingTool>(&Handler, Parameters(Request::default()))
-            .await
-            .into_call_tool_result();
-
-        let Ok(CallToolResponse::Complete(result)) = response else {
-            panic!("expected a completed tool result, got {response:?}");
-        };
-        assert_eq!(result.is_error, Some(true));
-        let text = result.content[0].as_text().expect("text content");
-        assert_eq!(text.text, "syntax error near FROM");
-    }
-
+    /// Tool without an input schema; fails unless given the default parameter.
     struct NoInputTool;
 
     impl ToolBase for NoInputTool {
@@ -203,9 +225,54 @@ mod tests {
     }
 
     impl AsyncTool<Handler> for NoInputTool {
-        async fn invoke(_: &Handler, _: Request) -> Result<Response, ErrorData> {
-            Ok(Response { ok: true })
+        async fn invoke(_: &Handler, request: Request) -> Result<Response, ErrorData> {
+            match request.marker {
+                None => Err(ErrorData::internal_error(ERROR, None)),
+                Some(_) => Ok(Response { ok: true }),
+            }
         }
+    }
+
+    /// Returns the text of the `isError` result produced by `output`.
+    fn error_text(output: Result<Json<Response>, CallToolResult>) -> String {
+        let response = output.into_call_tool_result();
+        let Ok(CallToolResponse::Complete(result)) = response else {
+            panic!("expected a completed tool result, got {response:?}");
+        };
+        assert_eq!(result.is_error, Some(true));
+        result.content[0].as_text().expect("text content").text.clone()
+    }
+
+    #[tokio::test]
+    async fn tool_error_becomes_tool_result_with_is_error() {
+        let handler = Handler::new(false);
+        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
+
+        assert_eq!(error_text(output), ERROR);
+    }
+
+    #[tokio::test]
+    async fn tool_error_passes_through_redact_error_hook() {
+        let handler = Handler::new(true);
+        let output = invoke::<Handler, FailingTool>(&handler, Parameters(Request::default())).await;
+
+        assert_eq!(error_text(output), REDACTED);
+    }
+
+    #[tokio::test]
+    async fn no_input_tool_runs_with_default_parameter() {
+        let handler = Handler::new(false);
+        let output = invoke_without_params::<Handler, NoInputTool>(&handler).await;
+
+        assert_eq!(error_text(output), ERROR);
+    }
+
+    #[tokio::test]
+    async fn no_input_tool_error_passes_through_redact_error_hook() {
+        let handler = Handler::new(true);
+        let output = invoke_without_params::<Handler, NoInputTool>(&handler).await;
+
+        assert_eq!(error_text(output), REDACTED);
     }
 
     #[test]

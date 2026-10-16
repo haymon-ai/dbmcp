@@ -306,6 +306,36 @@ impl Redactor {
             Ok(rows)
         }
     }
+
+    /// Redacts a single free-text string, such as a tool error message.
+    ///
+    /// Runs only the regex recognizers, with no key-path context. The NER pass
+    /// is skipped: without column context it rewrites table, column, and
+    /// schema identifiers the caller needs to correct a failing query. Emits
+    /// one `pii.redacted_text` event when at least one span was rewritten.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RedactionError::Internal`] when the analyzer pipeline panics;
+    /// the caller must not fall back to the unredacted text (fail-closed).
+    pub fn redact_text(&self, text: &str) -> Result<String, RedactionError> {
+        let mut stats = RedactionStats::default();
+        let mut out = text.to_owned();
+        catch_unwind(AssertUnwindSafe(|| {
+            let results = self.analyzer.analyze(&out, &self.opts);
+            apply_spans(&mut out, results, &self.operator, &mut stats);
+        }))
+        .map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
+        if stats.total > 0 {
+            tracing::info!(
+                target: "dbmcp::pii",
+                redactions = stats.total,
+                by_entity = ?stats.by_entity,
+                "pii.redacted_text"
+            );
+        }
+        Ok(out)
+    }
 }
 
 /// Redaction over the `Option<Redactor>` field every query handler holds.
@@ -320,6 +350,12 @@ pub trait MaybeRedact {
     ///
     /// Propagates [`RedactionError`] from [`Redactor::redact_rows`].
     async fn redact_rows(&self, rows: Vec<Value>) -> Result<Vec<Value>, RedactionError>;
+
+    /// Redacts a free-text message when a redactor is present, else returns it unchanged.
+    ///
+    /// Fails closed: if redaction fails, the [`RedactionError`] text replaces
+    /// the message so the unredacted text is never returned.
+    fn redact_message(&self, message: &str) -> String;
 }
 
 impl MaybeRedact for Option<Redactor> {
@@ -327,6 +363,13 @@ impl MaybeRedact for Option<Redactor> {
         match self {
             Some(r) => r.redact_rows(rows).await,
             None => Ok(rows),
+        }
+    }
+
+    fn redact_message(&self, message: &str) -> String {
+        match self {
+            Some(r) => r.redact_text(message).unwrap_or_else(|e| e.to_string()),
+            None => message.to_owned(),
         }
     }
 }
@@ -1060,5 +1103,28 @@ mod tests {
         let redactor = Some(Redactor::with_defaults());
         let out = redactor.redact_rows(vec![email_row()]).await.expect("some redacts");
         assert_eq!(out[0]["msg"], "ping me at <EMAIL_ADDRESS>");
+    }
+
+    #[test]
+    fn redact_text_redacts_free_text() {
+        let text = "Duplicate entry 'jane@doe.com' for key 'email'";
+        let out = Redactor::with_defaults().redact_text(text).expect("redacts");
+        assert_eq!(out, "Duplicate entry '<EMAIL_ADDRESS>' for key 'email'");
+    }
+
+    #[test]
+    fn maybe_redact_message_redacts_or_passes_through() {
+        let message = "no such table: jane@doe.com";
+        let none: Option<Redactor> = None;
+        assert_eq!(none.redact_message(message), message);
+        let some = Some(Redactor::with_defaults());
+        assert_eq!(some.redact_message(message), "no such table: <EMAIL_ADDRESS>");
+    }
+
+    #[test]
+    fn redact_text_without_pii_is_unchanged() {
+        let text = "no such table: customers";
+        let out = Redactor::with_defaults().redact_text(text).expect("redacts");
+        assert_eq!(out, text);
     }
 }
