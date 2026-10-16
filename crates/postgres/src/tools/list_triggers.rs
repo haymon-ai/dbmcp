@@ -173,8 +173,7 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorData`] with code `-32602` if `cursor` is malformed,
-    /// or an internal-error [`ErrorData`] if `database` is invalid
+    /// Returns an internal-error [`ErrorData`] if `database` is invalid
     /// or the underlying query fails.
     pub async fn list_triggers(
         &self,

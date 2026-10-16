@@ -755,7 +755,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
 #[tokio::test]
 async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
     // Malformed cursors are rejected at serde deserialization time (before any
-    // handler runs), which rmcp automatically maps to JSON-RPC `-32602`. Verify
+    // handler runs), which rmcp reports as a tool result with `isError: true`. Verify
     // the rejection here at the serde layer.
     use serde_json::json;
 

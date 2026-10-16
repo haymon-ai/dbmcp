@@ -1,16 +1,15 @@
 //! Opaque cursor pagination helpers for MCP tool responses.
 //!
 //! Implements the cursor conventions described in the MCP specification
-//! (`cursor` / `nextCursor`, opaque tokens, JSON-RPC `-32602` on invalid
-//! input). Cursors are base64url-encoded JSON objects of the form
-//! `{"offset": <offset>}`. The encoding is an implementation detail —
-//! clients MUST treat cursors as opaque strings.
+//! (`cursor` / `nextCursor`, opaque tokens). Cursors are base64url-encoded
+//! JSON objects of the form `{"offset": <offset>}`. The encoding is an
+//! implementation detail — clients MUST treat cursors as opaque strings.
 //!
 //! Tool requests declare their cursor as [`Option<Cursor>`]; the custom
 //! `Serialize`/`Deserialize` impls encode to / decode from the base64url
 //! wire string, so handlers never see the raw cursor string. Decode
-//! errors surface as serde errors, which rmcp automatically maps to
-//! JSON-RPC code `-32602` when parsing tool arguments.
+//! errors surface as serde errors, which rmcp reports as a tool result
+//! with `isError: true` when parsing tool arguments.
 
 use std::borrow::Cow;
 

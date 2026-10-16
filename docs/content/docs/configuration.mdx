@@ -91,7 +91,7 @@ A transport subcommand is required — running `dbmcp` with no subcommand prints
 
 ## PII
 
-Database MCP can rewrite detected PII spans inside query tool output. The feature is **opt-in and off by default** — applies to query tool response payloads (`readQuery` and any future query tools that route through the redactor) and is **not** applied to logs, errors, schema-discovery responses, or tool arguments. See [Features](/docs/features#pii-redaction) for the supported entity list.
+Database MCP can rewrite detected PII spans inside query tool output. The feature is **opt-in and off by default** — applies to query tool response payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex recognizers only, no NER pass). It is **not** applied to logs, successful schema-discovery responses, or tool arguments. See [Features](/docs/features#pii-redaction) for the supported entity list.
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
