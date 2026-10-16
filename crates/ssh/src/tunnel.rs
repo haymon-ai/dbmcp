@@ -225,21 +225,15 @@ impl Inner {
         };
 
         if let Some(key) = &self.key {
-            // `None` would mean SHA-1 `ssh-rsa`, which OpenSSH 8.8+ rejects.
-            // Skip the lookup for other keys: it can wait up to 1s.
-            let hash = if key.algorithm().is_rsa() {
-                session.best_supported_rsa_hash().await.map_err(auth_error)?.flatten()
-            } else {
-                None
-            };
-            let auth = session
-                .authenticate_publickey(self.user.as_str(), PrivateKeyWithHashAlg::new(Arc::clone(key), hash))
-                .await
-                .map_err(auth_error)?;
-            if auth.success() {
-                return Ok(session);
+            match self.authenticate_key(&mut session, key).await {
+                Ok(true) => return Ok(session),
+                Ok(false) => debug!("SSH key rejected for {}@{}", self.user, self.ssh_target),
+                Err(e) if self.password.is_some() => warn!(
+                    "SSH key authentication for {}@{} failed: {e}; trying password",
+                    self.user, self.ssh_target
+                ),
+                Err(e) => return Err(auth_error(e)),
             }
-            debug!("SSH key rejected for {}@{}", self.user, self.ssh_target);
         }
 
         if let Some(password) = &self.password {
@@ -256,6 +250,25 @@ impl Inner {
             user: self.user.clone(),
             target: self.ssh_target.clone(),
         })
+    }
+
+    /// Offers `key` and returns whether the server accepted it.
+    async fn authenticate_key(
+        &self,
+        session: &mut client::Handle<Client>,
+        key: &Arc<PrivateKey>,
+    ) -> Result<bool, russh::Error> {
+        // `None` would mean SHA-1 `ssh-rsa`, which OpenSSH 8.8+ rejects.
+        // Skip the lookup for other keys: it can wait up to 1s.
+        let hash = if key.algorithm().is_rsa() {
+            session.best_supported_rsa_hash().await?.flatten()
+        } else {
+            None
+        };
+        let auth = session
+            .authenticate_publickey(self.user.as_str(), PrivateKeyWithHashAlg::new(Arc::clone(key), hash))
+            .await?;
+        Ok(auth.success())
     }
 }
 

@@ -67,23 +67,31 @@ pub(crate) fn load_private_key(path: &Path, passphrase: Option<&str>) -> Result<
     }
 
     // russh rejects a passphrase for unencrypted PKCS#8 and SEC1 keys.
-    match keys::decode_secret_key(&text, None) {
-        Ok(key) => Ok(key),
-        Err(retry) if pem.encrypted || matches!(retry, keys::Error::KeyIsEncrypted) => {
-            debug!("SSH key {} could not be decrypted: {first}", path.display());
-            Err(SshError::KeyDecrypt {
-                path: path.to_owned(),
-                source: first,
-            })
+    // Armour-marked keys are encrypted, so retrying them is pointless.
+    let retry = if pem.encrypted {
+        None
+    } else {
+        match keys::decode_secret_key(&text, None) {
+            Ok(key) => return Ok(key),
+            Err(keys::Error::KeyIsEncrypted) => None,
+            Err(retry) => Some(retry),
         }
-        Err(retry) => Err(SshError::KeyParse {
+    };
+    if let Some(retry) = retry {
+        return Err(SshError::KeyParse {
             path: path.to_owned(),
             source: retry,
-        }),
+        });
     }
+
+    debug!("SSH key {} could not be decrypted: {first}", path.display());
+    Err(SshError::KeyDecrypt {
+        path: path.to_owned(),
+        source: first,
+    })
 }
 
-/// Logs a warning when the key file is readable by group or others.
+/// Logs a warning when group or others have any access to the key file.
 ///
 /// Never fails: secret mounts in Docker and Kubernetes are often 0644.
 #[cfg(unix)]
@@ -94,9 +102,9 @@ pub(crate) fn warn_if_key_exposed(path: &Path) {
         return;
     };
     let mode = metadata.permissions().mode() & 0o777;
-    if mode & 0o044 != 0 {
+    if mode & 0o077 != 0 {
         tracing::warn!(
-            "SSH key {} is readable by group or others (mode {mode:03o}); run `chmod 600 {}`",
+            "SSH key {} is accessible by group or others (mode {mode:03o}); run `chmod 600 {}`",
             path.display(),
             path.display()
         );
@@ -315,6 +323,12 @@ mod tests {
             assert!(logs.contains("WARN"), "{logs}");
             assert!(logs.contains("mode 644"), "{logs}");
             assert!(logs.contains("chmod 600"), "{logs}");
+        }
+
+        #[test]
+        fn warns_for_group_writable_key() {
+            let logs = logs_for_mode(0o620);
+            assert!(logs.contains("mode 620"), "{logs}");
         }
 
         #[test]
