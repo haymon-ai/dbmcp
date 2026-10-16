@@ -73,3 +73,25 @@ pub enum SshError {
         source: russh::Error,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_includes_source_exactly_once() {
+        let err = SshError::Connect {
+            target: "bastion:22".into(),
+            source: russh::Error::IO(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "Connection refused",
+            )),
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.starts_with("SSH connection to bastion:22 failed: "),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("Connection refused").count(), 1, "{rendered}");
+    }
+}

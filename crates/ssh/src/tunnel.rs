@@ -238,7 +238,7 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
     let session = match inner.session().await {
         Ok(session) => session,
         Err(e) => {
-            error!("SSH tunnel unavailable: {}", ErrorChain(&e));
+            error!("SSH tunnel unavailable: {e}");
             return;
         }
     };
@@ -256,7 +256,7 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
         Ok(channel) => channel,
         Err(source) => {
             let e = SshError::ChannelOpen { target, source };
-            error!("{}", ErrorChain(&e));
+            error!("{e}");
             return;
         }
     };
@@ -268,21 +268,6 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
             debug!("SSH channel for {peer} closed ({sent} bytes sent, {received} bytes received)");
         }
         Err(e) => debug!("SSH channel for {peer} closed with error: {e}"),
-    }
-}
-
-/// Renders an error followed by its `source()` chain.
-struct ErrorChain<'a>(&'a (dyn std::error::Error + 'static));
-
-impl std::fmt::Display for ErrorChain<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)?;
-        let mut source = self.0.source();
-        while let Some(cause) = source {
-            write!(f, ": {cause}")?;
-            source = cause.source();
-        }
-        Ok(())
     }
 }
 
