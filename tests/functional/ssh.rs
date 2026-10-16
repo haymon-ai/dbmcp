@@ -206,6 +206,18 @@ async fn assert_query_fails(command: tokio::process::Command) -> String {
     logs.await.expect("stderr reader")
 }
 
+/// Runs one query, asserts it fails, and returns the tool error text.
+async fn query_error_text(command: tokio::process::Command) -> String {
+    let client = connect(command).await;
+
+    let result = call_read_query(&client, "SELECT 1").await;
+    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
+    let text = result.content[0].as_text().expect("text content").text.clone();
+
+    client.cancel().await.expect("shutdown");
+    text
+}
+
 /// Records the sshd host key of `key_type` in `known_hosts` via `ssh-keyscan`.
 async fn keyscan(key_type: &str, known_hosts: &Path) {
     let (host, port) = ssh_endpoint();
@@ -289,11 +301,7 @@ async fn tool_error_names_ssh_failure() {
         .env("DB_SSH_PASSWORD", "wrong")
         .env_remove("DB_SSH_KEY")
         .env("DB_CONNECTION_TIMEOUT", "5");
-    let client = connect(command).await;
-
-    let result = call_read_query(&client, "SELECT 1").await;
-    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
-    let text = &result.content[0].as_text().expect("text content").text;
+    let text = query_error_text(command).await;
     let (host, port) = ssh_endpoint();
     assert!(
         text.ends_with(&format!(
@@ -301,8 +309,6 @@ async fn tool_error_names_ssh_failure() {
         )),
         "{text}"
     );
-
-    client.cancel().await.expect("shutdown");
 }
 
 #[tokio::test]
@@ -368,12 +374,6 @@ async fn tls_database_with_wrong_ca_fails_through_ssh_tunnel() {
         return;
     }
     let wrong = format!("{}/tests/tls/wrong_ca.pem", env!("CARGO_MANIFEST_DIR"));
-    let client = connect(tls_command(&wrong)).await;
-
-    let result = call_read_query(&client, "SELECT 1").await;
-    assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
-    let text = &result.content[0].as_text().expect("text content").text;
+    let text = query_error_text(tls_command(&wrong)).await;
     assert!(text.contains("invalid peer certificate"), "{text}");
-
-    client.cancel().await.expect("shutdown");
 }

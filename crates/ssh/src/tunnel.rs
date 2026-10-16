@@ -108,7 +108,6 @@ impl Tunnel {
             db_port,
             session: Mutex::new(None),
             failures: AtomicU64::new(0),
-            failure: std::sync::Mutex::default(),
             last_error: LastError::default(),
         });
 
@@ -220,8 +219,6 @@ struct Inner {
     session: Mutex<Option<Arc<client::Handle<Client>>>>,
     /// Connect attempts that failed; lets waiters detect a failure.
     failures: AtomicU64,
-    /// Message of the latest failed connect; written under the session lock.
-    failure: std::sync::Mutex<String>,
     last_error: LastError,
 }
 
@@ -258,7 +255,7 @@ impl Inner {
             }
             None if self.failures.load(Ordering::Acquire) != seen => {
                 return Err(SshError::Unavailable {
-                    cause: self.failure.lock().expect("failure lock is not poisoned").clone(),
+                    cause: self.last_error.get().unwrap_or_default(),
                 });
             }
             None => {}
@@ -271,14 +268,10 @@ impl Inner {
                 secs: CONNECT_TIMEOUT.as_secs(),
             }),
         };
-        let session = match connected {
-            Ok(session) => Arc::new(session),
-            Err(e) => {
-                *self.failure.lock().expect("failure lock is not poisoned") = self.last_error.set(&e);
-                self.failures.fetch_add(1, Ordering::AcqRel);
-                return Err(e);
-            }
-        };
+        let session = Arc::new(connected.inspect_err(|e| {
+            self.last_error.set(e);
+            self.failures.fetch_add(1, Ordering::AcqRel);
+        })?);
         self.last_error.clear();
         info!("SSH session established to {}@{}", self.user, self.ssh_target);
 
@@ -481,8 +474,8 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
                 target: inner.db_target.clone(),
                 source,
             };
-            error!("{}", error_chain(&e));
-            inner.last_error.set(&e);
+            let message = inner.last_error.set(&e);
+            error!("{message}");
             return;
         }
     };
@@ -1441,7 +1434,6 @@ mod tests {
             db_port: 5432,
             session: Mutex::new(None),
             failures: AtomicU64::new(0),
-            failure: std::sync::Mutex::default(),
             last_error: LastError::default(),
         };
         let debug = format!("{inner:?}");
