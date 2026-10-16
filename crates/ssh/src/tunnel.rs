@@ -1,12 +1,15 @@
 //! Loopback listener forwarding each socket over a `direct-tcpip` channel.
 
+use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use dbmcp_config::{SshConfig, StrictHostKeyChecking};
-use russh::client;
-use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
+use russh::{Preferred, client};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
@@ -14,6 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::SshError;
 use crate::key;
+use crate::known_hosts::{self, Check, KnownHosts};
 
 /// Deadline for TCP dial, SSH handshake, and authentication together.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,11 +39,11 @@ impl Tunnel {
     ///
     /// The private key, when configured, is loaded and decrypted here and
     /// kept in memory for every later connect. Authentication tries the
-    /// key first, then the password.
+    /// key first, then the password. The host key is verified against
+    /// `config.known_hosts`, which is re-read on every connect.
     ///
     /// # Errors
     ///
-    /// - [`SshError::NotImplemented`] for host-key checking other than `no`.
     /// - [`SshError::MissingCredentials`] when neither password nor key is set.
     /// - `SshError::Key*` when the private key cannot be read, parsed, or
     ///   decrypted.
@@ -49,12 +53,6 @@ impl Tunnel {
     ///
     /// Panics if the blocking key-loading task panics.
     pub async fn start(config: &SshConfig, db_host: &str, db_port: u16) -> Result<TunnelHandle, SshError> {
-        if config.strict_host_key_checking != StrictHostKeyChecking::No {
-            return Err(SshError::NotImplemented(format!(
-                "SSH host-key verification (DB_SSH_STRICT_HOST_KEY_CHECKING={})",
-                config.strict_host_key_checking
-            )));
-        }
         if config.password.is_none() && config.key.is_none() {
             return Err(SshError::MissingCredentials);
         }
@@ -74,10 +72,12 @@ impl Tunnel {
             None => None,
         };
 
-        warn!(
-            "SSH host-key verification is DISABLED (DB_SSH_STRICT_HOST_KEY_CHECKING=no); \
-             the tunnel is open to man-in-the-middle attacks"
-        );
+        if config.strict_host_key_checking == StrictHostKeyChecking::No {
+            warn!(
+                "SSH host-key verification is DISABLED (DB_SSH_STRICT_HOST_KEY_CHECKING=no); \
+                 the tunnel is open to man-in-the-middle attacks"
+            );
+        }
 
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, config.local_port.unwrap_or(0)));
         let listener = TcpListener::bind(addr)
@@ -88,17 +88,14 @@ impl Tunnel {
             .map_err(|source| SshError::Bind { addr, source })?;
 
         let inner = Arc::new(Inner {
-            client_config: Arc::new(client::Config {
-                inactivity_timeout: None,
-                nodelay: true,
-                ..client::Config::default()
-            }),
             ssh_target: format!("{}:{}", config.host, config.port),
             ssh_host: config.host.clone(),
             ssh_port: config.port,
             user: config.user.clone(),
             password: config.password.clone(),
             key,
+            known_hosts: config.known_hosts.clone(),
+            strict_host_key_checking: config.strict_host_key_checking,
             db_target: format!("{db_host}:{db_port}"),
             db_host: db_host.to_owned(),
             db_port,
@@ -159,13 +156,14 @@ impl Drop for TunnelHandle {
 
 /// State shared between the accept loop and channel tasks.
 struct Inner {
-    client_config: Arc<client::Config>,
     ssh_target: String,
     ssh_host: String,
     ssh_port: u16,
     user: String,
     password: Option<String>,
     key: Option<Arc<PrivateKey>>,
+    known_hosts: Option<PathBuf>,
+    strict_host_key_checking: StrictHostKeyChecking,
     db_target: String,
     db_host: String,
     db_port: u16,
@@ -179,6 +177,8 @@ impl std::fmt::Debug for Inner {
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
             .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
+            .field("known_hosts", &self.known_hosts)
+            .field("strict_host_key_checking", &self.strict_host_key_checking)
             .field("db_target", &self.db_target)
             .finish_non_exhaustive()
     }
@@ -205,18 +205,72 @@ impl Inner {
         Ok(session)
     }
 
-    /// Dials the SSH server and authenticates with the key, then the password.
+    /// Dials the SSH server, verifies its host key, and authenticates.
+    ///
+    /// Runs under the session lock, which also serialises `accept-new`
+    /// appends to `known_hosts`.
     async fn connect(&self) -> Result<client::Handle<Client>, SshError> {
-        let mut session = client::connect(
-            Arc::clone(&self.client_config),
-            (self.ssh_host.as_str(), self.ssh_port),
-            Client,
-        )
-        .await
-        .map_err(|source| SshError::Connect {
-            target: self.ssh_target.clone(),
-            source,
-        })?;
+        let known_hosts = match &self.known_hosts {
+            None => KnownHosts::default(),
+            Some(path) => match blocking({
+                let path = path.clone();
+                move || KnownHosts::read(&path)
+            })
+            .await
+            {
+                Ok(known_hosts) => known_hosts,
+                // Checking is off, so an unreadable file only loses `@revoked` entries.
+                Err(source) if self.strict_host_key_checking == StrictHostKeyChecking::No => {
+                    warn!("ignoring unreadable known_hosts {}: {source}", path.display());
+                    KnownHosts::default()
+                }
+                Err(source) => {
+                    return Err(SshError::KnownHostsRead {
+                        path: path.clone(),
+                        source,
+                    });
+                }
+            },
+        };
+        let host = known_hosts::host_name(&self.ssh_host, self.ssh_port);
+        // The handler lives as long as the session; keep only this host's lines.
+        let known_hosts = known_hosts.for_host(&host);
+        let preferred = Preferred {
+            key: Cow::Owned(known_hosts::preferred(
+                &known_hosts.algorithms(&host),
+                &Preferred::DEFAULT.key,
+            )),
+            ..Preferred::DEFAULT
+        };
+        let config = client::Config {
+            preferred,
+            inactivity_timeout: None,
+            nodelay: true,
+            ..client::Config::default()
+        };
+        let key_changed = Arc::new(AtomicBool::new(false));
+        let client = Client {
+            known_hosts,
+            key_changed: Arc::clone(&key_changed),
+            host,
+            ssh_host: self.ssh_host.clone(),
+            ssh_port: self.ssh_port,
+            ssh_target: self.ssh_target.clone(),
+            // `SshConfig` leaves `known_hosts` unset only when checking is `no`,
+            // where an empty file accepts every key without writing.
+            path: self.known_hosts.clone().unwrap_or_default(),
+            mode: self.strict_host_key_checking,
+        };
+
+        let mut session = client::connect(Arc::new(config), (self.ssh_host.as_str(), self.ssh_port), client)
+            .await
+            .map_err(|e| match e {
+                ClientError::HostKey(e) => *e,
+                ClientError::Ssh(source) => SshError::Connect {
+                    target: self.ssh_target.clone(),
+                    source,
+                },
+            })?;
 
         let auth_error = |source| SshError::Auth {
             user: self.user.clone(),
@@ -236,7 +290,18 @@ impl Inner {
             }
         }
 
-        if let Some(password) = &self.password {
+        // Like OpenSSH, never hand a password to a host whose key changed.
+        let password = self.password.as_ref().filter(|_| {
+            let changed = key_changed.load(Ordering::Relaxed);
+            if changed {
+                warn!(
+                    "SSH password authentication disabled for {}: host key changed",
+                    self.ssh_target
+                );
+            }
+            !changed
+        });
+        if let Some(password) = password {
             let auth = session
                 .authenticate_password(self.user.as_str(), password.as_str())
                 .await
@@ -335,26 +400,130 @@ async fn forward(inner: Arc<Inner>, mut socket: TcpStream, peer: SocketAddr) {
     }
 }
 
-/// russh client callbacks.
+/// Errors raised during the SSH handshake.
+#[derive(Debug, thiserror::Error)]
+enum ClientError {
+    /// Transport or protocol failure.
+    #[error(transparent)]
+    Ssh(#[from] russh::Error),
+    /// The host key was rejected or could not be recorded.
+    #[error(transparent)]
+    HostKey(Box<SshError>),
+}
+
+/// russh client callbacks verifying the host key against `known_hosts`.
 #[derive(Debug)]
-struct Client;
+struct Client {
+    /// Snapshot of `known_hosts`, read just before this connect.
+    known_hosts: KnownHosts,
+    /// Host as recorded in `known_hosts` (`host` or `[host]:port`).
+    host: String,
+    ssh_host: String,
+    ssh_port: u16,
+    ssh_target: String,
+    /// Set when a changed host key was accepted under `no`.
+    key_changed: Arc<AtomicBool>,
+    /// `known_hosts` path; empty only when checking is `no`.
+    path: PathBuf,
+    mode: StrictHostKeyChecking,
+}
+
+impl Client {
+    /// Applies the host-key policy to `key`, appending it under `accept-new`.
+    ///
+    /// | Check   | `yes` | `accept-new` | `no`      |
+    /// |---------|-------|--------------|-----------|
+    /// | revoked | fail  | fail         | fail      |
+    /// | match   | ok    | ok           | ok        |
+    /// | changed | fail  | fail         | warn + ok |
+    /// | unknown | fail  | append + ok  | ok        |
+    async fn verify(&self, key: &PublicKey) -> Result<(), SshError> {
+        use StrictHostKeyChecking::{AcceptNew, No, Yes};
+
+        let (host, path) = (&self.host, &self.path);
+        let fingerprint = || known_hosts::fingerprint(key);
+        match (self.known_hosts.check(host, key), self.mode) {
+            (Check::Revoked { line }, _) => Err(SshError::HostKeyRevoked {
+                host: host.clone(),
+                fingerprint: fingerprint(),
+                path: path.clone(),
+                line,
+            }),
+            (Check::Match, _) | (Check::Unknown, No) => Ok(()),
+            (Check::Changed { line }, No) => {
+                warn!(
+                    "SSH host key for {host} ({}) does not match {}:{line}; accepting it because \
+                     DB_SSH_STRICT_HOST_KEY_CHECKING=no",
+                    fingerprint(),
+                    path.display()
+                );
+                self.key_changed.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+            (Check::Changed { line }, Yes | AcceptNew) => Err(SshError::HostKeyChanged {
+                host: host.clone(),
+                fingerprint: fingerprint(),
+                path: path.clone(),
+                line,
+            }),
+            (Check::Unknown, AcceptNew) => {
+                blocking({
+                    let (path, host, key) = (path.clone(), host.clone(), key.clone());
+                    move || known_hosts::append(&path, &host, &key)
+                })
+                .await
+                .map_err(|source| SshError::KnownHostsWrite {
+                    host: host.clone(),
+                    path: path.clone(),
+                    source,
+                })?;
+                warn!(
+                    "Added SSH host key for {host} ({}) to {}",
+                    fingerprint(),
+                    path.display()
+                );
+                Ok(())
+            }
+            (Check::Unknown, Yes) => Err(SshError::HostKeyUnknown {
+                host: host.clone(),
+                ssh_host: self.ssh_host.clone(),
+                port: self.ssh_port,
+                fingerprint: fingerprint(),
+                path: path.clone(),
+            }),
+        }
+    }
+}
+
+/// Runs blocking file I/O off the async runtime.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> std::io::Result<T> + Send + 'static) -> std::io::Result<T> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .expect("known_hosts I/O task does not panic")
+}
 
 impl client::Handler for Client {
-    type Error = russh::Error;
+    type Error = ClientError;
 
-    /// Accepts every host key; only reachable with checking set to `no`.
-    async fn check_server_key(&mut self, _server_public_key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
-        Ok(true)
+    /// Verifies the host key; host certificates are always rejected.
+    async fn check_server_key(&mut self, server_public_key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+        let result = match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => self.verify(key).await,
+            PublicKeyOrCertificate::Certificate(_) => Err(SshError::HostCertificate {
+                target: self.ssh_target.clone(),
+            }),
+        };
+        result.map(|()| true).map_err(|e| ClientError::HostKey(Box::new(e)))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
 
     use russh::keys::ssh_key::private::Ed25519Keypair;
-    use russh::keys::{PublicKey, load_public_key};
+    use russh::keys::{load_public_key, load_secret_key};
     use russh::server::{self, Auth, ChannelOpenHandle, Msg, Server as _, Session};
     use russh::{Channel, MethodKind, MethodSet};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -442,11 +611,20 @@ mod tests {
         }
     }
 
+    /// Ed25519 host key of the default test server.
+    fn host_key() -> PrivateKey {
+        PrivateKey::from(Ed25519Keypair::from_seed(&[7; 32]))
+    }
+
     /// Starts the SSH test server on an ephemeral loopback port.
     async fn start_ssh_server() -> (SocketAddr, TestServer) {
-        let host_key = PrivateKey::from(Ed25519Keypair::from_seed(&[7; 32]));
+        start_ssh_server_with(vec![host_key()]).await
+    }
+
+    /// Starts the SSH test server offering `host_keys`.
+    async fn start_ssh_server_with(host_keys: Vec<PrivateKey>) -> (SocketAddr, TestServer) {
         let config = Arc::new(server::Config {
-            keys: vec![host_key],
+            keys: host_keys,
             methods: MethodSet::from(&[MethodKind::PublicKey, MethodKind::Password][..]),
             auth_rejection_time: Duration::from_millis(10),
             auth_rejection_time_initial: Some(Duration::ZERO),
@@ -718,34 +896,291 @@ mod tests {
         assert!(matches!(err, SshError::MissingCredentials), "{err:?}");
     }
 
+    /// Returns a config verifying host keys against `known_hosts` under `mode`.
+    fn verifying_config(ssh: SocketAddr, known_hosts: &Path, mode: StrictHostKeyChecking) -> SshConfig {
+        SshConfig {
+            known_hosts: Some(known_hosts.to_path_buf()),
+            strict_host_key_checking: mode,
+            ..ssh_config(ssh)
+        }
+    }
+
+    /// Renders a `known_hosts` line recording `key` for the test server.
+    fn known_hosts_line(ssh: SocketAddr, key: &PublicKey) -> String {
+        let name = known_hosts::host_name(&ssh.ip().to_string(), ssh.port());
+        format!("{}\n", known_hosts::entry(&name, key).expect("encode"))
+    }
+
+    /// Opens the tunnel's SSH session directly, surfacing its error.
+    async fn open_session(config: &SshConfig) -> Result<(), SshError> {
+        let tunnel = Tunnel::start(config, "127.0.0.1", 5432).await.expect("tunnel starts");
+        tunnel.inner.session().await.map(drop)
+    }
+
     #[tokio::test]
-    async fn host_key_verification_is_not_yet_implemented() {
-        for (mode, value) in [
-            (StrictHostKeyChecking::Yes, "yes"),
-            (StrictHostKeyChecking::AcceptNew, "accept-new"),
-        ] {
-            let config = SshConfig {
-                strict_host_key_checking: mode,
-                ..ssh_config(SocketAddr::from((Ipv4Addr::LOCALHOST, 22)))
-            };
-            let err = Tunnel::start(&config, "db", 5432).await.expect_err("mode unsupported");
-            assert_eq!(
-                err.to_string(),
-                format!("SSH host-key verification (DB_SSH_STRICT_HOST_KEY_CHECKING={value}) is not yet implemented")
+    async fn rejects_unknown_host_under_yes() {
+        let (ssh, server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+
+        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+            .await
+            .expect_err("unknown host");
+
+        assert!(matches!(err, SshError::HostKeyUnknown { .. }), "{err:?}");
+        let fingerprint = known_hosts::fingerprint(host_key().public_key());
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "SSH host key for [127.0.0.1]:{port} ({fingerprint}) is not in {path}; verify the fingerprint, \
+                 then run `ssh-keyscan -p {port} 127.0.0.1 >> {path}`",
+                port = ssh.port(),
+                path = path.display()
+            )
+        );
+        assert!(server.attempts().is_empty(), "must not authenticate");
+        assert!(!path.exists(), "yes never writes known_hosts");
+    }
+
+    #[tokio::test]
+    async fn accept_new_learns_host_then_matches() {
+        let (ssh, _server) = start_ssh_server().await;
+        let echo = start_echo_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".ssh").join("known_hosts");
+
+        let config = verifying_config(ssh, &path, StrictHostKeyChecking::AcceptNew);
+        let tunnel = Tunnel::start(&config, "127.0.0.1", echo.port())
+            .await
+            .expect("tunnel starts");
+        assert_eq!(round_trip(tunnel.local_addr(), b"ping").await.expect("echo"), b"ping");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("known_hosts written"),
+            known_hosts_line(ssh, host_key().public_key())
+        );
+
+        open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+            .await
+            .expect("learned key matches under yes");
+        open_session(&config)
+            .await
+            .expect("learned key matches under accept-new");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read").lines().count(),
+            1,
+            "known host is not appended again"
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_host_key_fails_unless_mode_no() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        let other = load_public_key(fixture("openssh_ed25519.pub")).expect("other key");
+        let recorded = format!("# header\n{}", known_hosts_line(ssh, &other));
+        std::fs::write(&path, &recorded).expect("seed");
+
+        for mode in [StrictHostKeyChecking::Yes, StrictHostKeyChecking::AcceptNew] {
+            let err = open_session(&verifying_config(ssh, &path, mode))
+                .await
+                .expect_err("changed key");
+            assert!(
+                matches!(err, SshError::HostKeyChanged { line: 2, .. }),
+                "{mode}: {err:?}"
             );
         }
+        let config = SshConfig {
+            password: None,
+            key: Some(fixture("openssh_ed25519")),
+            ..verifying_config(ssh, &path, StrictHostKeyChecking::No)
+        };
+        open_session(&config).await.expect("mode no accepts a changed key");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            recorded,
+            "file untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_host_key_under_no_withholds_password() {
+        let (ssh, server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        let other = load_public_key(fixture("openssh_ed25519.pub")).expect("other key");
+        std::fs::write(&path, known_hosts_line(ssh, &other)).expect("seed");
+
+        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::No))
+            .await
+            .expect_err("password withheld");
+        assert!(matches!(err, SshError::AuthRejected { .. }), "{err:?}");
+        assert!(server.attempts().is_empty(), "{:?}", server.attempts());
+
+        let config = SshConfig {
+            password: None,
+            key: Some(fixture("openssh_ed25519")),
+            ..verifying_config(ssh, &path, StrictHostKeyChecking::No)
+        };
+        open_session(&config).await.expect("key auth still allowed");
+    }
+
+    /// Exercises `Client::verify` for every check result and mode.
+    #[tokio::test]
+    async fn verify_follows_outcome_table() {
+        use StrictHostKeyChecking::{AcceptNew, No, Yes};
+
+        let key = host_key().public_key().clone();
+        let other = load_public_key(fixture("openssh_ed25519.pub")).expect("other key");
+        let entry = |key: &PublicKey| known_hosts::entry("bastion", key).expect("encode");
+        let checks = [
+            ("revoked", format!("@revoked {}", entry(&key))),
+            ("match", entry(&key)),
+            ("changed", entry(&other)),
+            ("unknown", String::new()),
+        ];
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        for (check, mode, expected) in [
+            ("revoked", Yes, "revoked"),
+            ("revoked", AcceptNew, "revoked"),
+            ("revoked", No, "revoked"),
+            ("match", Yes, "ok"),
+            ("match", AcceptNew, "ok"),
+            ("match", No, "ok"),
+            ("changed", Yes, "changed"),
+            ("changed", AcceptNew, "changed"),
+            ("changed", No, "ok"),
+            ("unknown", Yes, "unknown"),
+            ("unknown", AcceptNew, "learned"),
+            ("unknown", No, "ok"),
+        ] {
+            let text = &checks.iter().find(|(name, _)| *name == check).expect("check").1;
+            let path = dir.path().join(format!("{check}-{mode}"));
+            let client = Client {
+                known_hosts: KnownHosts::parse(text),
+                key_changed: Arc::default(),
+                host: "bastion".into(),
+                ssh_host: "bastion".into(),
+                ssh_port: 22,
+                ssh_target: "bastion:22".into(),
+                path: path.clone(),
+                mode,
+            };
+            let actual = match client.verify(&key).await {
+                Ok(()) if path.exists() => "learned",
+                Ok(()) => "ok",
+                Err(SshError::HostKeyRevoked { .. }) => "revoked",
+                Err(SshError::HostKeyChanged { .. }) => "changed",
+                Err(SshError::HostKeyUnknown { .. }) => "unknown",
+                Err(e) => panic!("{check} under {mode}: {e}"),
+            };
+            assert_eq!(actual, expected, "{check} under {mode}");
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_host_key_fails_in_every_mode() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        std::fs::write(
+            &path,
+            format!("@revoked {}", known_hosts_line(ssh, host_key().public_key())),
+        )
+        .expect("seed");
+
+        for mode in [
+            StrictHostKeyChecking::Yes,
+            StrictHostKeyChecking::AcceptNew,
+            StrictHostKeyChecking::No,
+        ] {
+            let err = open_session(&verifying_config(ssh, &path, mode))
+                .await
+                .expect_err("revoked key");
+            assert!(
+                matches!(err, SshError::HostKeyRevoked { line: 1, .. }),
+                "{mode}: {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn accept_new_rejects_key_of_unrecorded_type_for_known_host() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        let recorded = load_secret_key(fixture("openssh_ecdsa"), None).expect("ecdsa key");
+        let seeded = known_hosts_line(ssh, recorded.public_key());
+        std::fs::write(&path, &seeded).expect("seed");
+
+        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::AcceptNew))
+            .await
+            .expect_err("ed25519 offered for a host recorded as ecdsa");
+        assert!(matches!(err, SshError::HostKeyChanged { line: 1, .. }), "{err:?}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), seeded, "nothing learned");
+    }
+
+    /// H4: russh prefers Ed25519 unless the recorded algorithms come first.
+    #[tokio::test]
+    async fn connects_to_host_recorded_only_with_ecdsa_or_rsa() {
+        for name in ["openssh_ecdsa", "openssh_rsa"] {
+            let recorded = load_secret_key(fixture(name), None).expect("host key");
+            let (ssh, _server) = start_ssh_server_with(vec![host_key(), recorded.clone()]).await;
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("known_hosts");
+            std::fs::write(&path, known_hosts_line(ssh, recorded.public_key())).expect("seed");
+
+            open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+                .await
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_known_hosts_fails_unless_mode_no() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A directory cannot be read as a file on any platform.
+        let path = dir.path();
+
+        for mode in [StrictHostKeyChecking::Yes, StrictHostKeyChecking::AcceptNew] {
+            let err = open_session(&verifying_config(ssh, path, mode))
+                .await
+                .expect_err("unreadable known_hosts");
+            assert!(matches!(err, SshError::KnownHostsRead { .. }), "{mode}: {err:?}");
+        }
+        open_session(&verifying_config(ssh, path, StrictHostKeyChecking::No))
+            .await
+            .expect("mode no ignores an unreadable known_hosts");
+    }
+
+    #[tokio::test]
+    async fn known_hosts_is_reread_on_every_connect() {
+        let (ssh, _server) = start_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        let config = verifying_config(ssh, &path, StrictHostKeyChecking::Yes);
+        let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
+
+        let err = tunnel.inner.connect().await.map(drop).expect_err("unknown host");
+        assert!(matches!(err, SshError::HostKeyUnknown { .. }), "{err:?}");
+
+        std::fs::write(&path, known_hosts_line(ssh, host_key().public_key())).expect("seed");
+        tunnel.inner.connect().await.expect("recorded host connects");
     }
 
     #[test]
     fn inner_debug_redacts_password() {
         let inner = Inner {
-            client_config: Arc::new(client::Config::default()),
             ssh_target: "bastion:22".into(),
             ssh_host: "bastion".into(),
             ssh_port: 22,
             user: USER.into(),
             password: Some("hunter2".into()),
             key: None,
+            known_hosts: None,
+            strict_host_key_checking: StrictHostKeyChecking::No,
             db_target: "db:5432".into(),
             db_host: "db".into(),
             db_port: 5432,
