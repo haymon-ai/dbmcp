@@ -3,6 +3,7 @@
 use std::net::IpAddr;
 
 use crate::error::{ConfigError, ConfigErrors};
+use crate::origin;
 
 /// HTTP transport binding and security settings.
 #[derive(Clone)]
@@ -46,13 +47,19 @@ impl HttpConfig {
     pub const DEFAULT_PORT: u16 = 9001;
 
     /// Return default allowed CORS origins.
+    ///
+    /// Covers every loopback host in [`Self::default_allowed_hosts`], each
+    /// with the `:*` port wildcard so local browser clients on any port
+    /// (e.g. `http://localhost:5173`) are accepted.
     #[must_use]
     pub fn default_allowed_origins() -> Vec<String> {
         vec![
-            "http://localhost".into(),
-            "http://127.0.0.1".into(),
-            "https://localhost".into(),
-            "https://127.0.0.1".into(),
+            "http://localhost:*".into(),
+            "http://127.0.0.1:*".into(),
+            "http://[::1]:*".into(),
+            "https://localhost:*".into(),
+            "https://127.0.0.1:*".into(),
+            "https://[::1]:*".into(),
         ]
     }
 
@@ -83,6 +90,8 @@ impl HttpConfig {
     /// - `auth_token`, when set, MUST NOT be empty or whitespace-only.
     /// - A non-loopback `host` MUST have an `auth_token` unless
     ///   `allow_unauthenticated` is set.
+    /// - Every `allowed_origins` entry MUST parse as an origin
+    ///   (`<scheme>://<host>[:<port>|:*]` or `null`).
     ///
     /// # Errors
     ///
@@ -102,6 +111,12 @@ impl HttpConfig {
         {
             errors.push(ConfigError::UnauthenticatedNonLoopbackBind(self.host.clone()));
         }
+        errors.extend(
+            self.allowed_origins
+                .iter()
+                .filter(|entry| !origin::is_valid_entry(entry))
+                .map(|entry| ConfigError::InvalidAllowedOrigin(entry.clone())),
+        );
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
     }
 }
@@ -195,6 +210,42 @@ mod tests {
             let errors = config.validate().expect_err("blank token must fail");
             assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpAuthToken)));
         }
+    }
+
+    #[test]
+    fn validate_rejects_each_malformed_origin() {
+        let config = HttpConfig {
+            allowed_origins: vec![
+                "http://localhost:*".into(),
+                "localhost".into(),
+                String::new(),
+                "https://app.example:443:*".into(),
+            ],
+            ..config_with_host(HttpConfig::DEFAULT_HOST)
+        };
+        let errors = config.validate().expect_err("malformed origins must fail");
+        let rejected: Vec<&str> = errors
+            .iter()
+            .filter_map(|e| match e {
+                ConfigError::InvalidAllowedOrigin(entry) => Some(entry.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rejected, ["localhost", "", "https://app.example:443:*"]);
+    }
+
+    #[test]
+    fn validate_accepts_origin_forms() {
+        let config = HttpConfig {
+            allowed_origins: vec![
+                "null".into(),
+                "https://app.example".into(),
+                "https://app.example:8443".into(),
+                "http://[::1]:*".into(),
+            ],
+            ..config_with_host(HttpConfig::DEFAULT_HOST)
+        };
+        config.validate().expect("valid origins must pass");
     }
 
     #[test]

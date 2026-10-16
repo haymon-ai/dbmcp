@@ -80,12 +80,14 @@ These options are available only when running in HTTP mode (`dbmcp http`):
 |----------|---------|-------------|
 | `--host` | `127.0.0.1` | Bind host for the HTTP server |
 | `--port` | `9001` | Bind port for the HTTP server |
-| `--allowed-origins` | `http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. |
+| `--allowed-origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
 | `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
 | `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
 | `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
 
 > **Security note**: Binding a non-loopback host (e.g. `--host 0.0.0.0`) without `HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
+
+> **Security note**: The default `--allowed-origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `HTTP_AUTH_TOKEN` or narrow `--allowed-origins` to the explicit origins you trust (e.g. `http://localhost:5173`).
 
 A transport subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
 

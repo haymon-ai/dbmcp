@@ -815,6 +815,7 @@ name = "dbmcp-config"
 version = "0.14.0"
 dependencies = [
  "clap",
+ "http",
  "thiserror",
 ]
 
