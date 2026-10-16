@@ -103,7 +103,7 @@ CI automatically runs on every push and pull request:
 1. Commit message validation — conventional commit format ([cocogitto](https://github.com/cocogitto/cocogitto))
 2. `cargo fmt --check` — formatting
 3. `cargo clippy --workspace --tests -- -D warnings` — linting
-4. `cargo test --workspace --lib --bins` — unit tests
+4. `cargo test --workspace --lib --bins` — unit tests on Linux and Windows
 5. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
 
 All checks must pass before a PR can be merged.

@@ -52,8 +52,12 @@ jobs:
       - run: cargo clippy --workspace --tests -- -D warnings
 
   test:
-    name: Unit Tests
-    runs-on: ubuntu-24.04
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
