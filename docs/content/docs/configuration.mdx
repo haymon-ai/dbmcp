@@ -74,7 +74,9 @@ Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bas
 | `--ssh-keepalive-interval` | `DB_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
 | `--ssh-local-port` | `DB_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
 
-`DB_SSH_USER` and one of `DB_SSH_PASSWORD` / `DB_SSH_KEY` are required with `DB_SSH_HOST`. Setting any other `DB_SSH_*` option without `DB_SSH_HOST` is a startup error. A leading `~` in `DB_SSH_KEY` and `DB_SSH_KNOWN_HOSTS` expands to your home directory.
+`DB_SSH_USER` and one of `DB_SSH_PASSWORD` / `DB_SSH_KEY` are required with `DB_SSH_HOST`. Setting any other `DB_SSH_*` option without `DB_SSH_HOST` is a startup error, as is `DB_SSH_KEY_PASSPHRASE` without `DB_SSH_KEY`. A leading `~` in `DB_SSH_KEY` and `DB_SSH_KNOWN_HOSTS` expands to your home directory; when no home directory can be determined, `DB_SSH_KNOWN_HOSTS` must be set explicitly (unless the host-key policy is `no`).
+
+**Docker:** inside the container `~` is the image's home directory, not yours. Mount the private key and a `known_hosts` file into the container (readable by the container user) and point `DB_SSH_KEY` / `DB_SSH_KNOWN_HOSTS` at the mounted paths. Avoid `accept-new` with `--rm` containers: every new container starts with an empty `known_hosts` and trusts the first key it sees on each launch.
 
 ```json
 {
@@ -102,7 +104,7 @@ Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bas
 - **`DB_HOST` and `DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
 - The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
 - If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
-- Keepalives are sent every `--ssh-keepalive-interval` seconds; after 3 unanswered keepalives the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
+- Keepalives are sent every `--ssh-keepalive-interval` seconds; when keepalives go unanswered for about four intervals (~2 minutes at the default 30 s) the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
 
 ### Authentication
 

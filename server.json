@@ -108,7 +108,7 @@
     {
       "type": "named",
       "name": "--db-host",
-      "description": "Database host",
+      "description": "Database host (as seen from the SSH server when tunnelling)",
       "default": "localhost"
     },
     {
@@ -289,7 +289,7 @@
     },
     {
       "name": "DB_HOST",
-      "description": "Database host (default: 127.0.0.1)"
+      "description": "Database host, as seen from the SSH server when tunnelling (default: 127.0.0.1)"
     },
     {
       "name": "DB_PORT",

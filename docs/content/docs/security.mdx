@@ -63,7 +63,7 @@ The `Origin` and `Host` allowlists remain enforced alongside the token. They sto
 
 ## SSH Host-Key Verification
 
-When the [SSH tunnel](/docs/configuration#ssh-tunnel) is enabled, the SSH server's host key is verified against `known_hosts` before any password or key signature is sent, so credentials never reach an impostor that `known_hosts` would reject.
+When the [SSH tunnel](/docs/configuration#ssh-tunnel) is enabled, the SSH server's host key is verified against `known_hosts` before any password or key signature is sent. Under `yes` and `accept-new`, credentials never reach an impostor that `known_hosts` would reject; under `no` they can (see below).
 
 - **`yes` (default)** — only hosts already recorded in `known_hosts` are accepted. Add a host by checking its fingerprint out-of-band, then running the `ssh-keyscan` command from the error message.
 - **`accept-new`** — trust on first use: the first key seen for an unknown host is recorded and trusted from then on. If an attacker intercepts that **first** connection, their key is recorded instead. Use it only on networks you trust for the initial connect, or pre-seed `known_hosts`. Afterwards it behaves like `yes`; a known host that offers a key of an unrecorded type is rejected rather than learned.
