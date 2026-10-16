@@ -18,6 +18,8 @@ Database MCP connects to four database backends with a single binary:
 
 Each backend has sensible defaults for host, port, and user. See [Configuration](/docs/configuration#backend-defaults) for the full default table.
 
+MySQL, MariaDB, and PostgreSQL can also be reached through an SSH bastion using the built-in [SSH tunnel](/docs/configuration#ssh-tunnel) — no `ssh` binary needed, with password or key authentication, `known_hosts` host-key verification, keepalive, and automatic reconnect.
+
 ## MCP Tools
 
 Database MCP exposes tools through the MCP protocol. The available tool set depends on the database backend and read-only setting. AI assistants call these tools to explore and query your database.

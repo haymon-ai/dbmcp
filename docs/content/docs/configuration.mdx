@@ -20,7 +20,7 @@ When the same option is set in multiple places, the higher-priority source wins.
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
 | `--db-backend` | `DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
-| `--db-host` | `DB_HOST` | `localhost` | Database host |
+| `--db-host` | `DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
 | `--db-port` | `DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
 | `--db-user` | `DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
 | `--db-password` | `DB_PASSWORD` | — | Database password |
@@ -56,6 +56,114 @@ SQLite does not use host, port, or user — only `--db-name` (the file path) is 
 | `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
 
 When `--db-ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
+
+## SSH Tunnel
+
+Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `--ssh-host` / `DB_SSH_HOST` is set.
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--ssh-host` | `DB_SSH_HOST` | — | SSH server host; enables the tunnel when set |
+| `--ssh-port` | `DB_SSH_PORT` | `22` | SSH server port |
+| `--ssh-user` | `DB_SSH_USER` | — | SSH user |
+| `--ssh-password` | `DB_SSH_PASSWORD` | — | SSH password |
+| `--ssh-key` | `DB_SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `--ssh-key-passphrase` | `DB_SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
+| `--ssh-known-hosts` | `DB_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
+| `--ssh-strict-host-key-checking` | `DB_SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
+| `--ssh-keepalive-interval` | `DB_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
+| `--ssh-local-port` | `DB_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+
+`DB_SSH_USER` and one of `DB_SSH_PASSWORD` / `DB_SSH_KEY` are required with `DB_SSH_HOST`. Setting any other `DB_SSH_*` option without `DB_SSH_HOST` is a startup error. A leading `~` in `DB_SSH_KEY` and `DB_SSH_KNOWN_HOSTS` expands to your home directory.
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": ["stdio"],
+      "env": {
+        "DB_BACKEND": "postgres",
+        "DB_HOST": "db.internal",
+        "DB_USER": "postgres",
+        "DB_NAME": "mydb",
+        "DB_SSH_HOST": "bastion.example.com",
+        "DB_SSH_USER": "deploy",
+        "DB_SSH_KEY": "~/.ssh/id_ed25519"
+      }
+    }
+  }
+}
+```
+
+### How It Works
+
+- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `--ssh-local-port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
+- **`DB_HOST` and `DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
+- The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
+- If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
+- Keepalives are sent every `--ssh-keepalive-interval` seconds; after 3 unanswered keepalives the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
+
+### Authentication
+
+- **Password** (`DB_SSH_PASSWORD`) and **private key** (`DB_SSH_KEY`). When both are set, the key is tried first, then the password.
+- Key formats: OpenSSH (plain or passphrase-encrypted), PKCS#1 RSA (including legacy AES-128-CBC encryption), SEC1 EC (unencrypted), PKCS#8 (plain or PBES2-encrypted).
+- Key types: Ed25519, ECDSA (P-256, P-384, P-521), and RSA. RSA keys sign with `rsa-sha2-256`/`rsa-sha2-512`, as required by OpenSSH 8.8+.
+- The key is read and decrypted once at startup; a wrong passphrase or unsupported format aborts startup.
+- On Unix, a key accessible by group or others (any of the `0o077` mode bits set) logs a warning suggesting `chmod 600`; startup continues. No permission check is done on Windows.
+
+### Host-Key Policies
+
+The SSH server's host key is checked against `known_hosts` (re-read on every connect) before any credentials are sent.
+
+| Value | Behavior |
+|-------|----------|
+| `yes` *(default)* | Only hosts already in `known_hosts` are accepted. Unknown hosts are rejected with the key's fingerprint and an `ssh-keyscan` hint. |
+| `accept-new` | Unknown hosts are trusted on first use and appended to `known_hosts`. On Unix, a newly created file gets mode `0600` and newly created directories `0700` (subject to your umask); existing ones keep their permissions. A known host presenting a different key — including a key of a type not yet recorded — is rejected. |
+| `no` | Verification is disabled (a warning is logged at startup). A changed key is accepted with a warning, but the password is withheld for that session. **Insecure**: exposes the tunnel to man-in-the-middle attacks. |
+
+Keys marked `@revoked` are rejected under every policy, as long as `known_hosts` can be read. Under `no`, an unreadable `known_hosts` is ignored with a warning, so its `@revoked` entries no longer apply. `known_hosts` entries may be hashed (`|1|…`), use `[host]:port`, comma-separated host lists, and `*` / `?` / `!` patterns. See [SSH Host-Key Verification](/docs/security#ssh-host-key-verification) for the security implications.
+
+### Database TLS Through the Tunnel
+
+All `DB_SSL_*` settings work unchanged, and TLS stays end-to-end between Database MCP and the database. `DB_SSL_VERIFY_CERT=true` validates the certificate chain (against system roots and `DB_SSL_CA`) but not the hostname, so connecting via `127.0.0.1` does not cause a name mismatch.
+
+**Limitation:** because the driver connects to an IP address, no TLS SNI is sent. Services that route on SNI (for example Neon's proxy) cannot be reached through the tunnel.
+
+### Not Supported
+
+- SQLite (rejected at startup)
+- ssh-agent, keyboard-interactive / 2FA authentication
+- `~/.ssh/config` parsing and `Host` aliases
+- Multi-hop / `ProxyJump`, HTTP or SOCKS proxies in front of SSH
+- Host-key fingerprint pinning (use a dedicated `known_hosts` file instead)
+- DSA keys, FIDO/security-key (`sk-*`) keys, user certificates
+- Host certificates and `@cert-authority` entries
+- Hostname-verifying database TLS (`verify-full`)
+
+### Troubleshooting
+
+**Unknown host key** — under `yes`, the error names the fingerprint and suggests a command:
+
+```text
+SSH host key for bastion.example.com (SHA256:…) is not in /home/me/.ssh/known_hosts; verify the fingerprint, then run `ssh-keyscan -p 22 bastion.example.com >> /home/me/.ssh/known_hosts`
+```
+
+Compare the fingerprint with one obtained out-of-band (e.g. from the server's console via `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before running the suggested command.
+
+**Host key does not match** — `… does not match <file>:<line>; the server may be impersonated`. If the server was legitimately re-keyed, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`) and add the new one.
+
+**Unsupported or legacy key encryption** — `SSH key <path> uses an unsupported encryption format; re-encrypt it with ssh-keygen -p -f <path>`. This covers legacy PEM keys encrypted with AES-256 or 3DES, encrypted SEC1 EC keys, and PKCS#8 PBES1. `ssh-keygen -p` rewrites the key in the OpenSSH format. An encrypted key without `DB_SSH_KEY_PASSPHRASE` fails with `SSH key <path> is encrypted; set DB_SSH_KEY_PASSPHRASE`.
+
+**Unsupported key types** — DSA, FIDO (`sk-ecdsa-…`, `sk-ssh-ed25519-…`) keys, and certificates cannot be loaded. Use an Ed25519, ECDSA, or RSA key.
+
+**`DB_SSH_HOST is not supported with the sqlite backend`** — SQLite is a local file; remove the `DB_SSH_*` settings.
+
+**Tool errors ending in `(SSH tunnel: …)`** — when the database cannot be reached and the tunnel has an unresolved failure (connect timeout, authentication, host key, channel open, or a lost session), the cause is appended to the tool error, e.g. `… (SSH tunnel: SSH authentication failed for deploy@bastion.example.com:22)`. Other errors (SQL errors, read-only rejections) never get the suffix. It disappears once a connection through the tunnel succeeds. Failed connects are also logged with their full error chain at `error` level; a lost session is logged at `warn`.
+
+**Windows: `os error 10013` with `--ssh-local-port`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or omit `--ssh-local-port` to use an ephemeral port.
+
+**Windows: a different `known_hosts` than `ssh` uses** — Database MCP resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `DB_SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
 
 ## Server Behavior
 
