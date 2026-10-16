@@ -36,6 +36,7 @@ fn handler(read_only: bool) -> MysqlHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -49,6 +50,7 @@ fn handler_with_page_size(page_size: u16) -> MysqlHandler {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -398,6 +400,7 @@ async fn test_query_timeout_cancels_slow_query() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
 
@@ -430,6 +433,7 @@ async fn test_query_timeout_disabled_with_zero() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
 
@@ -1177,6 +1181,7 @@ async fn test_timeout_on_list_tables() {
         database: config,
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     })
     .expect("handler builds");
 
@@ -4063,6 +4068,7 @@ fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }
@@ -4076,6 +4082,7 @@ fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
             operator,
             ..PiiConfig::default()
         },
+        ssh: None,
     })
     .expect("handler builds")
 }

@@ -1,11 +1,12 @@
 //! Configuration types for the dbmcp project.
 //!
 //! Each concern lives in its own module:
-//! - [`config`] — top-level [`Config`] composing the three sections
+//! - [`config`] — top-level [`Config`] composing the four sections
 //! - [`database`] — [`DatabaseConfig`] and [`DatabaseBackend`]
 //! - [`http`] — [`HttpConfig`]
 //! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
+//! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
 //!
 //! Database connection is configured via individual variables
@@ -18,8 +19,8 @@
 //!
 //! # Security
 //!
-//! [`DatabaseConfig`] implements [`Debug`] manually to redact the
-//! database password.
+//! [`DatabaseConfig`] and [`SshConfig`] implement [`Debug`] manually to
+//! redact the database password and the SSH password and key passphrase.
 
 pub mod config;
 pub mod database;
@@ -27,6 +28,7 @@ pub mod error;
 pub mod http;
 pub mod origin;
 pub mod pii;
+pub mod ssh;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
@@ -34,3 +36,4 @@ pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
+pub use ssh::{SshConfig, StrictHostKeyChecking};

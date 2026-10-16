@@ -187,7 +187,7 @@ impl DatabaseConfig {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::SslCertNotFound(name.into(), path.clone()));
+                    errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
                 }
             }
         }
@@ -240,6 +240,7 @@ mod tests {
             database: db_config(backend),
             http: None,
             pii: PiiConfig::default(),
+            ssh: None,
         }
     }
 
@@ -377,7 +378,7 @@ mod tests {
         let errors = config.validate().expect_err("missing ssl ca must fail");
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::SslCertNotFound(name, path)
+            ConfigError::FileNotFound(name, path)
                 if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"
         )));
     }
@@ -393,9 +394,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
+        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
+        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
     }
 
     #[test]
@@ -421,7 +422,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::SslCertNotFound(name, _) if name == "DB_SSL_CA"
+            ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"
         )));
     }
 

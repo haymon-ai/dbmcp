@@ -26,6 +26,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
         },
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     };
     MysqlHandler::new(&config).expect("handler builds").into()
 }

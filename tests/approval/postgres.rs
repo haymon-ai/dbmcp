@@ -27,6 +27,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
         },
         http: None,
         pii: PiiConfig::default(),
+        ssh: None,
     };
     PostgresHandler::new(&config).expect("handler builds").into()
 }

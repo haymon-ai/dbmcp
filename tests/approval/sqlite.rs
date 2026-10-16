@@ -29,6 +29,7 @@ fn server_with_pii(read_only: bool, pii: PiiConfig) -> Server {
         },
         http: None,
         pii,
+        ssh: None,
     };
     SqliteHandler::new(&config).expect("handler builds").into()
 }
