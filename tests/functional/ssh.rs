@@ -61,11 +61,19 @@ fn verifying_command(known_hosts: &Path, mode: &str) -> tokio::process::Command 
     command
 }
 
-/// Returns the SSH server as recorded in `known_hosts` (`[host]:port`).
-fn known_hosts_name() -> String {
+/// Returns the SSH server's `DB_SSH_HOST` and `DB_SSH_PORT`.
+fn ssh_endpoint() -> (String, String) {
     let host = std::env::var("DB_SSH_HOST").expect("DB_SSH_HOST");
     let port = std::env::var("DB_SSH_PORT").expect("DB_SSH_PORT");
-    format!("[{host}]:{port}")
+    (host, port)
+}
+
+/// Returns the SSH server as recorded in `known_hosts`.
+fn known_hosts_name() -> String {
+    match ssh_endpoint() {
+        (host, port) if port == "22" => host,
+        (host, port) => format!("[{host}]:{port}"),
+    }
 }
 
 /// Completes the MCP handshake with a spawned `dbmcp`.
@@ -120,12 +128,7 @@ async fn sequential_queries_reuse_ssh_tunnel() {
 
 /// Runs one query through a tunnel authenticated with key `name`.
 async fn assert_key_auth(name: &str, passphrase: Option<&str>) {
-    let client = connect(key_command(name, passphrase)).await;
-
-    let result = read_query(&client, "SELECT name FROM users WHERE id = 1").await;
-    assert_eq!(result["rows"], json!([{ "name": "Alice Johnson" }]), "{name}: {result}");
-
-    client.cancel().await.expect("shutdown");
+    assert_query_succeeds(key_command(name, passphrase)).await;
 }
 
 #[tokio::test]
@@ -196,10 +199,9 @@ async fn assert_query_fails(command: tokio::process::Command) -> String {
 
 /// Records the sshd host key of `key_type` in `known_hosts` via `ssh-keyscan`.
 async fn keyscan(key_type: &str, known_hosts: &Path) {
+    let (host, port) = ssh_endpoint();
     let output = tokio::process::Command::new("ssh-keyscan")
-        .args(["-t", key_type, "-p"])
-        .arg(std::env::var("DB_SSH_PORT").expect("DB_SSH_PORT"))
-        .arg(std::env::var("DB_SSH_HOST").expect("DB_SSH_HOST"))
+        .args(["-t", key_type, "-p", &port, &host])
         .output()
         .await
         .expect("run ssh-keyscan");
@@ -259,22 +261,14 @@ async fn changed_host_key_is_rejected() {
     }
 }
 
-/// H4: a host recorded only as ECDSA must not be offered Ed25519 first.
+/// H4: a host recorded only as ECDSA or RSA must not be offered Ed25519 first.
 #[tokio::test]
-async fn host_recorded_only_as_ecdsa_connects() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let known_hosts = dir.path().join("known_hosts");
-    keyscan("ecdsa", &known_hosts).await;
+async fn host_recorded_only_as_ecdsa_or_rsa_connects() {
+    for key_type in ["ecdsa", "rsa"] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let known_hosts = dir.path().join("known_hosts");
+        keyscan(key_type, &known_hosts).await;
 
-    assert_query_succeeds(verifying_command(&known_hosts, "yes")).await;
-}
-
-/// H4: a host recorded only as RSA must not be offered Ed25519 first.
-#[tokio::test]
-async fn host_recorded_only_as_rsa_connects() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let known_hosts = dir.path().join("known_hosts");
-    keyscan("rsa", &known_hosts).await;
-
-    assert_query_succeeds(verifying_command(&known_hosts, "yes")).await;
+        assert_query_succeeds(verifying_command(&known_hosts, "yes")).await;
+    }
 }

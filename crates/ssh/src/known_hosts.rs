@@ -8,7 +8,6 @@ use std::fs::OpenOptions;
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 
-use dbmcp_config::StrictHostKeyChecking;
 use ring::hmac;
 use russh::keys::ssh_key::known_hosts::{Entry, HostPatterns, Marker};
 use russh::keys::{Algorithm, PublicKey};
@@ -43,33 +42,6 @@ pub(crate) enum Check {
     Changed { line: usize },
     /// No key is recorded for the host.
     Unknown,
-}
-
-/// What to do with a host key after [`Check`]ing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Outcome {
-    /// Accept the key.
-    Accept,
-    /// Accept the key although it differs from the recorded one.
-    AcceptChanged,
-    /// Record the key in `known_hosts`, then accept it.
-    Learn,
-    /// Reject the key.
-    Reject,
-}
-
-/// Maps a [`Check`] result to an [`Outcome`] under `mode`.
-pub(crate) fn outcome(check: Check, mode: StrictHostKeyChecking) -> Outcome {
-    use StrictHostKeyChecking::{AcceptNew, No, Yes};
-
-    match (check, mode) {
-        (Check::Revoked { .. }, _) | (Check::Changed { .. }, Yes | AcceptNew) | (Check::Unknown, Yes) => {
-            Outcome::Reject
-        }
-        (Check::Match, _) | (Check::Unknown, No) => Outcome::Accept,
-        (Check::Changed { .. }, No) => Outcome::AcceptChanged,
-        (Check::Unknown, AcceptNew) => Outcome::Learn,
-    }
 }
 
 /// Returns the name `known_hosts` records for `host:port`.
@@ -116,7 +88,7 @@ impl KnownHosts {
 
     /// Looks up `key` presented by the host recorded as `name`.
     ///
-    /// `name` comes from [`host_name`]. Revocation wins over a match, and a
+    /// `name` comes from [`host_name`], so it is lowercase. Revocation wins over a match, and a
     /// match against any recorded key wins over a change.
     pub(crate) fn check(&self, name: &str, key: &PublicKey) -> Check {
         let mut changed = None;
@@ -140,16 +112,19 @@ impl KnownHosts {
         }
     }
 
-    /// Returns the distinct key algorithms trusted for `name`.
+    /// Keeps only the entries whose host patterns match `name`.
+    pub(crate) fn for_host(mut self, name: &str) -> Self {
+        self.entries
+            .retain(|line| hosts_match(line.entry.host_patterns(), name));
+        self
+    }
+
+    /// Returns the key algorithms trusted for `name`.
     pub(crate) fn algorithms(&self, name: &str) -> Vec<Algorithm> {
-        let mut algorithms: Vec<Algorithm> = Vec::new();
-        for line in self.lines_for(name).filter(|line| line.entry.marker().is_none()) {
-            let algorithm = line.entry.public_key().algorithm();
-            if !algorithms.contains(&algorithm) {
-                algorithms.push(algorithm);
-            }
-        }
-        algorithms
+        self.lines_for(name)
+            .filter(|line| line.entry.marker().is_none())
+            .map(|line| line.entry.public_key().algorithm())
+            .collect()
     }
 
     /// Iterates entries whose host patterns match `name`.
@@ -184,9 +159,7 @@ pub(crate) fn preferred(recorded: &[Algorithm], default: &[Algorithm]) -> Vec<Al
 /// Returns the I/O error when the directory or file cannot be created,
 /// read, or written.
 pub(crate) fn append(path: &Path, name: &str, key: &PublicKey) -> io::Result<()> {
-    let key = PublicKey::new(key.key_data().clone(), "")
-        .to_openssh()
-        .map_err(io::Error::other)?;
+    let entry = entry(name, key).map_err(io::Error::other)?;
 
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         let mut builder = std::fs::DirBuilder::new();
@@ -211,16 +184,25 @@ pub(crate) fn append(path: &Path, name: &str, key: &PublicKey) -> io::Result<()>
             line.push('\n');
         }
     }
-    line.push_str(name);
-    line.push(' ');
-    line.push_str(&key);
+    line.push_str(&entry);
     line.push('\n');
     file.write_all(line.as_bytes())
 }
 
+/// Renders the unhashed, comment-free `known_hosts` entry for `name` and `key`.
+///
+/// # Errors
+///
+/// Returns the encoding error when `key` cannot be serialised.
+pub(crate) fn entry(name: &str, key: &PublicKey) -> russh::keys::ssh_key::Result<String> {
+    let key = PublicKey::new(key.key_data().clone(), "").to_openssh()?;
+    Ok(format!("{name} {key}"))
+}
+
 /// Returns whether `patterns` match `name`, honouring `!` negation.
+///
+/// `name` is lowercase, as returned by [`host_name`].
 fn hosts_match(patterns: &HostPatterns, name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
     match patterns {
         HostPatterns::HashedName { salt, hash } => {
             let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, salt);
@@ -233,7 +215,7 @@ fn hosts_match(patterns: &HostPatterns, name: &str) -> bool {
                     Some(pattern) => (true, pattern),
                     None => (false, pattern.as_str()),
                 };
-                if glob(&pattern.to_ascii_lowercase(), &name) {
+                if glob(&pattern.to_ascii_lowercase(), name) {
                     if negated {
                         return false;
                     }
@@ -287,11 +269,6 @@ mod tests {
 
     use super::*;
 
-    fn b64(bytes: &[u8]) -> String {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    }
-
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name)
     }
@@ -315,13 +292,13 @@ mod tests {
             .clone()
     }
 
-    /// Renders `key` as the `<type> <base64>` part of a `known_hosts` line.
+    /// Renders `key` as `<type> <base64>`, independently of [`entry`].
     fn openssh(key: &PublicKey) -> String {
         PublicKey::new(key.key_data().clone(), "").to_openssh().expect("encode")
     }
 
     fn line(hosts: &str, key: &PublicKey) -> String {
-        format!("{hosts} {}\n", openssh(key))
+        format!("{}\n", entry(hosts, key).expect("encode"))
     }
 
     fn check(text: &str, name: &str, key: &PublicKey) -> Check {
@@ -354,20 +331,12 @@ mod tests {
         let known = KnownHosts::parse(&text);
         assert_eq!(known.check("bastion.example.com", &ed25519()), Check::Match);
         assert_eq!(known.check("[bastion.example.com]:2222", &ed25519()), Check::Match);
-        assert_eq!(known.check("BASTION.example.com", &ed25519()), Check::Match);
+        assert_eq!(
+            known.check(&host_name("BASTION.example.com", 22), &ed25519()),
+            Check::Match
+        );
         assert_eq!(known.check("[bastion.example.com]:2223", &ed25519()), Check::Unknown);
         assert_eq!(known.check("bastion", &ed25519()), Check::Unknown);
-    }
-
-    #[test]
-    fn hashed_helper_round_trips() {
-        let salt = [1u8; 20];
-        let tag = hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &salt),
-            b"[db.internal]:2222",
-        );
-        let text = line(&format!("|1|{}|{}", b64(&salt), b64(tag.as_ref())), &rsa());
-        assert_eq!(check(&text, "[db.internal]:2222", &rsa()), Check::Match);
     }
 
     #[test]
@@ -411,7 +380,10 @@ mod tests {
     fn hostnames_match_case_insensitively() {
         let text = line("Bastion.EXAMPLE.com", &ed25519());
         assert_eq!(check(&text, "bastion.example.com", &ed25519()), Check::Match);
-        assert_eq!(check(&text, "BASTION.example.COM", &ed25519()), Check::Match);
+        assert_eq!(
+            check(&text, &host_name("BASTION.example.COM", 22), &ed25519()),
+            Check::Match
+        );
     }
 
     #[test]
@@ -494,30 +466,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let known = KnownHosts::read(&dir.path().join("missing")).expect("missing is empty");
         assert_eq!(known.check("bastion", &ed25519()), Check::Unknown);
-    }
-
-    #[test]
-    fn outcome_table() {
-        use StrictHostKeyChecking::{AcceptNew, No, Yes};
-
-        let revoked = Check::Revoked { line: 1 };
-        let changed = Check::Changed { line: 1 };
-        for (check, mode, expected) in [
-            (revoked, Yes, Outcome::Reject),
-            (revoked, AcceptNew, Outcome::Reject),
-            (revoked, No, Outcome::Reject),
-            (Check::Match, Yes, Outcome::Accept),
-            (Check::Match, AcceptNew, Outcome::Accept),
-            (Check::Match, No, Outcome::Accept),
-            (changed, Yes, Outcome::Reject),
-            (changed, AcceptNew, Outcome::Reject),
-            (changed, No, Outcome::AcceptChanged),
-            (Check::Unknown, Yes, Outcome::Reject),
-            (Check::Unknown, AcceptNew, Outcome::Learn),
-            (Check::Unknown, No, Outcome::Accept),
-        ] {
-            assert_eq!(outcome(check, mode), expected, "{check:?} under {mode}");
-        }
     }
 
     #[test]
