@@ -195,10 +195,12 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Bind host |
 | `--port` | `9001` | Bind port |
-| `--allowed-origins` | localhost variants | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side Origin rejection. |
+| `--allowed-origins` | localhost variants, any port | Allowed browser origins (comma-separated, `:*` matches any port). Drives both CORS preflight and server-side Origin rejection. |
 | `--allowed-hosts` | `localhost,127.0.0.1,::1` | Trusted Host headers (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
 | `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Prefer the `HTTP_AUTH_TOKEN` env var — CLI args are visible in `ps`. Required for non-loopback binds. |
 | `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token (`HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Only behind a reverse proxy that authenticates callers. |
+
+> **Security note**: The default `--allowed-origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `HTTP_AUTH_TOKEN` or narrow `--allowed-origins` to the explicit origins you trust (e.g. `http://localhost:5173`).
 
 ## MCP Tools 🧩
 

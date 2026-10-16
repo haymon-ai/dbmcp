@@ -9,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::{Args, Parser};
-use dbmcp_config::{Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
+use dbmcp_config::{AllowedOrigins, Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
 use crate::commands::common::{self, DatabaseArguments, PiiArguments};
@@ -54,8 +54,11 @@ struct HttpArguments {
     /// Allowed browser origins (comma-separated, RFC 6454 `<scheme>://<host>[:<port>]` or `null`).
     ///
     /// Drives BOTH the CORS preflight allowlist AND the rmcp server-side
-    /// Origin validator. Pass an empty list (`--allowed-origins ""`) to
-    /// disable both layers — only do this for non-browser deployments.
+    /// Origin validator. Use `:*` to match any port or give an explicit
+    /// port; entries without a port are deprecated. Malformed entries are
+    /// rejected at startup. Pass an empty list
+    /// (`--allowed-origins ""`) to disable server-side Origin validation
+    /// and grant no CORS access — only do this for non-browser deployments.
     #[arg(
         long = "allowed-origins",
         env = "HTTP_ALLOWED_ORIGINS",
@@ -119,7 +122,14 @@ impl TryFrom<&HttpArguments> for HttpConfig {
         let candidate = Self {
             host: http.host.clone(),
             port: http.port,
-            allowed_origins: http.allowed_origins.clone(),
+            // `--allowed-origins ""` arrives as `[""]`; dropping blanks turns
+            // it into the empty list that disables Origin validation.
+            allowed_origins: http
+                .allowed_origins
+                .iter()
+                .filter(|origin| !origin.trim().is_empty())
+                .cloned()
+                .collect(),
             allowed_hosts: http.allowed_hosts.clone(),
             auth_token: http.auth_token.clone(),
             allow_unauthenticated: http.dangerously_allow_unauthenticated,
@@ -231,10 +241,11 @@ impl HttpCommand {
 /// Builds the axum router that serves MCP over Streamable HTTP.
 ///
 /// Wires the configured allowed-origins list into BOTH the rmcp
-/// server-side Origin validator and the tower-http CORS preflight layer
-/// so the two layers cannot disagree by accident. When an auth token is
-/// configured, every request must pass [`require_bearer`] before it
-/// reaches the MCP service. CORS stays outermost so browser preflights,
+/// server-side Origin validator and the tower-http CORS preflight layer,
+/// which match entries with the same rules via [`AllowedOrigins`]. An
+/// empty list disables rmcp's validator but grants no CORS access, so
+/// browsers stay blocked. When an auth token is configured, every request
+/// must pass [`require_bearer`] before it reaches the MCP service. CORS stays outermost so browser preflights,
 /// which never carry credentials, are answered without authentication.
 fn build_http_router(
     http_config: &HttpConfig,
@@ -302,15 +313,14 @@ async fn require_bearer(State(auth): State<BearerAuth>, request: Request, next: 
 }
 
 /// Builds a CORS layer from the configured allowed origins.
+///
+/// Uses the same `(scheme, host, port)` matching as rmcp, including the
+/// `:*` port wildcard, instead of tower-http's exact string matching.
 fn build_cors_layer(http_config: &HttpConfig) -> CorsLayer {
-    let origins: Vec<axum::http::HeaderValue> = http_config
-        .allowed_origins
-        .iter()
-        .filter_map(|origin| origin.parse().ok())
-        .collect();
+    let origins = AllowedOrigins::new(&http_config.allowed_origins);
 
     CorsLayer::new()
-        .allow_origin(origins)
+        .allow_origin(AllowOrigin::predicate(move |origin, _| origins.allows(origin)))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
@@ -435,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn clap_default_yields_four_loopback_origins() {
+    fn clap_default_yields_loopback_origins() {
         let args = parse_http_args(&[]);
         let config = HttpConfig::try_from(&args).expect("default args are valid");
         assert_eq!(config.allowed_origins, HttpConfig::default_allowed_origins());
@@ -517,16 +527,92 @@ mod tests {
         assert_eq!(body, "Forbidden: Invalid Origin header");
     }
 
-    #[tokio::test]
-    async fn allowed_origin_passes_validator() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
-        let request = mcp_post("/mcp/")
-            .header(header::ORIGIN, "http://localhost")
-            .body(Body::from("{}"))
+    fn preflight(origin: &str) -> Request<Body> {
+        Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/mcp/")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, origin)
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization, content-type")
+            .body(Body::empty())
+            .expect("build request")
+    }
+
+    const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#;
+
+    /// Asserts the CORS layer and rmcp's validator both accept or both reject `origin`.
+    async fn assert_origin(origins: &[impl AsRef<str>], origin: &str, allowed: bool) {
+        let origins: Vec<String> = origins.iter().map(|o| o.as_ref().to_owned()).collect();
+        let context = format!("origins={origins:?} origin={origin}");
+        let router = router_with_origins(origins);
+
+        let response = router.clone().oneshot(preflight(origin)).await.expect("oneshot");
+        let allow_origin = response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN);
+        let post = mcp_post("/mcp/")
+            .header(header::ORIGIN, origin)
+            .body(Body::from(INITIALIZE))
             .expect("build request");
-        let (status, _body) = send(router, request).await;
-        assert_ne!(status, StatusCode::FORBIDDEN);
-        assert_ne!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = send(router, post).await;
+
+        if allowed {
+            assert_eq!(
+                allow_origin.and_then(|v| v.to_str().ok()),
+                Some(origin),
+                "preflight {context}"
+            );
+            assert_eq!(status, StatusCode::OK, "POST {context} body={body}");
+        } else {
+            assert_eq!(allow_origin, None, "preflight {context}");
+            assert_eq!(status, StatusCode::FORBIDDEN, "POST {context} body={body}");
+            assert_eq!(body, "Forbidden: Origin header is not allowed", "POST {context}");
+        }
+    }
+
+    /// Pins `crate::commands::origin` to rmcp's private matcher.
+    ///
+    /// Every case runs through both the CORS preflight and rmcp's
+    /// validator, so an rmcp upgrade that changes Origin semantics fails
+    /// here instead of silently splitting the two layers.
+    #[tokio::test]
+    async fn cors_and_rmcp_agree_on_origin_matching() {
+        let cases: &[(&[&str], &str, bool)] = &[
+            (&["http://app.example:*"], "http://app.example", true),
+            (&["http://app.example:*"], "http://app.example:5173", true),
+            (&["http://app.example:8080"], "http://app.example:8080", true),
+            (&["http://app.example:8080"], "http://app.example:9090", false),
+            (&["http://app.example:8080"], "http://app.example", false),
+            (&["https://app.example:443"], "https://app.example", true),
+            (&["https://app.example:443"], "http://app.example", false),
+            (&["http://app.example"], "http://app.example", true),
+            (&["http://app.example"], "http://app.example:5173", true),
+            (&["HTTP://App.Example:*"], "http://APP.example:3000", true),
+            (&["http://[::1]:*"], "http://[::1]:8080", true),
+            (&["http://[::1]:*"], "http://[::2]:8080", false),
+            (&["null"], "null", true),
+            (&["http://app.example:*"], "null", false),
+            (&["http://app.example:*"], "https://app.example", false),
+            (&["http://app.example:*"], "http://evil.example", false),
+            (&["not a url", "http://app.example:*"], "http://app.example", true),
+        ];
+        for (origins, origin, allowed) in cases {
+            assert_origin(origins, origin, *allowed).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn default_origins_allow_any_local_port() {
+        for (origin, allowed) in [
+            ("http://localhost", true),
+            ("http://localhost:5173", true),
+            ("http://127.0.0.1:3000", true),
+            ("https://localhost:8443", true),
+            ("https://127.0.0.1", true),
+            ("http://[::1]:5173", true),
+            ("http://evil.example:5173", false),
+        ] {
+            assert_origin(&HttpConfig::default_allowed_origins(), origin, allowed).await;
+        }
     }
 
     #[tokio::test]
@@ -547,6 +633,24 @@ mod tests {
             .expect("build request");
         let (status, _body) = send(router, request).await;
         assert_ne!(status, StatusCode::FORBIDDEN, "empty allowlist must not reject Origin");
+    }
+
+    #[test]
+    fn empty_allowed_origins_flag_yields_empty_list() {
+        let args = parse_http_args(&["--allowed-origins", ""]);
+        let config = HttpConfig::try_from(&args).expect("empty origins must validate");
+        assert!(config.allowed_origins.is_empty(), "{:?}", config.allowed_origins);
+    }
+
+    #[test]
+    fn try_from_rejects_malformed_origin() {
+        let args = parse_http_args(&["--allowed-origins", "http://localhost:*,localhost"]);
+        let errors = HttpConfig::try_from(&args).expect_err("malformed origin must be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::InvalidAllowedOrigin(entry) if entry == "localhost"))
+        );
     }
 
     #[test]
@@ -655,16 +759,10 @@ mod tests {
 
     #[tokio::test]
     async fn token_cors_preflight_skips_auth() {
-        let request = Request::builder()
-            .method(Method::OPTIONS)
-            .uri("/mcp/")
-            .header(header::HOST, "localhost")
-            .header(header::ORIGIN, "http://localhost")
-            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
-            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization, content-type")
-            .body(Body::empty())
-            .expect("build request");
-        let response = router_with_token().oneshot(request).await.expect("oneshot");
+        let response = router_with_token()
+            .oneshot(preflight("http://localhost"))
+            .await
+            .expect("oneshot");
         assert!(response.status().is_success(), "status={}", response.status());
     }
 }

@@ -40,6 +40,13 @@ pub enum ConfigError {
     )]
     UnauthenticatedNonLoopbackBind(String),
 
+    /// An allowed-origins entry is not a valid origin.
+    #[error(
+        "HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
+         expected `<scheme>://<host>[:<port>|:*]` or `null`"
+    )]
+    InvalidAllowedOrigin(String),
+
     /// `PII_CATEGORIES` was supplied but the resolved list is empty.
     #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
     PiiCategoriesEmpty,
