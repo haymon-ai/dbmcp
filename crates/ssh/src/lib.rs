@@ -8,6 +8,7 @@
 
 mod error;
 mod key;
+mod known_hosts;
 mod tunnel;
 
 pub use error::SshError;

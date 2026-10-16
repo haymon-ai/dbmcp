@@ -54,6 +54,7 @@ rmcp = { version = "3.5", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
+ring = "0.17"
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa"] }
 schemars = { version = "1.2", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
@@ -75,6 +76,7 @@ tracing-subscriber = "0.3"
 # Dev/test dependencies
 criterion = { version = "0.8", features = ["html_reports"] }
 insta = { version = "1", features = ["json", "redactions"] }
+tempfile = "3"
 
 [workspace.lints.rust]
 ambiguous_negative_literals = "warn"
@@ -124,6 +126,7 @@ indexmap = { workspace = true }
 insta = { workspace = true }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 tower = { workspace = true }
 
 [[test]]
