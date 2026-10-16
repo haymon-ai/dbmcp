@@ -4,6 +4,7 @@
 //! - [`config`] — top-level [`Config`] composing the three sections
 //! - [`database`] — [`DatabaseConfig`] and [`DatabaseBackend`]
 //! - [`http`] — [`HttpConfig`]
+//! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
 //! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
 //!
@@ -24,10 +25,12 @@ pub mod config;
 pub mod database;
 pub mod error;
 pub mod http;
+pub mod origin;
 pub mod pii;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
 pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
+pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
