@@ -112,7 +112,6 @@ dbmcp-config = { workspace = true }
 dbmcp-mysql = { workspace = true }
 dbmcp-postgres = { workspace = true }
 dbmcp-server = { workspace = true }
-dbmcp-sql = { workspace = true }
 dbmcp-sqlite = { workspace = true }
 indexmap = { workspace = true }
 insta = { workspace = true }
