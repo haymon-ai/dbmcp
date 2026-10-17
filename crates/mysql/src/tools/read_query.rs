@@ -1,7 +1,7 @@
 //! MCP tool: `readQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::pagination::{Cursor, Pager};
+use dbmcp_server::listing::{self, Cursor};
 use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
@@ -126,10 +126,11 @@ impl MysqlHandler {
 
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
-                let pager = Pager::new(cursor, self.config.page_size);
-                let wrapped = with_limit_offset(&query, pager.limit(), pager.offset());
-                let rows = self.connection.fetch_json(wrapped.as_str(), database).await?;
-                pager.paginate(rows)
+                listing::paginate(cursor, self.config.page_size, async |page| {
+                    let wrapped = with_limit_offset(&query, page.limit(), page.offset());
+                    self.connection.fetch_json(wrapped.as_str(), database).await
+                })
+                .await?
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json(query.as_str(), database).await?;

@@ -1,6 +1,6 @@
 //! MCP tool: `listFunctions`.
 
-use dbmcp_server::pagination::{Cursor, Pager};
+use dbmcp_server::listing::{self, Cursor};
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
@@ -228,42 +228,41 @@ impl MysqlHandler {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.connection.default_database_name());
 
-        let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let pager = Pager::new(cursor, self.config.page_size);
-
-        if detailed {
-            let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-                .connection
-                .fetch(
-                    sqlx::query(DETAILED_SQL)
-                        .bind(database)
-                        .bind(pattern)
-                        .bind(pattern)
-                        .bind(pager.limit())
-                        .bind(pager.offset()),
-                    None,
-                )
-                .await?;
-            let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListEntriesResponse::detailed(
-                rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
-                next_cursor,
-            ));
-        }
-
-        let rows: Vec<String> = self
-            .connection
-            .fetch_scalar(
-                sqlx::query(BRIEF_SQL)
-                    .bind(database)
-                    .bind(pattern)
-                    .bind(pattern)
-                    .bind(pager.limit())
-                    .bind(pager.offset()),
-                None,
-            )
-            .await?;
-        let (functions, next_cursor) = pager.paginate(rows);
-        Ok(ListEntriesResponse::brief(functions, next_cursor))
+        let response = listing::list_entries(
+            cursor,
+            self.config.page_size,
+            search.as_deref(),
+            detailed,
+            async |page, pattern| {
+                self.connection
+                    .fetch_scalar(
+                        sqlx::query(BRIEF_SQL)
+                            .bind(database)
+                            .bind(pattern)
+                            .bind(pattern)
+                            .bind(page.limit())
+                            .bind(page.offset()),
+                        None,
+                    )
+                    .await
+            },
+            async |page, pattern| {
+                let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
+                    .connection
+                    .fetch(
+                        sqlx::query(DETAILED_SQL)
+                            .bind(database)
+                            .bind(pattern)
+                            .bind(pattern)
+                            .bind(page.limit())
+                            .bind(page.offset()),
+                        None,
+                    )
+                    .await?;
+                Ok(rows.into_iter().map(|(name, json)| (name, json.0)).collect())
+            },
+        )
+        .await?;
+        Ok(response)
     }
 }
