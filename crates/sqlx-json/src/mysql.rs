@@ -3,8 +3,8 @@
 //! Maps each column's `type_info().name()` to a [`Cell`]; JSON shapes are
 //! owned by [`encode`](crate::cell::encode). `DECIMAL` decodes to
 //! `Cell::Decimal`, `FLOAT` to `Cell::Float32` (sqlx-mysql strict-checks the
-//! column type), `TIMESTAMP` to `Cell::DateTimeUtc`, and `BLOB`, `BIT`, and
-//! `GEOMETRY` to `Cell::Bytes`. Text-like columns, including `MySQL` 9's
+//! column type), `TIMESTAMP` to `Cell::DateTimeUtc`, and binary-collation `BLOB`,
+//! `BIT`, and `GEOMETRY` to `Cell::Bytes`. Text-like columns, including `MySQL` 9's
 //! `VARBINARY` `information_schema` columns, decode as `Cell::Text` when
 //! valid UTF-8 and `Cell::Bytes` otherwise.
 
@@ -36,9 +36,13 @@ impl DecodeCell for MySqlRow {
 
             "JSON" => self.try_get(idx).map_or(Cell::Null, Cell::Json),
 
-            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => {
-                self.try_get(idx).map_or(Cell::Null, Cell::Bytes)
-            }
+            // sqlx names a column BLOB from the BINARY flag, which MySQL also sets
+            // for `_bin` collations (DESCRIBE output, MariaDB JSON). sqlx's String
+            // decode rejects only the binary collation, so true binary data falls
+            // through to bytes while `_bin` text stays text.
+            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => self
+                .try_get(idx)
+                .map_or_else(|_| self.try_get(idx).map_or(Cell::Null, Cell::Bytes), Cell::Text),
 
             "DATE" => self.try_get(idx).map_or(Cell::Null, Cell::Date),
 

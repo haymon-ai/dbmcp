@@ -1634,11 +1634,13 @@ async fn test_read_query_returns_non_null_temporal_columns() {
 async fn test_read_query_blob_is_base64_varbinary_is_text() {
     // BLOB is always base64, even when its bytes are valid UTF-8; VARBINARY
     // keeps the UTF-8-first decode for MySQL 9 information_schema columns.
+    // A `_bin`-collated TEXT column carries the BINARY flag, so sqlx names it
+    // BLOB, but it is text and must stay text.
     let handler = handler(false);
 
     let response = handler
         .read_query(
-            "SELECT `blob`, `varbinary` FROM binary_samples WHERE id = 1".into(),
+            "SELECT `blob`, `varbinary`, `text_bin` FROM binary_samples WHERE id = 1".into(),
             Some("app".into()),
             None,
         )
@@ -1649,6 +1651,29 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
     assert_eq!(arr.len(), 1, "binary_samples seeds exactly one row");
     assert_eq!(arr[0]["blob"], "aGVsbG8=", "BLOB → base64");
     assert_eq!(arr[0]["varbinary"], "hello", "VARBINARY → UTF-8 text");
+    assert_eq!(arr[0]["text_bin"], "hello", "utf8mb4_bin TEXT → text");
+}
+
+#[tokio::test]
+async fn test_read_query_describe_types_are_text() {
+    // DESCRIBE's `Type` column is `_bin`-collated text that sqlx names BLOB.
+    let handler = handler(false);
+
+    let response = handler
+        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .await
+        .expect("DESCRIBE users should succeed");
+
+    let id = response
+        .rows
+        .iter()
+        .find(|row| row["Field"] == "id")
+        .expect("users has an id column");
+    // MySQL reports `int`, MariaDB keeps the display width: `int(11)`.
+    assert!(
+        id["Type"].as_str().is_some_and(|t| t.starts_with("int")),
+        "DESCRIBE Type must be plain text: {id}"
+    );
 }
 
 #[tokio::test]
