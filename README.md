@@ -379,12 +379,15 @@ This is a Cargo workspace with the following crates:
 |-------|------|-------------|
 | `dbmcp` | `.` (root) | Binary shim |
 | `dbmcp-cli` | `crates/cli/` | CLI parsing, transports, server bootstrap |
-| `dbmcp-sql` | `crates/backend/` | Shared error types, validation, and identifier utilities |
-| `dbmcp-config` | `crates/config/` | Configuration structs and CLI argument mapping |
+| `dbmcp-sql` | `crates/sql/` | Shared error types, validation, and identifier utilities |
+| `dbmcp-config` | `crates/config/` | Configuration structs and validation |
 | `dbmcp-server` | `crates/server/` | Shared MCP tool implementations and server info |
 | `dbmcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
 | `dbmcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
 | `dbmcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
+| `dbmcp-pii` | `crates/pii/` | PII detection and anonymisation of query output |
+| `dbmcp-sql-lineage` | `crates/sql-lineage/` | Column-level SQL lineage extraction |
+| `dbmcp-ssh` | `crates/ssh/` | SSH tunnel for database connections |
 | `sqlx-json` | `crates/sqlx-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
 
 ## Development 🧰
