@@ -112,7 +112,7 @@ impl SqliteHandler {
             detailed,
         }: ListTriggersRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
-        let response = listing::list_entries(
+        listing::list_entries(
             cursor,
             self.config.page_size,
             search.as_deref(),
@@ -129,8 +129,7 @@ impl SqliteHandler {
                     .await
             },
             async |page, pattern| {
-                let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-                    .connection
+                self.connection
                     .fetch(
                         sqlx::query(DETAILED_SQL)
                             .bind(pattern)
@@ -138,11 +137,10 @@ impl SqliteHandler {
                             .bind(page.offset()),
                         None,
                     )
-                    .await?;
-                Ok(rows.into_iter().map(|(name, json)| (name, json.0)).collect())
+                    .await
             },
         )
-        .await?;
-        Ok(response)
+        .await
+        .map_err(Into::into)
     }
 }

@@ -183,7 +183,7 @@ impl PostgresHandler {
         detailed: bool,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let response = listing::list_entries(
+        listing::list_entries(
             cursor,
             self.config.page_size,
             search.as_deref(),
@@ -200,8 +200,7 @@ impl PostgresHandler {
                     .await
             },
             async |page, pattern| {
-                let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-                    .connection
+                self.connection
                     .fetch(
                         sqlx::query(DETAILED_SQL)
                             .bind(pattern)
@@ -209,11 +208,10 @@ impl PostgresHandler {
                             .bind(page.offset()),
                         database,
                     )
-                    .await?;
-                Ok(rows.into_iter().map(|(name, json)| (name, json.0)).collect())
+                    .await
             },
         )
-        .await?;
-        Ok(response)
+        .await
+        .map_err(Into::into)
     }
 }
