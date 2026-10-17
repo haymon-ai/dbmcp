@@ -4,11 +4,10 @@
 //! subcommand enum, the [`LogLevel`] selector, and the [`run`] entry
 //! point that dispatches to the active subcommand.
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
-use crate::consts::{BIN, VERSION};
 use crate::error::{Error, ErrorKind};
 
 /// Log severity levels for the MCP server.
@@ -55,7 +54,7 @@ impl From<LogLevel> for tracing::Level {
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(name = BIN, about = "Database MCP Server", version)]
+#[command(about = "Database MCP Server")]
 struct Arguments {
     /// Subcommand selector.
     #[command(subcommand)]
@@ -84,6 +83,11 @@ enum Command {
     Http(HttpCommand),
 }
 
+/// Builds the clap command for the binary named `bin` at `version`.
+fn command(bin: &'static str, version: &'static str) -> clap::Command {
+    Arguments::command().name(bin).version(version)
+}
+
 /// Parses CLI arguments, initializes tracing, and dispatches to the active subcommand.
 ///
 /// # Errors
@@ -93,11 +97,16 @@ enum Command {
 /// (transport initialization errors, TCP bind failures, fatal protocol
 /// errors).
 ///
-/// Must run inside a Tokio runtime. A global tracing subscriber that is
+/// `bin` and `version` are the installed binary's name and version, used
+/// in `--help`, `--version`, and the `version` subcommand. Must run
+/// inside a Tokio runtime. A global tracing subscriber that is
 /// already installed is kept.
 #[allow(clippy::result_large_err)]
-pub async fn run() -> Result<(), Error> {
-    let arguments = match Arguments::try_parse() {
+pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> {
+    let parsed = command(bin, version)
+        .try_get_matches()
+        .and_then(|mut matches| Arguments::from_arg_matches_mut(&mut matches));
+    let arguments = match parsed {
         Ok(arguments) => arguments,
         // `--help` and `--version` arrive as clap errors that print to stdout.
         // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
@@ -117,7 +126,7 @@ pub async fn run() -> Result<(), Error> {
 
     match arguments.command {
         Command::Version => {
-            println!("{BIN} {VERSION}");
+            println!("{bin} {version}");
             Ok(())
         }
         Command::Stdio(cmd) => Ok(cmd.execute().await?),
@@ -129,13 +138,13 @@ pub async fn run() -> Result<(), Error> {
 mod tests {
     use clap::CommandFactory;
 
-    use super::Arguments;
-    use crate::consts::BIN;
+    use super::{Arguments, command};
 
     #[test]
-    fn binary_name_is_dbmcp() {
-        assert_eq!(Arguments::command().get_name(), "dbmcp");
-        assert_eq!(BIN, "dbmcp");
+    fn command_uses_given_name_and_version() {
+        let cmd = command("dbmcp", "1.2.3");
+        assert_eq!(cmd.get_name(), "dbmcp");
+        assert_eq!(cmd.get_version(), Some("1.2.3"));
     }
 
     #[test]

@@ -5,7 +5,6 @@
 
 mod cli;
 mod commands;
-mod consts;
 mod error;
 
 pub use cli::run;

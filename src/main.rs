@@ -11,7 +11,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match dbmcp_cli::run().await {
+    match dbmcp_cli::run(env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION")).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
