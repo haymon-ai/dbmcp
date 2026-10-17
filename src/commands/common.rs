@@ -47,7 +47,7 @@ pub(crate) struct DatabaseArguments {
     pub(crate) user: Option<String>,
 
     /// Database password
-    #[arg(long = "db-password", env = "DB_PASSWORD")]
+    #[arg(long = "db-password", env = "DB_PASSWORD", hide_env_values = true)]
     pub(crate) password: Option<String>,
 
     /// Database name or `SQLite` file path
