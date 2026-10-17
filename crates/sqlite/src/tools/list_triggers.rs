@@ -1,6 +1,6 @@
 //! MCP tool: `listTriggers`.
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::listing;
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
@@ -112,38 +112,35 @@ impl SqliteHandler {
             detailed,
         }: ListTriggersRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
-        let pattern = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let pager = Pager::new(cursor, self.config.page_size);
-
-        if detailed {
-            let rows: Vec<(String, sqlx::types::Json<serde_json::Value>)> = self
-                .connection
-                .fetch(
-                    sqlx::query(DETAILED_SQL)
-                        .bind(pattern)
-                        .bind(pager.limit())
-                        .bind(pager.offset()),
-                    None,
-                )
-                .await?;
-            let (rows, next_cursor) = pager.paginate(rows);
-            return Ok(ListEntriesResponse::detailed(
-                rows.into_iter().map(|(name, json)| (name, json.0)).collect(),
-                next_cursor,
-            ));
-        }
-
-        let rows: Vec<String> = self
-            .connection
-            .fetch_scalar(
-                sqlx::query(BRIEF_SQL)
-                    .bind(pattern)
-                    .bind(pager.limit())
-                    .bind(pager.offset()),
-                None,
-            )
-            .await?;
-        let (triggers, next_cursor) = pager.paginate(rows);
-        Ok(ListEntriesResponse::brief(triggers, next_cursor))
+        listing::list_entries(
+            cursor,
+            self.config.page_size,
+            search.as_deref(),
+            detailed,
+            async |page, pattern| {
+                self.connection
+                    .fetch_scalar(
+                        sqlx::query(BRIEF_SQL)
+                            .bind(pattern)
+                            .bind(page.limit())
+                            .bind(page.offset()),
+                        None,
+                    )
+                    .await
+            },
+            async |page, pattern| {
+                self.connection
+                    .fetch(
+                        sqlx::query(DETAILED_SQL)
+                            .bind(pattern)
+                            .bind(page.limit())
+                            .bind(page.offset()),
+                        None,
+                    )
+                    .await
+            },
+        )
+        .await
+        .map_err(Into::into)
     }
 }

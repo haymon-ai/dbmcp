@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::pagination::Cursor;
+use crate::listing::Cursor;
 
 /// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///

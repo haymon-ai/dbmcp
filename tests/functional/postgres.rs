@@ -1118,7 +1118,7 @@ const PG_DB: &str = "app";
 
 async fn collect_all_paged(handler: &PostgresHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_tables(Some(PG_DB.into()), cursor.take(), None, false)
@@ -1196,7 +1196,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
 
     let handler = handler(true);
     let response = handler
@@ -1239,7 +1239,7 @@ async fn test_list_tables_respects_configured_page_size_minimum() {
 
 async fn collect_all_paged_databases(handler: &PostgresHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let request = ListDatabasesRequest { cursor };
         let response = handler.list_databases(request).await.expect("list page");
@@ -1311,7 +1311,7 @@ async fn test_list_databases_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
 
     let handler = handler(true);
     let request = ListDatabasesRequest {
@@ -1347,7 +1347,7 @@ async fn test_list_databases_respects_configured_page_size() {
 
 async fn collect_all_paged_read_query(handler: &PostgresHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .read_query(query.into(), Some("app".into()), cursor.take())
@@ -1433,7 +1433,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
 
 #[tokio::test]
 async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
         .read_query(
@@ -1471,7 +1471,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
 #[tokio::test]
 async fn test_read_query_non_select_show_server_version_single_page() {
     // SHOW is classified as NonSelect; cursor must be ignored.
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
@@ -1596,7 +1596,7 @@ async fn test_list_views_pagination_traverses_pages() {
     let handler_full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler_paged
             .list_views(Some("app".into()), cursor.take(), None, false)
@@ -1715,7 +1715,7 @@ async fn test_list_views_search_paginates_filtered_results() {
     let full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = paged
             .list_views(Some("app".into()), cursor.take(), Some("active".into()), false)
@@ -1868,7 +1868,7 @@ async fn test_list_views_detailed_with_search_only_includes_filtered() {
 async fn test_list_views_detailed_paginates() {
     let paged = handler_with_page_size(2);
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = paged
             .list_views(Some("app".into()), cursor.take(), None, true)
@@ -3108,7 +3108,7 @@ async fn test_list_materialized_views_search_paginates_filtered_results() {
     let full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = paged
             .list_materialized_views(Some("app".into()), cursor.take(), Some("orders".into()), false)
@@ -3310,7 +3310,7 @@ async fn test_list_materialized_views_detailed_with_search_only_includes_filtere
 async fn test_list_materialized_views_detailed_paginates() {
     let paged = handler_with_page_size(2);
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = paged
             .list_materialized_views(Some("app".into()), cursor.take(), None, true)
@@ -3480,7 +3480,7 @@ async fn test_list_tables_search_paginates_filtered_results() {
     let handler = handler_with_page_size(2);
     // Collect every page with the filter held constant.
     let mut collected: Vec<String> = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_tables(Some(PG_DB.into()), cursor.take(), Some("order".into()), false)
@@ -3641,7 +3641,7 @@ async fn test_list_tables_detailed_values_have_no_redundant_name_field() {
 async fn test_list_tables_detailed_paginates() {
     let handler = handler_with_page_size(1);
     let mut collected_names: Vec<String> = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_tables(Some(PG_DB.into()), cursor.take(), Some("order".into()), true)
