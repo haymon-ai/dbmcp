@@ -2,7 +2,8 @@
 //!
 //! Uses `column.type_info().name()` to pick the right Rust type for each column.
 //! `MySQL` 9 reports `information_schema` text columns as `VARBINARY`; these
-//! are decoded as UTF-8 strings rather than base64. Temporal types (`DATE`,
+//! are decoded as UTF-8 strings rather than base64; `BLOB`, `BIT`, and
+//! `GEOMETRY` are always base64. Temporal types (`DATE`,
 //! `TIME`, `DATETIME`, `TIMESTAMP`) are decoded via sqlx's `chrono` integration
 //! and serialized as ISO 8601 strings; `TIMESTAMP` is stored in UTC and is
 //! emitted with a `Z` suffix, the other types without an offset. `DECIMAL`
@@ -47,7 +48,9 @@ impl DecodeCell for MySqlRow {
                 .try_get::<String, _>(idx)
                 .map_or_else(|_| bytes_cell(self, idx), Cell::Text),
 
-            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => bytes_cell(self, idx),
+            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => {
+                self.try_get::<Vec<u8>, _>(idx).map_or(Cell::Null, Cell::Bytes)
+            }
 
             "DATE" => self.try_get::<NaiveDate, _>(idx).map_or(Cell::Null, Cell::Date),
 

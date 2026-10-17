@@ -1568,8 +1568,9 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 8 seeded base tables (users, posts, tags,
-    // post_tags, temporal, posts_audit, events_by_year, numeric_samples) plus
+    // SHOW TABLES in `app` returns 9 seeded base tables (users, posts, tags,
+    // post_tags, temporal, binary_samples, posts_audit, events_by_year,
+    // numeric_samples) plus
     // 9 seeded views (active_users, active_users_v2, active_orders,
     // active_users_with_check_cascaded, active_users_with_check_local,
     // archived_users, archived_users_invoker, user_metrics_cte,
@@ -1578,8 +1579,8 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        17,
-        "SHOW TABLES must not be paginated: expected all 17 seeded tables+views, got {}",
+        18,
+        "SHOW TABLES must not be paginated: expected all 18 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -1627,6 +1628,27 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     assert_eq!(arr[0]["time"], "14:30:00", "TIME → HH:MM:SS");
     assert_eq!(arr[0]["datetime"], "2026-04-20T14:30:00", "DATETIME → naive ISO 8601");
     assert_eq!(arr[0]["timestamp"], "2026-04-20T14:30:00Z", "TIMESTAMP → UTC ISO 8601");
+}
+
+#[tokio::test]
+async fn test_read_query_blob_is_base64_varbinary_is_text() {
+    // BLOB is always base64, even when its bytes are valid UTF-8; VARBINARY
+    // keeps the UTF-8-first decode for MySQL 9 information_schema columns.
+    let handler = handler(false);
+
+    let response = handler
+        .read_query(
+            "SELECT `blob`, `varbinary` FROM binary_samples WHERE id = 1".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .expect("binary SELECT should succeed");
+
+    let arr = &response.rows;
+    assert_eq!(arr.len(), 1, "binary_samples seeds exactly one row");
+    assert_eq!(arr[0]["blob"], "aGVsbG8=", "BLOB → base64");
+    assert_eq!(arr[0]["varbinary"], "hello", "VARBINARY → UTF-8 text");
 }
 
 #[tokio::test]
