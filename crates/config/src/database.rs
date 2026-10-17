@@ -51,7 +51,7 @@ impl DatabaseBackend {
 /// Database connection and behavior settings.
 ///
 /// All fields are fully resolved — no `Option` indirection for connection
-/// fields. Defaults are applied during construction in `From<&Cli>`.
+/// fields. Defaults are applied during construction in the binary's CLI conversion.
 #[derive(Clone)]
 pub struct DatabaseConfig {
     /// Database backend type.

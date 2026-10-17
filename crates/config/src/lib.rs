@@ -14,7 +14,7 @@
 //! `DB_BACKEND`) instead of a single DSN URL. Values are resolved with
 //! clear precedence: CLI flags > environment variables > defaults. All
 //! defaults (backend-aware port, user, host) are resolved at construction
-//! time in the binary's `From<&Cli>` conversion — consumers access plain
+//! time in the binary's CLI conversion — consumers access plain
 //! values directly.
 //!
 //! # Security
