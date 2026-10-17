@@ -102,6 +102,13 @@ CREATE TABLE `app`.`temporal` (
     `timestamp` TIMESTAMP NOT NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE `app`.`binary_samples` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `blob` BLOB NOT NULL,
+    `varbinary` VARBINARY(16) NOT NULL,
+    `text_bin` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
+) ENGINE=InnoDB;
+
 -- Audit log written to by the posts_after_insert trigger.
 CREATE TABLE `app`.`posts_audit` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -148,6 +155,10 @@ PARTITION BY RANGE (`year`) (
 -- Sample data: 1 temporal row
 INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00');
+
+-- Sample data: 1 binary row holding valid UTF-8 in every column
+INSERT INTO `app`.`binary_samples` (`id`, `blob`, `varbinary`, `text_bin`) VALUES
+    (1, 'hello', 'hello', 'hello');
 
 -- Views
 

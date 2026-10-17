@@ -7,10 +7,11 @@
 //! [`PgRow`](sqlx::postgres::PgRow), and
 //! [`MySqlRow`](sqlx::mysql::MySqlRow).
 
+mod cell;
 mod mysql;
-mod numeric;
 mod postgres;
 mod prelude;
+mod row;
 mod sqlite;
 mod traits;
 
