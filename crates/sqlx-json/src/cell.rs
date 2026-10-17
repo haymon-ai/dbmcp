@@ -1,14 +1,75 @@
-//! Shared `BigDecimal` → JSON conversion for the per-backend row decoders.
+//! Backend-neutral column values and their JSON shapes.
 //!
-//! `bigdecimal_to_json` enforces the value-driven JSON shape rule for
-//! fixed-point and arbitrary-precision numerics: integers fitting in `i64`
-//! emit as integer JSON numbers, values whose canonical decimal form has
-//! ≤15 digits emit as JSON numbers via `Number::from_f64`, and everything
-//! else emits as the decimal string. The same database value always
-//! produces the same JSON shape regardless of column or backend.
+//! Each backend adapter decodes a column into a [`Cell`]; [`encode`] then
+//! applies the one JSON shape rule for that cell kind, so the same kind of
+//! value produces the same JSON on every backend.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use serde_json::Value;
+use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
+/// A single decoded column value, independent of the backend it came from.
+#[derive(Debug)]
+pub(crate) enum Cell {
+    /// SQL `NULL`, or a value the adapter could not decode.
+    Null,
+    /// Boolean.
+    Bool(bool),
+    /// Signed integer.
+    Int(i64),
+    /// Unsigned integer that may exceed `i64::MAX`.
+    UInt(u64),
+    /// Single-precision float.
+    Float32(f32),
+    /// Double-precision float.
+    Float64(f64),
+    /// Exact fixed-point or arbitrary-precision numeric.
+    Decimal(BigDecimal),
+    /// Text.
+    Text(String),
+    /// Raw bytes.
+    Bytes(Vec<u8>),
+    /// Already-parsed JSON document.
+    Json(Value),
+    /// Calendar date.
+    Date(NaiveDate),
+    /// Time of day without a zone.
+    Time(NaiveTime),
+    /// Date and time without a zone.
+    DateTime(NaiveDateTime),
+    /// Date and time in UTC.
+    DateTimeUtc(DateTime<Utc>),
+}
+
+/// Converts a [`Cell`] to its JSON shape.
+///
+/// Unsigned integers beyond `i64::MAX` become strings; non-finite floats
+/// become `null`; decimals follow `bigdecimal_to_json`; bytes are
+/// base64-encoded; temporal values are ISO 8601 strings, with a `Z` suffix
+/// only for UTC date-times.
+pub(crate) fn encode(cell: Cell) -> Value {
+    match cell {
+        Cell::Null => Value::Null,
+        Cell::Bool(v) => Value::Bool(v),
+        Cell::Int(v) => Value::from(v),
+        Cell::UInt(v) => i64::try_from(v).map_or_else(|_| Value::String(v.to_string()), Value::from),
+        Cell::Float32(v) => Value::from(v),
+        Cell::Float64(v) => Value::from(v),
+        Cell::Decimal(v) => bigdecimal_to_json(&v),
+        Cell::Text(v) => Value::String(v),
+        Cell::Bytes(v) => Value::String(BASE64.encode(v)),
+        Cell::Json(v) => v,
+        Cell::Date(v) => Value::String(v.to_string()),
+        Cell::Time(v) => Value::String(v.to_string()),
+        Cell::DateTime(v) => Value::String(format!("{}T{}", v.date(), v.time())),
+        Cell::DateTimeUtc(v) => {
+            let n = v.naive_utc();
+            Value::String(format!("{}T{}Z", n.date(), n.time()))
+        }
+    }
+}
 
 /// Maximum significant decimal digits that round-trip through `f64`.
 ///
@@ -24,7 +85,7 @@ const F64_SAFE_DIGITS: u64 = 15;
 /// Other values emit as `Value::Number` when their canonical decimal form
 /// has at most `F64_SAFE_DIGITS` digits, else as `Value::String` carrying
 /// the decimal text.
-pub(crate) fn bigdecimal_to_json(value: &BigDecimal) -> Value {
+fn bigdecimal_to_json(value: &BigDecimal) -> Value {
     let normalized = value.normalized();
 
     if normalized.is_integer()
@@ -255,5 +316,76 @@ mod tests {
         // that normalise to whole numbers.
         let v = bigdecimal_to_json(&dec("1.23e5"));
         assert_eq!(v, Value::from(123_000));
+    }
+
+    #[test]
+    fn encode_null_bool_int() {
+        assert_eq!(encode(Cell::Null), Value::Null);
+        assert_eq!(encode(Cell::Bool(true)), Value::Bool(true));
+        assert_eq!(encode(Cell::Int(-7)), Value::from(-7));
+    }
+
+    #[test]
+    fn encode_uint_within_i64_is_number() {
+        assert_eq!(encode(Cell::UInt(42)), Value::from(42));
+        assert_eq!(encode(Cell::UInt(i64::MAX as u64)), Value::from(i64::MAX));
+    }
+
+    #[test]
+    fn encode_uint_beyond_i64_is_string() {
+        assert_eq!(encode(Cell::UInt(u64::MAX)), Value::String(u64::MAX.to_string()));
+    }
+
+    #[test]
+    fn encode_floats() {
+        assert_eq!(encode(Cell::Float32(1.5)), Value::from(1.5_f32));
+        assert_eq!(encode(Cell::Float64(2.25)), Value::from(2.25));
+    }
+
+    #[test]
+    fn encode_non_finite_float_is_null() {
+        assert_eq!(encode(Cell::Float32(f32::NAN)), Value::Null);
+        assert_eq!(encode(Cell::Float64(f64::INFINITY)), Value::Null);
+        assert_eq!(encode(Cell::Float64(f64::NAN)), Value::Null);
+    }
+
+    #[test]
+    fn encode_decimal_uses_shape_rule() {
+        assert_eq!(encode(Cell::Decimal(dec("1.20"))), Value::from(1.2));
+        assert_eq!(
+            encode(Cell::Decimal(dec("12345678901234567890.5"))),
+            Value::String("12345678901234567890.5".to_string())
+        );
+    }
+
+    #[test]
+    fn encode_text_and_json() {
+        assert_eq!(encode(Cell::Text("abc".to_string())), Value::from("abc"));
+        let doc = serde_json::json!({"a": [1, null]});
+        assert_eq!(encode(Cell::Json(doc.clone())), doc);
+    }
+
+    #[test]
+    fn encode_bytes_is_base64() {
+        assert_eq!(encode(Cell::Bytes(b"hello".to_vec())), Value::from("aGVsbG8="));
+        assert_eq!(encode(Cell::Bytes(vec![0xff, 0x00])), Value::from("/wA="));
+    }
+
+    #[test]
+    fn encode_temporal() {
+        let date = NaiveDate::from_ymd_opt(2026, 1, 2).expect("valid date");
+        let time = NaiveTime::from_hms_micro_opt(3, 4, 5, 6).expect("valid time");
+        let datetime = NaiveDateTime::new(date, time);
+
+        assert_eq!(encode(Cell::Date(date)), Value::from("2026-01-02"));
+        assert_eq!(encode(Cell::Time(time)), Value::from("03:04:05.000006"));
+        assert_eq!(
+            encode(Cell::DateTime(datetime)),
+            Value::from("2026-01-02T03:04:05.000006")
+        );
+        assert_eq!(
+            encode(Cell::DateTimeUtc(datetime.and_utc())),
+            Value::from("2026-01-02T03:04:05.000006Z")
+        );
     }
 }
