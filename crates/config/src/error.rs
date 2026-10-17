@@ -57,31 +57,31 @@ pub enum ConfigError {
     PiiNerModelMissing,
 
     /// SSH tunnelling was requested for the `SQLite` backend.
-    #[error("DB_SSH_HOST is not supported with the sqlite backend")]
+    #[error("SSH_HOST is not supported with the sqlite backend")]
     SshSqliteUnsupported,
 
-    /// Other `DB_SSH_*` options were set without `DB_SSH_HOST`.
-    #[error("DB_SSH_HOST is required when other DB_SSH_* options are set")]
+    /// Other `SSH_*` options were set without `SSH_HOST`.
+    #[error("SSH_HOST is required when other SSH_* options are set")]
     MissingSshHost,
 
-    /// `DB_SSH_HOST` was set to an empty string.
-    #[error("DB_SSH_HOST must not be empty")]
+    /// `SSH_HOST` was set to an empty string.
+    #[error("SSH_HOST must not be empty")]
     EmptySshHost,
 
-    /// `DB_SSH_HOST` was set without `DB_SSH_USER`.
-    #[error("DB_SSH_USER is required when DB_SSH_HOST is set")]
+    /// `SSH_HOST` was set without `SSH_USER`.
+    #[error("SSH_USER is required when SSH_HOST is set")]
     MissingSshUser,
 
-    /// `DB_SSH_HOST` was set without a password or key.
-    #[error("DB_SSH_PASSWORD or DB_SSH_KEY is required when DB_SSH_HOST is set")]
+    /// `SSH_HOST` was set without a password or key.
+    #[error("SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set")]
     MissingSshAuth,
 
-    /// `DB_SSH_KEY_PASSPHRASE` was set without `DB_SSH_KEY`.
-    #[error("DB_SSH_KEY_PASSPHRASE requires DB_SSH_KEY")]
+    /// `SSH_KEY_PASSPHRASE` was set without `SSH_KEY`.
+    #[error("SSH_KEY_PASSPHRASE requires SSH_KEY")]
     SshKeyPassphraseWithoutKey,
 
     /// `known_hosts` could not be resolved and host-key checking is on.
-    #[error("DB_SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    #[error("SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
     MissingSshKnownHosts,
 }
 

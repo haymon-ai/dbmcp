@@ -2,10 +2,10 @@
 //!
 //! Spawns the `dbmcp` binary over stdio and queries a database that is only
 //! reachable through the sshd container. The child inherits `DB_BACKEND`,
-//! `DB_HOST`, `DB_PORT`, and every `DB_SSH_*` variable from the environment.
-//! Key tests drop `DB_SSH_PASSWORD` and authenticate with the fixture keys
+//! `DB_HOST`, `DB_PORT`, and every `SSH_*` variable from the environment.
+//! Key tests drop `SSH_PASSWORD` and authenticate with the fixture keys
 //! in `crates/ssh/testdata`, authorised via `tests/ssh/authorized_keys`.
-//! Host-key tests point `DB_SSH_KNOWN_HOSTS` at a temporary file; the H4
+//! Host-key tests point `SSH_KNOWN_HOSTS` at a temporary file; the H4
 //! tests seed it with `ssh-keyscan`, which must be on `PATH`.
 //!
 //! The reconnect test restarts sshd inside the container named by
@@ -41,8 +41,8 @@ fn key(name: &str) -> String {
 /// Builds `dbmcp stdio` with the inherited database and SSH environment.
 fn command() -> tokio::process::Command {
     assert!(
-        std::env::var_os("DB_SSH_HOST").is_some(),
-        "DB_SSH_HOST must be set (run via ./tests/run.sh)"
+        std::env::var_os("SSH_HOST").is_some(),
+        "SSH_HOST must be set (run via ./tests/run.sh)"
     );
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
     command.arg("stdio").env("DB_NAME", "app");
@@ -52,10 +52,10 @@ fn command() -> tokio::process::Command {
 /// Builds `dbmcp stdio` authenticating only with the key `name`.
 fn key_command(name: &str, passphrase: Option<&str>) -> tokio::process::Command {
     let mut command = command();
-    command.env_remove("DB_SSH_PASSWORD").env("DB_SSH_KEY", key(name));
+    command.env_remove("SSH_PASSWORD").env("SSH_KEY", key(name));
     match passphrase {
-        Some(passphrase) => command.env("DB_SSH_KEY_PASSPHRASE", passphrase),
-        None => command.env_remove("DB_SSH_KEY_PASSPHRASE"),
+        Some(passphrase) => command.env("SSH_KEY_PASSPHRASE", passphrase),
+        None => command.env_remove("SSH_KEY_PASSPHRASE"),
     };
     command
 }
@@ -64,16 +64,16 @@ fn key_command(name: &str, passphrase: Option<&str>) -> tokio::process::Command 
 fn verifying_command(known_hosts: &Path, mode: &str) -> tokio::process::Command {
     let mut command = command();
     command
-        .env("DB_SSH_KNOWN_HOSTS", known_hosts)
-        .env("DB_SSH_STRICT_HOST_KEY_CHECKING", mode)
+        .env("SSH_KNOWN_HOSTS", known_hosts)
+        .env("SSH_STRICT_HOST_KEY_CHECKING", mode)
         .env("DB_CONNECTION_TIMEOUT", "5");
     command
 }
 
-/// Returns the SSH server's `DB_SSH_HOST` and `DB_SSH_PORT`.
+/// Returns the SSH server's `SSH_HOST` and `SSH_PORT`.
 fn ssh_endpoint() -> (String, String) {
-    let host = std::env::var("DB_SSH_HOST").expect("DB_SSH_HOST");
-    let port = std::env::var("DB_SSH_PORT").expect("DB_SSH_PORT");
+    let host = std::env::var("SSH_HOST").expect("SSH_HOST");
+    let port = std::env::var("SSH_PORT").expect("SSH_PORT");
     (host, port)
 }
 
@@ -312,8 +312,8 @@ async fn host_recorded_only_as_ecdsa_or_rsa_connects() {
 async fn tool_error_names_ssh_failure() {
     let mut command = command();
     command
-        .env("DB_SSH_PASSWORD", "wrong")
-        .env_remove("DB_SSH_KEY")
+        .env("SSH_PASSWORD", "wrong")
+        .env_remove("SSH_KEY")
         .env("DB_CONNECTION_TIMEOUT", "5");
     let client = connect(command).await;
 

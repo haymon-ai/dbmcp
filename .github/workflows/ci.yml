@@ -119,11 +119,11 @@ jobs:
           DB_BACKEND: mysql
           DB_HOST: mariadb
           DB_PORT: 3306
-          DB_SSH_HOST: 127.0.0.1
-          DB_SSH_PORT: 2222
-          DB_SSH_USER: dbmcp
-          DB_SSH_PASSWORD: dbmcp
-          DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSH_HOST: 127.0.0.1
+          SSH_PORT: 2222
+          SSH_USER: dbmcp
+          SSH_PASSWORD: dbmcp
+          SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   mysql:
@@ -184,11 +184,11 @@ jobs:
           DB_BACKEND: mysql
           DB_HOST: mysql
           DB_PORT: 3306
-          DB_SSH_HOST: 127.0.0.1
-          DB_SSH_PORT: 2222
-          DB_SSH_USER: dbmcp
-          DB_SSH_PASSWORD: dbmcp
-          DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSH_HOST: 127.0.0.1
+          SSH_PORT: 2222
+          SSH_USER: dbmcp
+          SSH_PASSWORD: dbmcp
+          SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   postgres:
@@ -246,11 +246,11 @@ jobs:
           DB_BACKEND: postgres
           DB_HOST: postgres
           DB_PORT: 5432
-          DB_SSH_HOST: 127.0.0.1
-          DB_SSH_PORT: 2222
-          DB_SSH_USER: dbmcp
-          DB_SSH_PASSWORD: dbmcp
-          DB_SSH_STRICT_HOST_KEY_CHECKING: "no"
+          SSH_HOST: 127.0.0.1
+          SSH_PORT: 2222
+          SSH_USER: dbmcp
+          SSH_PASSWORD: dbmcp
+          SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   sqlite:

@@ -29,7 +29,7 @@ impl std::fmt::Display for StrictHostKeyChecking {
 
 /// Resolved SSH tunnel settings.
 ///
-/// Present on [`Config`](crate::Config) only when `DB_SSH_HOST` is set.
+/// Present on [`Config`](crate::Config) only when `SSH_HOST` is set.
 /// Paths are already `~`-expanded and the `known_hosts` default is resolved.
 #[derive(Clone)]
 pub struct SshConfig {
@@ -119,10 +119,7 @@ impl SshConfig {
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound(
-                "DB_SSH_KEY".into(),
-                key.display().to_string(),
-            ));
+            errors.push(ConfigError::FileNotFound("SSH_KEY".into(), key.display().to_string()));
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
             errors.push(ConfigError::SshKeyPassphraseWithoutKey);
@@ -222,7 +219,7 @@ mod tests {
     fn validate_rejects_sqlite_backend() {
         assert_eq!(
             errors_of(&ssh_config(), DatabaseBackend::Sqlite),
-            ["DB_SSH_HOST is not supported with the sqlite backend"]
+            ["SSH_HOST is not supported with the sqlite backend"]
         );
     }
 
@@ -234,7 +231,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["DB_SSH_HOST must not be empty"]
+            ["SSH_HOST must not be empty"]
         );
     }
 
@@ -246,7 +243,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Postgres),
-            ["DB_SSH_USER is required when DB_SSH_HOST is set"]
+            ["SSH_USER is required when SSH_HOST is set"]
         );
     }
 
@@ -258,7 +255,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["DB_SSH_PASSWORD or DB_SSH_KEY is required when DB_SSH_HOST is set"]
+            ["SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set"]
         );
     }
 
@@ -272,12 +269,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             &errors[0],
-            ConfigError::FileNotFound(name, _) if name == "DB_SSH_KEY"
+            ConfigError::FileNotFound(name, _) if name == "SSH_KEY"
         ));
         assert_eq!(
             errors[0].to_string(),
             format!(
-                "DB_SSH_KEY file not found: {}",
+                "SSH_KEY file not found: {}",
                 Path::new("/nonexistent/id_ed25519").display()
             )
         );
@@ -301,7 +298,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["DB_SSH_KEY_PASSPHRASE requires DB_SSH_KEY"]
+            ["SSH_KEY_PASSPHRASE requires SSH_KEY"]
         );
     }
 
@@ -315,7 +312,7 @@ mod tests {
             };
             assert_eq!(
                 errors_of(&config, DatabaseBackend::Mysql),
-                ["DB_SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
+                ["SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
                 "mode {mode}"
             );
         }

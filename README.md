@@ -182,16 +182,16 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--ssh-host` | `DB_SSH_HOST` | | SSH server host; enables the tunnel when set |
-| `--ssh-port` | `DB_SSH_PORT` | `22` | SSH server port |
-| `--ssh-user` | `DB_SSH_USER` | | SSH user |
-| `--ssh-password` | `DB_SSH_PASSWORD` | | SSH password |
-| `--ssh-key` | `DB_SSH_KEY` | | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
-| `--ssh-key-passphrase` | `DB_SSH_KEY_PASSPHRASE` | | Passphrase for the SSH private key |
-| `--ssh-known-hosts` | `DB_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
-| `--ssh-strict-host-key-checking` | `DB_SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
-| `--ssh-keepalive-interval` | `DB_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
-| `--ssh-local-port` | `DB_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+| `--ssh-host` | `SSH_HOST` | | SSH server host; enables the tunnel when set |
+| `--ssh-port` | `SSH_PORT` | `22` | SSH server port |
+| `--ssh-user` | `SSH_USER` | | SSH user |
+| `--ssh-password` | `SSH_PASSWORD` | | SSH password |
+| `--ssh-key` | `SSH_KEY` | | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `--ssh-key-passphrase` | `SSH_KEY_PASSPHRASE` | | Passphrase for the SSH private key |
+| `--ssh-known-hosts` | `SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
+| `--ssh-strict-host-key-checking` | `SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
+| `--ssh-keepalive-interval` | `SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
+| `--ssh-local-port` | `SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
 
 The tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client (no `ssh` binary). `--db-host`/`--db-port` are resolved **by the SSH server**. With both a key and a password set, the key is tried first. See [SSH Tunnel](https://dbmcp.haymon.ai/docs/configuration#ssh-tunnel) for host-key policies, limitations, and troubleshooting.
 

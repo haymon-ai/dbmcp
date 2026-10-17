@@ -341,53 +341,53 @@
       "default": "true"
     },
     {
-      "name": "DB_SSH_HOST",
+      "name": "SSH_HOST",
       "description": "SSH server host; enables the tunnel when set"
     },
     {
-      "name": "DB_SSH_PORT",
+      "name": "SSH_PORT",
       "description": "SSH server port",
       "format": "number",
       "default": "22"
     },
     {
-      "name": "DB_SSH_USER",
+      "name": "SSH_USER",
       "description": "SSH user"
     },
     {
-      "name": "DB_SSH_PASSWORD",
+      "name": "SSH_PASSWORD",
       "description": "SSH password",
       "isSecret": true
     },
     {
-      "name": "DB_SSH_KEY",
+      "name": "SSH_KEY",
       "description": "Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)",
       "format": "filepath"
     },
     {
-      "name": "DB_SSH_KEY_PASSPHRASE",
+      "name": "SSH_KEY_PASSPHRASE",
       "description": "Passphrase for the SSH private key",
       "isSecret": true
     },
     {
-      "name": "DB_SSH_KNOWN_HOSTS",
+      "name": "SSH_KNOWN_HOSTS",
       "description": "Path to known_hosts file (default: ~/.ssh/known_hosts)",
       "format": "filepath"
     },
     {
-      "name": "DB_SSH_STRICT_HOST_KEY_CHECKING",
+      "name": "SSH_STRICT_HOST_KEY_CHECKING",
       "description": "Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure)",
       "default": "yes",
       "choices": ["yes", "accept-new", "no"]
     },
     {
-      "name": "DB_SSH_KEEPALIVE_INTERVAL",
+      "name": "SSH_KEEPALIVE_INTERVAL",
       "description": "SSH keepalive interval in seconds (0 disables)",
       "format": "number",
       "default": "30"
     },
     {
-      "name": "DB_SSH_LOCAL_PORT",
+      "name": "SSH_LOCAL_PORT",
       "description": "Local tunnel port (default: ephemeral)",
       "format": "number"
     },
