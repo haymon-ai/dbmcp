@@ -1,9 +1,7 @@
 //! Database MCP Server entry point.
-
-mod cli;
-mod commands;
-mod consts;
-mod error;
+//!
+//! Installs mimalloc as the global allocator, starts the Tokio runtime, and
+//! delegates to [`dbmcp_cli::run`].
 
 use mimalloc::MiMalloc;
 use std::process::ExitCode;
@@ -11,12 +9,13 @@ use std::process::ExitCode;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-fn main() -> ExitCode {
-    match cli::run() {
+#[tokio::main]
+async fn main() -> ExitCode {
+    match dbmcp_cli::run(env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION")).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
-            ExitCode::FAILURE
+            error.exit_code()
         }
     }
 }

@@ -22,6 +22,7 @@ repository = "https://github.com/haymon-ai/dbmcp"
 
 [workspace.dependencies]
 # Internal workspace crates
+dbmcp-cli = { path = "crates/cli", version = "0.15.0" }
 dbmcp-config = { path = "crates/config", version = "0.15.0" }
 dbmcp-mysql = { path = "crates/mysql", version = "0.15.0" }
 dbmcp-pii = { path = "crates/pii", version = "0.15.0" }
@@ -102,33 +103,22 @@ module_name_repetitions = "allow"
 workspace = true
 
 [dependencies]
-axum = { workspace = true }
-clap = { workspace = true }
+dbmcp-cli = { workspace = true }
+mimalloc = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
 dbmcp-config = { workspace = true }
 dbmcp-mysql = { workspace = true }
 dbmcp-postgres = { workspace = true }
 dbmcp-server = { workspace = true }
-dbmcp-sql = { workspace = true }
 dbmcp-sqlite = { workspace = true }
-dbmcp-ssh = { workspace = true }
-mimalloc = { workspace = true }
-rmcp = { workspace = true }
-sha2 = { workspace = true }
-subtle = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
-tower-http = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-
-[dev-dependencies]
 indexmap = { workspace = true }
 insta = { workspace = true }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-tower = { workspace = true }
+tokio = { workspace = true }
 
 [[test]]
 name = "functional_mysql"

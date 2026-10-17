@@ -25,16 +25,19 @@ cargo fmt                     # apply formatting
 
 ## Architecture
 
-Cargo workspace: root binary (`dbmcp`) + 7 library crates under `crates/`. Workspace members use `"crates/*"` glob.
+Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Workspace members use `"crates/*"` glob.
 
-- **`src/`** — Binary crate. `cli.rs` owns CLI parsing (clap with subcommands), tracing init, and subcommand dispatch. `commands/common.rs` hosts the shared `DatabaseArguments` group, the `TryFrom<&DatabaseArguments> for DatabaseConfig` conversion, and the `create_server` factory. `commands/stdio.rs` and `commands/http.rs` own transport-specific execution; `HttpArguments` is private to `http.rs`.
+- **`src/main.rs`** — Binary shim. Installs mimalloc as the global allocator, owns `#[tokio::main]`, and calls `dbmcp_cli::run` with the binary's name and version.
+- **`crates/cli/`** (`dbmcp-cli`) — CLI crate; public API is the async `run(bin, version)` and the opaque `Error` (with `exit_code()`). `cli.rs` owns CLI parsing (clap with subcommands), tracing init, and subcommand dispatch. `commands/common.rs` hosts the shared `DatabaseArguments` group, the `TryFrom<&DatabaseArguments> for DatabaseConfig` conversion, and the `create_server` factory. `commands/stdio.rs` and `commands/http.rs` own transport-specific execution; `HttpArguments` is private to `http.rs`.
 - **`crates/config/`** (`dbmcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`. `origin` module: `AllowedOrigins` mirrors rmcp's private `Origin` matching (`:*` port wildcard) for the HTTP CORS layer; `HttpConfig::validate()` rejects malformed entries.
-- **`crates/backend/`** (`dbmcp-sql`) — Shared `AppError` type, SQL read-only validation (`validation` module), identifier quoting/validation (`identifier` module), and request/response types (`types` module).
+- **`crates/sql/`** (`dbmcp-sql`) — Shared `SqlError` type, SQL read-only validation (`validation` module), identifier quoting (`sanitize` module), `LIMIT`/`OFFSET` rewriting (`pagination` module), query timeouts (`timeout` module), and the `Connection` trait shared by every backend (`connection` module).
 - **`crates/server/`** (`dbmcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
 - **`crates/pii/`** (`dbmcp-pii`) — Regex-based PII detection (46 built-in entity types covering personal, financial, government, contact, network, digital-identity, and crypto categories) tagged by `Category` (`Personal`, `Financial`, `Government`, `Contact`, `Network`, `DigitalIdentity`, `Crypto`), four anonymisation operators (`replace`, `mask`, `redact`, `hash`), and an `Analyzer::builder()` entry point for category-filtered registries. Wired into query tool output behind `PiiConfig`. Canonical entity list: `crates/pii/src/entity.rs` (`Entity` enum); registration order: `crates/pii/src/recognizers/mod.rs` (`all()`).
 - **`crates/mysql/`** (`dbmcp-mysql`) — MySQL/MariaDB backend: connection pooling, query operations, schema introspection, MCP handler via `rmcp::tool_router`.
 - **`crates/postgres/`** (`dbmcp-postgres`) — PostgreSQL backend: per-database connection pool cache (moka), query operations, schema introspection, MCP handler.
 - **`crates/sqlite/`** (`dbmcp-sqlite`) — SQLite backend: single-file connection, query operations, schema introspection, MCP handler.
+- **`crates/sql-lineage/`** (`dbmcp-sql-lineage`) — Column-level SQL lineage extraction: maps each output column of a statement to its physical `table.column` sources.
+- **`crates/ssh/`** (`dbmcp-ssh`) — Embedded SSH client that tunnels database connections through a bastion via a loopback listener (`Tunnel::start` → `TunnelHandle`).
 - **`crates/sqlx-json/`** (`sqlx-json`) — `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow`.
 - **Transport**: `stdio` (for Claude Desktop/Cursor) and `http` (Streamable HTTP with CORS via axum + tower-http). A transport subcommand is required — `dbmcp` with no subcommand prints usage help and exits non-zero.
 

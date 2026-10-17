@@ -21,7 +21,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
 use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, flag_conventions};
-use crate::error::Error;
+use crate::error::ErrorKind;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
 ///
@@ -193,7 +193,7 @@ impl HttpCommand {
     /// Returns an error if configuration validation fails, TCP bind
     /// fails (port in use, permission denied), or the HTTP service
     /// fails to serve.
-    pub(crate) async fn execute(&self) -> Result<(), Error> {
+    pub(crate) async fn execute(&self) -> Result<(), ErrorKind> {
         let config = Config::try_from(self)?;
         let http_config = config.http.as_ref().expect("http config set by TryFrom impl");
 
