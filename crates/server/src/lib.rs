@@ -11,7 +11,6 @@ mod server;
 pub mod tool;
 pub mod types;
 
-pub use listing::Cursor;
 pub use schema::{input_schema, output_schema};
 pub use server::{Server, Shutdown, ShutdownFuture, server_info};
 pub use tool::{ErrorContext, ToolHandler, ToolRouterExt, ToolSpec};

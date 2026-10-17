@@ -89,14 +89,6 @@ pub struct Page {
 }
 
 impl Page {
-    /// Builds a page from an optional cursor and the configured page size.
-    fn new(cursor: Option<Cursor>, size: u16) -> Self {
-        Self {
-            offset: cursor.map_or(0, |c| c.offset),
-            size,
-        }
-    }
-
     /// Row offset at which this page starts.
     ///
     /// Returned as `i64` so the value is directly bindable to sqlx
@@ -144,7 +136,10 @@ pub async fn paginate<T, E>(
     page_size: u16,
     fetch: impl AsyncFnOnce(Page) -> Result<Vec<T>, E>,
 ) -> Result<(Vec<T>, Option<Cursor>), E> {
-    let page = Page::new(cursor, page_size);
+    let page = Page {
+        offset: cursor.map_or(0, |c| c.offset),
+        size: page_size,
+    };
     let rows = fetch(page).await?;
     Ok(page.split(rows))
 }
