@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
 use crate::consts::{BIN, VERSION};
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 
 /// Log severity levels for the MCP server.
 ///
@@ -88,9 +88,10 @@ enum Command {
 ///
 /// # Errors
 ///
-/// Returns an error if configuration validation fails or the selected
-/// subcommand fails (transport initialization errors, TCP bind
-/// failures, fatal protocol errors).
+/// Returns an error if the command-line arguments are invalid,
+/// configuration validation fails, or the selected subcommand fails
+/// (transport initialization errors, TCP bind failures, fatal protocol
+/// errors).
 ///
 /// # Panics
 ///
@@ -99,7 +100,16 @@ enum Command {
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 pub async fn run() -> Result<(), Error> {
-    let arguments = Arguments::parse();
+    let arguments = match Arguments::try_parse() {
+        Ok(arguments) => arguments,
+        // `--help` and `--version` arrive as clap errors that print to stdout.
+        // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
+        Err(error) if !error.use_stderr() => {
+            let _ = error.print();
+            return Ok(());
+        }
+        Err(error) => return Err(ErrorKind::from(error).into()),
+    };
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
