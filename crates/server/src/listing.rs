@@ -113,7 +113,7 @@ impl Page {
         let size = usize::from(self.size);
         if items.len() > size {
             items.truncate(size);
-            let offset = self.offset + u64::from(self.size);
+            let offset = self.offset.saturating_add(u64::from(self.size));
             (items, Some(Cursor { offset }))
         } else {
             (items, None)
@@ -166,11 +166,11 @@ pub async fn list_entries<E>(
     let pattern = search.map(str::trim).filter(|s| !s.is_empty());
 
     if detailed {
-        let (rows, next_cursor) = paginate(cursor, page_size, async |page| full(page, pattern).await).await?;
+        let (rows, next_cursor) = paginate(cursor, page_size, |page| full(page, pattern)).await?;
         return Ok(ListEntriesResponse::detailed(rows.into_iter().collect(), next_cursor));
     }
 
-    let (names, next_cursor) = paginate(cursor, page_size, async |page| brief(page, pattern).await).await?;
+    let (names, next_cursor) = paginate(cursor, page_size, |page| brief(page, pattern)).await?;
     Ok(ListEntriesResponse::brief(names, next_cursor))
 }
 
@@ -365,6 +365,16 @@ mod tests {
         .await
         .expect("infallible");
         assert_eq!(next, Some(Cursor { offset: 150 }));
+    }
+
+    #[tokio::test]
+    async fn paginate_saturates_next_cursor_offset() {
+        let (_, next) = paginate(Some(Cursor { offset: u64::MAX - 1 }), 3, async |_| {
+            Ok::<_, Infallible>(vec![1, 2, 3, 4])
+        })
+        .await
+        .expect("infallible");
+        assert_eq!(next, Some(Cursor { offset: u64::MAX }));
     }
 
     #[tokio::test]
