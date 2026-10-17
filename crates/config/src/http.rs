@@ -4,9 +4,10 @@ use std::net::IpAddr;
 
 use crate::error::{ConfigError, ConfigErrors};
 use crate::origin;
+use crate::secret::Secret;
 
 /// HTTP transport binding and security settings.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HttpConfig {
     /// Bind host for HTTP transport.
     pub host: String,
@@ -21,23 +22,10 @@ pub struct HttpConfig {
     pub allowed_hosts: Vec<String>,
 
     /// Bearer token required on every request; `None` disables authentication.
-    pub auth_token: Option<String>,
+    pub auth_token: Option<Secret>,
 
     /// Permits a non-loopback bind without an `auth_token`.
     pub allow_unauthenticated: bool,
-}
-
-impl std::fmt::Debug for HttpConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpConfig")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("allowed_origins", &self.allowed_origins)
-            .field("allowed_hosts", &self.allowed_hosts)
-            .field("auth_token", &self.auth_token.as_ref().map(|_| "[REDACTED]"))
-            .field("allow_unauthenticated", &self.allow_unauthenticated)
-            .finish()
-    }
 }
 
 impl HttpConfig {
@@ -101,7 +89,7 @@ impl HttpConfig {
         if self.host.trim().is_empty() {
             errors.push(ConfigError::EmptyHttpHost);
         }
-        if self.auth_token.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        if self.auth_token.as_ref().is_some_and(|t| t.expose().trim().is_empty()) {
             errors.push(ConfigError::EmptyHttpAuthToken);
         }
         if !self.host.trim().is_empty()

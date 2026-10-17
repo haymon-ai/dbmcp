@@ -6,6 +6,7 @@
 //! - [`http`] — [`HttpConfig`]
 //! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
+//! - [`secret`] — [`Secret`] redacting string wrapper
 //! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
 //!
@@ -19,8 +20,9 @@
 //!
 //! # Security
 //!
-//! [`DatabaseConfig`] and [`SshConfig`] implement [`Debug`] manually to
-//! redact the database password and the SSH password and key passphrase.
+//! The database password, SSH password and key passphrase, and HTTP auth
+//! token are stored as [`Secret`], so their values never reach [`Debug`]
+//! output.
 
 pub mod config;
 pub mod database;
@@ -28,6 +30,7 @@ pub mod error;
 pub mod http;
 pub mod origin;
 pub mod pii;
+pub mod secret;
 pub mod ssh;
 
 pub use config::Config;
@@ -36,4 +39,5 @@ pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
+pub use secret::Secret;
 pub use ssh::{SshConfig, StrictHostKeyChecking};

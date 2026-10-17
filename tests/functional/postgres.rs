@@ -22,7 +22,7 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
             .and_then(|p| p.parse().ok())
             .unwrap_or(5432),
         user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
-        password: std::env::var("DB_PASSWORD").ok(),
+        password: std::env::var("DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()

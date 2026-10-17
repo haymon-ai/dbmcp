@@ -15,8 +15,8 @@ use std::time::Duration;
 use clap::builder::FalseyValueParser;
 use clap::{Arg, ArgAction, Args};
 use dbmcp_config::{
-    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
-    StrictHostKeyChecking, ssh,
+    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, Secret,
+    SshConfig, StrictHostKeyChecking, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -69,7 +69,7 @@ pub(crate) struct DatabaseArguments {
 
     /// Database password
     #[arg(long = "db-password", env = "DB_PASSWORD", hide_env_values = true)]
-    pub(crate) password: Option<String>,
+    pub(crate) password: Option<Secret>,
 
     /// Database name or `SQLite` file path
     #[arg(long = "db-name", env = "DB_NAME")]
@@ -250,7 +250,7 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 /// collide with the same-named fields in [`DatabaseArguments`]. `port`, `strict_host_key_checking`, and `keepalive_interval` stay
 /// `Option` so [`SshArguments::to_config`] can tell whether they were set;
 /// their defaults are applied there.
-#[derive(Args)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "SSH")]
 pub(crate) struct SshArguments {
     /// SSH server host; enables the tunnel when set
@@ -279,7 +279,7 @@ pub(crate) struct SshArguments {
         env = "SSH_PASSWORD",
         hide_env_values = true
     )]
-    pub(crate) password: Option<String>,
+    pub(crate) password: Option<Secret>,
 
     /// Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)
     #[arg(id = "ssh-key", long = "ssh-key", value_name = "PATH", env = "SSH_KEY")]
@@ -293,7 +293,7 @@ pub(crate) struct SshArguments {
         env = "SSH_KEY_PASSPHRASE",
         hide_env_values = true
     )]
-    pub(crate) key_passphrase: Option<String>,
+    pub(crate) key_passphrase: Option<Secret>,
 
     /// Path to known_hosts file (default: ~/.ssh/known_hosts)
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
@@ -332,23 +332,6 @@ pub(crate) struct SshArguments {
         value_parser = clap::value_parser!(u16).range(1..),
     )]
     pub(crate) local_port: Option<u16>,
-}
-
-impl std::fmt::Debug for SshArguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SshArguments")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
-            .field("key", &self.key)
-            .field("key_passphrase", &self.key_passphrase.as_ref().map(|_| "[REDACTED]"))
-            .field("known_hosts", &self.known_hosts)
-            .field("strict_host_key_checking", &self.strict_host_key_checking)
-            .field("keepalive_interval", &self.keepalive_interval)
-            .field("local_port", &self.local_port)
-            .finish()
-    }
 }
 
 impl SshArguments {
@@ -863,7 +846,7 @@ mod tests {
         assert_eq!(config.host, "bastion");
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "deploy");
-        assert_eq!(config.password.as_deref(), Some("pw"));
+        assert_eq!(config.password.as_ref().map(dbmcp_config::Secret::expose), Some("pw"));
         assert_eq!(config.known_hosts, Some(home().join(".ssh").join("known_hosts")));
         assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::Yes);
         assert_eq!(config.keepalive_interval, Duration::from_secs(30));
@@ -1009,6 +992,14 @@ mod tests {
         let cli = TestCli::try_parse_from(["--db-ssl", "--db-ssl-verify-cert"]).expect("valid args");
         assert!(cli.db.ssl);
         assert!(cli.db.ssl_verify_cert);
+    }
+
+    #[test]
+    fn database_arguments_debug_redacts_password() {
+        let cli = TestCli::try_parse_from(["--db-password", "hunter2-db"]).expect("valid args");
+        let debug = format!("{:?}", cli.db);
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Database connection settings and backend enum.
 
 use crate::error::{ConfigError, ConfigErrors};
+use crate::secret::Secret;
 
 /// Supported database backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -52,7 +53,7 @@ impl DatabaseBackend {
 ///
 /// All fields are fully resolved — no `Option` indirection for connection
 /// fields. Defaults are applied during construction in the binary's CLI conversion.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DatabaseConfig {
     /// Database backend type.
     pub backend: DatabaseBackend,
@@ -67,7 +68,7 @@ pub struct DatabaseConfig {
     pub user: String,
 
     /// Database password.
-    pub password: Option<String>,
+    pub password: Option<Secret>,
 
     /// Database name or `SQLite` file path.
     pub name: Option<String>,
@@ -110,30 +111,6 @@ pub struct DatabaseConfig {
     /// Applies uniformly to every paginated tool (currently `list_tables`).
     /// Range `1..=500`, enforced by CLI parsing.
     pub page_size: u16,
-}
-
-impl std::fmt::Debug for DatabaseConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatabaseConfig")
-            .field("backend", &self.backend)
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &"[REDACTED]")
-            .field("name", &self.name)
-            .field("charset", &self.charset)
-            .field("ssl", &self.ssl)
-            .field("ssl_ca", &self.ssl_ca)
-            .field("ssl_cert", &self.ssl_cert)
-            .field("ssl_key", &self.ssl_key)
-            .field("ssl_verify_cert", &self.ssl_verify_cert)
-            .field("read_only", &self.read_only)
-            .field("max_pool_size", &self.max_pool_size)
-            .field("connection_timeout", &self.connection_timeout)
-            .field("query_timeout", &self.query_timeout)
-            .field("page_size", &self.page_size)
-            .finish()
-    }
 }
 
 impl DatabaseConfig {
