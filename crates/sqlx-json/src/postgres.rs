@@ -1,20 +1,18 @@
 //! [`RowExt`](crate::RowExt) implementation for `PostgreSQL` rows.
 //!
-//! Type names are normalized to uppercase because sqlx may return either case
-//! depending on the query context. Integer types use size-specific Rust types
-//! (`i16`, `i32`, `i64`) because sqlx enforces strict type matching for
-//! `PostgreSQL`. Temporal types (`DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`)
-//! are decoded via sqlx's `chrono` integration and serialized as RFC 3339
-//! strings; `TIMESTAMPTZ` is normalized to UTC and emitted with a `Z` suffix.
-//! `NUMERIC` is decoded via `BigDecimal` to preserve precision; `MONEY`
-//! arrives as text (sqlx uses simple-query for parameterless statements)
-//! and is parsed locale-aware then routed through the same shape rule.
+//! Maps each column's type name to a [`Cell`]; JSON shapes are owned by
+//! [`encode`](crate::cell::encode). Type names are normalized to uppercase
+//! because sqlx may return either case depending on the query context.
+//! Integer types use size-specific Rust types (`i16`, `i32`, `i64`) because
+//! sqlx enforces strict type matching for `PostgreSQL`. `TIMESTAMPTZ`
+//! decodes to `Cell::DateTimeUtc`. `MONEY` arrives as text (sqlx uses
+//! simple-query for parameterless statements) and is parsed locale-aware
+//! into `Cell::Decimal`, like `NUMERIC`.
 
 use std::str::FromStr;
 
 use bigdecimal::BigDecimal;
 use sqlx::postgres::PgRow;
-use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::prelude::*;
 
@@ -38,15 +36,15 @@ impl RowExt for PgRow {
 impl DecodeCell for PgRow {
     fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
         match type_name.to_ascii_uppercase().as_str() {
-            "BOOL" => self.try_get::<bool, _>(idx).map_or(Cell::Null, Cell::Bool),
+            "BOOL" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
 
-            "INT8" => self.try_get::<i64, _>(idx).map_or(Cell::Null, Cell::Int),
+            "INT8" => self.try_get(idx).map_or(Cell::Null, Cell::Int),
 
-            "INT4" | "OID" => self.try_get::<i32, _>(idx).map_or(Cell::Null, |v| Cell::Int(v.into())),
+            "INT4" | "OID" => self.try_get(idx).map_or(Cell::Null, |v: i32| Cell::Int(v.into())),
 
-            "INT2" => self.try_get::<i16, _>(idx).map_or(Cell::Null, |v| Cell::Int(v.into())),
+            "INT2" => self.try_get(idx).map_or(Cell::Null, |v: i16| Cell::Int(v.into())),
 
-            "NUMERIC" => self.try_get::<BigDecimal, _>(idx).map_or(Cell::Null, Cell::Decimal),
+            "NUMERIC" => self.try_get(idx).map_or(Cell::Null, Cell::Decimal),
 
             // dbmcp passes raw `&str` queries → sqlx uses Postgres' simple-query
             // (text) protocol, where `PgMoney` errors out (binary-only). Parse the
@@ -59,25 +57,23 @@ impl DecodeCell for PgRow {
                 .and_then(parse_pg_money_text)
                 .map_or(Cell::Null, Cell::Decimal),
 
-            "FLOAT4" => self.try_get::<f32, _>(idx).map_or(Cell::Null, Cell::Float32),
+            "FLOAT4" => self.try_get(idx).map_or(Cell::Null, Cell::Float32),
 
-            "FLOAT8" => self.try_get::<f64, _>(idx).map_or(Cell::Null, Cell::Float64),
+            "FLOAT8" => self.try_get(idx).map_or(Cell::Null, Cell::Float64),
 
-            "BYTEA" => self.try_get::<Vec<u8>, _>(idx).map_or(Cell::Null, Cell::Bytes),
+            "BYTEA" => self.try_get(idx).map_or(Cell::Null, Cell::Bytes),
 
-            "JSON" | "JSONB" => self.try_get::<Value, _>(idx).map_or(Cell::Null, Cell::Json),
+            "JSON" | "JSONB" => self.try_get(idx).map_or(Cell::Null, Cell::Json),
 
-            "DATE" => self.try_get::<NaiveDate, _>(idx).map_or(Cell::Null, Cell::Date),
+            "DATE" => self.try_get(idx).map_or(Cell::Null, Cell::Date),
 
-            "TIME" => self.try_get::<NaiveTime, _>(idx).map_or(Cell::Null, Cell::Time),
+            "TIME" => self.try_get(idx).map_or(Cell::Null, Cell::Time),
 
-            "TIMESTAMP" => self.try_get::<NaiveDateTime, _>(idx).map_or(Cell::Null, Cell::DateTime),
+            "TIMESTAMP" => self.try_get(idx).map_or(Cell::Null, Cell::DateTime),
 
-            "TIMESTAMPTZ" => self
-                .try_get::<DateTime<Utc>, _>(idx)
-                .map_or(Cell::Null, Cell::DateTimeUtc),
+            "TIMESTAMPTZ" => self.try_get(idx).map_or(Cell::Null, Cell::DateTimeUtc),
 
-            _ => self.try_get::<String, _>(idx).map_or(Cell::Null, Cell::Text),
+            _ => self.try_get(idx).map_or(Cell::Null, Cell::Text),
         }
     }
 }

@@ -13,18 +13,18 @@ impl RowExt for SqliteRow {
 impl DecodeCell for SqliteRow {
     fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
         match type_name {
-            "BOOLEAN" | "BOOL" => self.try_get::<bool, _>(idx).map_or(Cell::Null, Cell::Bool),
+            "BOOLEAN" | "BOOL" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
 
             "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => {
-                self.try_get::<i64, _>(idx).map_or(Cell::Null, Cell::Int)
+                self.try_get(idx).map_or(Cell::Null, Cell::Int)
             }
 
-            "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => self.try_get::<f64, _>(idx).map_or(Cell::Null, Cell::Float64),
+            "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => self.try_get(idx).map_or(Cell::Null, Cell::Float64),
 
-            "BLOB" => self.try_get::<Vec<u8>, _>(idx).map_or(Cell::Null, Cell::Bytes),
+            "BLOB" => self.try_get(idx).map_or(Cell::Null, Cell::Bytes),
 
             "TEXT" | "VARCHAR" | "CHAR" | "CLOB" | "DATE" | "DATETIME" | "TIMESTAMP" | "TIME" => {
-                self.try_get::<String, _>(idx).map_or(Cell::Null, Cell::Text)
+                self.try_get(idx).map_or(Cell::Null, Cell::Text)
             }
 
             // SQLite reports "NULL" type for expressions like COUNT(*), SUM().

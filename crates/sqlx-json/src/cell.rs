@@ -3,13 +3,6 @@
 //! Each backend adapter decodes a column into a [`Cell`]; [`encode`] then
 //! applies the one JSON shape rule for that cell kind, so the same kind of
 //! value produces the same JSON on every backend.
-//!
-//! `bigdecimal_to_json` enforces the value-driven JSON shape rule for
-//! fixed-point and arbitrary-precision numerics: integers fitting in `i64`
-//! emit as integer JSON numbers, values whose canonical decimal form has
-//! ≤15 digits emit as JSON numbers via `Number::from_f64`, and everything
-//! else emits as the decimal string. The same database value always
-//! produces the same JSON shape regardless of column or backend.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -52,9 +45,10 @@ pub(crate) enum Cell {
 
 /// Converts a [`Cell`] to its JSON shape.
 ///
-/// Unsigned integers beyond `i64` and non-finite floats follow the rules
-/// below; bytes are base64-encoded; temporal values are ISO 8601 strings,
-/// with a `Z` suffix only for UTC date-times.
+/// Unsigned integers beyond `i64::MAX` become strings; non-finite floats
+/// become `null`; decimals follow `bigdecimal_to_json`; bytes are
+/// base64-encoded; temporal values are ISO 8601 strings, with a `Z` suffix
+/// only for UTC date-times.
 pub(crate) fn encode(cell: Cell) -> Value {
     match cell {
         Cell::Null => Value::Null,
