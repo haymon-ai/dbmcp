@@ -29,7 +29,7 @@ use crate::error::Error;
 /// clap argument ids don't collide with the `host`/`port` fields in
 /// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
 #[derive(Debug, Args)]
-#[command(next_help_heading = "HTTP Transport", mut_args(flag_conventions))]
+#[command(next_help_heading = "HTTP Transport")]
 struct HttpArguments {
     /// Bind host for HTTP transport.
     #[arg(
@@ -120,6 +120,7 @@ impl TryFrom<&HttpArguments> for HttpConfig {
 
 /// Runs the MCP server in HTTP mode.
 #[derive(Debug, Parser)]
+#[command(mut_args(flag_conventions))]
 pub(crate) struct HttpCommand {
     /// Shared database connection flags.
     #[command(flatten)]
@@ -331,7 +332,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true)]
+    #[command(no_binary_name = true, mut_args(flag_conventions))]
     struct TestCli {
         #[command(flatten)]
         http: HttpArguments,

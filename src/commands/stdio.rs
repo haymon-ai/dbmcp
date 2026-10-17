@@ -13,6 +13,7 @@ use crate::error::Error;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
+#[command(mut_args(common::flag_conventions))]
 pub(crate) struct StdioCommand {
     /// Shared database connection flags.
     #[command(flatten)]

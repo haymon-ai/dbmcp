@@ -35,9 +35,9 @@ pub(crate) use dbmcp_server::Server;
 /// clap's default `SetTrue` action also accept an explicit value: bare
 /// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var treat
 /// `0`, `false`, `f`, `no`, `n`, `off`, and empty (any case) as `false` and
-/// anything else as `true`. Each flag group applies it via
-/// `#[command(mut_args(flag_conventions))]`, so flags added to those groups
-/// inherit it.
+/// anything else as `true`. Each transport subcommand applies it once, after
+/// flattening its flag groups, via `#[command(mut_args(flag_conventions))]`,
+/// so every flag it exposes inherits it.
 pub(crate) fn flag_conventions(arg: Arg) -> Arg {
     let value_type = arg.get_value_parser().type_id();
     if value_type == TypeId::of::<Secret>() {
@@ -61,7 +61,7 @@ pub(crate) fn flag_conventions(arg: Arg) -> Arg {
 
 /// Shared database connection flags embedded in transport subcommands.
 #[derive(Debug, Args)]
-#[command(next_help_heading = "Database", mut_args(flag_conventions))]
+#[command(next_help_heading = "Database")]
 pub(crate) struct DatabaseArguments {
     /// Database backend
     #[arg(long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND)]
@@ -194,7 +194,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
 
 /// Shared PII flags embedded in transport subcommands.
 #[derive(Debug, Args)]
-#[command(next_help_heading = "PII", mut_args(flag_conventions))]
+#[command(next_help_heading = "PII")]
 pub(crate) struct PiiArguments {
     /// Enable PII redaction of query tool output
     #[arg(
@@ -258,7 +258,7 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 /// `Option` so [`SshArguments::to_config`] can tell whether they were set;
 /// their defaults are applied there.
 #[derive(Debug, Args)]
-#[command(next_help_heading = "SSH", mut_args(flag_conventions))]
+#[command(next_help_heading = "SSH")]
 pub(crate) struct SshArguments {
     /// SSH server host; enables the tunnel when set
     #[arg(id = "ssh-host", long = "ssh-host", value_name = "HOST", env = "SSH_HOST")]
@@ -514,7 +514,7 @@ mod tests {
     };
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true)]
+    #[command(no_binary_name = true, mut_args(super::flag_conventions))]
     struct TestCli {
         #[command(flatten)]
         db: DatabaseArguments,
