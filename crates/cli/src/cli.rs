@@ -93,11 +93,8 @@ enum Command {
 /// (transport initialization errors, TCP bind failures, fatal protocol
 /// errors).
 ///
-/// # Panics
-///
-/// Panics if the Tokio runtime cannot be built, if called from within an
-/// existing Tokio runtime, or if a global tracing subscriber is already set.
-#[tokio::main]
+/// Must run inside a Tokio runtime. A global tracing subscriber that is
+/// already installed is kept.
 #[allow(clippy::result_large_err)]
 pub async fn run() -> Result<(), Error> {
     let arguments = match Arguments::try_parse() {
@@ -111,11 +108,12 @@ pub async fn run() -> Result<(), Error> {
         Err(error) => return Err(ErrorKind::from(error).into()),
     };
 
-    tracing_subscriber::fmt()
+    // Fails only if a subscriber is already installed; keep that one.
+    let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_max_level(tracing::Level::from(arguments.log_level))
         .with_ansi(false)
-        .init();
+        .try_init();
 
     match arguments.command {
         Command::Version => {

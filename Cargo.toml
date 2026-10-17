@@ -105,6 +105,7 @@ workspace = true
 [dependencies]
 dbmcp-cli = { workspace = true }
 mimalloc = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 dbmcp-config = { workspace = true }
