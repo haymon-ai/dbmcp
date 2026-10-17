@@ -377,7 +377,8 @@ This is a Cargo workspace with the following crates:
 
 | Crate | Path | Description |
 |-------|------|-------------|
-| `dbmcp` | `.` (root) | Main binary — CLI, transports, database backends |
+| `dbmcp` | `.` (root) | Binary shim |
+| `dbmcp-cli` | `crates/cli/` | CLI parsing, transports, server bootstrap |
 | `dbmcp-sql` | `crates/backend/` | Shared error types, validation, and identifier utilities |
 | `dbmcp-config` | `crates/config/` | Configuration structs and CLI argument mapping |
 | `dbmcp-server` | `crates/server/` | Shared MCP tool implementations and server info |

@@ -25,9 +25,10 @@ cargo fmt                     # apply formatting
 
 ## Architecture
 
-Cargo workspace: root binary (`dbmcp`) + 7 library crates under `crates/`. Workspace members use `"crates/*"` glob.
+Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Workspace members use `"crates/*"` glob.
 
-- **`src/`** — Binary crate. `cli.rs` owns CLI parsing (clap with subcommands), tracing init, and subcommand dispatch. `commands/common.rs` hosts the shared `DatabaseArguments` group, the `TryFrom<&DatabaseArguments> for DatabaseConfig` conversion, and the `create_server` factory. `commands/stdio.rs` and `commands/http.rs` own transport-specific execution; `HttpArguments` is private to `http.rs`.
+- **`src/main.rs`** — Binary shim. Installs mimalloc as the global allocator and calls `dbmcp_cli::run()`.
+- **`crates/cli/`** (`dbmcp-cli`) — CLI crate; public API is `run` and `Error`. `cli.rs` owns CLI parsing (clap with subcommands), tracing init, and subcommand dispatch. `commands/common.rs` hosts the shared `DatabaseArguments` group, the `TryFrom<&DatabaseArguments> for DatabaseConfig` conversion, and the `create_server` factory. `commands/stdio.rs` and `commands/http.rs` own transport-specific execution; `HttpArguments` is private to `http.rs`.
 - **`crates/config/`** (`dbmcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`. `origin` module: `AllowedOrigins` mirrors rmcp's private `Origin` matching (`:*` port wildcard) for the HTTP CORS layer; `HttpConfig::validate()` rejects malformed entries.
 - **`crates/backend/`** (`dbmcp-sql`) — Shared `AppError` type, SQL read-only validation (`validation` module), identifier quoting/validation (`identifier` module), and request/response types (`types` module).
 - **`crates/server/`** (`dbmcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
