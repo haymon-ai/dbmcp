@@ -112,8 +112,8 @@ pub async fn run() -> Result<(), Error> {
             println!("{BIN} {VERSION}");
             Ok(())
         }
-        Command::Stdio(cmd) => cmd.execute().await,
-        Command::Http(cmd) => cmd.execute().await,
+        Command::Stdio(cmd) => Ok(cmd.execute().await?),
+        Command::Http(cmd) => Ok(cmd.execute().await?),
     }
 }
 

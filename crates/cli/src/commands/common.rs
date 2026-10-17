@@ -424,10 +424,10 @@ impl SshArguments {
 ///
 /// # Errors
 ///
-/// Returns [`crate::error::Error::Init`] when the SSH tunnel cannot start
+/// Returns [`crate::error::ErrorKind::Init`] when the SSH tunnel cannot start
 /// or a handler fails to initialise (e.g. a fail-closed NER model load).
 #[allow(clippy::result_large_err)]
-pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandle>, Server), crate::error::Error> {
+pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandle>, Server), crate::error::ErrorKind> {
     if config.database.read_only {
         info!("Server running in READ-ONLY mode. Write operations are disabled.");
     }
@@ -438,7 +438,7 @@ pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandl
 
     let tunnel = Tunnel::start(ssh, &config.database.host, config.database.port)
         .await
-        .map_err(|e| crate::error::Error::Init(e.to_string()))?;
+        .map_err(|e| crate::error::ErrorKind::Init(e.to_string()))?;
     let local_addr = tunnel.local_addr();
     let mut tunnelled = config.clone();
     tunnelled.database.host = local_addr.ip().to_string();
@@ -456,7 +456,7 @@ pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandl
 
 /// Builds the backend adapter selected by `config.database.backend`.
 #[allow(clippy::result_large_err)]
-pub(crate) fn build_server(config: &Config) -> Result<Server, crate::error::Error> {
+pub(crate) fn build_server(config: &Config) -> Result<Server, crate::error::ErrorKind> {
     match config.database.backend {
         DatabaseBackend::Sqlite => init(SqliteHandler::new(config)),
         DatabaseBackend::Postgres => init(PostgresHandler::new(config)),
@@ -466,14 +466,14 @@ pub(crate) fn build_server(config: &Config) -> Result<Server, crate::error::Erro
 
 /// Maps a handler constructor result into a [`Server`], failing closed.
 #[allow(clippy::result_large_err)]
-fn init<H, E>(handler: Result<H, E>) -> Result<Server, crate::error::Error>
+fn init<H, E>(handler: Result<H, E>) -> Result<Server, crate::error::ErrorKind>
 where
     H: Into<Server>,
     E: std::fmt::Display,
 {
     handler
         .map(Into::into)
-        .map_err(|e| crate::error::Error::Init(e.to_string()))
+        .map_err(|e| crate::error::ErrorKind::Init(e.to_string()))
 }
 
 /// Future that resolves when the process should shut down.

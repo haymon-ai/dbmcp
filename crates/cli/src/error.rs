@@ -1,16 +1,23 @@
 //! Application-level error types.
 //!
-//! Defines the top-level [`Error`] enum used for server startup and
-//! transport failures in the CLI crate.
+//! Defines the opaque public [`Error`] returned by [`crate::run`] and the
+//! internal [`ErrorKind`] used for server startup and transport failures.
 
 use dbmcp_config::ConfigErrors;
 
-/// Application-level errors for server startup and transport.
+/// Error returned when the CLI fails to start or run the server.
 ///
-/// Returned once to the `dbmcp` binary's `main` at exit, so variant size is irrelevant.
+/// The underlying cause is private; render it with [`std::fmt::Display`].
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct Error(#[from] ErrorKind);
+
+/// Internal causes of an [`Error`].
+///
+/// Only returned once to the `dbmcp` binary's `main` at exit, so variant size is irrelevant.
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::large_enum_variant)]
-pub enum Error {
+pub(crate) enum ErrorKind {
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]
     Transport(#[from] rmcp::service::ServerInitializeError),
@@ -52,7 +59,7 @@ mod tests {
             ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope".into()),
         ])
         .expect("non-empty");
-        let error = Error::Config(errors);
+        let error = ErrorKind::Config(errors);
         let rendered = error.to_string();
         assert!(rendered.starts_with("configuration validation failed:"));
         assert!(rendered.contains("\n  - DB_NAME (file path) is required for SQLite"));
@@ -62,7 +69,7 @@ mod tests {
     #[test]
     fn config_error_from_config_errors() {
         let errors: ConfigErrors = ConfigError::MissingSqliteDbName.into();
-        let error: Error = errors.into();
-        assert!(matches!(error, Error::Config(_)));
+        let error: ErrorKind = errors.into();
+        assert!(matches!(error, ErrorKind::Config(_)));
     }
 }
