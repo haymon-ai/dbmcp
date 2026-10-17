@@ -239,9 +239,9 @@ run_entry() {
                 # DB_HOST is the compose service name: only sshd can resolve it.
                 test_output=$(
                     env DB_BACKEND="$db_type" DB_HOST="$service" DB_PORT="$container_port" \
-                    DB_SSH_HOST=127.0.0.1 DB_SSH_PORT="$SSHD_PORT" \
-                    DB_SSH_USER=dbmcp DB_SSH_PASSWORD=dbmcp \
-                    DB_SSH_STRICT_HOST_KEY_CHECKING=no \
+                    SSH_HOST=127.0.0.1 SSH_PORT="$SSHD_PORT" \
+                    SSH_USER=dbmcp SSH_PASSWORD=dbmcp \
+                    SSH_STRICT_HOST_KEY_CHECKING=no \
                     SSHD_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q sshd)" \
                     ${tls_env[@]+"${tls_env[@]}"} \
                     cargo test --test "$bin" -- --test-threads=1 2>&1

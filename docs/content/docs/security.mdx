@@ -70,7 +70,7 @@ When the [SSH tunnel](/docs/configuration#ssh-tunnel) is enabled, the SSH server
 - **`no`** — verification is disabled and a warning is logged at startup. Anyone on the network path can impersonate the SSH server. A changed key is still logged, and password authentication is skipped for that session, but key authentication proceeds. Avoid outside throwaway test setups.
 - **`@revoked`** entries are rejected under every policy, provided `known_hosts` is readable. Under `no`, an unreadable `known_hosts` is skipped with a warning, so revocations in it are not enforced.
 
-Secrets are protected the same way as database credentials: `DB_SSH_PASSWORD` and `DB_SSH_KEY_PASSPHRASE` are printed as `[REDACTED]` in debug output and are never logged; SSH error messages never include passwords, passphrases, or key material (the key **path** may appear). The private key is decrypted once at startup and kept only in memory.
+Secrets are protected the same way as database credentials: `SSH_PASSWORD` and `SSH_KEY_PASSPHRASE` are printed as `[REDACTED]` in debug output and are never logged; SSH error messages never include passwords, passphrases, or key material (the key **path** may appear). The private key is decrypted once at startup and kept only in memory.
 
 On Unix, a private key accessible by group or others triggers a startup warning suggesting `chmod 600`, but is still used. **Windows does not get a key-permission check** — protect the key file with NTFS ACLs yourself. When `accept-new` creates `known_hosts`, the file gets mode `0600` and any directories it creates get `0700` on Unix (subject to your umask); an existing `~/.ssh` keeps its current mode, so check it is not world-writable. On Windows the file inherits its folder's ACL.
 

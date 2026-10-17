@@ -11,7 +11,7 @@ use crate::ssh::SshConfig;
 /// [`PiiConfig`], and an optional [`SshConfig`]. HTTP config is present
 /// only when the HTTP transport is selected (via subcommand or
 /// `MCP_TRANSPORT` env var); PII config is always present; SSH config is
-/// present only when `DB_SSH_HOST` is set. Logging is configured directly from CLI arguments
+/// present only when `SSH_HOST` is set. Logging is configured directly from CLI arguments
 /// before `Config` is constructed, so it is not part of this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
