@@ -102,8 +102,8 @@ pub struct DatabaseConfig {
 
     /// Query execution timeout in seconds.
     ///
-    /// `None` means "use default" (30 s when constructed via CLI).
-    /// `Some(0)` disables the timeout entirely.
+    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `None` or `Some(0)`
+    /// disables the timeout entirely.
     pub query_timeout: Option<u64>,
 
     /// Maximum items returned in a single paginated tool response.
@@ -191,7 +191,7 @@ impl Default for DatabaseConfig {
             read_only: Self::DEFAULT_READ_ONLY,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
-            query_timeout: None,
+            query_timeout: Some(Self::DEFAULT_QUERY_TIMEOUT_SECS),
             page_size: Self::DEFAULT_PAGE_SIZE,
         }
     }
@@ -299,9 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn query_timeout_default_is_none() {
+    fn query_timeout_default_matches_cli_default() {
         let config = DatabaseConfig::default();
-        assert!(config.query_timeout.is_none());
+        assert_eq!(config.query_timeout, Some(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS));
     }
 
     #[test]
