@@ -18,6 +18,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Two-layer config** — CLI flags > environment variables, with sensible defaults per backend
+- **SSH tunnel** — reach MySQL/MariaDB/PostgreSQL through an SSH bastion with an embedded client: password or key auth, `known_hosts` verification, automatic reconnect
 
 ## Install 📦
 
@@ -118,6 +119,10 @@ dbmcp stdio --db-backend postgres --db-host localhost --db-user postgres --db-na
 # SQLite
 dbmcp stdio --db-backend sqlite --db-name ./data.db
 
+# PostgreSQL through an SSH bastion (DB host is resolved by the bastion)
+dbmcp stdio --db-backend postgres --db-host db.internal --db-user postgres --db-name mydb \
+  --ssh-host bastion.example.com --ssh-user deploy --ssh-key ~/.ssh/id_ed25519
+
 # HTTP transport (loopback only, no token required)
 dbmcp http --db-backend mysql --db-user root --db-name mydb --port 9001
 
@@ -156,7 +161,7 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
 | `--db-backend` | `DB_BACKEND` | *(required)* | `mysql`, `mariadb`, `postgres`, or `sqlite` |
-| `--db-host` | `DB_HOST` | `localhost` | Database host |
+| `--db-host` | `DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
 | `--db-port` | `DB_PORT` | backend default | `3306` (MySQL/MariaDB), `5432` (PostgreSQL) |
 | `--db-user` | `DB_USER` | backend default | `root` (MySQL/MariaDB), `postgres` (PostgreSQL) |
 | `--db-password` | `DB_PASSWORD` | *(empty)* | Database password |
@@ -172,6 +177,23 @@ A subcommand is required — running `dbmcp` with no subcommand prints usage hel
 | `--db-ssl-cert` | `DB_SSL_CERT` | | Client certificate path |
 | `--db-ssl-key` | `DB_SSL_KEY` | | Client key path |
 | `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify server certificate |
+
+### SSH Tunnel Options
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--ssh-host` | `DB_SSH_HOST` | | SSH server host; enables the tunnel when set |
+| `--ssh-port` | `DB_SSH_PORT` | `22` | SSH server port |
+| `--ssh-user` | `DB_SSH_USER` | | SSH user |
+| `--ssh-password` | `DB_SSH_PASSWORD` | | SSH password |
+| `--ssh-key` | `DB_SSH_KEY` | | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `--ssh-key-passphrase` | `DB_SSH_KEY_PASSPHRASE` | | Passphrase for the SSH private key |
+| `--ssh-known-hosts` | `DB_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
+| `--ssh-strict-host-key-checking` | `DB_SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
+| `--ssh-keepalive-interval` | `DB_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
+| `--ssh-local-port` | `DB_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+
+The tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client (no `ssh` binary). `--db-host`/`--db-port` are resolved **by the SSH server**. With both a key and a password set, the key is tried first. See [SSH Tunnel](https://dbmcp.haymon.ai/docs/configuration#ssh-tunnel) for host-key policies, limitations, and troubleshooting.
 
 ### Server Options
 
@@ -319,6 +341,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **HTTP bearer authentication** — `HTTP_AUTH_TOKEN` enforces `Authorization: Bearer <token>` (constant-time compare, 401 on failure); non-loopback binds refuse to start without a token
 - **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport. Defends against browser DNS rebinding — not a substitute for authentication
 - **SSL/TLS** — configured via individual `DB_SSL_*` variables
+- **SSH host-key verification** — the SSH tunnel checks the server key against `known_hosts` (`yes` by default); SSH passwords and passphrases are never logged
 - **PII redaction** *(opt-in, off by default)* — when enabled, query tool output passes through a regex-based redactor that rewrites detected PII spans across **46 built-in entity types** spanning seven categories: personal (email), financial (cards, IBAN, UK bank accounts, sort and US ABA routing codes, CVV), government IDs (SSN, ITIN, EIN, UK/US passports, NHS, NINO, SIN, VAT), contact (phone), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Toggle: `--pii` / `PII_ENABLE`. Operator: `--pii-operator` / `PII_OPERATOR` — one of `replace` (default, entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop), `hash` (SHA-256 hex). Optional subset via `--pii-categories` / `PII_CATEGORIES` (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: query tool output payloads only. See [PII configuration](https://dbmcp.haymon.ai/docs/configuration#pii) for the full surface.
 - **ML/NER redaction** *(opt-in at runtime, off by default)* — adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection that regex cannot catch, enabled via the `--pii-ner` / `PII_NER_ENABLE` toggle plus a user-supplied model directory. Which entities are produced depends on the model's labels (CoNLL models give person/location/organization; OntoNotes-class models add NRP and facility). Inference uses **ONNX Runtime** (model directory holds `config.json`, `tokenizer.json`, `model.onnx`; recommended: the MIT-licensed [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) exported to ONNX, int8-quantized for speed). Fail-closed: a model that cannot load aborts startup and an inference error fails the request — never a silent fallback. Respects `--pii-categories`. English for v1.
 - **Credential redaction** — database password is never shown in logs or debug output
