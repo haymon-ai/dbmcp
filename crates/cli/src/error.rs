@@ -1,7 +1,7 @@
 //! Application-level error types.
 //!
 //! Defines the top-level [`Error`] enum used for server startup and
-//! transport failures in the binary crate.
+//! transport failures in the CLI crate.
 
 use dbmcp_config::ConfigErrors;
 
@@ -10,7 +10,7 @@ use dbmcp_config::ConfigErrors;
 /// Only instantiated once at program exit, so variant size is irrelevant.
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Error {
+pub enum Error {
     /// MCP transport failed to initialize.
     #[error("transport error: {0}")]
     Transport(#[from] rmcp::service::ServerInitializeError),

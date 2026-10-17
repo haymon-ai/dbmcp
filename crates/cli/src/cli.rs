@@ -91,9 +91,13 @@ enum Command {
 /// Returns an error if configuration validation fails or the selected
 /// subcommand fails (transport initialization errors, TCP bind
 /// failures, fatal protocol errors).
+///
+/// # Panics
+///
+/// Panics if the Tokio runtime cannot be built.
 #[tokio::main]
 #[allow(clippy::result_large_err)]
-pub(crate) async fn run() -> Result<(), Error> {
+pub async fn run() -> Result<(), Error> {
     let arguments = Arguments::parse();
 
     tracing_subscriber::fmt()

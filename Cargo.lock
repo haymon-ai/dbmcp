@@ -956,6 +956,26 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 name = "dbmcp"
 version = "0.15.0"
 dependencies = [
+ "dbmcp-cli",
+ "dbmcp-config",
+ "dbmcp-mysql",
+ "dbmcp-postgres",
+ "dbmcp-server",
+ "dbmcp-sql",
+ "dbmcp-sqlite",
+ "indexmap",
+ "insta",
+ "mimalloc",
+ "rmcp",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "dbmcp-cli"
+version = "0.15.0"
+dependencies = [
  "axum",
  "clap",
  "dbmcp-config",
@@ -965,14 +985,9 @@ dependencies = [
  "dbmcp-sql",
  "dbmcp-sqlite",
  "dbmcp-ssh",
- "indexmap",
- "insta",
- "mimalloc",
  "rmcp",
- "serde_json",
  "sha2 0.11.1",
  "subtle",
- "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",

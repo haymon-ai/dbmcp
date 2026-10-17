@@ -1,9 +1,6 @@
 //! Database MCP Server entry point.
-
-mod cli;
-mod commands;
-mod consts;
-mod error;
+//!
+//! Installs mimalloc as the global allocator and delegates to [`dbmcp_cli::run`].
 
 use mimalloc::MiMalloc;
 use std::process::ExitCode;
@@ -12,7 +9,7 @@ use std::process::ExitCode;
 static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() -> ExitCode {
-    match cli::run() {
+    match dbmcp_cli::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
