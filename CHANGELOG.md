@@ -2,6 +2,24 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.15.0](https://github.com/haymon-ai/dbmcp/compare/1413a41701a4aa2324ca6d01d5c16b73c8072876..v0.15.0) - 2026-10-17
+#### Features
+- (**server**) align with rmcp 3.5 and return tool errors in-band (#215) - ([1413a41](https://github.com/haymon-ai/dbmcp/commit/1413a41701a4aa2324ca6d01d5c16b73c8072876)) - [@athopen](https://github.com/athopen)
+- (**ssh**) reconnect lost sessions, keep alive and surface tunnel errors (#237) - ([4e33704](https://github.com/haymon-ai/dbmcp/commit/4e3370440482f40bbedd6448d857cbe12e2e3811)) - [@athopen](https://github.com/athopen)
+- (**ssh**) verify host keys against known_hosts (#236) - ([7647657](https://github.com/haymon-ai/dbmcp/commit/76476576cda439de61b3ffd0efeb09edf60a27c6)) - [@athopen](https://github.com/athopen)
+- (**ssh**) authenticate with private keys (#235) - ([eaf3170](https://github.com/haymon-ai/dbmcp/commit/eaf3170ece0efc54e04ec68e8d109fb595b58a99)) - [@athopen](https://github.com/athopen)
+- (**ssh**) tunnel database connections through SSH with password auth (#234) - ([57d78fd](https://github.com/haymon-ai/dbmcp/commit/57d78fdbb9ab3a2a79768058ac148bb9eb6753fb)) - [@athopen](https://github.com/athopen)
+#### Bug Fixes
+- (**deps**) bump yanked inout 0.2.3 to 0.2.4 (#241) - ([9404699](https://github.com/haymon-ai/dbmcp/commit/94046999f95f47c6ecac0a88f3628f3faf43eb85)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**http**) match allowed origins per port in CORS and rmcp (#217) - ([953d0e4](https://github.com/haymon-ai/dbmcp/commit/953d0e4935a1bbf85a989101387dc4c0cfcea7cc)) - [@athopen](https://github.com/athopen)
+- (**tests**) probe DB readiness over TCP (#216) - ([a59829a](https://github.com/haymon-ai/dbmcp/commit/a59829a406605d9b942625afff1a188ca4c837b7)) - [@athopen](https://github.com/athopen)
+#### Documentation
+- (**ssh**) document SSH tunnel support (#238) - ([53a531e](https://github.com/haymon-ai/dbmcp/commit/53a531ee13764991920142f9b3097a726bfc020e)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**ssh**) drop DB_ prefix from SSH env vars (#240) - ([ba26e67](https://github.com/haymon-ai/dbmcp/commit/ba26e6753139ee07fbbccede5cf1e9e83edc3a45)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.14.0](https://github.com/haymon-ai/dbmcp/compare/29f4efa5955c10be6e9b86ab5452d86d133ddb7a..v0.14.0) - 2026-10-15
 #### Features
 - (**server**) drain connection pools on graceful shutdown (#192) - ([866dd9b](https://github.com/haymon-ai/dbmcp/commit/866dd9bf957599c0214e291eaa6ff6ae105aaf82)) - [@athopen](https://github.com/athopen)
