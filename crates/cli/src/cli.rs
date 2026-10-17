@@ -4,12 +4,11 @@
 //! subcommand enum, the [`LogLevel`] selector, and the [`run`] entry
 //! point that dispatches to the active subcommand.
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
-use crate::consts::{BIN, VERSION};
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 
 /// Log severity levels for the MCP server.
 ///
@@ -55,7 +54,7 @@ impl From<LogLevel> for tracing::Level {
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(name = "dbmcp", about = "Database MCP Server", version)]
+#[command(about = "Database MCP Server")]
 struct Arguments {
     /// Subcommand selector.
     #[command(subcommand)]
@@ -84,31 +83,54 @@ enum Command {
     Http(HttpCommand),
 }
 
+/// Builds the clap command for the binary named `bin` at `version`.
+fn command(bin: &'static str, version: &'static str) -> clap::Command {
+    Arguments::command().name(bin).version(version)
+}
+
 /// Parses CLI arguments, initializes tracing, and dispatches to the active subcommand.
 ///
 /// # Errors
 ///
-/// Returns an error if configuration validation fails or the selected
-/// subcommand fails (transport initialization errors, TCP bind
-/// failures, fatal protocol errors).
-#[tokio::main]
+/// Returns an error if the command-line arguments are invalid,
+/// configuration validation fails, or the selected subcommand fails
+/// (transport initialization errors, TCP bind failures, fatal protocol
+/// errors).
+///
+/// `bin` and `version` are the installed binary's name and version, used
+/// in `--help`, `--version`, and the `version` subcommand. Must run
+/// inside a Tokio runtime. A global tracing subscriber that is
+/// already installed is kept.
 #[allow(clippy::result_large_err)]
-pub(crate) async fn run() -> Result<(), Error> {
-    let arguments = Arguments::parse();
+pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> {
+    let parsed = command(bin, version)
+        .try_get_matches()
+        .and_then(|mut matches| Arguments::from_arg_matches_mut(&mut matches));
+    let arguments = match parsed {
+        Ok(arguments) => arguments,
+        // `--help` and `--version` arrive as clap errors that print to stdout.
+        // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
+        Err(error) if !error.use_stderr() => {
+            let _ = error.print();
+            return Ok(());
+        }
+        Err(error) => return Err(ErrorKind::from(error).into()),
+    };
 
-    tracing_subscriber::fmt()
+    // Fails only if a subscriber is already installed; keep that one.
+    let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_max_level(tracing::Level::from(arguments.log_level))
         .with_ansi(false)
-        .init();
+        .try_init();
 
     match arguments.command {
         Command::Version => {
-            println!("{BIN} {VERSION}");
+            println!("{bin} {version}");
             Ok(())
         }
-        Command::Stdio(cmd) => cmd.execute().await,
-        Command::Http(cmd) => cmd.execute().await,
+        Command::Stdio(cmd) => Ok(cmd.execute().await?),
+        Command::Http(cmd) => Ok(cmd.execute().await?),
     }
 }
 
@@ -116,7 +138,14 @@ pub(crate) async fn run() -> Result<(), Error> {
 mod tests {
     use clap::CommandFactory;
 
-    use super::Arguments;
+    use super::{Arguments, command};
+
+    #[test]
+    fn command_uses_given_name_and_version() {
+        let cmd = command("dbmcp", "1.2.3");
+        assert_eq!(cmd.get_name(), "dbmcp");
+        assert_eq!(cmd.get_version(), Some("1.2.3"));
+    }
 
     #[test]
     fn secret_env_values_are_hidden_from_help() {

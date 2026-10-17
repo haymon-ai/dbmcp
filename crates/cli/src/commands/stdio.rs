@@ -9,7 +9,7 @@ use rmcp::ServiceExt;
 use tracing::{error, info};
 
 use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments};
-use crate::error::Error;
+use crate::error::ErrorKind;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
@@ -70,7 +70,7 @@ impl StdioCommand {
     /// Returns an error if configuration validation fails, the stdio
     /// transport fails to initialize, or the server encounters a fatal
     /// protocol error.
-    pub(crate) async fn execute(&self) -> Result<(), Error> {
+    pub(crate) async fn execute(&self) -> Result<(), ErrorKind> {
         let config = Config::try_from(self)?;
         let (tunnel, server) = common::create_server(&config).await?;
 
