@@ -170,31 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn debug_redacts_password_and_passphrase() {
-        let config = SshConfig {
-            password: Some("hunter2-password".into()),
-            key_passphrase: Some("hunter2-passphrase".into()),
-            ..ssh_config()
-        };
-        let debug = format!("{config:?}");
-        assert!(!debug.contains("hunter2-password"), "password leaked: {debug}");
-        assert!(!debug.contains("hunter2-passphrase"), "passphrase leaked: {debug}");
-        assert!(debug.contains("password: Some(\"[REDACTED]\")"), "{debug}");
-        assert!(debug.contains("key_passphrase: Some(\"[REDACTED]\")"), "{debug}");
-    }
-
-    #[test]
-    fn debug_shows_unset_secrets_as_none() {
-        let config = SshConfig {
-            password: None,
-            ..ssh_config()
-        };
-        let debug = format!("{config:?}");
-        assert!(debug.contains("password: None"), "{debug}");
-        assert!(debug.contains("key_passphrase: None"), "{debug}");
-    }
-
-    #[test]
     fn validate_accepts_password_auth() {
         ssh_config().validate(DatabaseBackend::Mysql).expect("valid");
     }

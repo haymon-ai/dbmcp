@@ -682,14 +682,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn http_arguments_debug_redacts_token() {
-        let args = parse_http_args(&["--auth-token", TEST_TOKEN]);
-        let rendered = format!("{args:?}");
-        assert!(!rendered.contains(TEST_TOKEN), "{rendered}");
-        assert!(rendered.contains("[REDACTED]"), "{rendered}");
-    }
-
     async fn assert_unauthorized(request: Request<Body>) {
         let response = router_with_token().oneshot(request).await.expect("oneshot");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

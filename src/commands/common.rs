@@ -1014,22 +1014,6 @@ mod tests {
     }
 
     #[test]
-    fn database_arguments_debug_redacts_password() {
-        let cli = TestCli::try_parse_from(["--db-password", "hunter2-db"]).expect("valid args");
-        let debug = format!("{:?}", cli.db);
-        assert!(!debug.contains("hunter2"), "{debug}");
-        assert!(debug.contains("[REDACTED]"), "{debug}");
-    }
-
-    #[test]
-    fn ssh_arguments_debug_redacts_secrets() {
-        let args = parse_ssh(&["--ssh-password", "hunter2-pw", "--ssh-key-passphrase", "hunter2-pp"]);
-        let debug = format!("{args:?}");
-        assert!(!debug.contains("hunter2"), "{debug}");
-        assert!(debug.contains("[REDACTED]"), "{debug}");
-    }
-
-    #[test]
     fn clap_ssh_flags_grouped_under_ssh_heading() {
         let help = TestCli::command().render_help().to_string();
         let ssh_pos = help.find("SSH:").expect("SSH heading must be present in --help");

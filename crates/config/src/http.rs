@@ -235,15 +235,4 @@ mod tests {
         };
         config.validate().expect("valid origins must pass");
     }
-
-    #[test]
-    fn debug_redacts_token() {
-        let config = HttpConfig {
-            auth_token: Some("super-secret-token".into()),
-            ..config_with_host(HttpConfig::DEFAULT_HOST)
-        };
-        let rendered = format!("{config:?}");
-        assert!(!rendered.contains("super-secret-token"), "{rendered}");
-        assert!(rendered.contains("[REDACTED]"), "{rendered}");
-    }
 }

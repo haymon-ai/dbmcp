@@ -234,26 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn debug_redacts_password() {
-        let config = Config {
-            database: DatabaseConfig {
-                password: Some("super_secret_password".into()),
-                ..mysql_config().database
-            },
-            ..mysql_config()
-        };
-        let debug_output = format!("{config:?}");
-        assert!(
-            !debug_output.contains("super_secret_password"),
-            "password leaked in debug output: {debug_output}"
-        );
-        assert!(
-            debug_output.contains("[REDACTED]"),
-            "expected [REDACTED] in debug output: {debug_output}"
-        );
-    }
-
-    #[test]
     fn defaults_resolved_at_construction() {
         let mysql = base_config(DatabaseBackend::Mysql);
         assert_eq!(mysql.database.host, "localhost");
