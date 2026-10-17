@@ -121,6 +121,13 @@ mod tests {
     use clap::CommandFactory;
 
     use super::Arguments;
+    use crate::consts::BIN;
+
+    #[test]
+    fn binary_name_is_dbmcp() {
+        assert_eq!(Arguments::command().get_name(), "dbmcp");
+        assert_eq!(BIN, "dbmcp");
+    }
 
     #[test]
     fn secret_env_values_are_hidden_from_help() {
