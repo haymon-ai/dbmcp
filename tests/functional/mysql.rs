@@ -1608,8 +1608,8 @@ async fn test_read_query_non_select_describe_users_single_page() {
 #[tokio::test]
 async fn test_read_query_returns_non_null_temporal_columns() {
     // Feature 038: MySQL temporal columns must round-trip as ISO 8601 strings.
-    // MySQL has no TIMESTAMPTZ analog, so the zoned bucket is exercised on
-    // PostgreSQL only; here all four columns are naive (no offset, no Z).
+    // TIMESTAMP is stored in UTC, so it carries a Z like PostgreSQL's
+    // TIMESTAMPTZ; DATE, TIME, and DATETIME are naive (no offset).
     let handler = handler(false);
 
     let response = handler
@@ -1626,7 +1626,7 @@ async fn test_read_query_returns_non_null_temporal_columns() {
     assert_eq!(arr[0]["date"], "2026-04-20", "DATE → YYYY-MM-DD");
     assert_eq!(arr[0]["time"], "14:30:00", "TIME → HH:MM:SS");
     assert_eq!(arr[0]["datetime"], "2026-04-20T14:30:00", "DATETIME → naive ISO 8601");
-    assert_eq!(arr[0]["timestamp"], "2026-04-20T14:30:00", "TIMESTAMP → naive ISO 8601");
+    assert_eq!(arr[0]["timestamp"], "2026-04-20T14:30:00Z", "TIMESTAMP → UTC ISO 8601");
 }
 
 #[tokio::test]

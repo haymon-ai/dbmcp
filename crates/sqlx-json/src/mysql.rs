@@ -4,7 +4,8 @@
 //! `MySQL` 9 reports `information_schema` text columns as `VARBINARY`; these
 //! are decoded as UTF-8 strings rather than base64. Temporal types (`DATE`,
 //! `TIME`, `DATETIME`, `TIMESTAMP`) are decoded via sqlx's `chrono` integration
-//! and serialized as naive ISO 8601 strings (no timezone offset). `DECIMAL`
+//! and serialized as ISO 8601 strings; `TIMESTAMP` is stored in UTC and is
+//! emitted with a `Z` suffix, the other types without an offset. `DECIMAL`
 //! is decoded via `BigDecimal` to preserve precision; `FLOAT` is decoded as
 //! `f32` (sqlx-mysql strict-checks the column type), `DOUBLE` as `f64`.
 
@@ -55,11 +56,11 @@ impl DecodeCell for MySqlRow {
             "DATETIME" => self.try_get::<NaiveDateTime, _>(idx).map_or(Cell::Null, Cell::DateTime),
 
             // sqlx-mysql's NaiveDateTime decoder only accepts ColumnType::Datetime,
-            // not Timestamp. DateTime<Utc> accepts both; we then strip the zone
-            // via naive_utc() so the wire shape matches the naive ISO 8601 form.
+            // not Timestamp. DateTime<Utc> accepts both, and TIMESTAMP values are
+            // stored in UTC, so the zone is kept.
             "TIMESTAMP" => self
                 .try_get::<DateTime<Utc>, _>(idx)
-                .map_or(Cell::Null, |v| Cell::DateTime(v.naive_utc())),
+                .map_or(Cell::Null, Cell::DateTimeUtc),
 
             // All other types (VARCHAR, TEXT, ENUM, etc.) → String
             _ => self
