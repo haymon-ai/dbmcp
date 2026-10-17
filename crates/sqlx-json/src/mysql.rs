@@ -12,89 +12,66 @@ use bigdecimal::BigDecimal;
 use sqlx::mysql::MySqlRow;
 use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
-use crate::numeric::bigdecimal_to_json;
 use crate::prelude::*;
 
 impl RowExt for MySqlRow {
     fn to_json(&self) -> Value {
-        let columns = self.columns();
-        let mut map = Map::with_capacity(columns.len());
-
-        for column in columns {
-            let idx = column.ordinal();
-            let type_name = column.type_info().name();
-
-            let value = if self.try_get_raw(idx).is_ok_and(|v| v.is_null()) {
-                Value::Null
-            } else {
-                match type_name {
-                    "BOOLEAN" => self.try_get::<bool, _>(idx).map_or(Value::Null, Value::Bool),
-
-                    "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED"
-                    | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => self
-                        .try_get::<i64, _>(idx)
-                        .map_or(Value::Null, |v| Value::Number(v.into())),
-
-                    "BIGINT UNSIGNED" => self.try_get::<u64, _>(idx).map_or(Value::Null, |v| {
-                        i64::try_from(v)
-                            .map_or_else(|_| Value::String(v.to_string()), |signed| Value::Number(signed.into()))
-                    }),
-
-                    "DECIMAL" => self
-                        .try_get::<BigDecimal, _>(idx)
-                        .map_or(Value::Null, |v| bigdecimal_to_json(&v)),
-
-                    "FLOAT" => self.try_get::<f32, _>(idx).map_or(Value::Null, Value::from),
-
-                    "DOUBLE" => self.try_get::<f64, _>(idx).map_or(Value::Null, Value::from),
-
-                    "JSON" => self.try_get::<Value, _>(idx).unwrap_or(Value::Null),
-
-                    // MySQL 9 returns information_schema columns as BINARY/VARBINARY
-                    // even when they contain valid UTF-8. Try String first, then bytes.
-                    "BINARY" | "VARBINARY" => self
-                        .try_get::<String, _>(idx)
-                        .map_or_else(|_| bytes_to_json(self, idx), Value::String),
-
-                    "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => bytes_to_json(self, idx),
-
-                    "DATE" => self
-                        .try_get::<NaiveDate, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.to_string())),
-
-                    "TIME" => self
-                        .try_get::<NaiveTime, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(v.to_string())),
-
-                    "DATETIME" => self
-                        .try_get::<NaiveDateTime, _>(idx)
-                        .map_or(Value::Null, |v| Value::String(format!("{}T{}", v.date(), v.time()))),
-
-                    // sqlx-mysql's NaiveDateTime decoder only accepts ColumnType::Datetime,
-                    // not Timestamp. DateTime<Utc> accepts both; we then strip the zone
-                    // via naive_utc() so the wire shape matches the naive ISO 8601 form.
-                    "TIMESTAMP" => self.try_get::<DateTime<Utc>, _>(idx).map_or(Value::Null, |v| {
-                        let n = v.naive_utc();
-                        Value::String(format!("{}T{}", n.date(), n.time()))
-                    }),
-
-                    // All other types (VARCHAR, TEXT, ENUM, etc.) → String
-                    _ => self
-                        .try_get::<String, _>(idx)
-                        .map_or_else(|_| bytes_to_json(self, idx), Value::String),
-                }
-            };
-
-            map.insert(column.name().to_string(), value);
-        }
-
-        Value::Object(map)
+        row_to_json(self)
     }
 }
 
-/// Extracts a `MySQL` binary column as UTF-8 string, falling back to base64.
-fn bytes_to_json(row: &MySqlRow, idx: usize) -> Value {
-    row.try_get::<Vec<u8>, _>(idx).map_or(Value::Null, |bytes| {
-        String::from_utf8(bytes.clone()).map_or_else(|_| Value::String(BASE64.encode(&bytes)), Value::String)
+impl DecodeCell for MySqlRow {
+    fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
+        match type_name {
+            "BOOLEAN" => self.try_get::<bool, _>(idx).map_or(Cell::Null, Cell::Bool),
+
+            "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED"
+            | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => {
+                self.try_get::<i64, _>(idx).map_or(Cell::Null, Cell::Int)
+            }
+
+            "BIGINT UNSIGNED" => self.try_get::<u64, _>(idx).map_or(Cell::Null, Cell::UInt),
+
+            "DECIMAL" => self.try_get::<BigDecimal, _>(idx).map_or(Cell::Null, Cell::Decimal),
+
+            "FLOAT" => self.try_get::<f32, _>(idx).map_or(Cell::Null, Cell::Float32),
+
+            "DOUBLE" => self.try_get::<f64, _>(idx).map_or(Cell::Null, Cell::Float64),
+
+            "JSON" => self.try_get::<Value, _>(idx).map_or(Cell::Null, Cell::Json),
+
+            // MySQL 9 returns information_schema columns as BINARY/VARBINARY
+            // even when they contain valid UTF-8. Try String first, then bytes.
+            "BINARY" | "VARBINARY" => self
+                .try_get::<String, _>(idx)
+                .map_or_else(|_| bytes_cell(self, idx), Cell::Text),
+
+            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" => bytes_cell(self, idx),
+
+            "DATE" => self.try_get::<NaiveDate, _>(idx).map_or(Cell::Null, Cell::Date),
+
+            "TIME" => self.try_get::<NaiveTime, _>(idx).map_or(Cell::Null, Cell::Time),
+
+            "DATETIME" => self.try_get::<NaiveDateTime, _>(idx).map_or(Cell::Null, Cell::DateTime),
+
+            // sqlx-mysql's NaiveDateTime decoder only accepts ColumnType::Datetime,
+            // not Timestamp. DateTime<Utc> accepts both; we then strip the zone
+            // via naive_utc() so the wire shape matches the naive ISO 8601 form.
+            "TIMESTAMP" => self
+                .try_get::<DateTime<Utc>, _>(idx)
+                .map_or(Cell::Null, |v| Cell::DateTime(v.naive_utc())),
+
+            // All other types (VARCHAR, TEXT, ENUM, etc.) → String
+            _ => self
+                .try_get::<String, _>(idx)
+                .map_or_else(|_| bytes_cell(self, idx), Cell::Text),
+        }
+    }
+}
+
+/// Extracts a `MySQL` binary column as UTF-8 text, falling back to raw bytes.
+fn bytes_cell(row: &MySqlRow, idx: usize) -> Cell {
+    row.try_get::<Vec<u8>, _>(idx).map_or(Cell::Null, |bytes| {
+        String::from_utf8(bytes).map_or_else(|e| Cell::Bytes(e.into_bytes()), Cell::Text)
     })
 }

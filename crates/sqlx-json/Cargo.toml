@@ -13,5 +13,8 @@ bigdecimal = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["mysql", "postgres", "sqlite", "chrono", "bigdecimal"] }
 
+[dev-dependencies]
+tokio = { workspace = true }
+
 [lints]
 workspace = true

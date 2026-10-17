@@ -3809,6 +3809,7 @@ dependencies = [
  "bigdecimal",
  "serde_json",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]
