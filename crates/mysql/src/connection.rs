@@ -112,7 +112,7 @@ impl Connection for MysqlConnection {
         self.pool(target).await
     }
 
-    fn query_timeout(&self) -> Option<u64> {
+    fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
 }
@@ -128,7 +128,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
         .username(&config.user);
 
     if let Some(ref password) = config.password {
-        conn_ops = conn_ops.password(password);
+        conn_ops = conn_ops.password(password.expose());
     }
     if !database.is_empty() {
         conn_ops = conn_ops.database(database);

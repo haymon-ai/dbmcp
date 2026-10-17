@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::database::DatabaseBackend;
 use crate::error::{ConfigError, ConfigErrors};
+use crate::secret::Secret;
 
 /// Host-key verification policy for the SSH tunnel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -31,7 +32,7 @@ impl std::fmt::Display for StrictHostKeyChecking {
 ///
 /// Present on [`Config`](crate::Config) only when `SSH_HOST` is set.
 /// Paths are already `~`-expanded and the `known_hosts` default is resolved.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SshConfig {
     /// SSH server host.
     pub host: String,
@@ -43,13 +44,13 @@ pub struct SshConfig {
     pub user: String,
 
     /// SSH password.
-    pub password: Option<String>,
+    pub password: Option<Secret>,
 
     /// Path to the SSH private key.
     pub key: Option<PathBuf>,
 
     /// Passphrase for the SSH private key.
-    pub key_passphrase: Option<String>,
+    pub key_passphrase: Option<Secret>,
 
     /// Path to the `known_hosts` file (`None` only when unverified and no home).
     pub known_hosts: Option<PathBuf>,
@@ -62,23 +63,6 @@ pub struct SshConfig {
 
     /// Local tunnel port (`None` = ephemeral).
     pub local_port: Option<u16>,
-}
-
-impl std::fmt::Debug for SshConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SshConfig")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
-            .field("key", &self.key)
-            .field("key_passphrase", &self.key_passphrase.as_ref().map(|_| "[REDACTED]"))
-            .field("known_hosts", &self.known_hosts)
-            .field("strict_host_key_checking", &self.strict_host_key_checking)
-            .field("keepalive_interval", &self.keepalive_interval)
-            .field("local_port", &self.local_port)
-            .finish()
-    }
 }
 
 impl SshConfig {
@@ -183,31 +167,6 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect()
-    }
-
-    #[test]
-    fn debug_redacts_password_and_passphrase() {
-        let config = SshConfig {
-            password: Some("hunter2-password".into()),
-            key_passphrase: Some("hunter2-passphrase".into()),
-            ..ssh_config()
-        };
-        let debug = format!("{config:?}");
-        assert!(!debug.contains("hunter2-password"), "password leaked: {debug}");
-        assert!(!debug.contains("hunter2-passphrase"), "passphrase leaked: {debug}");
-        assert!(debug.contains("password: Some(\"[REDACTED]\")"), "{debug}");
-        assert!(debug.contains("key_passphrase: Some(\"[REDACTED]\")"), "{debug}");
-    }
-
-    #[test]
-    fn debug_shows_unset_secrets_as_none() {
-        let config = SshConfig {
-            password: None,
-            ..ssh_config()
-        };
-        let debug = format!("{config:?}");
-        assert!(debug.contains("password: None"), "{debug}");
-        assert!(debug.contains("key_passphrase: None"), "{debug}");
     }
 
     #[test]

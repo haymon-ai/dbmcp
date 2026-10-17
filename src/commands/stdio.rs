@@ -13,6 +13,7 @@ use crate::error::Error;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
+#[command(mut_args(common::flag_conventions))]
 pub(crate) struct StdioCommand {
     /// Shared database connection flags.
     #[command(flatten)]
@@ -116,10 +117,16 @@ mod tests {
     }
 
     #[test]
+    fn db_query_timeout_default_matches_database_config_default() {
+        let config = DatabaseConfig::try_from(&parse(&["_"]).database).expect("valid db args");
+        assert_eq!(config.query_timeout, DatabaseConfig::default().query_timeout);
+    }
+
+    #[test]
     fn db_query_timeout_zero_passes_through() {
         let cmd = parse(&["_", "--db-query-timeout", "0"]);
         let config = DatabaseConfig::try_from(&cmd.database).expect("valid db args");
-        assert_eq!(config.query_timeout, Some(0));
+        assert_eq!(config.query_timeout, 0);
     }
 
     #[test]

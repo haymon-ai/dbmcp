@@ -23,7 +23,7 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
             .and_then(|p| p.parse().ok())
             .unwrap_or(3306),
         user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
-        password: std::env::var("DB_PASSWORD").ok(),
+        password: std::env::var("DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
@@ -393,7 +393,7 @@ async fn test_uses_default_pool_for_matching_database() {
 #[tokio::test]
 async fn test_query_timeout_cancels_slow_query() {
     let config = DatabaseConfig {
-        query_timeout: Some(2),
+        query_timeout: 2,
         ..base_db_config(false)
     };
     let handler = MysqlHandler::new(&Config {
@@ -426,7 +426,7 @@ async fn test_query_timeout_cancels_slow_query() {
 #[tokio::test]
 async fn test_query_timeout_disabled_with_zero() {
     let config = DatabaseConfig {
-        query_timeout: None,
+        query_timeout: 0,
         ..base_db_config(false)
     };
     let handler = MysqlHandler::new(&Config {
@@ -1176,7 +1176,7 @@ async fn test_create_drop_database_with_double_quote() {
 #[tokio::test]
 async fn test_timeout_on_list_tables() {
     let mut config = base_db_config(true);
-    config.query_timeout = Some(1);
+    config.query_timeout = 1;
     let handler = MysqlHandler::new(&Config {
         database: config,
         http: None,

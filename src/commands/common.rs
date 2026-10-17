@@ -6,15 +6,18 @@
 //! `#[command(flatten)]` wherever needed — and [`create_server`], the
 //! backend-selection factory that maps a configured [`DatabaseBackend`]
 //! onto the matching concrete adapter, tunnelling through SSH when
-//! configured.
+//! configured. Also provides [`flag_conventions`], which shapes every
+//! flag by its value type.
 
+use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::Args;
+use clap::builder::BoolishValueParser;
+use clap::{Arg, ArgAction, Args};
 use dbmcp_config::{
-    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
-    StrictHostKeyChecking, ssh,
+    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, Secret,
+    SshConfig, StrictHostKeyChecking, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -25,6 +28,38 @@ use tracing::info;
 
 use dbmcp_server::ErrorContext;
 pub(crate) use dbmcp_server::Server;
+
+/// Applies the shared conventions for a flag's value type.
+///
+/// [`Secret`] flags hide their env value from `--help`. `bool` flags with
+/// clap's default `SetTrue` action also accept an explicit value: bare
+/// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var accept
+/// `true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0` in any case. Empty
+/// and unknown values are rejected, so a blank or mistyped env var fails
+/// startup instead of flipping a security setting. Each transport
+/// subcommand applies it once, after
+/// flattening its flag groups, via `#[command(mut_args(flag_conventions))]`,
+/// so every flag it exposes inherits it.
+pub(crate) fn flag_conventions(arg: Arg) -> Arg {
+    let value_type = arg.get_value_parser().type_id();
+    if value_type == TypeId::of::<Secret>() {
+        arg.hide_env_values(true)
+    } else if value_type == TypeId::of::<bool>() && matches!(arg.get_action(), ArgAction::SetTrue) {
+        let arg = arg
+            .action(ArgAction::Set)
+            .num_args(0..=1)
+            .default_missing_value("true")
+            .value_parser(BoolishValueParser::new());
+        // `ArgAction::Set` drops the implicit `false` default of `SetTrue`.
+        if arg.get_default_values().is_empty() {
+            arg.default_value("false")
+        } else {
+            arg
+        }
+    } else {
+        arg
+    }
+}
 
 /// Shared database connection flags embedded in transport subcommands.
 #[derive(Debug, Args)]
@@ -47,8 +82,8 @@ pub(crate) struct DatabaseArguments {
     pub(crate) user: Option<String>,
 
     /// Database password
-    #[arg(long = "db-password", env = "DB_PASSWORD")]
-    pub(crate) password: Option<String>,
+    #[arg(long = "db-password", env = "DB_PASSWORD", hide_env_values = true)]
+    pub(crate) password: Option<Secret>,
 
     /// Database name or `SQLite` file path
     #[arg(long = "db-name", env = "DB_NAME")]
@@ -151,7 +186,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
             read_only: db.read_only,
             max_pool_size: db.max_pool_size,
             connection_timeout: db.connection_timeout,
-            query_timeout: Some(db.query_timeout),
+            query_timeout: db.query_timeout,
             page_size: db.page_size,
         };
         candidate.validate()?;
@@ -168,8 +203,6 @@ pub(crate) struct PiiArguments {
         long = "pii",
         env = "PII_ENABLE",
         default_value_t = PiiConfig::DEFAULT_ENABLED,
-        action = clap::ArgAction::Set,
-        value_parser = clap::value_parser!(bool),
     )]
     pub(crate) enabled: bool,
 
@@ -196,8 +229,6 @@ pub(crate) struct PiiArguments {
         long = "pii-ner",
         env = "PII_NER_ENABLE",
         default_value_t = PiiConfig::DEFAULT_NER_ENABLED,
-        action = clap::ArgAction::Set,
-        value_parser = clap::value_parser!(bool),
     )]
     pub(crate) ner_enabled: bool,
 
@@ -228,7 +259,7 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 /// collide with the same-named fields in [`DatabaseArguments`]. `port`, `strict_host_key_checking`, and `keepalive_interval` stay
 /// `Option` so [`SshArguments::to_config`] can tell whether they were set;
 /// their defaults are applied there.
-#[derive(Args)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "SSH")]
 pub(crate) struct SshArguments {
     /// SSH server host; enables the tunnel when set
@@ -257,7 +288,7 @@ pub(crate) struct SshArguments {
         env = "SSH_PASSWORD",
         hide_env_values = true
     )]
-    pub(crate) password: Option<String>,
+    pub(crate) password: Option<Secret>,
 
     /// Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)
     #[arg(id = "ssh-key", long = "ssh-key", value_name = "PATH", env = "SSH_KEY")]
@@ -271,7 +302,7 @@ pub(crate) struct SshArguments {
         env = "SSH_KEY_PASSPHRASE",
         hide_env_values = true
     )]
-    pub(crate) key_passphrase: Option<String>,
+    pub(crate) key_passphrase: Option<Secret>,
 
     /// Path to known_hosts file (default: ~/.ssh/known_hosts)
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
@@ -310,23 +341,6 @@ pub(crate) struct SshArguments {
         value_parser = clap::value_parser!(u16).range(1..),
     )]
     pub(crate) local_port: Option<u16>,
-}
-
-impl std::fmt::Debug for SshArguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SshArguments")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
-            .field("key", &self.key)
-            .field("key_passphrase", &self.key_passphrase.as_ref().map(|_| "[REDACTED]"))
-            .field("known_hosts", &self.known_hosts)
-            .field("strict_host_key_checking", &self.strict_host_key_checking)
-            .field("keepalive_interval", &self.keepalive_interval)
-            .field("local_port", &self.local_port)
-            .finish()
-    }
 }
 
 impl SshArguments {
@@ -504,7 +518,7 @@ mod tests {
     };
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true)]
+    #[command(no_binary_name = true, mut_args(super::flag_conventions))]
     struct TestCli {
         #[command(flatten)]
         db: DatabaseArguments,
@@ -841,7 +855,7 @@ mod tests {
         assert_eq!(config.host, "bastion");
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "deploy");
-        assert_eq!(config.password.as_deref(), Some("pw"));
+        assert_eq!(config.password.as_ref().map(dbmcp_config::Secret::expose), Some("pw"));
         assert_eq!(config.known_hosts, Some(home().join(".ssh").join("known_hosts")));
         assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::Yes);
         assert_eq!(config.keepalive_interval, Duration::from_secs(30));
@@ -975,11 +989,39 @@ mod tests {
     }
 
     #[test]
-    fn ssh_arguments_debug_redacts_secrets() {
-        let args = parse_ssh(&["--ssh-password", "hunter2-pw", "--ssh-key-passphrase", "hunter2-pp"]);
-        let debug = format!("{args:?}");
-        assert!(!debug.contains("hunter2"), "{debug}");
-        assert!(debug.contains("[REDACTED]"), "{debug}");
+    fn bool_flags_accept_bare_and_explicit_values() {
+        let flags = [
+            ("--db-ssl", "ssl"),
+            ("--db-ssl-verify-cert", "ssl_verify_cert"),
+            ("--db-read-only", "read_only"),
+            ("--pii", "enabled"),
+            ("--pii-ner", "ner_enabled"),
+        ];
+        for (flag, id) in flags {
+            let mut cases = vec![
+                (vec![flag.to_owned()], true),
+                (vec![flag.to_owned(), "false".to_owned()], false),
+            ];
+            for value in ["true", "1", "yes", "on", "True", "TRUE"] {
+                cases.push((vec![format!("{flag}={value}")], true));
+            }
+            for value in ["false", "0", "no", "off", "False", "FALSE"] {
+                cases.push((vec![format!("{flag}={value}")], false));
+            }
+            for (args, expected) in cases {
+                let matches = TestCli::command()
+                    .try_get_matches_from(&args)
+                    .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
+                assert_eq!(matches.get_one::<bool>(id), Some(&expected), "{args:?}");
+            }
+            for value in ["", "disabled", "nope", "2"] {
+                let arg = format!("{flag}={value}");
+                assert!(
+                    TestCli::command().try_get_matches_from([&arg]).is_err(),
+                    "{arg:?} must be rejected"
+                );
+            }
+        }
     }
 
     #[test]
