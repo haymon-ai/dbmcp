@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, bool_flag};
 use crate::error::Error;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -29,7 +29,10 @@ use crate::error::Error;
 /// clap argument ids don't collide with the `host`/`port` fields in
 /// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
 #[derive(Args)]
-#[command(next_help_heading = "HTTP Transport")]
+#[command(
+    next_help_heading = "HTTP Transport",
+    mut_arg("dangerously_allow_unauthenticated", bool_flag)
+)]
 struct HttpArguments {
     /// Bind host for HTTP transport.
     #[arg(
@@ -94,7 +97,8 @@ struct HttpArguments {
     /// Anyone who can reach the port gets full access to the database.
     #[arg(
         long = "dangerously-allow-unauthenticated",
-        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
+        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
+        default_value_t = false
     )]
     dangerously_allow_unauthenticated: bool,
 }

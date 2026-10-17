@@ -6,12 +6,14 @@
 //! `#[command(flatten)]` wherever needed — and [`create_server`], the
 //! backend-selection factory that maps a configured [`DatabaseBackend`]
 //! onto the matching concrete adapter, tunnelling through SSH when
-//! configured.
+//! configured. Also provides [`bool_flag`], the shared shape of boolean
+//! flags.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::Args;
+use clap::builder::FalseyValueParser;
+use clap::{Arg, ArgAction, Args};
 use dbmcp_config::{
     Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
     StrictHostKeyChecking, ssh,
@@ -26,9 +28,28 @@ use tracing::info;
 use dbmcp_server::ErrorContext;
 pub(crate) use dbmcp_server::Server;
 
+/// Turns a boolean flag into one that also accepts an explicit value.
+///
+/// Bare `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var
+/// treat `0`, `false`, `f`, `no`, `n`, `off`, and empty (any case) as
+/// `false` and anything else as `true`. Applied via `#[command(mut_arg(..))]`
+/// so every boolean flag shares one definition.
+pub(crate) fn bool_flag(arg: Arg) -> Arg {
+    arg.action(ArgAction::Set)
+        .num_args(0..=1)
+        .default_missing_value("true")
+        .value_parser(FalseyValueParser::new())
+}
+
 /// Shared database connection flags embedded in transport subcommands.
 #[derive(Debug, Args)]
-#[command(next_help_heading = "Database")]
+#[allow(clippy::duplicated_attributes, reason = "each mut_arg targets a different flag")]
+#[command(
+    next_help_heading = "Database",
+    mut_arg("ssl", bool_flag),
+    mut_arg("ssl_verify_cert", bool_flag),
+    mut_arg("read_only", bool_flag)
+)]
 pub(crate) struct DatabaseArguments {
     /// Database backend
     #[arg(long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND)]
@@ -161,15 +182,18 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
 
 /// Shared PII flags embedded in transport subcommands.
 #[derive(Debug, Args)]
-#[command(next_help_heading = "PII")]
+#[allow(clippy::duplicated_attributes, reason = "each mut_arg targets a different flag")]
+#[command(
+    next_help_heading = "PII",
+    mut_arg("enabled", bool_flag),
+    mut_arg("ner_enabled", bool_flag)
+)]
 pub(crate) struct PiiArguments {
     /// Enable PII redaction of query tool output
     #[arg(
         long = "pii",
         env = "PII_ENABLE",
         default_value_t = PiiConfig::DEFAULT_ENABLED,
-        action = clap::ArgAction::Set,
-        value_parser = clap::value_parser!(bool),
     )]
     pub(crate) enabled: bool,
 
@@ -196,8 +220,6 @@ pub(crate) struct PiiArguments {
         long = "pii-ner",
         env = "PII_NER_ENABLE",
         default_value_t = PiiConfig::DEFAULT_NER_ENABLED,
-        action = clap::ArgAction::Set,
-        value_parser = clap::value_parser!(bool),
     )]
     pub(crate) ner_enabled: bool,
 
@@ -972,6 +994,21 @@ mod tests {
                 "{value} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn db_ssl_flags_accept_explicit_values() {
+        let cli = TestCli::try_parse_from(["--db-ssl=false", "--db-ssl-verify-cert=false"]).expect("valid args");
+        assert!(!cli.db.ssl);
+        assert!(!cli.db.ssl_verify_cert);
+
+        let cli = TestCli::try_parse_from(["--db-ssl", "true", "--db-ssl-verify-cert", "false"]).expect("valid args");
+        assert!(cli.db.ssl);
+        assert!(!cli.db.ssl_verify_cert);
+
+        let cli = TestCli::try_parse_from(["--db-ssl", "--db-ssl-verify-cert"]).expect("valid args");
+        assert!(cli.db.ssl);
+        assert!(cli.db.ssl_verify_cert);
     }
 
     #[test]
