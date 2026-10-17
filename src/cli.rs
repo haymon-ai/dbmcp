@@ -118,6 +118,24 @@ mod tests {
 
     use super::Arguments;
 
+    #[test]
+    fn secret_env_values_are_hidden_from_help() {
+        let cmd = Arguments::command();
+        for subcommand in cmd.get_subcommands() {
+            for arg in subcommand.get_arguments() {
+                let Some(env) = arg.get_env().and_then(|env| env.to_str()) else {
+                    continue;
+                };
+                if ["PASSWORD", "PASSPHRASE", "TOKEN", "SECRET"]
+                    .iter()
+                    .any(|word| env.contains(word))
+                {
+                    assert!(arg.is_hide_env_values_set(), "{env} must not print its value in --help");
+                }
+            }
+        }
+    }
+
     fn subcommand_help(name: &str) -> String {
         let mut cmd = Arguments::command();
         cmd.find_subcommand_mut(name)

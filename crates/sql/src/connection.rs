@@ -84,8 +84,8 @@ where
     /// - [`SqlError::InvalidIdentifier`] — `target` failed validation.
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError>;
 
-    /// Returns the configured query timeout in seconds, if any.
-    fn query_timeout(&self) -> Option<u64>;
+    /// Returns the configured query timeout in seconds (`0` = disabled).
+    fn query_timeout(&self) -> u64;
 
     /// Runs a statement that returns no meaningful rows.
     ///

@@ -22,7 +22,7 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
             .and_then(|p| p.parse().ok())
             .unwrap_or(5432),
         user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
-        password: std::env::var("DB_PASSWORD").ok(),
+        password: std::env::var("DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
@@ -394,7 +394,7 @@ async fn test_uses_default_pool_for_matching_database() {
 #[tokio::test]
 async fn test_query_timeout_cancels_slow_query() {
     let config = DatabaseConfig {
-        query_timeout: Some(2),
+        query_timeout: 2,
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {
@@ -425,9 +425,9 @@ async fn test_query_timeout_cancels_slow_query() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_disabled_with_none() {
+async fn test_query_timeout_disabled_with_zero() {
     let config = DatabaseConfig {
-        query_timeout: None,
+        query_timeout: 0,
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {

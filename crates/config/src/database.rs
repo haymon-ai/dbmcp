@@ -1,6 +1,7 @@
 //! Database connection settings and backend enum.
 
 use crate::error::{ConfigError, ConfigErrors};
+use crate::secret::Secret;
 
 /// Supported database backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -51,8 +52,8 @@ impl DatabaseBackend {
 /// Database connection and behavior settings.
 ///
 /// All fields are fully resolved — no `Option` indirection for connection
-/// fields. Defaults are applied during construction in `From<&Cli>`.
-#[derive(Clone)]
+/// fields. Defaults are applied during construction in the binary's CLI conversion.
+#[derive(Clone, Debug)]
 pub struct DatabaseConfig {
     /// Database backend type.
     pub backend: DatabaseBackend,
@@ -67,7 +68,7 @@ pub struct DatabaseConfig {
     pub user: String,
 
     /// Database password.
-    pub password: Option<String>,
+    pub password: Option<Secret>,
 
     /// Database name or `SQLite` file path.
     pub name: Option<String>,
@@ -101,39 +102,15 @@ pub struct DatabaseConfig {
 
     /// Query execution timeout in seconds.
     ///
-    /// `None` means "use default" (30 s when constructed via CLI).
-    /// `Some(0)` disables the timeout entirely.
-    pub query_timeout: Option<u64>,
+    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `0` disables the
+    /// timeout entirely.
+    pub query_timeout: u64,
 
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
     /// Range `1..=500`, enforced by CLI parsing.
     pub page_size: u16,
-}
-
-impl std::fmt::Debug for DatabaseConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatabaseConfig")
-            .field("backend", &self.backend)
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .field("password", &"[REDACTED]")
-            .field("name", &self.name)
-            .field("charset", &self.charset)
-            .field("ssl", &self.ssl)
-            .field("ssl_ca", &self.ssl_ca)
-            .field("ssl_cert", &self.ssl_cert)
-            .field("ssl_key", &self.ssl_key)
-            .field("ssl_verify_cert", &self.ssl_verify_cert)
-            .field("read_only", &self.read_only)
-            .field("max_pool_size", &self.max_pool_size)
-            .field("connection_timeout", &self.connection_timeout)
-            .field("query_timeout", &self.query_timeout)
-            .field("page_size", &self.page_size)
-            .finish()
-    }
 }
 
 impl DatabaseConfig {
@@ -214,7 +191,7 @@ impl Default for DatabaseConfig {
             read_only: Self::DEFAULT_READ_ONLY,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
-            query_timeout: None,
+            query_timeout: Self::DEFAULT_QUERY_TIMEOUT_SECS,
             page_size: Self::DEFAULT_PAGE_SIZE,
         }
     }
@@ -254,26 +231,6 @@ mod tests {
             },
             ..base_config(DatabaseBackend::Mysql)
         }
-    }
-
-    #[test]
-    fn debug_redacts_password() {
-        let config = Config {
-            database: DatabaseConfig {
-                password: Some("super_secret_password".into()),
-                ..mysql_config().database
-            },
-            ..mysql_config()
-        };
-        let debug_output = format!("{config:?}");
-        assert!(
-            !debug_output.contains("super_secret_password"),
-            "password leaked in debug output: {debug_output}"
-        );
-        assert!(
-            debug_output.contains("[REDACTED]"),
-            "expected [REDACTED] in debug output: {debug_output}"
-        );
     }
 
     #[test]
@@ -319,12 +276,6 @@ mod tests {
         let config = base_config(DatabaseBackend::Mariadb);
         assert_eq!(config.database.user, "root");
         assert_eq!(config.database.port, 3306);
-    }
-
-    #[test]
-    fn query_timeout_default_is_none() {
-        let config = DatabaseConfig::default();
-        assert!(config.query_timeout.is_none());
     }
 
     #[test]
@@ -430,14 +381,14 @@ mod tests {
     fn debug_includes_query_timeout() {
         let config = Config {
             database: DatabaseConfig {
-                query_timeout: Some(30),
+                query_timeout: 30,
                 ..db_config(DatabaseBackend::Mysql)
             },
             ..base_config(DatabaseBackend::Mysql)
         };
         let debug = format!("{config:?}");
         assert!(
-            debug.contains("query_timeout: Some(30)"),
+            debug.contains("query_timeout: 30"),
             "expected query_timeout in debug output: {debug}"
         );
     }

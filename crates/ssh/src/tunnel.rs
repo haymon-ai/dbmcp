@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::{SshConfig, StrictHostKeyChecking};
+use dbmcp_config::{Secret, SshConfig, StrictHostKeyChecking};
 use russh::client::DisconnectReason;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Preferred, client};
@@ -70,7 +70,7 @@ impl Tunnel {
                 #[allow(clippy::result_large_err)]
                 let key = tokio::task::spawn_blocking(move || {
                     key::warn_if_key_exposed(&path);
-                    key::load_private_key(&path, passphrase.as_deref())
+                    key::load_private_key(&path, passphrase.as_ref().map(Secret::expose))
                 })
                 .await
                 .expect("key loading task does not panic")?;
@@ -218,7 +218,7 @@ struct Inner {
     ssh_host: String,
     ssh_port: u16,
     user: String,
-    password: Option<String>,
+    password: Option<Secret>,
     key: Option<Arc<PrivateKey>>,
     known_hosts: Option<PathBuf>,
     strict_host_key_checking: StrictHostKeyChecking,
@@ -247,7 +247,7 @@ impl std::fmt::Debug for Inner {
         f.debug_struct("Inner")
             .field("ssh_target", &self.ssh_target)
             .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("password", &self.password)
             .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
             .field("known_hosts", &self.known_hosts)
             .field("strict_host_key_checking", &self.strict_host_key_checking)
@@ -402,7 +402,7 @@ impl Inner {
         });
         if let Some(password) = password {
             let auth = session
-                .authenticate_password(self.user.as_str(), password.as_str())
+                .authenticate_password(self.user.as_str(), password.expose())
                 .await
                 .map_err(auth_error)?;
             if auth.success() {

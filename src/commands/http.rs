@@ -9,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::{Args, Parser};
-use dbmcp_config::{AllowedOrigins, Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig};
+use dbmcp_config::{AllowedOrigins, Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig, Secret};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, flag_conventions};
 use crate::error::Error;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -28,7 +28,7 @@ use crate::error::Error;
 /// `host` and `port` use explicit `id = "http-*"` overrides so their
 /// clap argument ids don't collide with the `host`/`port` fields in
 /// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
-#[derive(Args)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "HTTP Transport")]
 struct HttpArguments {
     /// Bind host for HTTP transport.
@@ -86,7 +86,7 @@ struct HttpArguments {
         value_name = "TOKEN",
         hide_env_values = true
     )]
-    auth_token: Option<String>,
+    auth_token: Option<Secret>,
 
     /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
     ///
@@ -97,22 +97,6 @@ struct HttpArguments {
         env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
     )]
     dangerously_allow_unauthenticated: bool,
-}
-
-impl std::fmt::Debug for HttpArguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpArguments")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("allowed_origins", &self.allowed_origins)
-            .field("allowed_hosts", &self.allowed_hosts)
-            .field("auth_token", &self.auth_token.as_ref().map(|_| "[REDACTED]"))
-            .field(
-                "dangerously_allow_unauthenticated",
-                &self.dangerously_allow_unauthenticated,
-            )
-            .finish()
-    }
 }
 
 impl TryFrom<&HttpArguments> for HttpConfig {
@@ -141,6 +125,7 @@ impl TryFrom<&HttpArguments> for HttpConfig {
 
 /// Runs the MCP server in HTTP mode.
 #[derive(Debug, Parser)]
+#[command(mut_args(flag_conventions))]
 pub(crate) struct HttpCommand {
     /// Shared database connection flags.
     #[command(flatten)]
@@ -278,7 +263,7 @@ fn build_http_router(
     let mut router = axum::Router::new().nest_service("/mcp", service);
     if let Some(token) = &http_config.auth_token {
         router = router.layer(axum::middleware::from_fn_with_state(
-            BearerAuth::new(token),
+            BearerAuth::new(token.expose()),
             require_bearer,
         ));
     }
@@ -352,7 +337,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true)]
+    #[command(no_binary_name = true, mut_args(flag_conventions))]
     struct TestCli {
         #[command(flatten)]
         http: HttpArguments,
@@ -393,7 +378,7 @@ mod tests {
             port: HttpConfig::DEFAULT_PORT,
             allowed_origins: origins,
             allowed_hosts: HttpConfig::default_allowed_hosts(),
-            auth_token,
+            auth_token: auth_token.map(Secret::from),
             allow_unauthenticated: false,
         };
         let config = Config {
@@ -681,7 +666,7 @@ mod tests {
     fn try_from_accepts_non_loopback_with_token() {
         let args = parse_http_args(&["--host", "0.0.0.0", "--auth-token", TEST_TOKEN]);
         let config = HttpConfig::try_from(&args).expect("token must allow non-loopback bind");
-        assert_eq!(config.auth_token.as_deref(), Some(TEST_TOKEN));
+        assert_eq!(config.auth_token.as_ref().map(Secret::expose), Some(TEST_TOKEN));
     }
 
     #[test]
@@ -693,11 +678,17 @@ mod tests {
     }
 
     #[test]
-    fn http_arguments_debug_redacts_token() {
-        let args = parse_http_args(&["--auth-token", TEST_TOKEN]);
-        let rendered = format!("{args:?}");
-        assert!(!rendered.contains(TEST_TOKEN), "{rendered}");
-        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+    fn dangerously_allow_unauthenticated_accepts_explicit_values() {
+        assert!(!parse_http_args(&[]).dangerously_allow_unauthenticated);
+        assert!(parse_http_args(&["--dangerously-allow-unauthenticated=true"]).dangerously_allow_unauthenticated);
+        for value in ["false", "0", "no", "off"] {
+            let arg = format!("--dangerously-allow-unauthenticated={value}");
+            assert!(!parse_http_args(&[&arg]).dangerously_allow_unauthenticated, "{value:?}");
+        }
+        for value in ["", "disabled", "never"] {
+            let arg = format!("--dangerously-allow-unauthenticated={value}");
+            assert!(TestCli::try_parse_from([&arg]).is_err(), "{value:?} must be rejected");
+        }
     }
 
     async fn assert_unauthorized(request: Request<Body>) {
