@@ -2072,22 +2072,13 @@ async fn read_query_hash_operator_emits_stable_digest() {
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }
 
-/// Builds `dbmcp stdio` against the seeded database at `DB_PATH`.
-fn stdio_command() -> tokio::process::Command {
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
-    command
-        .arg("stdio")
-        .arg("--db-backend")
-        .arg("sqlite")
-        .arg("--db-name")
-        .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"));
-    command
-}
-
 /// Returns whether a server started with `DB_READ_ONLY=value` exposes `writeQuery`.
 async fn exposes_write_query(value: &str) -> bool {
-    let mut command = stdio_command();
-    command.env("DB_READ_ONLY", value);
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command
+        .args(["stdio", "--db-backend", "sqlite", "--db-name"])
+        .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
+        .env("DB_READ_ONLY", value);
     let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
     let client = ().serve(transport).await.expect("mcp handshake");
     let tools = client.list_all_tools().await.expect("tools/list");
@@ -2097,18 +2088,14 @@ async fn exposes_write_query(value: &str) -> bool {
 
 #[tokio::test]
 async fn test_db_read_only_env_accepts_falsey_values() {
-    for value in ["0", "no", "off", "False", "FALSE", ""] {
-        assert!(
-            exposes_write_query(value).await,
-            "DB_READ_ONLY={value:?} must disable read-only"
-        );
-    }
-    for value in ["1", "yes", "true", "TRUE"] {
-        assert!(
-            !exposes_write_query(value).await,
-            "DB_READ_ONLY={value:?} must keep read-only"
-        );
-    }
+    // The full value table is covered by the CLI unit tests; this only
+    // proves the env var reaches the same parser.
+    assert!(exposes_write_query("0").await, "DB_READ_ONLY=0 must disable read-only");
+    assert!(
+        exposes_write_query("").await,
+        "empty DB_READ_ONLY must disable read-only"
+    );
+    assert!(!exposes_write_query("1").await, "DB_READ_ONLY=1 must keep read-only");
 }
 
 #[tokio::test]

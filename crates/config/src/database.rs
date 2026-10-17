@@ -299,12 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn query_timeout_default_matches_cli_default() {
-        let config = DatabaseConfig::default();
-        assert_eq!(config.query_timeout, Some(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS));
-    }
-
-    #[test]
     fn page_size_default_is_100() {
         let config = DatabaseConfig::default();
         assert_eq!(config.page_size, 100);

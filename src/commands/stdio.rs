@@ -116,23 +116,9 @@ mod tests {
     }
 
     #[test]
-    fn db_read_only_accepts_explicit_values() {
-        assert!(!parse(&["_", "--db-read-only=false"]).database.read_only);
-        assert!(!parse(&["_", "--db-read-only", "false"]).database.read_only);
-        assert!(parse(&["_", "--db-read-only=true"]).database.read_only);
-        assert!(parse(&["_", "--db-read-only"]).database.read_only);
-    }
-
-    #[test]
-    fn db_read_only_accepts_falsey_values_like_env() {
-        for value in ["0", "no", "off", "False", "FALSE", ""] {
-            let arg = format!("--db-read-only={value}");
-            assert!(!parse(&["_", &arg]).database.read_only, "{value:?} must be false");
-        }
-        for value in ["1", "yes", "on", "True", "TRUE"] {
-            let arg = format!("--db-read-only={value}");
-            assert!(parse(&["_", &arg]).database.read_only, "{value:?} must be true");
-        }
+    fn db_query_timeout_default_matches_database_config_default() {
+        let config = DatabaseConfig::try_from(&parse(&["_"]).database).expect("valid db args");
+        assert_eq!(config.query_timeout, DatabaseConfig::default().query_timeout);
     }
 
     #[test]

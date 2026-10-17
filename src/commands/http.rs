@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, bool_flag};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, flag_conventions};
 use crate::error::Error;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -29,10 +29,7 @@ use crate::error::Error;
 /// clap argument ids don't collide with the `host`/`port` fields in
 /// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
 #[derive(Debug, Args)]
-#[command(
-    next_help_heading = "HTTP Transport",
-    mut_arg("dangerously_allow_unauthenticated", bool_flag)
-)]
+#[command(next_help_heading = "HTTP Transport", mut_args(flag_conventions))]
 struct HttpArguments {
     /// Bind host for HTTP transport.
     #[arg(
@@ -83,12 +80,7 @@ struct HttpArguments {
     ///
     /// Required when binding a non-loopback host. Prefer the env var:
     /// command-line arguments are visible to other local users.
-    #[arg(
-        long = "auth-token",
-        env = "HTTP_AUTH_TOKEN",
-        value_name = "TOKEN",
-        hide_env_values = true
-    )]
+    #[arg(long = "auth-token", env = "HTTP_AUTH_TOKEN", value_name = "TOKEN")]
     auth_token: Option<Secret>,
 
     /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
@@ -97,8 +89,7 @@ struct HttpArguments {
     /// Anyone who can reach the port gets full access to the database.
     #[arg(
         long = "dangerously-allow-unauthenticated",
-        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
-        default_value_t = false
+        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
     )]
     dangerously_allow_unauthenticated: bool,
 }
@@ -678,6 +669,16 @@ mod tests {
         let config = HttpConfig::try_from(&args).expect("opt-out must allow non-loopback bind");
         assert!(config.allow_unauthenticated);
         assert!(config.auth_token.is_none());
+    }
+
+    #[test]
+    fn dangerously_allow_unauthenticated_accepts_explicit_values() {
+        assert!(!parse_http_args(&[]).dangerously_allow_unauthenticated);
+        assert!(parse_http_args(&["--dangerously-allow-unauthenticated=true"]).dangerously_allow_unauthenticated);
+        for value in ["false", "0", "no", "off"] {
+            let arg = format!("--dangerously-allow-unauthenticated={value}");
+            assert!(!parse_http_args(&[&arg]).dangerously_allow_unauthenticated, "{value:?}");
+        }
     }
 
     #[test]
