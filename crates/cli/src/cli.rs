@@ -94,7 +94,8 @@ enum Command {
 ///
 /// # Panics
 ///
-/// Panics if the Tokio runtime cannot be built.
+/// Panics if the Tokio runtime cannot be built, if called from within an
+/// existing Tokio runtime, or if a global tracing subscriber is already set.
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 pub async fn run() -> Result<(), Error> {
