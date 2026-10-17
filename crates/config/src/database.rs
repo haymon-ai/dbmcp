@@ -102,9 +102,9 @@ pub struct DatabaseConfig {
 
     /// Query execution timeout in seconds.
     ///
-    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `None` or `Some(0)`
-    /// disables the timeout entirely.
-    pub query_timeout: Option<u64>,
+    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `0` disables the
+    /// timeout entirely.
+    pub query_timeout: u64,
 
     /// Maximum items returned in a single paginated tool response.
     ///
@@ -191,7 +191,7 @@ impl Default for DatabaseConfig {
             read_only: Self::DEFAULT_READ_ONLY,
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
-            query_timeout: Some(Self::DEFAULT_QUERY_TIMEOUT_SECS),
+            query_timeout: Self::DEFAULT_QUERY_TIMEOUT_SECS,
             page_size: Self::DEFAULT_PAGE_SIZE,
         }
     }
@@ -401,14 +401,14 @@ mod tests {
     fn debug_includes_query_timeout() {
         let config = Config {
             database: DatabaseConfig {
-                query_timeout: Some(30),
+                query_timeout: 30,
                 ..db_config(DatabaseBackend::Mysql)
             },
             ..base_config(DatabaseBackend::Mysql)
         };
         let debug = format!("{config:?}");
         assert!(
-            debug.contains("query_timeout: Some(30)"),
+            debug.contains("query_timeout: 30"),
             "expected query_timeout in debug output: {debug}"
         );
     }

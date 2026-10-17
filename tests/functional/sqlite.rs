@@ -175,7 +175,7 @@ async fn test_blocks_writes_in_read_only_mode() {
 #[tokio::test]
 async fn test_query_timeout_fast_query_succeeds() {
     let config = DatabaseConfig {
-        query_timeout: Some(5),
+        query_timeout: 5,
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&Config {
@@ -195,9 +195,9 @@ async fn test_query_timeout_fast_query_succeeds() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_disabled_with_none() {
+async fn test_query_timeout_disabled_with_zero() {
     let config = DatabaseConfig {
-        query_timeout: None,
+        query_timeout: 0,
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&Config {

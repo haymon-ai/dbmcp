@@ -394,7 +394,7 @@ async fn test_uses_default_pool_for_matching_database() {
 #[tokio::test]
 async fn test_query_timeout_cancels_slow_query() {
     let config = DatabaseConfig {
-        query_timeout: Some(2),
+        query_timeout: 2,
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {
@@ -425,9 +425,9 @@ async fn test_query_timeout_cancels_slow_query() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_disabled_with_none() {
+async fn test_query_timeout_disabled_with_zero() {
     let config = DatabaseConfig {
-        query_timeout: None,
+        query_timeout: 0,
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {

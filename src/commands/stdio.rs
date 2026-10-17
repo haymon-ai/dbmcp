@@ -125,7 +125,7 @@ mod tests {
     fn db_query_timeout_zero_passes_through() {
         let cmd = parse(&["_", "--db-query-timeout", "0"]);
         let config = DatabaseConfig::try_from(&cmd.database).expect("valid db args");
-        assert_eq!(config.query_timeout, Some(0));
+        assert_eq!(config.query_timeout, 0);
     }
 
     #[test]

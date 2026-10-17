@@ -116,7 +116,7 @@ impl Connection for PostgresConnection {
         self.pool(target).await
     }
 
-    fn query_timeout(&self) -> Option<u64> {
+    fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
 }

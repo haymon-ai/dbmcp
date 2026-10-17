@@ -184,7 +184,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
             read_only: db.read_only,
             max_pool_size: db.max_pool_size,
             connection_timeout: db.connection_timeout,
-            query_timeout: Some(db.query_timeout),
+            query_timeout: db.query_timeout,
             page_size: db.page_size,
         };
         candidate.validate()?;
