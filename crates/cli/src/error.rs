@@ -7,7 +7,7 @@ use dbmcp_config::ConfigErrors;
 
 /// Application-level errors for server startup and transport.
 ///
-/// Only instantiated once at program exit, so variant size is irrelevant.
+/// Returned once to the `dbmcp` binary's `main` at exit, so variant size is irrelevant.
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
