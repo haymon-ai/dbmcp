@@ -13,7 +13,7 @@ use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::builder::FalseyValueParser;
+use clap::builder::BoolishValueParser;
 use clap::{Arg, ArgAction, Args};
 use dbmcp_config::{
     Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, Secret,
@@ -33,9 +33,11 @@ pub(crate) use dbmcp_server::Server;
 ///
 /// [`Secret`] flags hide their env value from `--help`. `bool` flags with
 /// clap's default `SetTrue` action also accept an explicit value: bare
-/// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var treat
-/// `0`, `false`, `f`, `no`, `n`, `off`, and empty (any case) as `false` and
-/// anything else as `true`. Each transport subcommand applies it once, after
+/// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var accept
+/// `true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0` in any case. Empty
+/// and unknown values are rejected, so a blank or mistyped env var fails
+/// startup instead of flipping a security setting. Each transport
+/// subcommand applies it once, after
 /// flattening its flag groups, via `#[command(mut_args(flag_conventions))]`,
 /// so every flag it exposes inherits it.
 pub(crate) fn flag_conventions(arg: Arg) -> Arg {
@@ -47,7 +49,7 @@ pub(crate) fn flag_conventions(arg: Arg) -> Arg {
             .action(ArgAction::Set)
             .num_args(0..=1)
             .default_missing_value("true")
-            .value_parser(FalseyValueParser::new());
+            .value_parser(BoolishValueParser::new());
         // `ArgAction::Set` drops the implicit `false` default of `SetTrue`.
         if arg.get_default_values().is_empty() {
             arg.default_value("false")
@@ -80,7 +82,7 @@ pub(crate) struct DatabaseArguments {
     pub(crate) user: Option<String>,
 
     /// Database password
-    #[arg(long = "db-password", env = "DB_PASSWORD")]
+    #[arg(long = "db-password", env = "DB_PASSWORD", hide_env_values = true)]
     pub(crate) password: Option<Secret>,
 
     /// Database name or `SQLite` file path
@@ -283,7 +285,8 @@ pub(crate) struct SshArguments {
         id = "ssh-password",
         long = "ssh-password",
         value_name = "PASSWORD",
-        env = "SSH_PASSWORD"
+        env = "SSH_PASSWORD",
+        hide_env_values = true
     )]
     pub(crate) password: Option<Secret>,
 
@@ -296,7 +299,8 @@ pub(crate) struct SshArguments {
         id = "ssh-key-passphrase",
         long = "ssh-key-passphrase",
         value_name = "PASSPHRASE",
-        env = "SSH_KEY_PASSPHRASE"
+        env = "SSH_KEY_PASSPHRASE",
+        hide_env_values = true
     )]
     pub(crate) key_passphrase: Option<Secret>,
 
@@ -1001,7 +1005,7 @@ mod tests {
             for value in ["true", "1", "yes", "on", "True", "TRUE"] {
                 cases.push((vec![format!("{flag}={value}")], true));
             }
-            for value in ["false", "0", "no", "off", "False", "FALSE", ""] {
+            for value in ["false", "0", "no", "off", "False", "FALSE"] {
                 cases.push((vec![format!("{flag}={value}")], false));
             }
             for (args, expected) in cases {
@@ -1009,6 +1013,13 @@ mod tests {
                     .try_get_matches_from(&args)
                     .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
                 assert_eq!(matches.get_one::<bool>(id), Some(&expected), "{args:?}");
+            }
+            for value in ["", "disabled", "nope", "2"] {
+                let arg = format!("{flag}={value}");
+                assert!(
+                    TestCli::command().try_get_matches_from([&arg]).is_err(),
+                    "{arg:?} must be rejected"
+                );
             }
         }
     }

@@ -2087,15 +2087,28 @@ async fn exposes_write_query(value: &str) -> bool {
 }
 
 #[tokio::test]
-async fn test_db_read_only_env_accepts_falsey_values() {
+async fn test_db_read_only_env_accepts_explicit_values() {
     // The full value table is covered by the CLI unit tests; this only
     // proves the env var reaches the same parser.
     assert!(exposes_write_query("0").await, "DB_READ_ONLY=0 must disable read-only");
-    assert!(
-        exposes_write_query("").await,
-        "empty DB_READ_ONLY must disable read-only"
-    );
     assert!(!exposes_write_query("1").await, "DB_READ_ONLY=1 must keep read-only");
+}
+
+#[tokio::test]
+async fn test_db_read_only_env_rejects_blank_and_unknown_values() {
+    for value in ["", "disabled"] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+            .args(["stdio", "--db-backend", "sqlite", "--db-name"])
+            .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
+            .env("DB_READ_ONLY", value)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .expect("run dbmcp");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "DB_READ_ONLY={value:?} must fail startup");
+        assert!(stderr.contains("--db-read-only"), "{stderr}");
+    }
 }
 
 #[tokio::test]

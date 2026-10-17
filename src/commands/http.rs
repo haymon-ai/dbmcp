@@ -80,7 +80,12 @@ struct HttpArguments {
     ///
     /// Required when binding a non-loopback host. Prefer the env var:
     /// command-line arguments are visible to other local users.
-    #[arg(long = "auth-token", env = "HTTP_AUTH_TOKEN", value_name = "TOKEN")]
+    #[arg(
+        long = "auth-token",
+        env = "HTTP_AUTH_TOKEN",
+        value_name = "TOKEN",
+        hide_env_values = true
+    )]
     auth_token: Option<Secret>,
 
     /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
@@ -679,6 +684,10 @@ mod tests {
         for value in ["false", "0", "no", "off"] {
             let arg = format!("--dangerously-allow-unauthenticated={value}");
             assert!(!parse_http_args(&[&arg]).dangerously_allow_unauthenticated, "{value:?}");
+        }
+        for value in ["", "disabled", "never"] {
+            let arg = format!("--dangerously-allow-unauthenticated={value}");
+            assert!(TestCli::try_parse_from([&arg]).is_err(), "{value:?} must be rejected");
         }
     }
 
