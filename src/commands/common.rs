@@ -232,7 +232,7 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 #[command(next_help_heading = "SSH")]
 pub(crate) struct SshArguments {
     /// SSH server host; enables the tunnel when set
-    #[arg(id = "ssh-host", long = "ssh-host", value_name = "HOST", env = "DB_SSH_HOST")]
+    #[arg(id = "ssh-host", long = "ssh-host", value_name = "HOST", env = "SSH_HOST")]
     pub(crate) host: Option<String>,
 
     /// SSH server port
@@ -240,13 +240,13 @@ pub(crate) struct SshArguments {
         id = "ssh-port",
         long = "ssh-port",
         value_name = "PORT",
-        env = "DB_SSH_PORT",
+        env = "SSH_PORT",
         value_parser = clap::value_parser!(u16).range(1..),
     )]
     pub(crate) port: Option<u16>,
 
     /// SSH user
-    #[arg(id = "ssh-user", long = "ssh-user", value_name = "USER", env = "DB_SSH_USER")]
+    #[arg(id = "ssh-user", long = "ssh-user", value_name = "USER", env = "SSH_USER")]
     pub(crate) user: Option<String>,
 
     /// SSH password
@@ -254,13 +254,13 @@ pub(crate) struct SshArguments {
         id = "ssh-password",
         long = "ssh-password",
         value_name = "PASSWORD",
-        env = "DB_SSH_PASSWORD",
+        env = "SSH_PASSWORD",
         hide_env_values = true
     )]
     pub(crate) password: Option<String>,
 
     /// Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)
-    #[arg(id = "ssh-key", long = "ssh-key", value_name = "PATH", env = "DB_SSH_KEY")]
+    #[arg(id = "ssh-key", long = "ssh-key", value_name = "PATH", env = "SSH_KEY")]
     pub(crate) key: Option<PathBuf>,
 
     /// Passphrase for the SSH private key
@@ -268,7 +268,7 @@ pub(crate) struct SshArguments {
         id = "ssh-key-passphrase",
         long = "ssh-key-passphrase",
         value_name = "PASSPHRASE",
-        env = "DB_SSH_KEY_PASSPHRASE",
+        env = "SSH_KEY_PASSPHRASE",
         hide_env_values = true
     )]
     pub(crate) key_passphrase: Option<String>,
@@ -279,7 +279,7 @@ pub(crate) struct SshArguments {
         id = "ssh-known-hosts",
         long = "ssh-known-hosts",
         value_name = "PATH",
-        env = "DB_SSH_KNOWN_HOSTS"
+        env = "SSH_KNOWN_HOSTS"
     )]
     pub(crate) known_hosts: Option<PathBuf>,
 
@@ -288,7 +288,7 @@ pub(crate) struct SshArguments {
         id = "ssh-strict-host-key-checking",
         long = "ssh-strict-host-key-checking",
         value_name = "MODE",
-        env = "DB_SSH_STRICT_HOST_KEY_CHECKING"
+        env = "SSH_STRICT_HOST_KEY_CHECKING"
     )]
     pub(crate) strict_host_key_checking: Option<StrictHostKeyChecking>,
 
@@ -297,7 +297,7 @@ pub(crate) struct SshArguments {
         id = "ssh-keepalive-interval",
         long = "ssh-keepalive-interval",
         value_name = "SECONDS",
-        env = "DB_SSH_KEEPALIVE_INTERVAL"
+        env = "SSH_KEEPALIVE_INTERVAL"
     )]
     pub(crate) keepalive_interval: Option<u64>,
 
@@ -306,7 +306,7 @@ pub(crate) struct SshArguments {
         id = "ssh-local-port",
         long = "ssh-local-port",
         value_name = "PORT",
-        env = "DB_SSH_LOCAL_PORT",
+        env = "SSH_LOCAL_PORT",
         value_parser = clap::value_parser!(u16).range(1..),
     )]
     pub(crate) local_port: Option<u16>,
@@ -330,14 +330,14 @@ impl std::fmt::Debug for SshArguments {
 }
 
 impl SshArguments {
-    /// Resolves the tunnel settings; `Ok(None)` when `DB_SSH_HOST` is unset.
+    /// Resolves the tunnel settings; `Ok(None)` when `SSH_HOST` is unset.
     ///
     /// Uses the process home directory for `~` expansion and the default
     /// `known_hosts` path.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when other `DB_SSH_*` options are set
+    /// Returns [`ConfigErrors`] when other `SSH_*` options are set
     /// without a host, or when [`SshConfig::validate`] fails.
     pub(crate) fn to_config(&self, backend: DatabaseBackend) -> Result<Option<SshConfig>, ConfigErrors> {
         self.resolve(backend, ssh::home_dir().as_deref())
@@ -768,20 +768,20 @@ mod tests {
     }
 
     const SSH_ENV: [&str; 10] = [
-        "DB_SSH_HOST",
-        "DB_SSH_PORT",
-        "DB_SSH_USER",
-        "DB_SSH_PASSWORD",
-        "DB_SSH_KEY",
-        "DB_SSH_KEY_PASSPHRASE",
-        "DB_SSH_KNOWN_HOSTS",
-        "DB_SSH_STRICT_HOST_KEY_CHECKING",
-        "DB_SSH_KEEPALIVE_INTERVAL",
-        "DB_SSH_LOCAL_PORT",
+        "SSH_HOST",
+        "SSH_PORT",
+        "SSH_USER",
+        "SSH_PASSWORD",
+        "SSH_KEY",
+        "SSH_KEY_PASSPHRASE",
+        "SSH_KNOWN_HOSTS",
+        "SSH_STRICT_HOST_KEY_CHECKING",
+        "SSH_KEEPALIVE_INTERVAL",
+        "SSH_LOCAL_PORT",
     ];
 
     fn parse_ssh(args: &[&str]) -> SshArguments {
-        // SAFETY: tests in this file do not write DB_SSH_* env vars concurrently.
+        // SAFETY: tests in this file do not write SSH_* env vars concurrently.
         unsafe {
             for name in SSH_ENV {
                 std::env::remove_var(name);
@@ -824,7 +824,7 @@ mod tests {
             assert_eq!(errors.len(), 1, "{args:?}");
             assert_eq!(
                 errors[0].to_string(),
-                "DB_SSH_HOST is required when other DB_SSH_* options are set",
+                "SSH_HOST is required when other SSH_* options are set",
                 "{args:?}"
             );
         }
@@ -898,7 +898,7 @@ mod tests {
         assert!(
             errors.iter().any(|e| matches!(
                 e,
-                ConfigError::FileNotFound(name, path) if name == "DB_SSH_KEY" && *path == expected.display().to_string()
+                ConfigError::FileNotFound(name, path) if name == "SSH_KEY" && *path == expected.display().to_string()
             )),
             "{errors:?}"
         );
