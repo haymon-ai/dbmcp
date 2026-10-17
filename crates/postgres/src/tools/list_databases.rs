@@ -1,6 +1,6 @@
 //! MCP tool: `listDatabases`.
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::listing;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
@@ -54,6 +54,14 @@ impl AsyncTool<PostgresHandler> for ListDatabasesTool {
     }
 }
 
+/// Lists one page of non-template database names, sorted by name.
+const SQL: &str = r"
+    SELECT datname
+    FROM pg_database
+    WHERE datistemplate = false
+    ORDER BY datname
+    LIMIT $1 OFFSET $2";
+
 impl PostgresHandler {
     /// Lists one page of accessible databases.
     ///
@@ -68,20 +76,12 @@ impl PostgresHandler {
         &self,
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
-        let pager = Pager::new(cursor, self.config.page_size);
-        let query = format!(
-            r"
-            SELECT datname
-            FROM pg_database
-            WHERE datistemplate = false
-            ORDER BY datname
-            LIMIT {} OFFSET {}",
-            pager.limit(),
-            pager.offset(),
-        );
-
-        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
-        let (databases, next_cursor) = pager.paginate(rows);
+        let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
+            self.connection
+                .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
+                .await
+        })
+        .await?;
 
         Ok(ListDatabasesResponse { databases, next_cursor })
     }

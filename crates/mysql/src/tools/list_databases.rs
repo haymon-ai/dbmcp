@@ -1,6 +1,6 @@
 //! MCP tool: `listDatabases`.
 
-use dbmcp_server::pagination::Pager;
+use dbmcp_server::listing;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
@@ -54,6 +54,13 @@ impl AsyncTool<MysqlHandler> for ListDatabasesTool {
     }
 }
 
+/// Lists one page of schema names, sorted by name.
+const SQL: &str = r"
+    SELECT CAST(SCHEMA_NAME AS CHAR)
+    FROM information_schema.SCHEMATA
+    ORDER BY SCHEMA_NAME
+    LIMIT ? OFFSET ?";
+
 impl MysqlHandler {
     /// Lists one page of accessible databases.
     ///
@@ -64,19 +71,12 @@ impl MysqlHandler {
         &self,
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
-        let pager = Pager::new(cursor, self.config.page_size);
-        let query = format!(
-            r"
-            SELECT CAST(SCHEMA_NAME AS CHAR)
-            FROM information_schema.SCHEMATA
-            ORDER BY SCHEMA_NAME
-            LIMIT {} OFFSET {}",
-            pager.limit(),
-            pager.offset(),
-        );
-
-        let rows: Vec<String> = self.connection.fetch_scalar(query.as_str(), None).await?;
-        let (databases, next_cursor) = pager.paginate(rows);
+        let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
+            self.connection
+                .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
+                .await
+        })
+        .await?;
 
         Ok(ListDatabasesResponse { databases, next_cursor })
     }

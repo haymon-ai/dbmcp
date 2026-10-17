@@ -641,7 +641,7 @@ async fn test_create_drop_table_with_spaces() {
 
 async fn collect_all_paged(handler: &SqliteHandler) -> Vec<String> {
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let request = ListTablesRequest {
             cursor,
@@ -718,7 +718,7 @@ async fn test_list_tables_pagination_boundary_page_size_equals_total() {
 
 #[tokio::test]
 async fn test_list_tables_pagination_off_the_end_cursor_returns_empty_page() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
 
     let handler = handler(true);
     let request = ListTablesRequest {
@@ -790,7 +790,7 @@ async fn test_list_tables_pagination_invalid_cursor_rejected_at_deserialize() {
 
 async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> Vec<Value> {
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let request = ReadQueryRequest {
             query: query.into(),
@@ -886,7 +886,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
 
 #[tokio::test]
 async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let response = handler
         .read_query(ReadQueryRequest {
@@ -958,7 +958,7 @@ async fn test_read_query_pagination_invalid_cursor_rejected_at_deserialize() {
 
 #[tokio::test]
 async fn test_read_query_cursor_does_not_bypass_read_only() {
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
     let result = handler
         .read_query(ReadQueryRequest {
@@ -976,7 +976,7 @@ async fn test_read_query_cursor_does_not_bypass_read_only() {
 async fn test_read_query_non_select_single_page_with_cursor_ignored() {
     // EXPLAIN is classified as NonSelect; cursor must be ignored (no error,
     // no nextCursor, response identical to the no-cursor call).
-    use dbmcp_server::pagination::Cursor;
+    use dbmcp_server::listing::Cursor;
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
@@ -1070,7 +1070,7 @@ async fn test_list_views_pagination_traverses_pages() {
     let handler_full = handler(true);
 
     let mut all = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler_paged
             .list_views(ListViewsRequest { cursor })
@@ -1264,7 +1264,7 @@ async fn test_list_tables_search_sql_meta_payloads_are_safe() {
 async fn test_list_tables_search_paginates_filtered_results() {
     let handler = handler_with_page_size(1);
     let mut collected = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_tables(ListTablesRequest {
@@ -1457,7 +1457,7 @@ async fn test_list_tables_detailed_reports_trigger() {
 async fn test_list_tables_detailed_paginates() {
     let handler = handler_with_page_size(1);
     let mut collected = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_tables(ListTablesRequest {
@@ -1654,7 +1654,7 @@ async fn test_list_triggers_search_sql_meta_payloads_are_safe() {
 async fn test_list_triggers_search_paginates_filtered_results() {
     let handler = handler_with_page_size(2);
     let mut collected: Vec<String> = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_triggers(ListTriggersRequest {
@@ -1816,7 +1816,7 @@ async fn test_list_triggers_detailed_search_narrows_payload() {
 async fn test_list_triggers_detailed_paginates() {
     let handler = handler_with_page_size(2);
     let mut collected: Vec<String> = Vec::new();
-    let mut cursor: Option<dbmcp_server::pagination::Cursor> = None;
+    let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
             .list_triggers(ListTriggersRequest {

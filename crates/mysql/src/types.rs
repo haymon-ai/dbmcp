@@ -4,7 +4,7 @@
 //! crate; they are re-exported here so call sites can keep importing them
 //! from `crate::types`.
 
-use dbmcp_server::pagination::Cursor;
+use dbmcp_server::listing::Cursor;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
