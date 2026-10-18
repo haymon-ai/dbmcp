@@ -1,0 +1,247 @@
+---
+title: Config File
+description: Configure dbmcp with a YAML file, ${VAR} interpolation, and .env files
+---
+
+Every setting that has a CLI flag can also live in a YAML config file passed with `--config`. Flags and environment variables still override the file, and values can pull secrets from the environment or from a `.env` file with `${VAR}` interpolation.
+
+## Quick Start
+
+Create `dbmcp.yaml`:
+
+```yaml
+database:
+  backend: postgres
+  host: db.internal
+  user: app
+  password: ${DB_PASSWORD:?}
+  name: app
+```
+
+Run the server with it:
+
+```bash
+dbmcp stdio --config dbmcp.yaml
+```
+
+Or point your MCP client at it:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": ["stdio", "--config", "/home/me/projects/app/dbmcp.yaml"]
+    }
+  }
+}
+```
+
+<Callout type="warn">
+Use an **absolute** path in MCP client configs. The client decides the working directory it starts dbmcp in, so a relative `--config` path may not point where you expect.
+</Callout>
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--config <PATH>` | Path to a YAML config file. Given once; no env var, no short form. |
+| `--env <PATH>` | Path to a dotenv file. Repeatable; later files win. Replaces the `.env` beside `--config`. |
+
+Both flags belong to the `stdio` and `http` subcommands: `dbmcp stdio --config dbmcp.yaml`. A relative path resolves against the current directory; `~` and `$VAR` are **not** expanded. `--config -` is a file named `-`, not stdin.
+
+The file is only read when `--config` is given — dbmcp never searches the current directory, your home directory, or parent directories. Separate MCP server instances therefore never share a config file by accident.
+
+## Precedence
+
+Values are resolved as described in [Configuration § Precedence](/docs/configuration#precedence):
+
+**CLI flags > environment variables > `.env` files > config file > defaults**
+
+For example, with this file
+
+```yaml
+database:
+  host: file-host
+```
+
+this `.env` beside it
+
+```bash
+DB_HOST=dotenv-host
+```
+
+and this command
+
+```bash
+DB_HOST=env-host dbmcp stdio --config dbmcp.yaml --db-host flag-host
+```
+
+the server connects to `flag-host`. Without `--db-host` it uses `env-host`; without the `DB_HOST` env var, `dotenv-host`; without the `.env` entry, `file-host`; and without the file key, the default `localhost`.
+
+## File Schema
+
+Sections mirror the [Configuration](/docs/configuration) tables; the **YAML key** column there lists every key. A full example:
+
+```yaml
+log_level: info                  # error | warn | info | debug | trace
+
+database:
+  backend: postgres              # mysql | mariadb | postgres | sqlite
+  host: db.internal
+  port: 5432
+  user: app
+  password: ${DB_PASSWORD:?}     # secret
+  name: app                      # database name, or file path for sqlite
+  charset: utf8mb4               # MySQL/MariaDB only
+  ssl: true
+  ssl_ca: certs/ca.pem           # relative to this file
+  ssl_cert: certs/client.pem
+  ssl_key: certs/client.key
+  ssl_verify_cert: true
+  read_only: true
+  max_pool_size: 5
+  connection_timeout: 10         # seconds
+  query_timeout: 30              # seconds; 0 disables
+  page_size: 100                 # 1–500
+
+ssh:
+  host: bastion.example.com      # setting a host enables the tunnel
+  port: 22
+  user: deploy
+  password: ${SSH_PASSWORD}      # secret
+  key: ~/.ssh/id_ed25519
+  key_passphrase: ${SSH_KEY_PASSPHRASE}  # secret
+  known_hosts: ~/.ssh/known_hosts
+  strict_host_key_checking: yes  # yes | accept-new | no
+  keepalive_interval: 30         # seconds; 0 disables
+  local_port: 4000
+
+http:                            # read only by `dbmcp http`
+  host: 127.0.0.1
+  port: 9001
+  allowed_origins: [http://localhost:*]
+  allowed_hosts: [localhost, 127.0.0.1, "::1"]
+  auth_token: ${HTTP_AUTH_TOKEN} # secret
+  allow_unauthenticated: false
+
+pii:
+  enabled: true
+  operator: replace              # replace | mask | redact | hash
+  categories: [financial, contact]
+  ner_enabled: false
+  ner_model: models/ner
+```
+
+Rules:
+
+- **Keys are strict.** Only the `snake_case` keys above are accepted, at every level. An unknown key — including `version:` or Compose-style `x-*` extension keys — is an error.
+- **Enum values** are the kebab-case tokens the CLI accepts, matched case-sensitively (`postgres`, not `Postgres`).
+- **Durations** are integers in seconds.
+- **`null` means absent.** `key:`, `key: null`, `key: ~`, and a bare section (`ssh:`) are the same as leaving the key out.
+- **Lists are YAML sequences** (`[a, b]` or one `- item` per line), never comma-separated strings. The highest layer that sets a list replaces it wholesale; lists are never merged. Empty or duplicate entries are rejected.
+- **Strings in typed fields are parsed like env vars.** `port: "5432"` is a number and `read_only: "yes"` is `true` — the same rules as `DB_PORT` and `DB_READ_ONLY`. The reverse does not hold: `user: 123` is an error; quote it as `"123"`.
+- **`http:` is ignored under `stdio`.** The section is still parsed, so unknown keys in it are still errors.
+- **There is no `ssh.enabled`.** Setting `ssh.host` turns the tunnel on; setting other `ssh` keys without a host is an error.
+- YAML anchors and aliases (`&name` / `*name`) work inside the schema.
+
+## Interpolation
+
+Every value in the file — strings and each list element — is interpolated before it is parsed. Keys are never interpolated. The syntax follows Docker Compose:
+
+| Syntax | Result |
+|--------|--------|
+| `$VAR`, `${VAR}` | Value of `VAR`; `""` if unset (with a warning) |
+| `${VAR:-default}` | `default` if `VAR` is unset **or empty** |
+| `${VAR-default}` | `default` if `VAR` is unset |
+| `${VAR:?message}` | Error if `VAR` is unset or empty |
+| `${VAR?message}` | Error if `VAR` is unset |
+| `${VAR:+alt}` | `alt` if `VAR` is set and non-empty, else `""` |
+| `${VAR+alt}` | `alt` if `VAR` is set, else `""` |
+| `$$` | A literal `$` |
+
+Defaults, messages, and alternatives can nest: `${PRIMARY:-${FALLBACK}}`. A `$` followed by anything other than a name, `{`, or `$` is an error — write `$$` for a literal dollar sign.
+
+Variables are looked up in the process environment first, then in the loaded `.env` files.
+
+An unset variable becomes an empty string and logs a warning; only the `?` forms fail. An empty string is still a value, not `null`, so `read_only: ${RO}` with `RO` unset is an **error** (an empty boolean is rejected) rather than silently changing a security setting. Use `${RO:-true}` to give it a default.
+
+## `.env` Files
+
+dotenv files supply variables both for interpolation and for settings directly:
+
+- **Default `.env`:** when `--config` is given and no `--env` is, the `.env` in the config file's directory is loaded. A missing file is skipped silently; an unreadable one logs a warning and is skipped. Without `--config` no `.env` is read — not even from the current directory.
+- **`--env <PATH>`:** loads the given files instead, in order; later files override earlier ones. A missing `--env` file is an error. `--env` works without `--config`.
+- **Settings:** a key named like a dbmcp env var (`DB_PASSWORD`, `PII_ENABLE`, `LOG_LEVEL`, …) sets that option, below real environment variables and above the config file. Its value is parsed exactly like the env var.
+
+The format follows Docker Compose:
+
+```bash
+# comments and blank lines are ignored
+DB_HOST=db.internal
+DB_USER: app                     # `KEY: VALUE` works too
+export DB_NAME=app               # optional `export` prefix
+DB_PASSWORD='literal $value'     # single quotes: no escapes, no interpolation
+SSH_KEY="${HOME}/.ssh/id_ed25519"  # double quotes: \n \t \" \\ \$ escapes, interpolation
+BANNER="line one
+line two"                        # quoted values may span lines
+```
+
+Unquoted and double-quoted values are interpolated against the process environment, then against keys defined earlier.
+
+## Path Resolution
+
+Paths written **in the config file** — `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model` — first expand a leading `~` to your home directory, then resolve relative to the **config file's directory**. Absolute paths are left as they are. A file therefore means the same thing whatever directory dbmcp is started in.
+
+`database.name` follows the same rules only when the backend is `sqlite` (after merging all layers) and the name came from the file. `:memory:` and `file:` URIs pass through unchanged; for MySQL and PostgreSQL it is a plain database name.
+
+Paths from CLI flags and environment variables are unchanged: they resolve against the current directory, and only the SSH paths expand `~`.
+
+## Running in Docker
+
+Mount the directory holding the config — not just the file — so its `.env` and any relative certificate paths come along, and mount it read-only:
+
+```bash
+docker run -i --rm \
+  -v /path/to/dbmcp-config:/config:ro \
+  ghcr.io/haymon-ai/dbmcp stdio --config /config/dbmcp.yaml
+```
+
+`~` inside the container is the image's home directory, not yours; prefer paths relative to the config file.
+
+The MCP registry entry (`server.json`) does not pass `--config`, because a registry install has no file to mount. Use environment variables there, or run the image yourself as above.
+
+## Secrets
+
+Keep secrets out of the file and require them from the environment:
+
+```yaml
+database:
+  password: ${DB_PASSWORD:?set DB_PASSWORD}
+```
+
+`${VAR:?}` fails startup with a clear error when the secret is missing, instead of connecting with an empty password. Put the value in the process environment, a `.env` file next to the config, or an `--env` file.
+
+Secret values (`database.password`, `ssh.password`, `ssh.key_passphrase`, `http.auth_token`) are never printed — not in errors, warnings, or `--help`. Neither is the raw content of the config or `.env` files. The text you write after `?` in `${VAR:?message}` is printed as written.
+
+## Errors
+
+Errors are printed to stderr as one header per failing stage followed by a bullet per problem, and dbmcp exits with code `1`. (Invalid command-line usage keeps exit code `2`.) Loading stops at the first failing stage — read file, `.env` files, YAML parse, interpolation, validation — and reports every problem within that stage.
+
+Each problem names the setting by its config path and, where a value is involved, where that value came from: a flag (`--db-port`), an env var (`DB_PORT`), a dotenv entry (`DB_PORT in /abs/.env:3`), or a file location (`/abs/dbmcp.yaml:12:5`). A required setting nobody set lists every way to set it.
+
+```text
+configuration validation failed:
+  - database.name: required (file path) for the sqlite backend; set --db-name, DB_NAME, or database.name in the config file
+  - database.page_size: must be between 1 and 500 (from /home/me/app/dbmcp.yaml:3:14)
+  - ssh.host: not supported with the sqlite backend (ssh.host from /home/me/app/dbmcp.yaml:5:9; database.backend from --db-backend)
+```
+
+Parse and type errors use the file location as a prefix:
+
+```text
+failed to parse config file /home/me/app/dbmcp.yaml:
+  - /home/me/app/dbmcp.yaml:2:3: database.pasword: unknown field; expected one of `backend`, `host`, `port`, …
+```
+
+Warnings (an unset variable, a skipped `.env`) are logged once logging starts. If loading fails, they are printed before the error.

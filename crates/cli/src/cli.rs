@@ -143,6 +143,21 @@ mod tests {
     use super::{Arguments, command};
 
     #[test]
+    fn config_flags_are_grouped_under_config_file_heading() {
+        for name in ["stdio", "http"] {
+            let help = subcommand_help(name);
+            let heading = help.find("Config File:").expect("Config File heading");
+            for flag in ["--config <PATH>", "--env <PATH>"] {
+                let pos = help.find(flag).unwrap_or_else(|| panic!("{flag} in {name} --help"));
+                assert!(heading < pos, "{flag} must follow the Config File heading:\n{help}");
+            }
+            assert!(help.contains("Path to a YAML config file"));
+            assert!(help.contains("Path to a dotenv file; repeatable, later wins. Replaces the .env beside --config"));
+            assert!(help.find("Logging:").expect("Logging heading") < help.find("--log-level").expect("--log-level"));
+        }
+    }
+
+    #[test]
     fn log_level_is_a_subcommand_option() {
         assert!(
             command("dbmcp", "0")

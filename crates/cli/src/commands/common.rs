@@ -87,11 +87,11 @@ pub(crate) fn explicit<T: Clone>(matches: &ArgMatches, id: &str, value: Option<&
 #[derive(Debug, Args)]
 pub(crate) struct SharedArguments {
     /// Path to a YAML config file
-    #[arg(long = "config", value_name = "PATH")]
+    #[arg(long = "config", value_name = "PATH", help_heading = "Config File")]
     pub(crate) config: Option<PathBuf>,
 
     /// Path to a dotenv file; repeatable, later wins. Replaces the .env beside --config
-    #[arg(long = "env", value_name = "PATH")]
+    #[arg(long = "env", value_name = "PATH", help_heading = "Config File")]
     pub(crate) env: Vec<PathBuf>,
 
     /// Log level

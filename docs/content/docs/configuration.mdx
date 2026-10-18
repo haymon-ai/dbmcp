@@ -1,9 +1,9 @@
 ---
 title: Configuration
-description: Configure dbmcp with CLI flags, environment variables, and backend-specific defaults
+description: Configure dbmcp with CLI flags, environment variables, a config file, and backend-specific defaults
 ---
 
-Database MCP is configured through CLI flags and environment variables. This page documents every available option.
+Database MCP is configured through CLI flags, environment variables, `.env` files, and an optional YAML [config file](/docs/config-file). This page documents every available option.
 
 ## Precedence
 
@@ -11,26 +11,30 @@ Configuration values are resolved in this order (highest priority first):
 
 1. **CLI flags** — explicitly passed on the command line
 2. **Environment variables** — set by the MCP client (via `env` or `envFile` in server config)
-3. **Built-in defaults** — backend-aware defaults described below
+3. **`.env` files** — `--env` files (later wins), or else the `.env` beside `--config`
+4. **Config file** — the YAML file given with `--config`
+5. **Built-in defaults** — backend-aware defaults described below
 
-When the same option is set in multiple places, the higher-priority source wins.
+When the same option is set in multiple places, the higher-priority source wins. A flag's built-in default never overrides a lower layer: `--db-read-only` defaults to `true`, but `read_only: false` in the config file still applies when neither the flag nor `DB_READ_ONLY` is set. See [Config File](/docs/config-file) for the file format, interpolation, and `.env` files.
+
+The **YAML key** column below gives each option's key in the config file; `—` marks flag-only options.
 
 ## Database Connection
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-backend` | `DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
-| `--db-host` | `DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
-| `--db-port` | `DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
-| `--db-user` | `DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
-| `--db-password` | `DB_PASSWORD` | — | Database password |
-| `--db-name` | `DB_NAME` | — | Database name, or file path for SQLite |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--db-backend` | `database.backend` | `DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
+| `--db-host` | `database.host` | `DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
+| `--db-port` | `database.port` | `DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
+| `--db-user` | `database.user` | `DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
+| `--db-password` | `database.password` | `DB_PASSWORD` | — | Database password |
+| `--db-name` | `database.name` | `DB_NAME` | — | Database name, or file path for SQLite |
 
 ### Character Set
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-charset` | `DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--db-charset` | `database.charset` | `DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
 
 ## Backend Defaults
 
@@ -47,13 +51,13 @@ SQLite does not use host, port, or user — only `--db-name` (the file path) is 
 
 ## SSL / TLS
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-ssl` | `DB_SSL` | `false` | Enable SSL for the database connection |
-| `--db-ssl-ca` | `DB_SSL_CA` | — | Path to CA certificate |
-| `--db-ssl-cert` | `DB_SSL_CERT` | — | Path to client certificate |
-| `--db-ssl-key` | `DB_SSL_KEY` | — | Path to client key |
-| `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--db-ssl` | `database.ssl` | `DB_SSL` | `false` | Enable SSL for the database connection |
+| `--db-ssl-ca` | `database.ssl_ca` | `DB_SSL_CA` | — | Path to CA certificate |
+| `--db-ssl-cert` | `database.ssl_cert` | `DB_SSL_CERT` | — | Path to client certificate |
+| `--db-ssl-key` | `database.ssl_key` | `DB_SSL_KEY` | — | Path to client key |
+| `--db-ssl-verify-cert` | `database.ssl_verify_cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
 
 When `--db-ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
 
@@ -61,18 +65,18 @@ When `--db-ssl` is enabled, the server validates that any provided certificate p
 
 Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `--ssh-host` / `SSH_HOST` is set.
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--ssh-host` | `SSH_HOST` | — | SSH server host; enables the tunnel when set |
-| `--ssh-port` | `SSH_PORT` | `22` | SSH server port |
-| `--ssh-user` | `SSH_USER` | — | SSH user |
-| `--ssh-password` | `SSH_PASSWORD` | — | SSH password |
-| `--ssh-key` | `SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
-| `--ssh-key-passphrase` | `SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
-| `--ssh-known-hosts` | `SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
-| `--ssh-strict-host-key-checking` | `SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
-| `--ssh-keepalive-interval` | `SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
-| `--ssh-local-port` | `SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--ssh-host` | `ssh.host` | `SSH_HOST` | — | SSH server host; enables the tunnel when set |
+| `--ssh-port` | `ssh.port` | `SSH_PORT` | `22` | SSH server port |
+| `--ssh-user` | `ssh.user` | `SSH_USER` | — | SSH user |
+| `--ssh-password` | `ssh.password` | `SSH_PASSWORD` | — | SSH password |
+| `--ssh-key` | `ssh.key` | `SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `--ssh-key-passphrase` | `ssh.key_passphrase` | `SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
+| `--ssh-known-hosts` | `ssh.known_hosts` | `SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
+| `--ssh-strict-host-key-checking` | `ssh.strict_host_key_checking` | `SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
+| `--ssh-keepalive-interval` | `ssh.keepalive_interval` | `SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
+| `--ssh-local-port` | `ssh.local_port` | `SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
 
 `SSH_USER` and one of `SSH_PASSWORD` / `SSH_KEY` are required with `SSH_HOST`. Setting any other `SSH_*` option without `SSH_HOST` is a startup error, as is `SSH_KEY_PASSPHRASE` without `SSH_KEY`. A leading `~` in `SSH_KEY` and `SSH_KNOWN_HOSTS` expands to your home directory; when no home directory can be determined, `SSH_KNOWN_HOSTS` must be set explicitly (unless the host-key policy is `no`).
 
@@ -159,7 +163,7 @@ Compare the fingerprint with one obtained out-of-band (e.g. from the server's co
 
 **Unsupported key types** — DSA, FIDO (`sk-ecdsa-…`, `sk-ssh-ed25519-…`) keys, and certificates cannot be loaded. Use an Ed25519, ECDSA, or RSA key.
 
-**`SSH_HOST is not supported with the sqlite backend`** — SQLite is a local file; remove the `SSH_*` settings.
+**`ssh.host: not supported with the sqlite backend`** — SQLite is a local file; remove the `SSH_*` settings (or the `ssh:` section of the config file).
 
 **Tool errors ending in `(SSH tunnel: …)`** — when the database cannot be reached and the tunnel has an unresolved failure (connect timeout, authentication, host key, channel open, or a lost session), the cause is appended to the tool error, e.g. `… (SSH tunnel: SSH authentication failed for deploy@bastion.example.com:22)`. Other errors (SQL errors, read-only rejections) never get the suffix. It disappears once a connection through the tunnel succeeds. Failed connects are also logged with their full error chain at `error` level; a lost session is logged at `warn`.
 
@@ -169,14 +173,24 @@ Compare the fingerprint with one obtained out-of-band (e.g. from the server's co
 
 ## Server Behavior
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-read-only` | `DB_READ_ONLY` | `true` | Enable read-only mode |
-| `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
-| `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
-| `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
-| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
-| `--log-level` | `LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--db-read-only` | `database.read_only` | `DB_READ_ONLY` | `true` | Enable read-only mode |
+| `--db-max-pool-size` | `database.max_pool_size` | `DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
+| `--db-connection-timeout` | `database.connection_timeout` | `DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
+| `--db-query-timeout` | `database.query_timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
+| `--db-page-size` | `database.page_size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
+| `--log-level` | `log_level` | `LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+
+<Callout title="--log-level moved after the subcommand">
+`--log-level` is now an option of `stdio` and `http`, like every other flag.
+
+```bash
+dbmcp --log-level debug stdio   # before: no longer parses
+dbmcp stdio --log-level debug   # now
+LOG_LEVEL=debug dbmcp stdio     # unchanged
+```
+</Callout>
 
 > **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `--db-read-only=false` or `DB_READ_ONLY=false` to enable write tools.
 
@@ -186,14 +200,14 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 
 These options are available only when running in HTTP mode (`dbmcp http`):
 
-| CLI Flag | Default | Description |
-|----------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind host for the HTTP server |
-| `--port` | `9001` | Bind port for the HTTP server |
-| `--allowed-origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
-| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
-| `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
-| `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
+| CLI Flag | YAML key | Default | Description |
+|----------|----------|---------|-------------|
+| `--host` | `http.host` | `127.0.0.1` | Bind host for the HTTP server |
+| `--port` | `http.port` | `9001` | Bind port for the HTTP server |
+| `--allowed-origins` | `http.allowed_origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
+| `--allowed-hosts` | `http.allowed_hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
+| `--auth-token` | `http.auth_token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
+| `--dangerously-allow-unauthenticated` | `http.allow_unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
 
 > **Security note**: Binding a non-loopback host (e.g. `--host 0.0.0.0`) without `HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
 
@@ -205,13 +219,13 @@ A transport subcommand is required — running `dbmcp` with no subcommand prints
 
 Database MCP can rewrite detected PII spans inside query tool output. The feature is **opt-in and off by default** — applies to query tool response payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex recognizers only, no NER pass). It is **not** applied to logs, successful schema-discovery responses, or tool arguments. See [Features](/docs/features#pii-redaction) for the supported entity list.
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
-| `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
-| `--pii-categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
-| `--pii-ner` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
-| `--pii-ner-model` | `PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
+| CLI Flag | YAML key | Environment Variable | Default | Description |
+|----------|----------|---------------------|---------|-------------|
+| `--pii` | `pii.enabled` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
+| `--pii-operator` | `pii.operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
+| `--pii-categories` | `pii.categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
+| `--pii-ner` | `pii.ner_enabled` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
+| `--pii-ner-model` | `pii.ner_model` | `PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
 
 ### Operator Values
 
@@ -529,6 +543,8 @@ Using Docker:
 Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from your shell environment instead of hardcoding them.
 
 ### Environment Variables vs. `envFile`
+
+To keep settings out of the client config entirely, pass [`--config` and `--env`](/docs/config-file) in `args` instead; dbmcp reads the files itself, so this works in every client.
 
 | Feature | Claude Code | Claude Desktop | Cursor | Windsurf |
 |---------|-------------|----------------|--------|----------|
