@@ -19,11 +19,15 @@ pub struct ConfigClient {
 
 /// Writes `yaml` to `dbmcp.yaml` and connects to `dbmcp stdio --config` it.
 ///
-/// `env` is applied after every inherited `DB_*` var is removed.
-pub async fn connect(yaml: &str, env: &[(&str, &str)]) -> ConfigClient {
+/// `files` are written beside the config as `(name, contents)`. `env` is
+/// applied after every inherited `DB_*` var is removed.
+pub async fn connect(yaml: &str, files: &[(&str, &str)], env: &[(&str, &str)]) -> ConfigClient {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("dbmcp.yaml");
     std::fs::write(&path, yaml).expect("write config");
+    for (name, contents) in files {
+        std::fs::write(dir.path().join(name), contents).expect("write file");
+    }
 
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
     command.arg("stdio").arg("--config").arg(&path);

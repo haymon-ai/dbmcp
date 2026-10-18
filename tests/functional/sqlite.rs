@@ -2160,7 +2160,7 @@ fn config_yaml(path: &str, read_only: bool) -> String {
 #[tokio::test]
 async fn test_config_file_supplies_connection_settings() {
     let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
-    let client = config_file::connect(&config_yaml(&path, true), &[]).await;
+    let client = config_file::connect(&config_yaml(&path, true), &[], &[]).await;
     let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
     assert_eq!(
         result["rows"],
@@ -2175,7 +2175,7 @@ async fn test_config_file_supplies_connection_settings() {
 async fn test_env_overrides_config_file() {
     let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
     let env = [("DB_NAME", path.as_str()), ("DB_READ_ONLY", "false")];
-    let client = config_file::connect(&config_yaml("/nonexistent/other.db", true), &env).await;
+    let client = config_file::connect(&config_yaml("/nonexistent/other.db", true), &[], &env).await;
     let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
     assert_eq!(
         result["rows"],
@@ -2212,4 +2212,25 @@ async fn test_invalid_config_file_fails_startup_with_exit_code_1() {
         .await
         .expect("run dbmcp");
     assert_eq!(output.status.code(), Some(2), "repeated --config is a usage error");
+}
+
+#[tokio::test]
+async fn test_dotenv_beside_config_file_is_loaded() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let dotenv = format!("DB_NAME='{path}'\nDB_READ_ONLY=true\n");
+    let yaml = "database:\n  backend: sqlite\n";
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "dotenv DB_READ_ONLY must apply");
+    client.shutdown().await;
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[("DB_READ_ONLY", "false")]).await;
+    assert!(client.exposes_write_query().await, "process env must beat dotenv");
+    client.shutdown().await;
 }

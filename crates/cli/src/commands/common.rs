@@ -6,21 +6,24 @@
 //! is defined exactly once and embedded via `#[command(flatten)]` wherever
 //! needed. Each group converts into its [`ConfigLayer`] section, keeping
 //! only values set on the command line or through an env var, and [`load`]
-//! merges that layer over the config file. Also provides [`create_server`],
+//! fills the gaps from dotenv files and merges the result over the config
+//! file. Also provides [`create_server`],
 //! the backend-selection factory that maps a configured [`DatabaseBackend`]
 //! onto the matching concrete adapter, tunnelling through SSH when
 //! configured, and [`flag_conventions`], which shapes every flag by its
 //! value type.
 
 use std::any::TypeId;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use clap::builder::BoolishValueParser;
 use clap::parser::ValueSource;
-use clap::{Arg, ArgAction, ArgMatches, Args};
+use clap::{Arg, ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches};
 use dbmcp_config::{
-    Config, ConfigLayer, DatabaseBackend, DatabaseConfig, DatabaseLayer, LoadError, LogLevel, PiiCategory, PiiConfig,
-    PiiLayer, PiiOperator, Resolved, Secret, SshLayer, StrictHostKeyChecking, Transport, ssh,
+    Config, ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
+    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Resolved, Secret, Sources, SshLayer, StrictHostKeyChecking,
+    Transport, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -64,15 +67,20 @@ pub(crate) fn flag_conventions(arg: Arg) -> Arg {
     }
 }
 
+/// Returns `true` when argument `id` was set on the command line or via its env var.
+fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
+    matches!(
+        matches.value_source(id),
+        Some(ValueSource::CommandLine | ValueSource::EnvVariable)
+    )
+}
+
 /// Returns `value` only when argument `id` was set on the command line or via its env var.
 ///
 /// Values that came from a clap default are dropped, so lower layers (the
-/// config file, then the built-in defaults) can fill them.
+/// dotenv files, the config file, then the built-in defaults) can fill them.
 pub(crate) fn explicit<T: Clone>(matches: &ArgMatches, id: &str, value: Option<&T>) -> Option<T> {
-    match matches.value_source(id) {
-        Some(ValueSource::CommandLine | ValueSource::EnvVariable) => value.cloned(),
-        _ => None,
-    }
+    is_explicit(matches, id).then(|| value.cloned()).flatten()
 }
 
 /// Config-file and logging flags shared by every transport subcommand.
@@ -81,6 +89,10 @@ pub(crate) struct SharedArguments {
     /// Path to a YAML config file
     #[arg(long = "config", value_name = "PATH")]
     pub(crate) config: Option<PathBuf>,
+
+    /// Path to a dotenv file; repeatable, later wins. Replaces the .env beside --config
+    #[arg(long = "env", value_name = "PATH")]
+    pub(crate) env: Vec<PathBuf>,
 
     /// Log level
     #[arg(
@@ -93,14 +105,90 @@ pub(crate) struct SharedArguments {
     pub(crate) log_level: LogLevel,
 }
 
-/// Merges `layer` over the `--config` file and resolves the result.
+/// Converts a parsed subcommand and its matches into its explicit [`ConfigLayer`].
+pub(crate) type ToLayer<C> = fn(&C, &ArgMatches) -> ConfigLayer;
+
+/// Loads the configuration for the parsed subcommand `cmd`.
+///
+/// Reads the `--config` and dotenv files, fills every flag not set on the
+/// command line or via its env var from a dotenv variable of the same name,
+/// and merges the result over the config file. Returns the outcome together
+/// with every warning collected, including on failure.
+pub(crate) fn load<C: CommandFactory + FromArgMatches>(
+    cmd: &C,
+    matches: &ArgMatches,
+    shared: &SharedArguments,
+    transport: Transport,
+    to_layer: ToLayer<C>,
+) -> (Result<Resolved, LoadError>, Vec<ConfigWarning>) {
+    let mut warnings = Vec::new();
+    let result = try_load(cmd, matches, shared, transport, to_layer, &mut warnings);
+    (result, warnings)
+}
+
+fn try_load<C: CommandFactory + FromArgMatches>(
+    cmd: &C,
+    matches: &ArgMatches,
+    shared: &SharedArguments,
+    transport: Transport,
+    to_layer: ToLayer<C>,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<Resolved, LoadError> {
+    let process_env = |name: &str| std::env::var(name).ok();
+    let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
+    let dotenv = dotenv_layer(matches, sources.dotenv(), to_layer)?;
+    sources.resolve(to_layer(cmd, matches).or(dotenv), transport, ssh::home_dir().as_deref())
+}
+
+/// Returns the layer of flags whose env var is defined only in a dotenv file.
+///
+/// Each value is parsed by re-running clap on `--<flag>=<value>`, so it
+/// goes through exactly the parser its env var would.
 ///
 /// # Errors
 ///
-/// Returns [`LoadError`] when the config file cannot be read or parsed, or
-/// when the merged configuration fails validation.
-pub(crate) fn load(shared: &SharedArguments, layer: ConfigLayer, transport: Transport) -> Result<Resolved, LoadError> {
-    dbmcp_config::load(layer, shared.config.as_deref(), transport, ssh::home_dir().as_deref())
+/// Returns [`LoadError::Env`] listing every invalid value from the first
+/// env file that has one.
+fn dotenv_layer<C: CommandFactory + FromArgMatches>(
+    matches: &ArgMatches,
+    dotenv: &Dotenv,
+    to_layer: ToLayer<C>,
+) -> Result<ConfigLayer, LoadError> {
+    let mut layer = ConfigLayer::default();
+    let mut errors: Vec<(PathBuf, String)> = Vec::new();
+    for arg in C::command().get_arguments() {
+        let (Some(env), Some(long)) = (arg.get_env().and_then(OsStr::to_str), arg.get_long()) else {
+            continue;
+        };
+        if is_explicit(matches, arg.get_id().as_str()) {
+            continue;
+        }
+        let Some(var) = dotenv.get(env) else {
+            continue;
+        };
+        let parsed = C::command()
+            .no_binary_name(true)
+            .try_get_matches_from([format!("--{long}={}", var.value)])
+            .and_then(|matches| C::from_arg_matches(&matches).map(|cmd| to_layer(&cmd, &matches)));
+        match parsed {
+            Ok(var_layer) => layer = layer.or(var_layer),
+            Err(_) => errors.push((
+                var.path.clone(),
+                format!("{}: {env}: invalid value for --{long}", var.location()),
+            )),
+        }
+    }
+    match errors.first() {
+        None => Ok(layer),
+        Some((path, _)) => Err(LoadError::Env {
+            path: path.clone(),
+            errors: errors
+                .iter()
+                .filter(|(p, _)| p == path)
+                .map(|(_, error)| error.clone())
+                .collect(),
+        }),
+    }
 }
 
 /// Shared database connection flags embedded in transport subcommands.

@@ -4110,7 +4110,7 @@ fn db_endpoint() -> (String, String) {
 #[tokio::test]
 async fn test_config_file_supplies_connection_settings() {
     let (host, port) = db_endpoint();
-    let client = config_file::connect(&config_yaml(&host, &port), &[]).await;
+    let client = config_file::connect(&config_yaml(&host, &port), &[], &[]).await;
     let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
     assert_eq!(
         result["rows"],
@@ -4129,7 +4129,7 @@ async fn test_env_overrides_config_file() {
         ("DB_PORT", port.as_str()),
         ("DB_READ_ONLY", "false"),
     ];
-    let client = config_file::connect(&config_yaml("invalid.invalid", "1"), &env).await;
+    let client = config_file::connect(&config_yaml("invalid.invalid", "1"), &[], &env).await;
     let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
     assert_eq!(
         result["rows"],

@@ -10,7 +10,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::{ArgMatches, Args, Parser};
 use dbmcp_config::{
-    AllowedOrigins, Config, ConfigLayer, HttpConfig, HttpLayer, LoadError, Resolved, Secret, Transport,
+    AllowedOrigins, Config, ConfigLayer, ConfigWarning, HttpConfig, HttpLayer, LoadError, Resolved, Secret, Transport,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
@@ -163,13 +163,11 @@ impl HttpCommand {
         }
     }
 
-    /// Merges these flags over the `--config` file and resolves the result.
+    /// Loads the configuration from these flags, dotenv files, and `--config`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`LoadError`] when loading or validation fails.
-    pub(crate) fn load(&self, matches: &ArgMatches) -> Result<Resolved, LoadError> {
-        common::load(&self.shared, self.layer(matches), Transport::Http)
+    /// Returns the outcome together with every warning collected.
+    pub(crate) fn load(&self, matches: &ArgMatches) -> (Result<Resolved, LoadError>, Vec<ConfigWarning>) {
+        common::load(self, matches, &self.shared, Transport::Http, Self::layer)
     }
 
     /// Builds the server for `config` and runs the HTTP transport.
@@ -432,6 +430,7 @@ mod tests {
         HttpCommand::from_arg_matches(&matches)
             .expect("from matches")
             .load(&matches)
+            .0
     }
 
     #[test]

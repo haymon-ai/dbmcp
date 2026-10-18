@@ -4,7 +4,7 @@
 //! Cursor, and other MCP clients that communicate via stdio.
 
 use clap::{ArgMatches, Parser};
-use dbmcp_config::{Config, ConfigLayer, HttpLayer, LoadError, Resolved, Transport};
+use dbmcp_config::{Config, ConfigLayer, ConfigWarning, HttpLayer, LoadError, Resolved, Transport};
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
@@ -46,13 +46,11 @@ impl StdioCommand {
         }
     }
 
-    /// Merges these flags over the `--config` file and resolves the result.
+    /// Loads the configuration from these flags, dotenv files, and `--config`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`LoadError`] when loading or validation fails.
-    pub(crate) fn load(&self, matches: &ArgMatches) -> Result<Resolved, LoadError> {
-        common::load(&self.shared, self.layer(matches), Transport::Stdio)
+    /// Returns the outcome together with every warning collected.
+    pub(crate) fn load(&self, matches: &ArgMatches) -> (Result<Resolved, LoadError>, Vec<ConfigWarning>) {
+        common::load(self, matches, &self.shared, Transport::Stdio, Self::layer)
     }
 
     /// Builds the server for `config` and runs the stdio transport.
@@ -98,7 +96,7 @@ mod tests {
     use std::path::PathBuf;
 
     use clap::{CommandFactory, FromArgMatches};
-    use dbmcp_config::{ConfigError, DatabaseBackend, DatabaseConfig, LogLevel};
+    use dbmcp_config::{ConfigError, DatabaseBackend, DatabaseConfig, LogLevel, PiiCategory, Secret};
 
     use super::*;
 
@@ -122,6 +120,7 @@ mod tests {
         StdioCommand::from_arg_matches(&matches)
             .expect("from matches")
             .load(&matches)
+            .0
     }
 
     /// Writes `yaml` to a fresh `dbmcp.yaml` and returns its directory and path.
@@ -200,6 +199,100 @@ mod tests {
         }
         assert_eq!(env.expect("valid"), LogLevel::Error, "env beats file");
         assert_eq!(flag.expect("valid"), LogLevel::Trace, "flag beats env");
+
+        std::fs::write(path.with_file_name(".env"), "LOG_LEVEL=debug\n").expect("write .env");
+        assert_eq!(
+            load(&with_config(&path, &[])).expect("valid").log_level,
+            LogLevel::Debug,
+            "dotenv beats file"
+        );
+        // SAFETY: only this test touches LOG_LEVEL.
+        unsafe {
+            std::env::set_var("LOG_LEVEL", "error");
+        }
+        let env = load(&with_config(&path, &[])).map(|r| r.log_level);
+        // SAFETY: only this test touches LOG_LEVEL.
+        unsafe {
+            std::env::remove_var("LOG_LEVEL");
+        }
+        assert_eq!(env.expect("valid"), LogLevel::Error, "process env beats dotenv");
+    }
+
+    #[test]
+    fn dotenv_beside_config_fills_unset_flags() {
+        let (dir, path) = config_file("database:\n  host: file-host\n  user: file-user\n");
+        std::fs::write(
+            dir.path().join(".env"),
+            "DB_PASSWORD=from-dotenv\nDB_HOST=dotenv-host\nDB_READ_ONLY=no\nPII_CATEGORIES=financial,contact\n",
+        )
+        .expect("write .env");
+        let config = load(&with_config(&path, &["--db-host", "flag-host"]))
+            .expect("valid")
+            .config;
+        let db = &config.database;
+        assert_eq!(db.password.as_ref().map(Secret::expose), Some("from-dotenv"));
+        assert_eq!(db.host, "flag-host", "flag beats dotenv");
+        assert_eq!(db.user, "file-user", "file fills what dotenv leaves");
+        assert!(!db.read_only, "dotenv values use the env parser");
+        assert_eq!(
+            config.pii.categories,
+            Some(vec![PiiCategory::Financial, PiiCategory::Contact])
+        );
+    }
+
+    #[test]
+    fn env_files_override_in_order_and_replace_default_dotenv() {
+        let (dir, path) = config_file("");
+        std::fs::write(dir.path().join(".env"), "DB_USER=default\nDB_NAME=default\n").expect("write .env");
+        let a = dir.path().join("a.env");
+        let b = dir.path().join("b.env");
+        std::fs::write(&a, "DB_USER=a\nDB_HOST=a\n").expect("write a");
+        std::fs::write(&b, "DB_USER=b\n").expect("write b");
+        let (a, b) = (a.to_str().expect("utf-8"), b.to_str().expect("utf-8"));
+        let db = load(&with_config(&path, &["--env", a, "--env", b]))
+            .expect("valid")
+            .config
+            .database;
+        assert_eq!(db.user, "b");
+        assert_eq!(db.host, "a");
+        assert_eq!(db.name, None, "default .env is ignored with --env");
+    }
+
+    #[test]
+    fn invalid_dotenv_value_reports_location_without_value() {
+        let (dir, path) = config_file("");
+        let env = dir.path().join(".env");
+        std::fs::write(&env, "\nDB_PORT=not-a-port\nDB_READ_ONLY=\n").expect("write .env");
+        let error = load(&with_config(&path, &[])).expect_err("invalid value");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "failed to load env file {0}:\n  - {0}:2: DB_PORT: invalid value for --db-port\n  - {0}:3: DB_READ_ONLY: invalid value for --db-read-only",
+                env.display()
+            )
+        );
+        assert!(!error.to_string().contains("not-a-port"));
+    }
+
+    #[test]
+    fn load_returns_warnings_on_failure() {
+        let (dir, path) = config_file("database:\n  pasword: x\n");
+        let env = dir.path().join("x.env");
+        std::fs::write(&env, "A=${UNSET_IN_TEST}\n").expect("write env");
+        clear_env();
+        let args = with_config(&path, &["--env", env.to_str().expect("utf-8")]);
+        let matches = StdioCommand::command().try_get_matches_from(&args).expect("parse");
+        let (result, warnings) = StdioCommand::from_arg_matches(&matches)
+            .expect("from matches")
+            .load(&matches);
+        assert!(matches!(result, Err(LoadError::Parse { .. })));
+        assert_eq!(
+            warnings,
+            [ConfigWarning::UnsetVariable {
+                name: "UNSET_IN_TEST".into(),
+                location: format!("{}:1", env.display())
+            }]
+        );
     }
 
     #[test]

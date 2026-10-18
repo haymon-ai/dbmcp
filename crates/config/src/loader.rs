@@ -1,8 +1,14 @@
 //! Loading the YAML config file and layering it under the CLI.
 //!
-//! [`load`] is the single entry point: it reads the optional config file,
-//! stacks the CLI layer on top, and resolves the result into a validated
-//! [`Config`](crate::Config). Each stage fails fast with a [`LoadError`].
+//! [`Sources::read`] reads the optional config file and the dotenv files;
+//! the caller then folds the dotenv variables into its CLI layer and calls
+//! [`Sources::resolve`], which stacks that layer over the config file and
+//! resolves the result into a validated [`Config`](crate::Config). Each
+//! stage fails fast with a [`LoadError`]; non-fatal problems are collected
+//! as [`ConfigWarning`]s.
+//!
+//! Without `--env` files, a `.env` beside the config file is loaded when it
+//! exists. Without a config file there is no default `.env`.
 //!
 //! Paths written in the file expand a leading `~` and then resolve
 //! relative to the file's directory, so the file means the same thing
@@ -11,9 +17,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::database::{DatabaseBackend, DatabaseConfig};
+use crate::dotenv::Dotenv;
 use crate::error::ConfigErrors;
+use crate::interpolate::Lookup;
 use crate::layer::{ConfigLayer, Resolved, Transport};
 use crate::ssh;
+use crate::warning::ConfigWarning;
 
 /// Failure of one [`load`] stage.
 ///
@@ -39,60 +48,155 @@ pub enum LoadError {
         message: String,
     },
 
+    /// A dotenv file could not be read or has malformed entries.
+    #[error("failed to load env file {}:{}", path.display(), Bullets(errors))]
+    Env {
+        /// Absolute path of the env file.
+        path: PathBuf,
+        /// One message per problem, e.g. `/abs/.env:3: reason`.
+        errors: Vec<String>,
+    },
+
     /// The merged configuration violates one or more rules.
     #[error("configuration validation failed:{}", Bullets(.0))]
     Invalid(#[from] ConfigErrors),
 }
 
-struct Bullets<'a>(&'a ConfigErrors);
+struct Bullets<'a, T>(&'a [T]);
 
-impl std::fmt::Display for Bullets<'_> {
+impl<T: std::fmt::Display> std::fmt::Display for Bullets<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for error in self.0.iter() {
+        for error in self.0 {
             write!(f, "\n  - {error}")?;
         }
         Ok(())
     }
 }
 
-/// Merges `cli` over the optional config `file` and resolves the result.
-///
-/// A relative `file` path resolves against the current directory. Path
-/// settings read from the file resolve against the file's directory, after
-/// expanding a leading `~` against `home`; `database.name` does so only when
-/// it came from the file and the merged backend is `sqlite`. `home` is also
-/// forwarded to [`ConfigLayer::resolve`].
-///
-/// # Errors
-///
-/// Returns [`LoadError::Read`] when `file` is missing, not a regular file,
-/// or unreadable; [`LoadError::Parse`] when it is not a valid config
-/// document; and [`LoadError::Invalid`] when the merged configuration
-/// fails validation.
-pub fn load(
-    cli: ConfigLayer,
-    file: Option<&Path>,
-    transport: Transport,
-    home: Option<&Path>,
-) -> Result<Resolved, LoadError> {
-    let Some(file) = file else {
-        return Ok(cli.resolve(transport, home)?);
-    };
-    let (path, mut file_layer) = read_file(file)?;
-    let dir = path.parent().unwrap_or(Path::new("/"));
-    resolve_file_paths(&mut file_layer, dir, home);
+/// Raw contents of the config file.
+#[derive(Debug)]
+struct ConfigFile {
+    /// Absolute path.
+    path: PathBuf,
+    /// File contents.
+    text: String,
+}
 
-    let name_from_file = cli.database.name.is_none() && file_layer.database.name.is_some();
-    let mut merged = cli.or(file_layer);
-    let backend = merged.database.backend.unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
-    if name_from_file
-        && backend == DatabaseBackend::Sqlite
-        && let Some(name) = &mut merged.database.name
-        && !is_sqlite_special_name(name)
-    {
-        *name = resolve_path_string(name, dir, home);
+/// Config file and dotenv variables read by [`Sources::read`].
+#[derive(Debug)]
+pub struct Sources {
+    file: Option<ConfigFile>,
+    dotenv: Dotenv,
+}
+
+impl Sources {
+    /// Reads the optional config file and the dotenv files.
+    ///
+    /// `env_files` are loaded in order, later files overriding earlier ones;
+    /// when empty, the `.env` beside `config` is loaded if it exists.
+    /// Relative paths resolve against the current directory. Dotenv values
+    /// interpolate against `process_env` first, then earlier keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::Read`] when `config` is missing, not a regular
+    /// file, or unreadable, and [`LoadError::Env`] when an explicit env file
+    /// cannot be read or any loaded env file has malformed entries.
+    pub fn read(
+        config: Option<&Path>,
+        env_files: &[PathBuf],
+        process_env: Lookup<'_>,
+        warnings: &mut Vec<ConfigWarning>,
+    ) -> Result<Self, LoadError> {
+        let file = config
+            .map(|path| {
+                read_text(path)
+                    .map(|(path, text)| ConfigFile { path, text })
+                    .map_err(|(path, reason)| LoadError::Read { path, reason })
+            })
+            .transpose()?;
+
+        let mut dotenv = Dotenv::default();
+        for path in env_files {
+            let (path, text) = read_text(path).map_err(|(path, reason)| LoadError::Env {
+                path,
+                errors: vec![reason],
+            })?;
+            parse_dotenv(&mut dotenv, &text, path, process_env, warnings)?;
+        }
+        if env_files.is_empty()
+            && let Some(file) = &file
+        {
+            let path = file.path.with_file_name(".env");
+            match std::fs::metadata(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                _ => match read_text(&path) {
+                    Ok((path, text)) => parse_dotenv(&mut dotenv, &text, path, process_env, warnings)?,
+                    Err((path, reason)) => warnings.push(ConfigWarning::SkippedEnvFile { path, reason }),
+                },
+            }
+        }
+        Ok(Self { file, dotenv })
     }
-    Ok(merged.resolve(transport, home)?)
+
+    /// Returns the variables of every loaded dotenv file.
+    #[must_use]
+    pub fn dotenv(&self) -> &Dotenv {
+        &self.dotenv
+    }
+
+    /// Merges `cli` over the config file and resolves the result.
+    ///
+    /// Path settings read from the file resolve against the file's
+    /// directory, after expanding a leading `~` against `home`;
+    /// `database.name` does so only when it came from the file and the
+    /// merged backend is `sqlite`. `home` is also forwarded to
+    /// [`ConfigLayer::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::Parse`] when the config file is not a valid
+    /// config document and [`LoadError::Invalid`] when the merged
+    /// configuration fails validation.
+    pub fn resolve(&self, cli: ConfigLayer, transport: Transport, home: Option<&Path>) -> Result<Resolved, LoadError> {
+        let Some(file) = &self.file else {
+            return Ok(cli.resolve(transport, home)?);
+        };
+        let mut file_layer = parse(&file.text).map_err(|message| LoadError::Parse {
+            path: file.path.clone(),
+            message,
+        })?;
+        let dir = file.path.parent().unwrap_or(Path::new("/"));
+        resolve_file_paths(&mut file_layer, dir, home);
+
+        let name_from_file = cli.database.name.is_none() && file_layer.database.name.is_some();
+        let mut merged = cli.or(file_layer);
+        let backend = merged.database.backend.unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
+        if name_from_file
+            && backend == DatabaseBackend::Sqlite
+            && let Some(name) = &mut merged.database.name
+            && !is_sqlite_special_name(name)
+        {
+            *name = resolve_path_string(name, dir, home);
+        }
+        Ok(merged.resolve(transport, home)?)
+    }
+}
+
+/// Parses one dotenv file into `dotenv`, failing on any malformed entry.
+fn parse_dotenv(
+    dotenv: &mut Dotenv,
+    text: &str,
+    path: PathBuf,
+    process_env: Lookup<'_>,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<(), LoadError> {
+    let errors = dotenv.parse(text, &path, process_env, warnings);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(LoadError::Env { path, errors })
+    }
 }
 
 /// Resolves every path setting of a file layer against `dir`.
@@ -133,21 +237,24 @@ fn is_sqlite_special_name(name: &str) -> bool {
     name.is_empty() || name == ":memory:" || name.starts_with("file:")
 }
 
-/// Reads and parses the config file at `path`, returning its absolute path.
-fn read_file(path: &Path) -> Result<(PathBuf, ConfigLayer), LoadError> {
-    let read_error = |path: PathBuf, reason: String| LoadError::Read { path, reason };
-    let path = std::path::absolute(path).map_err(|e| read_error(path.to_path_buf(), e.to_string()))?;
-    let metadata = std::fs::metadata(&path).map_err(|e| read_error(path.clone(), e.to_string()))?;
+/// Reads the regular file at `path`, returning its absolute path and contents.
+///
+/// On failure returns the absolute path (when known) and the reason.
+fn read_text(path: &Path) -> Result<(PathBuf, String), (PathBuf, String)> {
+    let path = std::path::absolute(path).map_err(|e| (path.to_path_buf(), e.to_string()))?;
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(e) => return Err((path, e.to_string())),
+    };
     if metadata.is_dir() {
-        return Err(read_error(path, "is a directory".into()));
+        return Err((path, "is a directory".into()));
     }
     if !metadata.is_file() {
-        return Err(read_error(path, "not a regular file".into()));
+        return Err((path, "not a regular file".into()));
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| read_error(path.clone(), e.to_string()))?;
-    match parse(&text) {
-        Ok(layer) => Ok((path, layer)),
-        Err(message) => Err(LoadError::Parse { path, message }),
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok((path, text)),
+        Err(e) => Err((path, e.to_string())),
     }
 }
 
@@ -168,6 +275,20 @@ mod tests {
 
     use super::*;
     use crate::{ConfigError, LogLevel, PiiCategory, StrictHostKeyChecking};
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    /// Reads `file` without env files and resolves `cli` over it.
+    fn load(
+        cli: ConfigLayer,
+        file: Option<&Path>,
+        transport: Transport,
+        home: Option<&Path>,
+    ) -> Result<Resolved, LoadError> {
+        Sources::read(file, &[], &no_env, &mut Vec::new())?.resolve(cli, transport, home)
+    }
 
     fn parse_ok(text: &str) -> ConfigLayer {
         parse(text).unwrap_or_else(|e| panic!("{text:?} must parse: {e}"))
@@ -459,7 +580,7 @@ ssh:
              pii:\n  ner_model: ~/ner\n\
              ssh:\n  host: bastion\n  user: deploy\n  password: pw\n  known_hosts: ~/kh\n",
         );
-        let mut layer = read_file(&path).expect("parse").1;
+        let mut layer = parse(&std::fs::read_to_string(&path).expect("read")).expect("parse");
         layer.ssh.key = Some(PathBuf::from("~/id"));
         resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()));
         let db = &layer.database;
@@ -544,6 +665,125 @@ ssh:
             config.database.name.as_deref().map(PathBuf::from),
             Some(home().join("app.db"))
         );
+    }
+
+    fn read_sources(config: Option<&Path>, env_files: &[PathBuf]) -> (Result<Sources, LoadError>, Vec<ConfigWarning>) {
+        let mut warnings = Vec::new();
+        let sources = Sources::read(config, env_files, &no_env, &mut warnings);
+        (sources, warnings)
+    }
+
+    fn dotenv_value(sources: &Sources, key: &str) -> Option<String> {
+        sources.dotenv().get(key).map(|var| var.value.clone())
+    }
+
+    #[test]
+    fn default_env_beside_config_is_loaded() {
+        let (dir, path) = config_dir("");
+        std::fs::write(dir.path().join(".env"), "DB_PASSWORD=from-dotenv\n").expect("write .env");
+        let (sources, warnings) = read_sources(Some(&path), &[]);
+        let sources = sources.expect("valid");
+        assert_eq!(dotenv_value(&sources, "DB_PASSWORD").as_deref(), Some("from-dotenv"));
+        let var = sources.dotenv().get("DB_PASSWORD").expect("var");
+        assert_eq!(var.path, dir.path().join(".env"));
+        assert_eq!(var.line, 1);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn missing_default_env_is_skipped_silently() {
+        let (_dir, path) = config_dir("");
+        let (sources, warnings) = read_sources(Some(&path), &[]);
+        assert!(sources.expect("valid").dotenv().get("DB_PASSWORD").is_none());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn unreadable_default_env_warns_and_is_skipped() {
+        let (dir, path) = config_dir("");
+        std::fs::create_dir(dir.path().join(".env")).expect(".env dir");
+        let (sources, warnings) = read_sources(Some(&path), &[]);
+        sources.expect("unreadable default .env is not fatal");
+        assert_eq!(
+            warnings,
+            [ConfigWarning::SkippedEnvFile {
+                path: dir.path().join(".env"),
+                reason: "is a directory".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn explicit_env_files_override_in_order_and_disable_default() {
+        let (dir, path) = config_dir("");
+        std::fs::write(dir.path().join(".env"), "A=default\nD=default\n").expect("write .env");
+        let a = dir.path().join("a.env");
+        let b = dir.path().join("b.env");
+        std::fs::write(&a, "A=a\nB=a\n").expect("write a");
+        std::fs::write(&b, "B=b\nC=${A}\n").expect("write b");
+        let (sources, _) = read_sources(Some(&path), &[a, b]);
+        let sources = sources.expect("valid");
+        assert_eq!(dotenv_value(&sources, "A").as_deref(), Some("a"));
+        assert_eq!(dotenv_value(&sources, "B").as_deref(), Some("b"), "later file wins");
+        assert_eq!(dotenv_value(&sources, "C").as_deref(), Some("a"));
+        assert_eq!(dotenv_value(&sources, "D"), None, "--env disables the default .env");
+    }
+
+    #[test]
+    fn env_file_without_config_is_valid() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let env = dir.path().join("x.env");
+        std::fs::write(&env, "A=1\n").expect("write env");
+        let (sources, _) = read_sources(None, &[env]);
+        assert_eq!(dotenv_value(&sources.expect("valid"), "A").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn no_default_env_without_config() {
+        let (sources, _) = read_sources(None, &[]);
+        assert!(sources.expect("valid").dotenv().get("PATH").is_none());
+    }
+
+    #[test]
+    fn missing_explicit_env_file_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("missing.env");
+        let (sources, _) = read_sources(None, std::slice::from_ref(&missing));
+        let error = sources.expect_err("missing --env");
+        assert!(matches!(&error, LoadError::Env { path, .. } if *path == missing));
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("failed to load env file {}:\n  - ", missing.display())),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn malformed_env_file_errors_list_locations_without_values() {
+        let (dir, path) = config_dir("");
+        let env = dir.path().join(".env");
+        std::fs::write(&env, "OK=1\nDB_PASSWORD='hunter2\n").expect("write .env");
+        let (sources, _) = read_sources(Some(&path), &[]);
+        let error = sources.expect_err("malformed");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "failed to load env file {0}:\n  - {0}:2: unterminated quoted value",
+                env.display()
+            )
+        );
+        assert!(!error.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn config_read_error_comes_before_env_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (sources, _) = read_sources(
+            Some(&dir.path().join("missing.yaml")),
+            &[dir.path().join("missing.env")],
+        );
+        assert!(matches!(sources, Err(LoadError::Read { .. })));
     }
 
     #[cfg(unix)]
