@@ -12,10 +12,8 @@ use crate::error::ConfigError;
 /// Origin of one merged configuration value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// A command-line flag, e.g. `--db-port`.
-    Flag(String),
-    /// A process env var, e.g. `DB_PORT`.
-    Env(String),
+    /// A command-line flag or its process env var.
+    Cli,
     /// A dotenv variable.
     Dotenv {
         /// Variable name, e.g. `DB_PORT`.
@@ -30,8 +28,7 @@ pub enum Source {
 impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Flag(flag) => f.write_str(flag),
-            Self::Env(name) => f.write_str(name),
+            Self::Cli => f.write_str("command line or environment"),
             Self::Dotenv { name, location } => write!(f, "{name} in {location}"),
             Self::File(location) => f.write_str(location),
         }
@@ -125,8 +122,7 @@ mod tests {
 
     #[test]
     fn source_display() {
-        assert_eq!(Source::Flag("--db-port".into()).to_string(), "--db-port");
-        assert_eq!(Source::Env("DB_PORT".into()).to_string(), "DB_PORT");
+        assert_eq!(Source::Cli.to_string(), "command line or environment");
         assert_eq!(
             Source::Dotenv {
                 name: "DB_PORT".into(),
@@ -144,12 +140,9 @@ mod tests {
     #[test]
     fn first_source_wins() {
         let mut provenance = Provenance::default();
-        provenance.set_source("database.port", Source::Flag("--db-port".into()));
+        provenance.set_source("database.port", Source::Cli);
         provenance.set_source("database.port", Source::File("/f:1:1".into()));
-        assert_eq!(
-            provenance.source("database.port"),
-            Some(&Source::Flag("--db-port".into()))
-        );
+        assert_eq!(provenance.source("database.port"), Some(&Source::Cli));
     }
 
     #[test]
@@ -167,8 +160,11 @@ mod tests {
     #[test]
     fn set_single_field_names_its_source() {
         let mut provenance = provenance();
-        provenance.set_source("database.name", Source::Env("DB_NAME".into()));
-        assert_eq!(provenance.note(&ConfigError::MissingSqliteDbName), " (from DB_NAME)");
+        provenance.set_source("database.name", Source::Cli);
+        assert_eq!(
+            provenance.note(&ConfigError::MissingSqliteDbName),
+            " (from command line or environment)"
+        );
     }
 
     #[test]
@@ -176,10 +172,10 @@ mod tests {
         let mut provenance = provenance();
         assert_eq!(provenance.note(&ConfigError::SshSqliteUnsupported), "");
         provenance.set_source("ssh.host", Source::File("/abs/dbmcp.yaml:20:9".into()));
-        provenance.set_source("database.backend", Source::Flag("--db-backend".into()));
+        provenance.set_source("database.backend", Source::Cli);
         assert_eq!(
             provenance.note(&ConfigError::SshSqliteUnsupported),
-            " (ssh.host from /abs/dbmcp.yaml:20:9; database.backend from --db-backend)"
+            " (ssh.host from /abs/dbmcp.yaml:20:9; database.backend from command line or environment)"
         );
     }
 
@@ -201,56 +197,56 @@ mod tests {
             "ssh.port",
             "ssh.key_passphrase",
         ] {
-            provenance.set_source(path, Source::Flag(format!("--{path}")));
+            provenance.set_source(path, Source::Cli);
         }
         let render = |error: ConfigError| format!("{error}{}", provenance.note(&error));
         let cases = [
             (
                 ConfigError::MissingSqliteDbName,
-                "database.name: required (file path) for the sqlite backend (from --database.name)",
+                "database.name: required (file path) for the sqlite backend (from command line or environment)",
             ),
             (
                 ConfigError::FileNotFound {
                     field: "database.ssl_ca",
                     path: "/ca.pem".into(),
                 },
-                "database.ssl_ca: file not found: /ca.pem (from --database.ssl_ca)",
+                "database.ssl_ca: file not found: /ca.pem (from command line or environment)",
             ),
             (
                 ConfigError::EmptyHttpHost,
-                "http.host: must not be empty (from --http.host)",
+                "http.host: must not be empty (from command line or environment)",
             ),
             (
                 ConfigError::EmptyHttpAuthToken,
-                "http.auth_token: must not be empty when set (from --http.auth_token)",
+                "http.auth_token: must not be empty when set (from command line or environment)",
             ),
             (
                 ConfigError::UnauthenticatedNonLoopbackBind("0.0.0.0".into()),
-                "http.host: refusing to bind non-loopback host '0.0.0.0' without authentication; set http.auth_token or http.allow_unauthenticated (http.host from --http.host; http.auth_token from --http.auth_token)",
+                "http.host: refusing to bind non-loopback host '0.0.0.0' without authentication; set http.auth_token or http.allow_unauthenticated (http.host from command line or environment; http.auth_token from command line or environment)",
             ),
             (
                 ConfigError::InvalidAllowedOrigin("x".into()),
-                "http.allowed_origins: entry 'x' is not a valid origin; expected `<scheme>://<host>[:<port>|:*]` or `null` (from --http.allowed_origins)",
+                "http.allowed_origins: entry 'x' is not a valid origin; expected `<scheme>://<host>[:<port>|:*]` or `null` (from command line or environment)",
             ),
             (
                 ConfigError::PiiCategoriesEmpty,
-                "pii.categories: must not be empty when set; remove it to fall back to defaults (from --pii.categories)",
+                "pii.categories: must not be empty when set; remove it to fall back to defaults (from command line or environment)",
             ),
             (
                 ConfigError::PiiNerModelMissing,
-                "pii.ner_model: required (model directory) when pii.ner_enabled is set (pii.ner_enabled from --pii.ner_enabled)",
+                "pii.ner_model: required (model directory) when pii.ner_enabled is set (pii.ner_enabled from command line or environment)",
             ),
             (
                 ConfigError::SshSqliteUnsupported,
-                "ssh.host: not supported with the sqlite backend (ssh.host from --ssh.host; database.backend from --database.backend)",
+                "ssh.host: not supported with the sqlite backend (ssh.host from command line or environment; database.backend from command line or environment)",
             ),
             (
                 ConfigError::MissingSshHost,
-                "ssh.host: required when other ssh options are set (ssh.host from --ssh.host; ssh.port from --ssh.port; ssh.key_passphrase from --ssh.key_passphrase)",
+                "ssh.host: required when other ssh options are set (ssh.host from command line or environment; ssh.port from command line or environment; ssh.key_passphrase from command line or environment)",
             ),
             (
                 ConfigError::EmptySshHost,
-                "ssh.host: must not be empty (from --ssh.host)",
+                "ssh.host: must not be empty (from command line or environment)",
             ),
             (
                 ConfigError::MissingSshUser,
@@ -262,7 +258,7 @@ mod tests {
             ),
             (
                 ConfigError::SshKeyPassphraseWithoutKey,
-                "ssh.key_passphrase: requires ssh.key (ssh.key_passphrase from --ssh.key_passphrase)",
+                "ssh.key_passphrase: requires ssh.key (ssh.key_passphrase from command line or environment)",
             ),
             (
                 ConfigError::MissingSshKnownHosts,
@@ -273,7 +269,7 @@ mod tests {
                     field: "ssh.port",
                     min: 1,
                 },
-                "ssh.port: must be at least 1 (from --ssh.port)",
+                "ssh.port: must be at least 1 (from command line or environment)",
             ),
             (
                 ConfigError::OutOfRange {
@@ -281,18 +277,18 @@ mod tests {
                     min: 1,
                     max: 500,
                 },
-                "database.page_size: must be between 1 and 500 (from --database.page_size)",
+                "database.page_size: must be between 1 and 500 (from command line or environment)",
             ),
             (
                 ConfigError::EmptyListEntry("http.allowed_origins"),
-                "http.allowed_origins: must not contain empty entries (from --http.allowed_origins)",
+                "http.allowed_origins: must not contain empty entries (from command line or environment)",
             ),
             (
                 ConfigError::DuplicateListEntry {
                     field: "pii.categories",
                     entry: "contact".into(),
                 },
-                "pii.categories: contains duplicate entry 'contact' (from --pii.categories)",
+                "pii.categories: contains duplicate entry 'contact' (from command line or environment)",
             ),
         ];
         for (error, expected) in cases {

@@ -1,14 +1,14 @@
 //! CLI argument parsing and application bootstrapping.
 //!
 //! Contains the [`Args`] struct (parsed by clap), the [`Command`]
-//! subcommand enum, and the [`run`] entry point that resolves the
-//! configuration, initialises tracing, and dispatches to the active
-//! subcommand.
+//! subcommand enum, the [`run`] entry point that dispatches to the active
+//! subcommand, and [`start`], which each subcommand calls to resolve its
+//! configuration and initialise tracing.
 
-use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
-use dbmcp_config::{Config, LogLevel};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use dbmcp_config::{Config, ConfigLayer, LogLevel};
 
-use crate::args::{self, LayerFn};
+use crate::args::{self, SharedArgs};
 use crate::error::{Error, ErrorKind};
 use crate::http::HttpCommand;
 use crate::stdio::StdioCommand;
@@ -26,7 +26,7 @@ fn tracing_level(level: LogLevel) -> tracing::Level {
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(about = "Database MCP Server")]
+#[command(name = "dbmcp", version, about = "Database MCP Server")]
 struct Args {
     /// Subcommand selector.
     #[command(subcommand)]
@@ -44,58 +44,32 @@ enum Command {
     Http(HttpCommand),
 }
 
-/// Builds the clap command for the binary named `bin` at `version`.
-fn command(bin: &'static str, version: &'static str) -> clap::Command {
-    Args::command().name(bin).version(version)
-}
-
-/// Parses CLI arguments, resolves the configuration, initializes tracing, and runs the subcommand.
+/// Parses CLI arguments and runs the selected subcommand.
+///
+/// Invalid arguments, `--help`, and `--version` are handled by clap,
+/// which prints and exits the process. Must run inside a Tokio runtime.
+/// A global tracing subscriber that is already installed is kept.
 ///
 /// # Errors
 ///
-/// Returns an error if the command-line arguments are invalid, the config
-/// file cannot be loaded, configuration validation fails, or the selected
-/// subcommand fails (transport initialization errors, TCP bind failures,
-/// fatal protocol errors).
-///
-/// `bin` and `version` are the installed binary's name and version, used
-/// in `--help`, `--version`, and the `version` subcommand. Must run
-/// inside a Tokio runtime. A global tracing subscriber that is
-/// already installed is kept.
+/// Returns an error if the config file cannot be loaded, configuration
+/// validation fails, or the selected subcommand fails (transport
+/// initialization errors, TCP bind failures, fatal protocol errors).
 #[allow(clippy::result_large_err)]
-pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> {
-    // `from_arg_matches` leaves `matches` intact: the layer conversions
-    // need each argument's value source afterwards.
-    let parsed = command(bin, version)
-        .try_get_matches()
-        .and_then(|matches| Args::from_arg_matches(&matches).map(|args| (matches, args)));
-    let (matches, args) = match parsed {
-        Ok(parsed) => parsed,
-        // `--help` and `--version` arrive as clap errors that print to stdout.
-        // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
-        Err(error) if !error.use_stderr() => {
-            let _ = error.print();
-            return Ok(());
-        }
-        Err(error) => return Err(ErrorKind::from(error).into()),
-    };
-
-    let Some((_, sub)) = matches.subcommand() else {
-        unreachable!("clap requires a subcommand");
-    };
-    match args.command {
+pub async fn run() -> Result<(), Error> {
+    match Args::parse().command {
         Command::Version => {
-            println!("{bin} {version}");
+            print!("{}", Args::command().render_version());
             Ok(())
         }
-        Command::Stdio(_) => Ok(StdioCommand::run(sub).await?),
-        Command::Http(_) => Ok(HttpCommand::run(sub).await?),
+        Command::Stdio(cmd) => Ok(cmd.run().await?),
+        Command::Http(cmd) => Ok(cmd.run().await?),
     }
 }
 
 /// Loads a subcommand's configuration, initialises tracing, and reports warnings.
 ///
-/// `command`, `matches`, and `layer` are passed to [`args::load`].
+/// `cli`, `shared`, and `layer` are passed to [`args::load`].
 ///
 /// On success, warnings are logged once tracing runs at the resolved
 /// level. On failure, they are printed to stderr ahead of the error.
@@ -104,9 +78,13 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
 ///
 /// Returns [`ErrorKind::Config`] if the configuration cannot be loaded.
 #[allow(clippy::result_large_err)]
-pub(crate) fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn) -> Result<Config, ErrorKind> {
+pub(crate) fn start<C: CommandFactory + FromArgMatches>(
+    cli: &C,
+    shared: &SharedArgs,
+    layer: fn(&C) -> ConfigLayer,
+) -> Result<Config, ErrorKind> {
     let mut warnings = Vec::new();
-    match args::load(command, matches, layer, &mut warnings) {
+    match args::load(cli, shared, layer, &mut warnings) {
         Ok(resolved) => {
             init_tracing(resolved.log_level);
             for warning in &warnings {
@@ -137,7 +115,7 @@ fn init_tracing(level: LogLevel) {
 mod tests {
     use clap::CommandFactory;
 
-    use super::{Args, command};
+    use super::Args;
 
     #[test]
     fn config_flags_are_grouped_under_config_file_heading() {
@@ -157,19 +135,19 @@ mod tests {
     #[test]
     fn log_level_is_a_subcommand_option() {
         assert!(
-            command("dbmcp", "0")
+            Args::command()
                 .try_get_matches_from(["dbmcp", "--log-level", "debug", "stdio"])
                 .is_err(),
             "--log-level before the subcommand must not parse"
         );
         for subcommand in ["stdio", "http"] {
-            command("dbmcp", "0")
+            Args::command()
                 .try_get_matches_from(["dbmcp", subcommand, "--log-level", "debug"])
                 .unwrap_or_else(|e| panic!("{subcommand} --log-level must parse: {e}"));
         }
         for flag in ["--log-level=debug", "--config=dbmcp.yaml"] {
             assert!(
-                command("dbmcp", "0")
+                Args::command()
                     .try_get_matches_from(["dbmcp", "version", flag])
                     .is_err(),
                 "version must reject {flag}"
@@ -178,10 +156,10 @@ mod tests {
     }
 
     #[test]
-    fn command_uses_given_name_and_version() {
-        let cmd = command("dbmcp", "1.2.3");
+    fn command_uses_binary_name_and_package_version() {
+        let cmd = Args::command();
         assert_eq!(cmd.get_name(), "dbmcp");
-        assert_eq!(cmd.get_version(), Some("1.2.3"));
+        assert_eq!(cmd.get_version(), Some(env!("CARGO_PKG_VERSION")));
     }
 
     #[test]

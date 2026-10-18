@@ -688,14 +688,17 @@ ssh:
     fn higher_layer_source_wins_over_file_location() {
         let file = write_file("database:\n  page_size: 0\n");
         let mut provenance = Provenance::default();
-        provenance.set_source("database.page_size", Source::Env("DB_PAGE_SIZE".into()));
+        provenance.set_source("database.page_size", Source::Cli);
         let mut cli = ConfigLayer::default();
         cli.database.page_size = Some(501);
         let error = Sources::read(Some(file.path()), &[], &NO_ENV, &mut Vec::new())
             .expect("read")
             .resolve(cli, provenance, None)
             .expect_err("invalid");
-        assert!(error.to_string().ends_with("(from DB_PAGE_SIZE)"), "{error}");
+        assert!(
+            error.to_string().ends_with("(from command line or environment)"),
+            "{error}"
+        );
     }
 
     #[test]

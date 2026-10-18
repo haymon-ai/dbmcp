@@ -3,7 +3,7 @@
 //! Runs the MCP server over stdin/stdout for use with Claude Desktop,
 //! Cursor, and other MCP clients that communicate via stdio.
 
-use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
+use clap::Parser;
 use dbmcp_config::{ConfigLayer, HttpLayer};
 use rmcp::ServiceExt;
 use tracing::{error, info};
@@ -33,23 +33,18 @@ pub(crate) struct StdioCommand {
 }
 
 impl StdioCommand {
-    /// Returns the flags in `matches` set by flag or env var as a layer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `matches` were not parsed by [`StdioCommand::command`](clap::CommandFactory::command).
-    pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
-        let cmd = Self::from_arg_matches(matches).expect("matches were parsed by StdioCommand::command()");
+    /// Returns the flags set by flag or env var as a layer.
+    fn layer(&self) -> ConfigLayer {
         ConfigLayer {
-            log_level: cmd.shared.log_level(matches),
-            database: cmd.database.layer(matches),
+            log_level: self.shared.log_level,
+            database: self.database.layer(),
             http: HttpLayer::default(),
-            pii: cmd.pii.layer(matches),
-            ssh: cmd.ssh.layer(matches),
+            pii: self.pii.layer(),
+            ssh: self.ssh.layer(),
         }
     }
 
-    /// Loads the config from `matches` and runs the stdio transport.
+    /// Loads the config and runs the stdio transport.
     ///
     /// Serves JSON-RPC over stdin/stdout.
     ///
@@ -58,8 +53,8 @@ impl StdioCommand {
     /// Returns an error if the configuration cannot be loaded, the server
     /// cannot be built, the stdio transport fails to initialize, or the
     /// server encounters a fatal protocol error.
-    pub(crate) async fn run(matches: &ArgMatches) -> Result<(), ErrorKind> {
-        let config = cli::start(Self::command(), matches, Self::layer)?;
+    pub(crate) async fn run(self) -> Result<(), ErrorKind> {
+        let config = cli::start(&self, &self.shared, Self::layer)?;
         let (tunnel, server) = server::create_server(&config).await?;
 
         info!("Starting MCP server via stdio transport...");
@@ -90,6 +85,7 @@ impl StdioCommand {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
     use dbmcp_config::{
         ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, ExposeSecret, LoadError, LogLevel, PiiCategory,
         Resolved,
@@ -99,7 +95,9 @@ mod tests {
     use crate::args::tests_support::{self, config_file};
 
     fn load(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<StdioCommand>(StdioCommand::layer, args)
+        tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
+        let cmd = StdioCommand::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
+        crate::args::load(&cmd, &cmd.shared, StdioCommand::layer, &mut Vec::new())
     }
 
     fn with_config<'a>(path: &'a std::path::Path, args: &[&'a str]) -> Vec<&'a str> {
@@ -265,7 +263,7 @@ mod tests {
 
     #[test]
     fn flag_and_dotenv_sources_are_named() {
-        assert!(validation_message(&["_", "--db-page-size", "0"]).ends_with(" (from --db-page-size)"));
+        assert!(validation_message(&["_", "--db-page-size", "0"]).ends_with(" (from command line or environment)"));
 
         let (dir, path) = config_file("");
         let env = dir.path().join(".env");
@@ -286,7 +284,7 @@ mod tests {
         ));
         assert!(
             message.contains(&format!(
-                "ssh.host: not supported with the sqlite backend (ssh.host from {}:2:9; database.backend from --db-backend)",
+                "ssh.host: not supported with the sqlite backend (ssh.host from {}:2:9; database.backend from command line or environment)",
                 path.display()
             )),
             "{message}"
@@ -305,9 +303,9 @@ mod tests {
         std::fs::create_dir(&env).expect("create unreadable .env");
         tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
         let argv = with_config(&path, &[]);
-        let matches = StdioCommand::command().try_get_matches_from(&argv).expect("parse");
+        let cmd = StdioCommand::try_parse_from(&argv).expect("parse");
         let mut warnings = Vec::new();
-        let result = crate::args::load(StdioCommand::command(), &matches, StdioCommand::layer, &mut warnings);
+        let result = crate::args::load(&cmd, &cmd.shared, StdioCommand::layer, &mut warnings);
         assert!(matches!(result, Err(LoadError::Parse { .. })));
         assert_eq!(
             warnings,

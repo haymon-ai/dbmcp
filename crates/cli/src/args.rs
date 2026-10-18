@@ -4,39 +4,22 @@
 //! [`SshArgs`] — clap argument groups bundling `--config`,
 //! `--log-level`, and every `--db-*`, `--pii-*`, and `--ssh-*` flag so each
 //! is defined exactly once and embedded via `#[command(flatten)]` wherever
-//! needed. Each group converts into its [`ConfigLayer`] section, keeping
-//! only values set on the command line or through an env var; every
-//! setting flag's clap id is its config path. [`load`] fills the gaps from
-//! dotenv files and merges the result over the config file.
+//! needed. Every setting flag is an `Option` without a clap default, so
+//! `None` means "not set on the command line or through an env var", and
+//! its clap id is its config path. Each group converts into its
+//! [`ConfigLayer`] section. [`load`] fills the gaps from dotenv files and
+//! merges the result over the config file.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use clap::builder::BoolishValueParser;
-use clap::parser::ValueSource;
-use clap::{ArgAction, ArgMatches, Args, FromArgMatches};
+use clap::{ArgAction, Args, CommandFactory, FromArgMatches};
 use dbmcp_config::{
-    ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
-    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources,
-    SshLayer, StrictHostKeyChecking, ssh,
+    ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseLayer, Dotenv, LoadError, LogLevel, PiiCategory, PiiLayer,
+    PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources, SshLayer, StrictHostKeyChecking, ssh,
 };
-
-/// Returns `true` when argument `id` was set by flag or env var.
-fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
-    matches!(
-        matches.value_source(id),
-        Some(ValueSource::CommandLine | ValueSource::EnvVariable)
-    )
-}
-
-/// Returns `value` only when argument `id` was set by flag or env var.
-///
-/// Values that came from a clap default are dropped, so lower layers (the
-/// dotenv files, the config file, then the built-in defaults) can fill them.
-pub(crate) fn explicit<T>(matches: &ArgMatches, id: &str, value: Option<T>) -> Option<T> {
-    if is_explicit(matches, id) { value } else { None }
-}
 
 /// Config-file and logging flags shared by every transport subcommand.
 #[derive(Debug, Args)]
@@ -49,83 +32,53 @@ pub(crate) struct SharedArgs {
     #[arg(long = "env", value_name = "PATH", help_heading = "Config File")]
     pub(crate) env: Vec<PathBuf>,
 
-    /// Log level
+    /// Log level [default: info]
     #[arg(
         id = "log_level",
         long = "log-level",
         value_name = "LOG_LEVEL",
         env = "LOG_LEVEL",
-        default_value_t = LogLevel::DEFAULT,
         ignore_case = true,
         help_heading = "Logging"
     )]
-    pub(crate) log_level: LogLevel,
+    pub(crate) log_level: Option<LogLevel>,
 }
 
-impl SharedArgs {
-    /// Returns the log level when set by flag or env var.
-    pub(crate) fn log_level(&self, matches: &ArgMatches) -> Option<LogLevel> {
-        explicit(matches, "log_level", Some(self.log_level))
-    }
-}
-
-/// Converts matches parsed by a subcommand's clap command into its layer.
-pub(crate) type LayerFn = fn(&ArgMatches) -> ConfigLayer;
-
-/// Loads the configuration of a transport subcommand.
+/// Loads the configuration of the transport subcommand `cli`.
 ///
-/// `command` is the subcommand's clap command, `matches` what it parsed,
-/// and `layer` turns matches parsed by `command` into a layer. Reads the
-/// `--config` and dotenv files, fills every flag not set on the command
-/// line or via its env var from a dotenv variable of the same name, and
-/// merges the result over the config file. Warnings are appended to
-/// `warnings`, including when loading fails.
+/// `shared` holds the config-file flags of `cli`, and `layer` turns a
+/// parsed `C` into a layer. Reads the `--config` and dotenv files, fills
+/// every flag not set on the command line or via its env var from a
+/// dotenv variable of the same name, and merges the result over the config
+/// file. Warnings are appended to `warnings`, including when loading fails.
 ///
 /// # Errors
 ///
 /// Returns [`LoadError`] from the first failing stage.
-///
-/// # Panics
-///
-/// Panics if `matches` were not parsed by `command`.
-pub(crate) fn load(
-    command: clap::Command,
-    matches: &ArgMatches,
-    layer: LayerFn,
+pub(crate) fn load<C: CommandFactory + FromArgMatches>(
+    cli: &C,
+    shared: &SharedArgs,
+    layer: fn(&C) -> ConfigLayer,
     warnings: &mut Vec<ConfigWarning>,
 ) -> Result<Resolved, LoadError> {
-    let shared = SharedArgs::from_arg_matches(matches).expect("matches were parsed by `command`");
     let process_env: HashMap<String, String> = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
         .collect();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
 
-    let routes = flag_routes(&command);
+    let cli = layer(cli);
+    let set = cli.set_paths();
+    let routes = flag_routes(&C::command());
     let mut provenance = Provenance::default();
     for (path, route) in &routes {
-        let source = match matches.value_source(path) {
-            Some(ValueSource::CommandLine) => Some(Source::Flag(route.flag.clone())),
-            Some(ValueSource::EnvVariable) => route.env.clone().map(Source::Env),
-            _ => None,
-        };
-        if let Some(source) = source {
-            provenance.set_source(path, source);
+        if set.contains(&path.as_str()) {
+            provenance.set_source(path, Source::Cli);
         }
         provenance.add_route(path, route.clone());
     }
 
-    let dotenv = parse_dotenv(
-        matches,
-        sources.dotenv(),
-        &routes,
-        bare_command(command),
-        &mut provenance,
-    )?;
-    sources.resolve(
-        layer(matches).or(layer(&dotenv)),
-        provenance,
-        ssh::home_dir().as_deref(),
-    )
+    let dotenv = parse_dotenv::<C>(&set, sources.dotenv(), &routes, &mut provenance)?;
+    sources.resolve(cli.or(layer(&dotenv)), provenance, ssh::home_dir().as_deref())
 }
 
 /// Returns the config path and route of every setting flag of `command`.
@@ -146,37 +99,37 @@ fn flag_routes(command: &clap::Command) -> Vec<(String, Route)> {
         .collect()
 }
 
-/// Returns `command` without binary name and with every env var binding removed.
+/// Returns the command of `C` without binary name and with every env var binding removed.
 ///
 /// Parsing `--flag=value` arguments with it sets exactly those flags,
 /// whatever the process environment contains.
-fn bare_command(command: clap::Command) -> clap::Command {
-    command
+fn bare_command<C: CommandFactory>() -> clap::Command {
+    C::command()
         .no_binary_name(true)
         .mut_args(|arg| arg.env(None::<&'static str>))
 }
 
-/// Parses the dotenv value of every flag not set by flag or env var.
+/// Parses the dotenv value of every flag whose config path is not in `set`.
 ///
-/// Each value is parsed by `bare` as `--<flag>=<value>`, so it goes through
-/// exactly the parser its env var would, and gets a [`Source::Dotenv`] in
-/// `provenance`. Returns the matches of all of them together.
+/// Each value is parsed as `--<flag>=<value>`, so it goes through exactly
+/// the parser its env var would, and gets a [`Source::Dotenv`] in
+/// `provenance`. Returns all of them parsed together as a `C`.
 ///
 /// # Errors
 ///
 /// Returns [`LoadError::Env`] listing every invalid value from the first
 /// env file that has one.
-fn parse_dotenv(
-    matches: &ArgMatches,
+fn parse_dotenv<C: CommandFactory + FromArgMatches>(
+    set: &[&str],
     dotenv: &Dotenv,
     routes: &[(String, Route)],
-    mut bare: clap::Command,
     provenance: &mut Provenance,
-) -> Result<ArgMatches, LoadError> {
+) -> Result<C, LoadError> {
+    let mut bare = bare_command::<C>();
     let mut args = Vec::new();
     let mut errors: Vec<(PathBuf, String)> = Vec::new();
     for (path, route) in routes {
-        if is_explicit(matches, path) {
+        if set.contains(&path.as_str()) {
             continue;
         }
         let Some((name, var)) = route
@@ -209,9 +162,10 @@ fn parse_dotenv(
             .collect();
         return Err(LoadError::Env { path, errors });
     }
-    Ok(bare
+    let matches = bare
         .try_get_matches_from_mut(args)
-        .expect("each value parsed on its own and no flags conflict"))
+        .expect("each value parsed on its own and no flags conflict");
+    Ok(C::from_arg_matches(&matches).expect("matches were parsed by `C::command()`"))
 }
 
 /// Test helpers shared by the subcommand tests.
@@ -219,10 +173,10 @@ fn parse_dotenv(
 pub(crate) mod tests_support {
     use std::path::PathBuf;
 
-    use clap::CommandFactory;
-    use dbmcp_config::{LoadError, Resolved};
+    use clap::{CommandFactory, FromArgMatches};
+    use dbmcp_config::ConfigLayer;
 
-    use super::{LayerFn, bare_command, flag_routes};
+    use super::{bare_command, flag_routes};
 
     /// Removes every env var bound to a flag of `C`, except those in `keep`.
     pub(crate) fn clear_env<C: CommandFactory>(keep: &[&str]) {
@@ -234,15 +188,6 @@ pub(crate) mod tests_support {
                 }
             }
         }
-    }
-
-    /// Parses `args` as `C` (with `LOG_LEVEL` left alone) and loads its config.
-    pub(crate) fn load<C: CommandFactory>(layer: LayerFn, args: &[&str]) -> Result<Resolved, LoadError> {
-        clear_env::<C>(&["LOG_LEVEL"]);
-        let matches = C::command()
-            .try_get_matches_from(args)
-            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        super::load(C::command(), &matches, layer, &mut Vec::new())
     }
 
     /// Writes `yaml` to a fresh `dbmcp.yaml` and returns its directory and path.
@@ -257,10 +202,10 @@ pub(crate) mod tests_support {
     ///
     /// Each flag is parsed alone with a sample value (its first possible
     /// value, or `1`).
-    pub(crate) fn check_routes<C: CommandFactory>(layer: LayerFn) {
+    pub(crate) fn check_routes<C: CommandFactory + FromArgMatches>(layer: fn(&C) -> ConfigLayer) {
         let command = C::command();
         let routes = flag_routes(&command);
-        let mut bare = bare_command(command.clone());
+        let mut bare = bare_command::<C>();
         for arg in command.get_arguments() {
             let Some(long) = arg.get_long() else { continue };
             if ["config", "env", "help"].contains(&long) {
@@ -278,7 +223,8 @@ pub(crate) mod tests_support {
             let matches = bare
                 .try_get_matches_from_mut([format!("{flag}={sample}")])
                 .unwrap_or_else(|e| panic!("{flag}={sample} must parse: {e}"));
-            assert_eq!(layer(&matches).set_paths(), [path.as_str()], "{flag}");
+            let cli = C::from_arg_matches(&matches).expect("from matches");
+            assert_eq!(layer(&cli).set_paths(), [path.as_str()], "{flag}");
         }
     }
 }
@@ -287,13 +233,13 @@ pub(crate) mod tests_support {
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Database")]
 pub(crate) struct DatabaseArgs {
-    /// Database backend
-    #[arg(id = "database.backend", long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND)]
-    pub(crate) backend: DatabaseBackend,
+    /// Database backend [default: mysql]
+    #[arg(id = "database.backend", long = "db-backend", env = "DB_BACKEND")]
+    pub(crate) backend: Option<DatabaseBackend>,
 
-    /// Database host (as seen from the SSH server when tunnelling)
-    #[arg(id = "database.host", long = "db-host", env = "DB_HOST", default_value = DatabaseConfig::DEFAULT_HOST)]
-    pub(crate) host: String,
+    /// Database host (as seen from the SSH server when tunnelling) [default: localhost]
+    #[arg(id = "database.host", long = "db-host", env = "DB_HOST")]
+    pub(crate) host: Option<String>,
 
     /// Database port (default: backend-dependent)
     #[arg(id = "database.port", long = "db-port", env = "DB_PORT")]
@@ -320,14 +266,13 @@ pub(crate) struct DatabaseArgs {
     #[arg(id = "database.charset", long = "db-charset", env = "DB_CHARSET")]
     pub(crate) charset: Option<String>,
 
-    /// Enable SSL for database connection
+    /// Enable SSL for database connection [default: false]
     #[arg(
         id = "database.ssl", long = "db-ssl",
         env = "DB_SSL",
-        default_value_t = DatabaseConfig::DEFAULT_SSL,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    pub(crate) ssl: bool,
+    pub(crate) ssl: Option<bool>,
 
     /// Path to CA certificate
     #[arg(id = "database.ssl_ca", long = "db-ssl-ca", env = "DB_SSL_CA")]
@@ -341,31 +286,25 @@ pub(crate) struct DatabaseArgs {
     #[arg(id = "database.ssl_key", long = "db-ssl-key", env = "DB_SSL_KEY")]
     pub(crate) ssl_key: Option<String>,
 
-    /// Verify server certificate
+    /// Verify server certificate [default: true]
     #[arg(
         id = "database.ssl_verify_cert", long = "db-ssl-verify-cert",
         env = "DB_SSL_VERIFY_CERT",
-        default_value_t = DatabaseConfig::DEFAULT_SSL_VERIFY_CERT,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    pub(crate) ssl_verify_cert: bool,
+    pub(crate) ssl_verify_cert: Option<bool>,
 
-    /// Enable read-only mode
+    /// Enable read-only mode [default: true]
     #[arg(
         id = "database.read_only", long = "db-read-only",
         env = "DB_READ_ONLY",
-        default_value_t = DatabaseConfig::DEFAULT_READ_ONLY,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    pub(crate) read_only: bool,
+    pub(crate) read_only: Option<bool>,
 
-    /// Maximum connection pool size
-    #[arg(
-        id = "database.max_pool_size", long = "db-max-pool-size",
-        env = "DB_MAX_POOL_SIZE",
-        default_value_t = DatabaseConfig::DEFAULT_MAX_POOL_SIZE
-    )]
-    pub(crate) max_pool_size: u32,
+    /// Maximum connection pool size [default: 5]
+    #[arg(id = "database.max_pool_size", long = "db-max-pool-size", env = "DB_MAX_POOL_SIZE")]
+    pub(crate) max_pool_size: Option<u32>,
 
     /// Connection timeout in seconds
     #[arg(
@@ -375,44 +314,36 @@ pub(crate) struct DatabaseArgs {
     )]
     pub(crate) connection_timeout: Option<u64>,
 
-    /// Query execution timeout in seconds
-    #[arg(
-        id = "database.query_timeout", long = "db-query-timeout",
-        env = "DB_QUERY_TIMEOUT",
-        default_value_t = DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS
-    )]
-    pub(crate) query_timeout: u64,
+    /// Query execution timeout in seconds [default: 30]
+    #[arg(id = "database.query_timeout", long = "db-query-timeout", env = "DB_QUERY_TIMEOUT")]
+    pub(crate) query_timeout: Option<u64>,
 
-    /// Maximum items returned in a single paginated tool response
-    #[arg(
-        id = "database.page_size", long = "db-page-size",
-        env = "DB_PAGE_SIZE",
-        default_value_t = DatabaseConfig::DEFAULT_PAGE_SIZE
-    )]
-    pub(crate) page_size: u16,
+    /// Maximum items returned in a single paginated tool response [default: 100]
+    #[arg(id = "database.page_size", long = "db-page-size", env = "DB_PAGE_SIZE")]
+    pub(crate) page_size: Option<u16>,
 }
 
 impl DatabaseArgs {
-    /// Returns the explicitly set database flags as a layer.
-    pub(crate) fn layer(self, matches: &ArgMatches) -> DatabaseLayer {
+    /// Returns the set database flags as a layer.
+    pub(crate) fn layer(&self) -> DatabaseLayer {
         DatabaseLayer {
-            backend: explicit(matches, "database.backend", Some(self.backend)),
-            host: explicit(matches, "database.host", Some(self.host)),
-            port: explicit(matches, "database.port", self.port),
-            user: explicit(matches, "database.user", self.user),
-            password: explicit(matches, "database.password", self.password),
-            name: explicit(matches, "database.name", self.name),
-            charset: explicit(matches, "database.charset", self.charset),
-            ssl: explicit(matches, "database.ssl", Some(self.ssl)),
-            ssl_ca: explicit(matches, "database.ssl_ca", self.ssl_ca),
-            ssl_cert: explicit(matches, "database.ssl_cert", self.ssl_cert),
-            ssl_key: explicit(matches, "database.ssl_key", self.ssl_key),
-            ssl_verify_cert: explicit(matches, "database.ssl_verify_cert", Some(self.ssl_verify_cert)),
-            read_only: explicit(matches, "database.read_only", Some(self.read_only)),
-            max_pool_size: explicit(matches, "database.max_pool_size", Some(self.max_pool_size)),
-            connection_timeout: explicit(matches, "database.connection_timeout", self.connection_timeout),
-            query_timeout: explicit(matches, "database.query_timeout", Some(self.query_timeout)),
-            page_size: explicit(matches, "database.page_size", Some(self.page_size)),
+            backend: self.backend,
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
+            password: self.password.clone(),
+            name: self.name.clone(),
+            charset: self.charset.clone(),
+            ssl: self.ssl,
+            ssl_ca: self.ssl_ca.clone(),
+            ssl_cert: self.ssl_cert.clone(),
+            ssl_key: self.ssl_key.clone(),
+            ssl_verify_cert: self.ssl_verify_cert,
+            read_only: self.read_only,
+            max_pool_size: self.max_pool_size,
+            connection_timeout: self.connection_timeout,
+            query_timeout: self.query_timeout,
+            page_size: self.page_size,
         }
     }
 }
@@ -421,22 +352,17 @@ impl DatabaseArgs {
 #[derive(Debug, Args)]
 #[command(next_help_heading = "PII")]
 pub(crate) struct PiiArgs {
-    /// Enable PII redaction of query tool output
+    /// Enable PII redaction of query tool output [default: false]
     #[arg(
         id = "pii.enabled", long = "pii",
         env = "PII_ENABLE",
-        default_value_t = PiiConfig::DEFAULT_ENABLED,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    pub(crate) enabled: bool,
+    pub(crate) enabled: Option<bool>,
 
-    /// Operator applied to detected PII spans
-    #[arg(
-        id = "pii.operator", long = "pii-operator",
-        env = "PII_OPERATOR",
-        default_value_t = PiiConfig::DEFAULT_OPERATOR,
-    )]
-    pub(crate) operator: PiiOperator,
+    /// Operator applied to detected PII spans [default: replace]
+    #[arg(id = "pii.operator", long = "pii-operator", env = "PII_OPERATOR")]
+    pub(crate) operator: Option<PiiOperator>,
 
     /// Comma-separated PII categories the analyzer should cover
     /// (personal, financial, government, contact, network, digital-identity, crypto)
@@ -448,14 +374,13 @@ pub(crate) struct PiiArgs {
     )]
     pub(crate) categories: Option<Vec<PiiCategory>>,
 
-    /// Enable the optional ML/NER pass (person & location detection)
+    /// Enable the optional ML/NER pass (person & location detection) [default: false]
     #[arg(
         id = "pii.ner_enabled", long = "pii-ner",
         env = "PII_NER_ENABLE",
-        default_value_t = PiiConfig::DEFAULT_NER_ENABLED,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    pub(crate) ner_enabled: bool,
+    pub(crate) ner_enabled: Option<bool>,
 
     /// Path to the NER model directory (required with --pii-ner)
     #[arg(id = "pii.ner_model", long = "pii-ner-model", env = "PII_NER_MODEL")]
@@ -463,14 +388,14 @@ pub(crate) struct PiiArgs {
 }
 
 impl PiiArgs {
-    /// Returns the explicitly set PII flags as a layer.
-    pub(crate) fn layer(self, matches: &ArgMatches) -> PiiLayer {
+    /// Returns the set PII flags as a layer.
+    pub(crate) fn layer(&self) -> PiiLayer {
         PiiLayer {
-            enabled: explicit(matches, "pii.enabled", Some(self.enabled)),
-            operator: explicit(matches, "pii.operator", Some(self.operator)),
-            categories: explicit(matches, "pii.categories", self.categories),
-            ner_enabled: explicit(matches, "pii.ner_enabled", Some(self.ner_enabled)),
-            ner_model: explicit(matches, "pii.ner_model", self.ner_model),
+            enabled: self.enabled,
+            operator: self.operator,
+            categories: self.categories.clone(),
+            ner_enabled: self.ner_enabled,
+            ner_model: self.ner_model.clone(),
         }
     }
 }
@@ -559,31 +484,31 @@ pub(crate) struct SshArgs {
 }
 
 impl SshArgs {
-    /// Returns the explicitly set SSH flags as a layer.
-    pub(crate) fn layer(self, matches: &ArgMatches) -> SshLayer {
+    /// Returns the set SSH flags as a layer.
+    pub(crate) fn layer(&self) -> SshLayer {
         SshLayer {
-            host: explicit(matches, "ssh.host", self.host),
-            port: explicit(matches, "ssh.port", self.port),
-            user: explicit(matches, "ssh.user", self.user),
-            password: explicit(matches, "ssh.password", self.password),
-            key: explicit(matches, "ssh.key", self.key),
-            key_passphrase: explicit(matches, "ssh.key_passphrase", self.key_passphrase),
-            known_hosts: explicit(matches, "ssh.known_hosts", self.known_hosts),
-            strict_host_key_checking: explicit(matches, "ssh.strict_host_key_checking", self.strict_host_key_checking),
-            keepalive_interval: explicit(matches, "ssh.keepalive_interval", self.keepalive_interval),
-            local_port: explicit(matches, "ssh.local_port", self.local_port),
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
+            password: self.password.clone(),
+            key: self.key.clone(),
+            key_passphrase: self.key_passphrase.clone(),
+            known_hosts: self.known_hosts.clone(),
+            strict_host_key_checking: self.strict_host_key_checking,
+            keepalive_interval: self.keepalive_interval,
+            local_port: self.local_port,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, FromArgMatches, Parser};
+    use clap::{CommandFactory, Parser};
 
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{DatabaseArgs, PiiArgs, SshArgs, explicit};
+    use super::{DatabaseArgs, PiiArgs, SshArgs};
     use dbmcp_config::{
         Config, ConfigError, ConfigErrors, ConfigLayer, DatabaseBackend, PiiCategory, PiiOperator,
         StrictHostKeyChecking,
@@ -613,14 +538,11 @@ mod tests {
     /// Parses `args` and converts them into the CLI layer.
     fn layer(args: &[&str]) -> ConfigLayer {
         clear_env();
-        let matches = TestCli::command()
-            .try_get_matches_from(args)
-            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        let cli = TestCli::from_arg_matches(&matches).expect("from matches");
+        let cli = TestCli::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
         ConfigLayer {
-            database: cli.db.layer(&matches),
-            pii: cli.pii.layer(&matches),
-            ssh: cli.ssh.layer(&matches),
+            database: cli.db.layer(),
+            pii: cli.pii.layer(),
+            ssh: cli.ssh.layer(),
             ..ConfigLayer::default()
         }
     }
@@ -665,34 +587,6 @@ mod tests {
             let flag = format!("--{long}={value}");
             assert_ne!(format!("{:?}", layer(&[&flag])), empty, "{flag} must reach the layer");
         }
-    }
-
-    #[test]
-    fn explicit_keeps_command_line_and_env_values_only() {
-        const ENV: &str = "DBMCP_TEST_EXPLICIT_ONLY";
-        let cmd = || {
-            clap::Command::new("t")
-                .no_binary_name(true)
-                .arg(clap::Arg::new("x").long("x").env(ENV).default_value("default"))
-        };
-        let value = |matches: &clap::ArgMatches| explicit(matches, "x", matches.get_one::<String>("x").cloned());
-
-        let matches = cmd().try_get_matches_from(Vec::<&str>::new()).expect("parse");
-        assert_eq!(value(&matches), None, "default value must be blanked");
-
-        let matches = cmd().try_get_matches_from(["--x", "flag"]).expect("parse");
-        assert_eq!(value(&matches).as_deref(), Some("flag"));
-
-        // SAFETY: ENV is unique to this test.
-        unsafe {
-            std::env::set_var(ENV, "env");
-        }
-        let matches = cmd().try_get_matches_from(Vec::<&str>::new()).expect("parse");
-        // SAFETY: ENV is unique to this test.
-        unsafe {
-            std::env::remove_var(ENV);
-        }
-        assert_eq!(value(&matches).as_deref(), Some("env"));
     }
 
     #[test]
@@ -771,7 +665,7 @@ mod tests {
             ("hash", PiiOperator::Hash),
         ] {
             let cli = try_parse(&["--pii-operator", raw]).expect("valid operator parses");
-            assert_eq!(cli.pii.operator, expected, "operator {raw} must parse");
+            assert_eq!(cli.pii.operator, Some(expected), "operator {raw} must parse");
         }
     }
 

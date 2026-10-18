@@ -9,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::builder::BoolishValueParser;
-use clap::{ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, Args, Parser};
 use dbmcp_config::{AllowedOrigins, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs, explicit};
+use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs};
 use crate::error::ErrorKind;
 use crate::{cli, server};
 
@@ -33,27 +33,16 @@ use crate::{cli, server};
 #[derive(Debug, Args)]
 #[command(next_help_heading = "HTTP Transport")]
 struct HttpArgs {
-    /// Bind host for HTTP transport.
-    #[arg(
-        id = "http.host",
-        long = "host",
-        env = "HTTP_HOST",
-        value_name = "HOST",
-        default_value = HttpConfig::DEFAULT_HOST,
-    )]
-    host: String,
+    /// Bind host for HTTP transport [default: 127.0.0.1]
+    #[arg(id = "http.host", long = "host", env = "HTTP_HOST", value_name = "HOST")]
+    host: Option<String>,
 
-    /// Bind port for HTTP transport.
-    #[arg(
-        id = "http.port",
-        long = "port",
-        env = "HTTP_PORT",
-        value_name = "PORT",
-        default_value_t = HttpConfig::DEFAULT_PORT
-    )]
-    port: u16,
+    /// Bind port for HTTP transport [default: 9001]
+    #[arg(id = "http.port", long = "port", env = "HTTP_PORT", value_name = "PORT")]
+    port: Option<u16>,
 
-    /// Allowed browser origins (comma-separated, RFC 6454 `<scheme>://<host>[:<port>]` or `null`).
+    /// Allowed browser origins (comma-separated, RFC 6454 `<scheme>://<host>[:<port>]` or `null`)
+    /// [default: http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*]
     ///
     /// Drives BOTH the CORS preflight allowlist AND the rmcp server-side
     /// Origin validator. Use `:*` to match any port or give an explicit
@@ -61,22 +50,24 @@ struct HttpArgs {
     /// rejected at startup. Pass an empty list
     /// (`--allowed-origins ""`) to disable server-side Origin validation
     /// and grant no CORS access — only do this for non-browser deployments.
+    #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
     #[arg(
-        id = "http.allowed_origins", long = "allowed-origins",
+        id = "http.allowed_origins",
+        long = "allowed-origins",
         env = "HTTP_ALLOWED_ORIGINS",
-        value_delimiter = ',',
-        default_values_t = HttpConfig::default_allowed_origins()
+        value_delimiter = ','
     )]
-    allowed_origins: Vec<String>,
+    allowed_origins: Option<Vec<String>>,
 
-    /// Allowed host names (comma-separated).
+    /// Allowed host names (comma-separated) [default: localhost,127.0.0.1,::1]
+    #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
     #[arg(
-        id = "http.allowed_hosts", long = "allowed-hosts",
+        id = "http.allowed_hosts",
+        long = "allowed-hosts",
         env = "HTTP_ALLOWED_HOSTS",
-        value_delimiter = ',',
-        default_values_t = HttpConfig::default_allowed_hosts()
+        value_delimiter = ','
     )]
-    allowed_hosts: Vec<String>,
+    allowed_hosts: Option<Vec<String>>,
 
     /// Bearer token clients MUST send as `Authorization: Bearer <token>`.
     ///
@@ -91,7 +82,7 @@ struct HttpArgs {
     )]
     auth_token: Option<SecretString>,
 
-    /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
+    /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN` [default: false]
     ///
     /// Only for deployments where a reverse proxy authenticates callers.
     /// Anyone who can reach the port gets full access to the database.
@@ -99,29 +90,29 @@ struct HttpArgs {
         id = "http.allow_unauthenticated",
         long = "dangerously-allow-unauthenticated",
         env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
-        default_value_t = false,
         action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
-    dangerously_allow_unauthenticated: bool,
+    dangerously_allow_unauthenticated: Option<bool>,
 }
 
 impl HttpArgs {
-    /// Returns the explicitly set HTTP flags as a layer.
-    fn layer(self, matches: &ArgMatches) -> HttpLayer {
+    /// Returns the set HTTP flags as a layer.
+    fn layer(&self) -> HttpLayer {
         HttpLayer {
-            host: explicit(matches, "http.host", Some(self.host)),
-            port: explicit(matches, "http.port", Some(self.port)),
+            host: self.host.clone(),
+            port: self.port,
             // `--allowed-origins ""` arrives as `[""]`; dropping blanks turns
             // it into the empty list that disables Origin validation.
-            allowed_origins: explicit(matches, "http.allowed_origins", Some(self.allowed_origins))
-                .map(|origins| origins.into_iter().filter(|origin| !origin.trim().is_empty()).collect()),
-            allowed_hosts: explicit(matches, "http.allowed_hosts", Some(self.allowed_hosts)),
-            auth_token: explicit(matches, "http.auth_token", self.auth_token),
-            allow_unauthenticated: explicit(
-                matches,
-                "http.allow_unauthenticated",
-                Some(self.dangerously_allow_unauthenticated),
-            ),
+            allowed_origins: self.allowed_origins.as_ref().map(|origins| {
+                origins
+                    .iter()
+                    .filter(|origin| !origin.trim().is_empty())
+                    .cloned()
+                    .collect()
+            }),
+            allowed_hosts: self.allowed_hosts.clone(),
+            auth_token: self.auth_token.clone(),
+            allow_unauthenticated: self.dangerously_allow_unauthenticated,
         }
     }
 }
@@ -151,23 +142,18 @@ pub(crate) struct HttpCommand {
 }
 
 impl HttpCommand {
-    /// Returns the flags in `matches` set by flag or env var as a layer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `matches` were not parsed by [`HttpCommand::command`](clap::CommandFactory::command).
-    pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
-        let cmd = Self::from_arg_matches(matches).expect("matches were parsed by HttpCommand::command()");
+    /// Returns the flags set by flag or env var as a layer.
+    fn layer(&self) -> ConfigLayer {
         ConfigLayer {
-            log_level: cmd.shared.log_level(matches),
-            database: cmd.database.layer(matches),
-            http: cmd.http.layer(matches),
-            pii: cmd.pii.layer(matches),
-            ssh: cmd.ssh.layer(matches),
+            log_level: self.shared.log_level,
+            database: self.database.layer(),
+            http: self.http.layer(),
+            pii: self.pii.layer(),
+            ssh: self.ssh.layer(),
         }
     }
 
-    /// Loads the config from `matches` and runs the HTTP transport.
+    /// Loads the config and runs the HTTP transport.
     ///
     /// Binds to the configured host/port and serves MCP requests over
     /// Streamable HTTP. Each session clones the internally-built handler,
@@ -179,8 +165,8 @@ impl HttpCommand {
     /// Returns an error if the configuration cannot be loaded, the server
     /// cannot be built, TCP bind fails (port in use, permission denied), or
     /// the HTTP service fails to serve.
-    pub(crate) async fn run(matches: &ArgMatches) -> Result<(), ErrorKind> {
-        let config = cli::start(Self::command(), matches, Self::layer)?;
+    pub(crate) async fn run(self) -> Result<(), ErrorKind> {
+        let config = cli::start(&self, &self.shared, Self::layer)?;
         let http_config = &config.http;
 
         let (tunnel, server) = server::create_server(&config).await?;
@@ -336,12 +322,9 @@ mod tests {
     /// Parses `args` and resolves them into an [`HttpConfig`].
     fn http_config(args: &[&str]) -> Result<HttpConfig, ConfigErrors> {
         tests_support::clear_env::<HttpCommand>(&[]);
-        let matches = TestCli::command()
-            .try_get_matches_from(args)
-            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        let cli = TestCli::from_arg_matches(&matches).expect("from matches");
+        let cli = TestCli::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
         let layer = ConfigLayer {
-            http: cli.http.layer(&matches),
+            http: cli.http.layer(),
             ..ConfigLayer::default()
         };
         Ok(layer.resolve(None)?.config.http)
@@ -408,7 +391,9 @@ mod tests {
 
     /// Parses `args` as the full `http` subcommand and loads its config.
     fn load_http(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<HttpCommand>(HttpCommand::layer, args)
+        tests_support::clear_env::<HttpCommand>(&["LOG_LEVEL"]);
+        let cmd = HttpCommand::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
+        crate::args::load(&cmd, &cmd.shared, HttpCommand::layer, &mut Vec::new())
     }
 
     #[test]
