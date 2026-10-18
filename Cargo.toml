@@ -59,8 +59,8 @@ rmcp = { version = "3.5", features = [
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa"] }
 schemars = { version = "1.2", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
+serde_json = "1"
 sha2 = "0.11"
 sqlparser = { version = "0.63", features = ["visitor"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls"] }
