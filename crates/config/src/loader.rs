@@ -23,6 +23,7 @@ use crate::interpolate::Lookup;
 use crate::layer::{ConfigLayer, Resolved, Transport};
 use crate::ssh;
 use crate::warning::ConfigWarning;
+use crate::yaml;
 
 /// Failure of one [`load`] stage.
 ///
@@ -57,6 +58,15 @@ pub enum LoadError {
         errors: Vec<String>,
     },
 
+    /// A substitution in the config file failed.
+    #[error("failed to interpolate config file {}:{}", path.display(), Bullets(errors))]
+    Interpolate {
+        /// Absolute path of the config file.
+        path: PathBuf,
+        /// One message per failure, sorted by config path.
+        errors: Vec<String>,
+    },
+
     /// The merged configuration violates one or more rules.
     #[error("configuration validation failed:{}", Bullets(.0))]
     Invalid(#[from] ConfigErrors),
@@ -82,20 +92,31 @@ struct ConfigFile {
     text: String,
 }
 
-/// Config file and dotenv variables read by [`Sources::read`].
-#[derive(Debug)]
-pub struct Sources {
+/// Config file, dotenv variables, and process env read by [`Sources::read`].
+pub struct Sources<'a> {
     file: Option<ConfigFile>,
     dotenv: Dotenv,
+    process_env: Lookup<'a>,
 }
 
-impl Sources {
+impl std::fmt::Debug for Sources<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sources")
+            .field("file", &self.file.as_ref().map(|file| &file.path))
+            .field("dotenv", &self.dotenv)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Sources<'a> {
     /// Reads the optional config file and the dotenv files.
     ///
     /// `env_files` are loaded in order, later files overriding earlier ones;
     /// when empty, the `.env` beside `config` is loaded if it exists.
     /// Relative paths resolve against the current directory. Dotenv values
-    /// interpolate against `process_env` first, then earlier keys.
+    /// interpolate against `process_env` first, then earlier keys; config
+    /// file values later interpolate against `process_env`, then the dotenv
+    /// variables.
     ///
     /// # Errors
     ///
@@ -105,7 +126,7 @@ impl Sources {
     pub fn read(
         config: Option<&Path>,
         env_files: &[PathBuf],
-        process_env: Lookup<'_>,
+        process_env: Lookup<'a>,
         warnings: &mut Vec<ConfigWarning>,
     ) -> Result<Self, LoadError> {
         let file = config
@@ -136,7 +157,11 @@ impl Sources {
                 },
             }
         }
-        Ok(Self { file, dotenv })
+        Ok(Self {
+            file,
+            dotenv,
+            process_env,
+        })
     }
 
     /// Returns the variables of every loaded dotenv file.
@@ -147,7 +172,10 @@ impl Sources {
 
     /// Merges `cli` over the config file and resolves the result.
     ///
-    /// Path settings read from the file resolve against the file's
+    /// The file is parsed, its string values are interpolated (unset
+    /// variables become `""` and add a warning), and the result is
+    /// deserialized; a string in a bool or integer field is parsed like the
+    /// matching env var. Path settings read from the file resolve against the file's
     /// directory, after expanding a leading `~` against `home`;
     /// `database.name` does so only when it came from the file and the
     /// merged backend is `sqlite`. `home` is also forwarded to
@@ -156,16 +184,22 @@ impl Sources {
     /// # Errors
     ///
     /// Returns [`LoadError::Parse`] when the config file is not a valid
-    /// config document and [`LoadError::Invalid`] when the merged
-    /// configuration fails validation.
-    pub fn resolve(&self, cli: ConfigLayer, transport: Transport, home: Option<&Path>) -> Result<Resolved, LoadError> {
+    /// config document, [`LoadError::Interpolate`] when a substitution
+    /// fails, and [`LoadError::Invalid`] when the merged configuration fails
+    /// validation.
+    pub fn resolve(
+        &self,
+        cli: ConfigLayer,
+        transport: Transport,
+        home: Option<&Path>,
+        warnings: &mut Vec<ConfigWarning>,
+    ) -> Result<Resolved, LoadError> {
         let Some(file) = &self.file else {
             return Ok(cli.resolve(transport, home)?);
         };
-        let mut file_layer = parse(&file.text).map_err(|message| LoadError::Parse {
-            path: file.path.clone(),
-            message,
-        })?;
+        let lookup =
+            |name: &str| (self.process_env)(name).or_else(|| self.dotenv.get(name).map(|var| var.value.clone()));
+        let mut file_layer = parse_layer(&file.path, &file.text, &lookup, warnings)?;
         let dir = file.path.parent().unwrap_or(Path::new("/"));
         resolve_file_paths(&mut file_layer, dir, home);
 
@@ -258,15 +292,49 @@ fn read_text(path: &Path) -> Result<(PathBuf, String), (PathBuf, String)> {
     }
 }
 
-/// Parses a config document; an empty or `null` document is an empty layer.
-fn parse(text: &str) -> Result<ConfigLayer, String> {
-    let options = serde_saphyr::options! {
-        strict_booleans: true,
-        with_snippet: false,
+/// Parses, interpolates, and deserializes the config file at `path`.
+///
+/// An empty or `null` document is an empty layer.
+fn parse_layer(
+    path: &Path,
+    text: &str,
+    lookup: Lookup<'_>,
+    warnings: &mut Vec<ConfigWarning>,
+) -> Result<ConfigLayer, LoadError> {
+    let parse_error = |message: String| LoadError::Parse {
+        path: path.to_path_buf(),
+        message,
     };
-    serde_saphyr::from_str_with_options::<Option<ConfigLayer>>(text, options)
-        .map(Option::unwrap_or_default)
-        .map_err(|e| e.to_string())
+    let at = |location: &serde_saphyr::Location| format!("{}:{}", path.display(), yaml::line_col(location));
+
+    let Some(mut root) = yaml::parse(text).map_err(parse_error)? else {
+        return Ok(ConfigLayer::default());
+    };
+    let mut unset = Vec::new();
+    let errors = yaml::interpolate(&mut root, lookup, &mut unset);
+    warnings.extend(unset.into_iter().map(|reference| ConfigWarning::UnsetVariable {
+        name: reference.name,
+        location: at(&reference.location),
+    }));
+    if !errors.is_empty() {
+        return Err(LoadError::Interpolate {
+            path: path.to_path_buf(),
+            errors: errors
+                .into_iter()
+                .map(|e| format!("{}: {}: {}", at(&e.location), e.path, e.error))
+                .collect(),
+        });
+    }
+    if matches!(root.value, yaml::Value::Null) {
+        return Ok(ConfigLayer::default());
+    }
+    yaml::from_node(&root).map_err(|e| {
+        parse_error(match (e.path.filter(|p| !p.is_empty()), e.location) {
+            (Some(config_path), Some(location)) => format!("{}: {config_path}: {}", at(&location), e.message),
+            (None, Some(location)) => format!("{}: {}", at(&location), e.message),
+            (_, None) => e.message,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -287,7 +355,12 @@ mod tests {
         transport: Transport,
         home: Option<&Path>,
     ) -> Result<Resolved, LoadError> {
-        Sources::read(file, &[], &no_env, &mut Vec::new())?.resolve(cli, transport, home)
+        Sources::read(file, &[], &no_env, &mut Vec::new())?.resolve(cli, transport, home, &mut Vec::new())
+    }
+
+    /// Parses a config document without any variables set.
+    fn parse(text: &str) -> Result<ConfigLayer, String> {
+        parse_layer(Path::new("/cfg/dbmcp.yaml"), text, &no_env, &mut Vec::new()).map_err(|e| e.to_string())
     }
 
     fn parse_ok(text: &str) -> ConfigLayer {
@@ -438,12 +511,191 @@ ssh:
     }
 
     #[test]
-    fn bool_fields_take_only_true_and_false() {
+    fn bool_fields_parse_strings_like_the_env_layer() {
         assert_eq!(
             parse_ok("database:\n  read_only: false\n").database.read_only,
             Some(false)
         );
-        parse("database:\n  read_only: yes\n").expect_err("yes is not a bool");
+        for (raw, expected) in [
+            ("yes", true),
+            ("'on'", true),
+            ("\"1\"", true),
+            ("no", false),
+            ("OFF", false),
+        ] {
+            let layer = parse_ok(&format!("database:\n  read_only: {raw}\n"));
+            assert_eq!(layer.database.read_only, Some(expected), "{raw}");
+        }
+        for raw in ["''", "disabled", "2"] {
+            parse(&format!("database:\n  read_only: {raw}\n")).expect_err(raw);
+        }
+    }
+
+    #[test]
+    fn integer_fields_parse_strings_and_strings_reject_numbers() {
+        assert_eq!(parse_ok("database:\n  port: \"5432\"\n").database.port, Some(5432));
+        parse("database:\n  port: '54x'\n").expect_err("not a number");
+        parse("database:\n  port: 70000\n").expect_err("out of range");
+        let message = parse("database:\n  user: 123\n").expect_err("number in string field");
+        assert_eq!(
+            message,
+            "failed to parse config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:2:9: database.user: invalid type: integer, expected a string"
+        );
+    }
+
+    #[test]
+    fn type_errors_never_echo_secret_values() {
+        for yaml in [
+            "database:\n  password: 31337\n",
+            "ssh:\n  key_passphrase: [31337]\n",
+            "http:\n  auth_token: {a: 31337}\n",
+        ] {
+            let message = parse(yaml).expect_err(yaml);
+            assert!(!message.contains("31337"), "{message}");
+        }
+    }
+
+    #[test]
+    fn anchors_resolve_before_deserializing() {
+        let layer = parse_ok("database:\n  host: &host db.internal\nhttp:\n  host: *host\n");
+        assert_eq!(layer.http.host.as_deref(), Some("db.internal"));
+        parse("x-common: &c 1\n").expect_err("no extension keys");
+    }
+
+    /// Resolves `yaml` with `vars` as the process env, returning the layer and warnings.
+    fn interpolate_with(yaml: &str, vars: &[(&str, &str)]) -> (Result<ConfigLayer, LoadError>, Vec<ConfigWarning>) {
+        let lookup = |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        };
+        let mut warnings = Vec::new();
+        let layer = parse_layer(Path::new("/cfg/dbmcp.yaml"), yaml, &lookup, &mut warnings);
+        (layer, warnings)
+    }
+
+    #[test]
+    fn required_variable_fails_when_unset_and_works_when_set() {
+        let yaml = "database:\n  password: ${DB_PASSWORD:?}\n";
+        let (layer, _) = interpolate_with(yaml, &[("DB_PASSWORD", "hunter2")]);
+        let layer = layer.expect("set");
+        assert_eq!(
+            layer.database.password.as_ref().map(crate::Secret::expose),
+            Some("hunter2")
+        );
+
+        let (error, _) = interpolate_with(yaml, &[]);
+        assert_eq!(
+            error.expect_err("unset").to_string(),
+            "failed to interpolate config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:2:13: database.password: required variable DB_PASSWORD is not set"
+        );
+    }
+
+    #[test]
+    fn unset_variable_cannot_flip_a_security_bool() {
+        let (error, warnings) = interpolate_with("database:\n  read_only: ${RO}\n", &[]);
+        let error = error.expect_err("empty bool must fail");
+        assert!(matches!(error, LoadError::Parse { .. }), "{error}");
+        assert_eq!(
+            warnings,
+            [ConfigWarning::UnsetVariable {
+                name: "RO".into(),
+                location: "/cfg/dbmcp.yaml:2:14".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn unset_variable_in_string_field_is_empty_not_null() {
+        let (layer, warnings) = interpolate_with("database:\n  user: ${NOPE}\n", &[]);
+        assert_eq!(layer.expect("valid").database.user.as_deref(), Some(""));
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn interpolated_numbers_deserialize_and_lists_interpolate_per_element() {
+        let (layer, _) = interpolate_with(
+            "database:\n  port: ${PORT}\nhttp:\n  allowed_hosts: [localhost, \"${EXTRA}\"]\n",
+            &[("PORT", "5433"), ("EXTRA", "db.example")],
+        );
+        let layer = layer.expect("valid");
+        assert_eq!(layer.database.port, Some(5433));
+        assert_eq!(
+            layer.http.allowed_hosts,
+            Some(vec!["localhost".into(), "db.example".into()])
+        );
+    }
+
+    #[test]
+    fn dollar_escape_and_keys_are_not_interpolated() {
+        let (layer, _) = interpolate_with("database:\n  password: pa$$word\n", &[]);
+        assert_eq!(
+            layer
+                .expect("valid")
+                .database
+                .password
+                .as_ref()
+                .map(crate::Secret::expose),
+            Some("pa$word")
+        );
+        let (error, _) = interpolate_with("database:\n  $KEY: x\n", &[("KEY", "host")]);
+        assert!(
+            error
+                .expect_err("keys stay literal")
+                .to_string()
+                .contains("unknown field `$KEY`")
+        );
+    }
+
+    #[test]
+    fn interpolation_errors_are_sorted_by_path_and_never_echo_values() {
+        let (error, _) = interpolate_with(
+            "ssh:\n  password: hunter2$\ndatabase:\n  user: ${A:?}\n  host: ${B\n",
+            &[],
+        );
+        let rendered = error.expect_err("must fail").to_string();
+        assert_eq!(
+            rendered,
+            "failed to interpolate config file /cfg/dbmcp.yaml:\n  \
+             - /cfg/dbmcp.yaml:5:9: database.host: unterminated `${`\n  \
+             - /cfg/dbmcp.yaml:4:9: database.user: required variable A is not set\n  \
+             - /cfg/dbmcp.yaml:2:13: ssh.password: invalid `$`; escape a literal `$` as `$$`"
+        );
+        assert!(!rendered.contains("hunter2"));
+    }
+
+    #[test]
+    fn file_paths_resolve_after_substitution() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("dbmcp.yaml");
+        std::fs::write(&path, "database:\n  ssl_ca: ${CERT_DIR}/ca.pem\n").expect("write config");
+        let env = |name: &str| (name == "CERT_DIR").then(|| "certs".to_owned());
+        let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
+        let config = sources
+            .resolve(ConfigLayer::default(), Transport::Stdio, None, &mut Vec::new())
+            .expect("valid")
+            .config;
+        assert_eq!(
+            config.database.ssl_ca.as_deref().map(PathBuf::from),
+            Some(dir.path().join("certs/ca.pem"))
+        );
+    }
+
+    #[test]
+    fn file_values_interpolate_from_process_env_then_dotenv() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("dbmcp.yaml");
+        std::fs::write(&path, "database:\n  user: ${WHO}\n  host: ${WHERE}\n").expect("write config");
+        std::fs::write(dir.path().join(".env"), "WHO=dotenv\nWHERE=dotenv-host\n").expect("write .env");
+        let env = |name: &str| (name == "WHO").then(|| "process".to_owned());
+        let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
+        let db = sources
+            .resolve(ConfigLayer::default(), Transport::Stdio, None, &mut Vec::new())
+            .expect("valid")
+            .config
+            .database;
+        assert_eq!(db.user, "process");
+        assert_eq!(db.host, "dotenv-host");
     }
 
     #[test]
@@ -667,7 +919,10 @@ ssh:
         );
     }
 
-    fn read_sources(config: Option<&Path>, env_files: &[PathBuf]) -> (Result<Sources, LoadError>, Vec<ConfigWarning>) {
+    fn read_sources(
+        config: Option<&Path>,
+        env_files: &[PathBuf],
+    ) -> (Result<Sources<'static>, LoadError>, Vec<ConfigWarning>) {
         let mut warnings = Vec::new();
         let sources = Sources::read(config, env_files, &no_env, &mut warnings);
         (sources, warnings)

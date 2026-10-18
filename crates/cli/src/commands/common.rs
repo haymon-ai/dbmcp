@@ -137,7 +137,12 @@ fn try_load<C: CommandFactory + FromArgMatches>(
     let process_env = |name: &str| std::env::var(name).ok();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
     let dotenv = dotenv_layer(matches, sources.dotenv(), to_layer)?;
-    sources.resolve(to_layer(cmd, matches).or(dotenv), transport, ssh::home_dir().as_deref())
+    sources.resolve(
+        to_layer(cmd, matches).or(dotenv),
+        transport,
+        ssh::home_dir().as_deref(),
+        warnings,
+    )
 }
 
 /// Returns the layer of flags whose env var is defined only in a dotenv file.

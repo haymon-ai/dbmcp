@@ -2234,3 +2234,46 @@ async fn test_dotenv_beside_config_file_is_loaded() {
     assert!(client.exposes_write_query().await, "process env must beat dotenv");
     client.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_config_file_interpolates_from_dotenv_and_process_env() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let yaml = "database:\n  backend: sqlite\n  name: ${DB_FILE:?set DB_FILE}\n  read_only: ${RO:-true}\n";
+    let dotenv = format!("DB_FILE='{path}'\n");
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "default read_only applies");
+    client.shutdown().await;
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[("RO", "no")]).await;
+    assert!(client.exposes_write_query().await, "process env feeds interpolation");
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_missing_required_variable_fails_startup() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("dbmcp.yaml");
+    std::fs::write(&path, "database:\n  password: ${DBMCP_TEST_UNSET_SECRET:?}\n").expect("write config");
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config"])
+        .arg(&path)
+        .env_remove("DBMCP_TEST_UNSET_SECRET")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("failed to interpolate config file"), "{stderr}");
+    assert!(
+        stderr.contains("database.password: required variable DBMCP_TEST_UNSET_SECRET is not set"),
+        "{stderr}"
+    );
+}

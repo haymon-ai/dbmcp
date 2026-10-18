@@ -43,6 +43,7 @@ pub mod secret;
 pub mod ssh;
 mod value_enum;
 pub mod warning;
+mod yaml;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
