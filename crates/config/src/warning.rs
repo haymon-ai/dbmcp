@@ -16,7 +16,7 @@ pub enum ConfigWarning {
         reason: String,
     },
 
-    /// A referenced variable is unset and was replaced with `""`.
+    /// A variable referenced in a dotenv file is unset and was replaced with `""`.
     #[error("variable {name} is not set; substituting an empty string ({location})")]
     UnsetVariable {
         /// Variable name.

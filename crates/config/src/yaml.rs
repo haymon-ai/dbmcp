@@ -1,8 +1,8 @@
 //! Config-file YAML: a span-carrying document tree and its typed deserializer.
 //!
 //! The file is parsed once into a [`Node`] tree that keeps each node's
-//! line and column. String values (never keys) are then interpolated in
-//! place, and the tree is deserialized into the typed layer by a
+//! line and column; string values (never keys) are interpolated while
+//! parsing. The tree is then deserialized into the typed layer by a
 //! path-aware [`Deserializer`](serde::Deserializer) that:
 //!
 //! - coerces a string into a bool or integer field with the same parsers
@@ -12,15 +12,15 @@
 //! - tags every error with the config path and location of the node it
 //!   came from.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
 
 use clap::builder::{BoolishValueParser, TypedValueParser};
 use serde::de::{self, DeserializeSeed, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Unexpected, Visitor};
 use serde::{Deserialize, de::Error as _};
-use serde_saphyr::{Location, Spanned};
-
-use crate::interpolate::{self, InterpolateError, Lookup};
+use serde_saphyr::budget::BudgetBreach;
+use serde_saphyr::{Location, PropertySyntax, Spanned};
 
 /// Document node with the location it was written at.
 pub(crate) type Node = Spanned<Value>;
@@ -130,26 +130,81 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 }
 
+/// Why [`parse`] failed.
+#[derive(Debug)]
+pub(crate) struct ParseError {
+    /// Where it failed, when known.
+    pub(crate) location: Option<Location>,
+    /// Parser message, without its `at line …, column …` suffix.
+    pub(crate) message: String,
+    /// A substitution failed, not the YAML itself.
+    pub(crate) interpolation: bool,
+}
+
 /// Parses a YAML document into a node tree; an empty document is a null node.
+///
+/// String values (never keys) are interpolated from `properties` with
+/// Docker Compose syntax; an unset variable becomes `""`.
 ///
 /// # Errors
 ///
-/// Returns the location (when known) and parser message for invalid YAML,
-/// without the parser's own `at line …, column …` suffix.
-pub(crate) fn parse(text: &str) -> Result<Node, (Option<Location>, String)> {
-    let options = serde_saphyr::options! {
+/// Returns the location (when known) and parser message for invalid YAML
+/// or the first failed substitution.
+pub(crate) fn parse(text: &str, properties: HashMap<String, String>) -> Result<Node, ParseError> {
+    let mut options = serde_saphyr::options! {
         strict_booleans: true,
         with_snippet: false,
+        property_syntax: PropertySyntax::DockerCompose,
     };
+    options = options.with_properties(properties);
     let root = serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| {
-        let message = e.to_string();
-        let message = match message.rfind(" at line ") {
-            Some(end) if e.location().is_some() => message[..end].to_owned(),
-            _ => message,
+        let inner = innermost(&e);
+        let message = if matches!(inner, serde_saphyr::Error::InvalidPropertyName { .. }) {
+            // The parser quotes the rest of the scalar, which may be a secret.
+            INVALID_SUBSTITUTION.to_owned()
+        } else {
+            let message = e.to_string();
+            match message.rfind(" at line ") {
+                Some(end) if e.location().is_some() => message[..end].to_owned(),
+                _ => message,
+            }
         };
-        (e.location(), message)
+        ParseError {
+            location: e.location(),
+            message,
+            interpolation: is_interpolation_error(inner),
+        }
     })?;
     Ok(root.unwrap_or_else(|| Spanned::new(Value::Null, Location::UNKNOWN, Location::UNKNOWN)))
+}
+
+/// Value-free message for a malformed `${...}`.
+const INVALID_SUBSTITUTION: &str =
+    "invalid substitution; expected `${NAME}` optionally followed by :-, -, :?, ?, :+, or +, and a closing `}`";
+
+/// Returns the error inside any snippet or alias wrappers.
+fn innermost(mut error: &serde_saphyr::Error) -> &serde_saphyr::Error {
+    while let serde_saphyr::Error::AliasError { error: inner, .. }
+    | serde_saphyr::Error::WithSnippet { error: inner, .. } = error
+    {
+        error = inner;
+    }
+    error
+}
+
+/// Returns `true` when `error` comes from a failed substitution.
+fn is_interpolation_error(error: &serde_saphyr::Error) -> bool {
+    matches!(
+        error,
+        serde_saphyr::Error::UnresolvedProperty { .. }
+            | serde_saphyr::Error::InvalidPropertyName { .. }
+            | serde_saphyr::Error::PropertyRequiredButUnset { .. }
+            | serde_saphyr::Error::PropertyRequiredButEmpty { .. }
+            | serde_saphyr::Error::Budget {
+                breach: BudgetBreach::PropertyExpansionDepth { .. } | BudgetBreach::PropertyInterpolationWork { .. },
+                ..
+            }
+    )
 }
 
 /// Returns `line:column` of `location`.
@@ -166,77 +221,25 @@ fn join(parent: &str, key: &str) -> String {
     }
 }
 
-/// Interpolation failure at one node.
-#[derive(Debug)]
-pub(crate) struct NodeInterpolateError {
-    /// Config path, e.g. `database.password`.
-    pub(crate) path: String,
-    /// Where the value was written.
-    pub(crate) location: Location,
-    /// Why it failed.
-    pub(crate) error: InterpolateError,
-}
-
-/// Unset variable referenced at one node.
-#[derive(Debug)]
-pub(crate) struct UnsetReference {
-    /// Variable name.
-    pub(crate) name: String,
-    /// Where it was referenced.
-    pub(crate) location: Location,
-}
-
-/// What [`interpolate`] found while walking the tree.
-#[derive(Debug, Default)]
-pub(crate) struct Interpolation {
-    /// Every failure, sorted by config path.
-    pub(crate) errors: Vec<NodeInterpolateError>,
-    /// Every referenced variable that is unset.
-    pub(crate) unset: Vec<UnsetReference>,
-    /// Config path and location of every non-null setting (a list counts as one).
-    pub(crate) locations: Vec<(String, Location)>,
-}
-
-/// Interpolates every string value under `node` in place; keys are left alone.
-pub(crate) fn interpolate(node: &mut Node, lookup: Lookup<'_>) -> Interpolation {
-    let mut found = Interpolation::default();
-    walk(node, "", true, lookup, &mut found);
-    found.errors.sort_by(|a, b| a.path.cmp(&b.path));
+/// Returns the config path and location of every non-null setting under `node`.
+///
+/// A list counts as one setting.
+pub(crate) fn locations(node: &Node) -> Vec<(String, Location)> {
+    let mut found = Vec::new();
+    walk(node, "", &mut found);
     found
 }
 
-/// Interpolates `node` at `path`, recording its location when `record` is set.
-fn walk(node: &mut Node, path: &str, record: bool, lookup: Lookup<'_>, found: &mut Interpolation) {
-    let location = node.referenced;
-    if record && !matches!(node.value, Value::Null | Value::Map(_)) {
-        found.locations.push((path.to_owned(), location));
-    }
-    match &mut node.value {
-        Value::Str(text) => {
-            let mut names = Vec::new();
-            match interpolate::interpolate(text, lookup, &mut names) {
-                Ok(expanded) => *text = expanded,
-                Err(error) => found.errors.push(NodeInterpolateError {
-                    path: path.to_owned(),
-                    location,
-                    error,
-                }),
-            }
-            found
-                .unset
-                .extend(names.into_iter().map(|name| UnsetReference { name, location }));
-        }
-        Value::Seq(items) => {
-            for (i, item) in items.iter_mut().enumerate() {
-                walk(item, &format!("{path}[{i}]"), false, lookup, found);
-            }
-        }
+/// Records `node` at `path`, then the entries of a mapping.
+fn walk(node: &Node, path: &str, found: &mut Vec<(String, Location)>) {
+    match &node.value {
+        Value::Null => {}
         Value::Map(entries) => {
             for (key, value) in entries {
-                walk(value, &join(path, &key.value), record, lookup, found);
+                walk(value, &join(path, &key.value), found);
             }
         }
-        Value::Null | Value::Bool(_) | Value::Int(_) | Value::UInt(_) | Value::Float(_) => {}
+        _ => found.push((path.to_owned(), node.referenced)),
     }
 }
 

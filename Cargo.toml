@@ -60,7 +60,7 @@ russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa
 schemars = { version = "1.2", features = ["indexmap2"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize", "properties"] }
 serde_json = "1"
 sha2 = "0.11"
 sqlparser = { version = "0.63", features = ["visitor"] }

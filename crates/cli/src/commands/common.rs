@@ -14,6 +14,7 @@
 //! value type.
 
 use std::any::TypeId;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
@@ -135,7 +136,9 @@ pub(crate) fn load<C: LoadCommand>(
     warnings: &mut Vec<ConfigWarning>,
 ) -> Result<Resolved, LoadError> {
     let shared = cmd.shared();
-    let process_env = |name: &str| std::env::var(name).ok();
+    let process_env: HashMap<String, String> = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .collect();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
 
     let command = C::command();
@@ -168,7 +171,6 @@ pub(crate) fn load<C: LoadCommand>(
         provenance,
         C::TRANSPORT,
         ssh::home_dir().as_deref(),
-        warnings,
     )
 }
 

@@ -50,7 +50,6 @@ pub use database::{DatabaseBackend, DatabaseConfig};
 pub use dotenv::{Dotenv, DotenvVar};
 pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
-pub use interpolate::Lookup;
 pub use layer::{ConfigLayer, DatabaseLayer, HttpLayer, PiiLayer, Resolved, SshLayer, Transport};
 pub use loader::{LoadError, Sources};
 pub use log_level::LogLevel;

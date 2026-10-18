@@ -66,6 +66,17 @@ impl Dotenv {
         process_env(name).or_else(|| self.get(name).map(|var| var.value.clone()))
     }
 
+    /// Returns these variables overlaid with `process_env`, as interpolation properties.
+    pub(crate) fn properties(&self, process_env: &HashMap<String, String>) -> HashMap<String, String> {
+        let mut properties: HashMap<String, String> = self
+            .vars
+            .iter()
+            .map(|(name, var)| (name.clone(), var.value.clone()))
+            .collect();
+        properties.extend(process_env.iter().map(|(name, value)| (name.clone(), value.clone())));
+        properties
+    }
+
     /// Parses `text`, read from `path`, on top of the variables loaded so far.
     ///
     /// Returns one `path:line: reason` message per malformed entry; the

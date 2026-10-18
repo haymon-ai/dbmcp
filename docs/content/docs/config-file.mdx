@@ -151,7 +151,7 @@ Every value in the file — strings and each list element — is interpolated be
 
 | Syntax | Result |
 |--------|--------|
-| `$VAR`, `${VAR}` | Value of `VAR`; `""` if unset (with a warning) |
+| `$VAR`, `${VAR}` | Value of `VAR`; `""` if unset |
 | `${VAR:-default}` | `default` if `VAR` is unset **or empty** |
 | `${VAR-default}` | `default` if `VAR` is unset |
 | `${VAR:?message}` | Error if `VAR` is unset or empty |
@@ -160,11 +160,11 @@ Every value in the file — strings and each list element — is interpolated be
 | `${VAR+alt}` | `alt` if `VAR` is set, else `""` |
 | `$$` | A literal `$` |
 
-Defaults, messages, and alternatives can nest: `${PRIMARY:-${FALLBACK}}`. A `$` followed by anything other than a name, `{`, or `$` is an error — write `$$` for a literal dollar sign.
+Defaults, messages, and alternatives can nest: `${PRIMARY:-${FALLBACK}}`. A `$` followed by anything other than a name, `{`, or `$` is kept as a literal `$` (in `.env` files it is an error, so prefer `$$` for a literal dollar sign).
 
 Variables are looked up in the process environment first, then in the loaded `.env` files.
 
-An unset variable becomes an empty string and logs a warning; only the `?` forms fail. An empty string is still a value, not `null`, so `read_only: ${RO}` with `RO` unset is an **error** (an empty boolean is rejected) rather than silently changing a security setting. Use `${RO:-true}` to give it a default.
+An unset variable silently becomes an empty string; only the `?` forms fail, and only the first failed substitution is reported. An empty string is still a value, not `null`, so `read_only: ${RO}` with `RO` unset is an **error** (an empty boolean is rejected) rather than silently changing a security setting. Use `${RO:-true}` to give it a default.
 
 ## `.env` Files
 

@@ -111,7 +111,7 @@ mod tests {
             },
             LoadError::Interpolate {
                 path,
-                errors: vec!["bad".into()],
+                message: "bad".into(),
             },
             LoadError::from(ConfigErrors::from(ConfigError::MissingSqliteDbName)),
         ] {

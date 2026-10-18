@@ -2273,7 +2273,7 @@ async fn test_missing_required_variable_fails_startup() {
     assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("failed to interpolate config file"), "{stderr}");
     assert!(
-        stderr.contains("database.password: required variable DBMCP_TEST_UNSET_SECRET is not set"),
+        stderr.contains(":2:13: missing property `DBMCP_TEST_UNSET_SECRET`"),
         "{stderr}"
     );
 }
