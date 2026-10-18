@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(
             errors[0].to_string(),
-            "pii.categories contains duplicate entry 'financial'"
+            "pii.categories: contains duplicate entry 'financial'"
         );
     }
 

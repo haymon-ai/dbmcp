@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn load_accumulates_database_and_http_errors_in_order() {
         let error = load_http(&["_", "--db-backend", "sqlite", "--host", ""]).expect_err("must fail");
-        let LoadError::Invalid(errors) = error else {
+        let LoadError::Invalid { errors, .. } = error else {
             panic!("expected validation error");
         };
         assert_eq!(errors.len(), 2);

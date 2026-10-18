@@ -133,13 +133,40 @@ impl<'de> Visitor<'de> for ValueVisitor {
 ///
 /// # Errors
 ///
-/// Returns the parser message for invalid YAML.
-pub(crate) fn parse(text: &str) -> Result<Option<Node>, String> {
+/// Returns the location (when known) and parser message for invalid YAML,
+/// without the parser's own `at line …, column …` suffix.
+pub(crate) fn parse(text: &str) -> Result<Option<Node>, (Option<Location>, String)> {
     let options = serde_saphyr::options! {
         strict_booleans: true,
         with_snippet: false,
     };
-    serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| e.to_string())
+    serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| {
+        let message = e.to_string();
+        let message = match message.rfind(" at line ") {
+            Some(end) if e.location().is_some() => message[..end].to_owned(),
+            _ => message,
+        };
+        (e.location(), message)
+    })
+}
+
+/// Returns the config path and location of every non-null, non-mapping value.
+pub(crate) fn value_locations(node: &Node) -> Vec<(String, Location)> {
+    let mut locations = Vec::new();
+    collect_locations(node, "", &mut locations);
+    locations
+}
+
+fn collect_locations(node: &Node, path: &str, locations: &mut Vec<(String, Location)>) {
+    match &node.value {
+        Value::Map(entries) => {
+            for (key, value) in entries {
+                collect_locations(value, &join(path, &key.value), locations);
+            }
+        }
+        Value::Null => {}
+        _ => locations.push((path.to_owned(), node.referenced)),
+    }
 }
 
 /// Returns `line:column` of `location`.
@@ -237,6 +264,41 @@ pub(crate) struct DeError {
     pub(crate) location: Option<Location>,
 }
 
+/// Value-free name of an [`Unexpected`] kind.
+fn kind(unexpected: &Unexpected<'_>) -> &'static str {
+    match unexpected {
+        Unexpected::Bool(_) => "boolean",
+        Unexpected::Unsigned(_) | Unexpected::Signed(_) => "integer",
+        Unexpected::Float(_) => "float",
+        Unexpected::Char(_) | Unexpected::Str(_) => "string",
+        Unexpected::Bytes(_) => "bytes",
+        Unexpected::Unit => "null",
+        Unexpected::Option => "option",
+        Unexpected::NewtypeStruct => "newtype struct",
+        Unexpected::Seq => "sequence",
+        Unexpected::Map => "mapping",
+        Unexpected::Enum
+        | Unexpected::UnitVariant
+        | Unexpected::NewtypeVariant
+        | Unexpected::TupleVariant
+        | Unexpected::StructVariant => "enum",
+        Unexpected::Other(other) => ["null", "boolean", "integer", "float", "string", "sequence", "mapping"]
+            .into_iter()
+            .find(|kind| kind == other)
+            .unwrap_or("value"),
+    }
+}
+
+/// Renders `names` as `` `a`, `b` ``.
+fn one_of(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Overrides every constructor that would echo a value with a value-free message.
 impl de::Error for DeError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self {
@@ -244,6 +306,38 @@ impl de::Error for DeError {
             path: None,
             location: None,
         }
+    }
+
+    fn invalid_type(unexp: Unexpected<'_>, exp: &dyn de::Expected) -> Self {
+        Self::custom(format_args!("expected {exp}, found {}", kind(&unexp)))
+    }
+
+    fn invalid_value(_unexp: Unexpected<'_>, exp: &dyn de::Expected) -> Self {
+        Self::custom(format_args!("invalid value; expected {exp}"))
+    }
+
+    fn invalid_length(_len: usize, exp: &dyn de::Expected) -> Self {
+        Self::custom(format_args!("invalid length; expected {exp}"))
+    }
+
+    fn unknown_variant(_variant: &str, expected: &'static [&'static str]) -> Self {
+        Self::custom(format_args!("unknown variant; expected one of {}", one_of(expected)))
+    }
+
+    fn unknown_field(_field: &str, expected: &'static [&'static str]) -> Self {
+        if expected.is_empty() {
+            Self::custom("unknown field; no fields are accepted here")
+        } else {
+            Self::custom(format_args!("unknown field; expected one of {}", one_of(expected)))
+        }
+    }
+
+    fn missing_field(field: &'static str) -> Self {
+        Self::custom(format_args!("missing field `{field}`"))
+    }
+
+    fn duplicate_field(field: &'static str) -> Self {
+        Self::custom(format_args!("duplicate field `{field}`"))
     }
 }
 

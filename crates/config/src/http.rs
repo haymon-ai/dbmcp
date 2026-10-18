@@ -251,10 +251,10 @@ mod tests {
         assert_eq!(
             errors,
             [
-                "http.allowed_origins must not contain empty entries",
-                "http.allowed_origins contains duplicate entry 'http://a.example:*'",
-                "http.allowed_hosts must not contain empty entries",
-                "http.allowed_hosts contains duplicate entry 'localhost'",
+                "http.allowed_origins: must not contain empty entries",
+                "http.allowed_origins: contains duplicate entry 'http://a.example:*'",
+                "http.allowed_hosts: must not contain empty entries",
+                "http.allowed_hosts: contains duplicate entry 'localhost'",
             ]
         );
     }

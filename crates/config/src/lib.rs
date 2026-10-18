@@ -10,6 +10,7 @@
 //! - [`log_level`] — [`LogLevel`]
 //! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
+//! - [`provenance`] — [`Provenance`]: the [`Source`] of each value, used to annotate errors
 //! - [`secret`] — [`Secret`] redacting string wrapper
 //! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`warning`] — [`ConfigWarning`] non-fatal loading problems
@@ -39,6 +40,7 @@ pub mod loader;
 pub mod log_level;
 pub mod origin;
 pub mod pii;
+pub mod provenance;
 pub mod secret;
 pub mod ssh;
 mod value_enum;
@@ -56,6 +58,7 @@ pub use loader::{LoadError, Sources};
 pub use log_level::LogLevel;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
+pub use provenance::{Provenance, Route, Source};
 pub use secret::Secret;
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use warning::ConfigWarning;

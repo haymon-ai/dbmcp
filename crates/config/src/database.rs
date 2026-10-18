@@ -159,14 +159,17 @@ impl DatabaseConfig {
 
         if self.ssl {
             for (name, path) in [
-                ("DB_SSL_CA", &self.ssl_ca),
-                ("DB_SSL_CERT", &self.ssl_cert),
-                ("DB_SSL_KEY", &self.ssl_key),
+                ("database.ssl_ca", &self.ssl_ca),
+                ("database.ssl_cert", &self.ssl_cert),
+                ("database.ssl_key", &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
+                    errors.push(ConfigError::FileNotFound {
+                        field: name,
+                        path: path.clone(),
+                    });
                 }
             }
         }
@@ -351,8 +354,8 @@ mod tests {
         let errors = config.validate().expect_err("missing ssl ca must fail");
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, path)
-                if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"
+            ConfigError::FileNotFound { field: name, path }
+                if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"
         )));
     }
 
@@ -367,9 +370,13 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_ca"));
+        assert!(
+            matches!(&errors[1], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_cert")
+        );
+        assert!(
+            matches!(&errors[2], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_key")
+        );
     }
 
     #[test]
@@ -395,7 +402,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"
+            ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_ca"
         )));
     }
 
@@ -416,9 +423,9 @@ mod tests {
         assert_eq!(
             errors,
             [
-                "database.max_pool_size must be at least 1",
-                "database.connection_timeout must be at least 1",
-                "database.page_size must be between 1 and 500",
+                "database.max_pool_size: must be at least 1",
+                "database.connection_timeout: must be at least 1",
+                "database.page_size: must be between 1 and 500",
             ]
         );
     }

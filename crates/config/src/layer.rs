@@ -171,20 +171,30 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-/// Implements a field-wise `or` for a layer struct.
+/// Implements a field-wise `or` and `set_paths` for a layer section.
 macro_rules! impl_or {
-    ($ty:ident { $($field:ident),* $(,)? }) => {
+    ($ty:ident, $section:literal { $($field:ident),* $(,)? }) => {
         impl $ty {
             /// Returns `self`, with every unset field taken from `lower`.
             #[must_use]
             pub fn or(self, lower: Self) -> Self {
                 Self { $($field: self.$field.or(lower.$field)),* }
             }
+
+            /// Returns the config path of every set field.
+            #[must_use]
+            pub fn set_paths(&self) -> Vec<&'static str> {
+                let mut paths = Vec::new();
+                $(if self.$field.is_some() {
+                    paths.push(concat!($section, ".", stringify!($field)));
+                })*
+                paths
+            }
         }
     };
 }
 
-impl_or!(DatabaseLayer {
+impl_or!(DatabaseLayer, "database" {
     backend,
     host,
     port,
@@ -203,7 +213,7 @@ impl_or!(DatabaseLayer {
     query_timeout,
     page_size,
 });
-impl_or!(HttpLayer {
+impl_or!(HttpLayer, "http" {
     host,
     port,
     allowed_origins,
@@ -211,14 +221,14 @@ impl_or!(HttpLayer {
     auth_token,
     allow_unauthenticated,
 });
-impl_or!(PiiLayer {
+impl_or!(PiiLayer, "pii" {
     enabled,
     operator,
     categories,
     ner_enabled,
     ner_model,
 });
-impl_or!(SshLayer {
+impl_or!(SshLayer, "ssh" {
     host,
     port,
     user,
@@ -242,6 +252,20 @@ impl ConfigLayer {
             pii: self.pii.or(lower.pii),
             ssh: self.ssh.or(lower.ssh),
         }
+    }
+
+    /// Returns the config path of every set setting, e.g. `database.port`.
+    #[must_use]
+    pub fn set_paths(&self) -> Vec<&'static str> {
+        let mut paths = Vec::new();
+        if self.log_level.is_some() {
+            paths.push("log_level");
+        }
+        paths.extend(self.database.set_paths());
+        paths.extend(self.http.set_paths());
+        paths.extend(self.pii.set_paths());
+        paths.extend(self.ssh.set_paths());
+        paths
     }
 
     /// Applies defaults to every unset setting and validates the result.
@@ -550,10 +574,7 @@ mod tests {
             ..ConfigLayer::default()
         };
         let errors = resolve(layer, Transport::Stdio).expect_err("orphan ssh option");
-        assert_eq!(
-            messages(&errors),
-            ["SSH_HOST is required when other SSH_* options are set"]
-        );
+        assert_eq!(messages(&errors), ["ssh.host: required when other ssh options are set"]);
     }
 
     #[test]
@@ -591,7 +612,7 @@ mod tests {
             .config;
         assert!(config.http.is_none());
         let errors = resolve(layer, Transport::Http).expect_err("http validates http");
-        assert_eq!(messages(&errors), ["HTTP_HOST must not be empty"]);
+        assert_eq!(messages(&errors), ["http.host: must not be empty"]);
     }
 
     #[test]
@@ -641,6 +662,29 @@ mod tests {
         };
         let errors = resolve(layer, Transport::Stdio).expect_err("sqlite cannot tunnel");
         assert!(matches!(errors[0], ConfigError::SshSqliteUnsupported));
+    }
+
+    #[test]
+    fn set_paths_lists_config_paths_of_set_fields() {
+        let mut layer = ConfigLayer {
+            log_level: Some(LogLevel::Debug),
+            ..ConfigLayer::default()
+        };
+        layer.database.port = Some(1);
+        layer.http.allowed_hosts = Some(vec![]);
+        layer.pii.ner_model = Some(PathBuf::from("/m"));
+        layer.ssh.key_passphrase = Some("pp".into());
+        assert_eq!(
+            layer.set_paths(),
+            [
+                "log_level",
+                "database.port",
+                "http.allowed_hosts",
+                "pii.ner_model",
+                "ssh.key_passphrase"
+            ]
+        );
+        assert!(ConfigLayer::default().set_paths().is_empty());
     }
 
     #[test]

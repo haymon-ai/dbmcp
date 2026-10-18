@@ -104,7 +104,10 @@ impl SshConfig {
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound("SSH_KEY".into(), key.display().to_string()));
+            errors.push(ConfigError::FileNotFound {
+                field: "ssh.key",
+                path: key.display().to_string(),
+            });
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
             errors.push(ConfigError::SshKeyPassphraseWithoutKey);
@@ -191,7 +194,7 @@ mod tests {
     fn validate_rejects_sqlite_backend() {
         assert_eq!(
             errors_of(&ssh_config(), DatabaseBackend::Sqlite),
-            ["SSH_HOST is not supported with the sqlite backend"]
+            ["ssh.host: not supported with the sqlite backend"]
         );
     }
 
@@ -203,7 +206,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_HOST must not be empty"]
+            ["ssh.host: must not be empty"]
         );
     }
 
@@ -215,7 +218,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Postgres),
-            ["SSH_USER is required when SSH_HOST is set"]
+            ["ssh.user: required when ssh.host is set"]
         );
     }
 
@@ -227,7 +230,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set"]
+            ["ssh.password: required when ssh.host is set and ssh.key is not"]
         );
     }
 
@@ -241,12 +244,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             &errors[0],
-            ConfigError::FileNotFound(name, _) if name == "SSH_KEY"
+            ConfigError::FileNotFound { field: name, path: _ } if *name == "ssh.key"
         ));
         assert_eq!(
             errors[0].to_string(),
             format!(
-                "SSH_KEY file not found: {}",
+                "ssh.key: file not found: {}",
                 Path::new("/nonexistent/id_ed25519").display()
             )
         );
@@ -259,7 +262,7 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate(DatabaseBackend::Mysql).expect_err("must fail");
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound { .. }));
     }
 
     #[test]
@@ -270,7 +273,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_KEY_PASSPHRASE requires SSH_KEY"]
+            ["ssh.key_passphrase: requires ssh.key"]
         );
     }
 
@@ -284,7 +287,7 @@ mod tests {
             };
             assert_eq!(
                 errors_of(&config, DatabaseBackend::Mysql),
-                ["SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
+                ["ssh.known_hosts: required when the home directory cannot be determined"],
                 "mode {mode}"
             );
         }
@@ -328,7 +331,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["ssh.port must be at least 1", "ssh.local_port must be at least 1"]
+            ["ssh.port: must be at least 1", "ssh.local_port: must be at least 1"]
         );
     }
 

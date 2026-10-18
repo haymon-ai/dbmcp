@@ -66,14 +66,17 @@ mod tests {
     fn config_error_display_bullets_each_error() {
         let errors = ConfigErrors::from_vec(vec![
             ConfigError::MissingSqliteDbName,
-            ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope".into()),
+            ConfigError::FileNotFound {
+                field: "database.ssl_ca",
+                path: "/nope".into(),
+            },
         ])
         .expect("non-empty");
         let error = ErrorKind::Config(errors.into());
         let rendered = error.to_string();
         assert!(rendered.starts_with("configuration validation failed:"));
-        assert!(rendered.contains("\n  - DB_NAME (file path) is required for SQLite"));
-        assert!(rendered.contains("\n  - DB_SSL_CA file not found: /nope"));
+        assert!(rendered.contains("\n  - database.name: required (file path) for the sqlite backend"));
+        assert!(rendered.contains("\n  - database.ssl_ca: file not found: /nope"));
     }
 
     #[test]
@@ -88,6 +91,32 @@ mod tests {
         let clap_error = clap::Error::new(clap::error::ErrorKind::UnknownArgument);
         let error = Error::from(ErrorKind::from(clap_error));
         assert_eq!(error.exit_code(), ExitCode::from(2));
+    }
+
+    #[test]
+    fn every_config_stage_exits_with_failure() {
+        let path = std::path::PathBuf::from("/abs/dbmcp.yaml");
+        for error in [
+            LoadError::Read {
+                path: path.clone(),
+                reason: "gone".into(),
+            },
+            LoadError::Parse {
+                path: path.clone(),
+                message: "bad".into(),
+            },
+            LoadError::Env {
+                path: path.clone(),
+                errors: vec!["bad".into()],
+            },
+            LoadError::Interpolate {
+                path,
+                errors: vec!["bad".into()],
+            },
+            LoadError::from(ConfigErrors::from(ConfigError::MissingSqliteDbName)),
+        ] {
+            assert_eq!(Error::from(ErrorKind::from(error)).exit_code(), ExitCode::FAILURE);
+        }
     }
 
     #[test]

@@ -21,6 +21,7 @@ use crate::dotenv::Dotenv;
 use crate::error::ConfigErrors;
 use crate::interpolate::Lookup;
 use crate::layer::{ConfigLayer, Resolved, Transport};
+use crate::provenance::{Provenance, Source};
 use crate::ssh;
 use crate::warning::ConfigWarning;
 use crate::yaml;
@@ -68,8 +69,37 @@ pub enum LoadError {
     },
 
     /// The merged configuration violates one or more rules.
-    #[error("configuration validation failed:{}", Bullets(.0))]
-    Invalid(#[from] ConfigErrors),
+    ///
+    /// Each error is rendered with its note: where the involved values came
+    /// from, or how to set a value nobody set.
+    #[error("configuration validation failed:{}", Annotated(errors, notes))]
+    Invalid {
+        /// The rule violations.
+        errors: ConfigErrors,
+        /// One note per error (may be empty).
+        notes: Vec<String>,
+    },
+}
+
+impl From<ConfigErrors> for LoadError {
+    fn from(errors: ConfigErrors) -> Self {
+        Self::Invalid {
+            errors,
+            notes: Vec::new(),
+        }
+    }
+}
+
+struct Annotated<'a>(&'a ConfigErrors, &'a [String]);
+
+impl std::fmt::Display for Annotated<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, error) in self.0.iter().enumerate() {
+            let note = self.1.get(i).map_or("", String::as_str);
+            write!(f, "\n  - {error}{note}")?;
+        }
+        Ok(())
+    }
 }
 
 struct Bullets<'a, T>(&'a [T]);
@@ -175,7 +205,10 @@ impl<'a> Sources<'a> {
     /// The file is parsed, its string values are interpolated (unset
     /// variables become `""` and add a warning), and the result is
     /// deserialized; a string in a bool or integer field is parsed like the
-    /// matching env var. Path settings read from the file resolve against the file's
+    /// matching env var. `provenance` holds the sources of the values in
+    /// `cli`; the file's value locations are added below them, and every
+    /// validation error is annotated from the result. Path settings read
+    /// from the file resolve against the file's
     /// directory, after expanding a leading `~` against `home`;
     /// `database.name` does so only when it came from the file and the
     /// merged backend is `sqlite`. `home` is also forwarded to
@@ -190,16 +223,24 @@ impl<'a> Sources<'a> {
     pub fn resolve(
         &self,
         cli: ConfigLayer,
+        mut provenance: Provenance,
         transport: Transport,
         home: Option<&Path>,
         warnings: &mut Vec<ConfigWarning>,
     ) -> Result<Resolved, LoadError> {
+        let annotate = |provenance: &Provenance, errors: ConfigErrors| {
+            let notes = errors.iter().map(|error| provenance.note(error)).collect();
+            LoadError::Invalid { errors, notes }
+        };
         let Some(file) = &self.file else {
-            return Ok(cli.resolve(transport, home)?);
+            return cli.resolve(transport, home).map_err(|e| annotate(&provenance, e));
         };
         let lookup =
             |name: &str| (self.process_env)(name).or_else(|| self.dotenv.get(name).map(|var| var.value.clone()));
-        let mut file_layer = parse_layer(&file.path, &file.text, &lookup, warnings)?;
+        let (mut file_layer, locations) = parse_layer(&file.path, &file.text, &lookup, warnings)?;
+        for (path, location) in locations {
+            provenance.set_source(&path, Source::File(location));
+        }
         let dir = file.path.parent().unwrap_or(Path::new("/"));
         resolve_file_paths(&mut file_layer, dir, home);
 
@@ -213,7 +254,7 @@ impl<'a> Sources<'a> {
         {
             *name = resolve_path_string(name, dir, home);
         }
-        Ok(merged.resolve(transport, home)?)
+        merged.resolve(transport, home).map_err(|e| annotate(&provenance, e))
     }
 }
 
@@ -294,21 +335,28 @@ fn read_text(path: &Path) -> Result<(PathBuf, String), (PathBuf, String)> {
 
 /// Parses, interpolates, and deserializes the config file at `path`.
 ///
-/// An empty or `null` document is an empty layer.
+/// Returns the layer and the `path:line:column` of every value set in it,
+/// keyed by config path. An empty or `null` document is an empty layer.
 fn parse_layer(
     path: &Path,
     text: &str,
     lookup: Lookup<'_>,
     warnings: &mut Vec<ConfigWarning>,
-) -> Result<ConfigLayer, LoadError> {
+) -> Result<(ConfigLayer, Vec<(String, String)>), LoadError> {
     let parse_error = |message: String| LoadError::Parse {
         path: path.to_path_buf(),
         message,
     };
     let at = |location: &serde_saphyr::Location| format!("{}:{}", path.display(), yaml::line_col(location));
 
-    let Some(mut root) = yaml::parse(text).map_err(parse_error)? else {
-        return Ok(ConfigLayer::default());
+    let root = yaml::parse(text).map_err(|(location, message)| {
+        parse_error(match location {
+            Some(location) => format!("{}: {message}", at(&location)),
+            None => message,
+        })
+    })?;
+    let Some(mut root) = root else {
+        return Ok((ConfigLayer::default(), Vec::new()));
     };
     let mut unset = Vec::new();
     let errors = yaml::interpolate(&mut root, lookup, &mut unset);
@@ -326,15 +374,20 @@ fn parse_layer(
         });
     }
     if matches!(root.value, yaml::Value::Null) {
-        return Ok(ConfigLayer::default());
+        return Ok((ConfigLayer::default(), Vec::new()));
     }
-    yaml::from_node(&root).map_err(|e| {
+    let layer = yaml::from_node(&root).map_err(|e| {
         parse_error(match (e.path.filter(|p| !p.is_empty()), e.location) {
             (Some(config_path), Some(location)) => format!("{}: {config_path}: {}", at(&location), e.message),
             (None, Some(location)) => format!("{}: {}", at(&location), e.message),
             (_, None) => e.message,
         })
-    })
+    })?;
+    let locations = yaml::value_locations(&root)
+        .into_iter()
+        .map(|(config_path, location)| (config_path, at(&location)))
+        .collect();
+    Ok((layer, locations))
 }
 
 #[cfg(test)]
@@ -355,12 +408,20 @@ mod tests {
         transport: Transport,
         home: Option<&Path>,
     ) -> Result<Resolved, LoadError> {
-        Sources::read(file, &[], &no_env, &mut Vec::new())?.resolve(cli, transport, home, &mut Vec::new())
+        Sources::read(file, &[], &no_env, &mut Vec::new())?.resolve(
+            cli,
+            Provenance::default(),
+            transport,
+            home,
+            &mut Vec::new(),
+        )
     }
 
     /// Parses a config document without any variables set.
     fn parse(text: &str) -> Result<ConfigLayer, String> {
-        parse_layer(Path::new("/cfg/dbmcp.yaml"), text, &no_env, &mut Vec::new()).map_err(|e| e.to_string())
+        parse_layer(Path::new("/cfg/dbmcp.yaml"), text, &no_env, &mut Vec::new())
+            .map(|(layer, _)| layer)
+            .map_err(|e| e.to_string())
     }
 
     fn parse_ok(text: &str) -> ConfigLayer {
@@ -539,7 +600,7 @@ ssh:
         let message = parse("database:\n  user: 123\n").expect_err("number in string field");
         assert_eq!(
             message,
-            "failed to parse config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:2:9: database.user: invalid type: integer, expected a string"
+            "failed to parse config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:2:9: database.user: expected a string, found integer"
         );
     }
 
@@ -553,6 +614,78 @@ ssh:
             let message = parse(yaml).expect_err(yaml);
             assert!(!message.contains("31337"), "{message}");
         }
+    }
+
+    #[test]
+    fn unknown_key_names_location_and_path_without_suggestion() {
+        let message = parse("database:\n  pasword: x\n").expect_err("unknown key");
+        assert!(
+            message.starts_with(
+                "failed to parse config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:2:3: database.pasword: unknown field; expected one of `backend`, `host`,"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn yaml_syntax_errors_use_file_line_column_prefix() {
+        let message = parse("database: [unclosed\n").expect_err("bad yaml");
+        assert!(
+            message.starts_with("failed to parse config file /cfg/dbmcp.yaml:\n  - /cfg/dbmcp.yaml:"),
+            "{message}"
+        );
+        assert!(!message.contains(" at line "), "{message}");
+    }
+
+    #[test]
+    fn out_of_range_values_are_not_echoed() {
+        let message = parse("database:\n  port: 70000\n").expect_err("range");
+        assert!(
+            message.ends_with("database.port: invalid value; expected u16"),
+            "{message}"
+        );
+        assert!(!message.contains("70000"));
+    }
+
+    #[test]
+    fn validation_errors_name_file_sources() {
+        let file = write_file("database:\n  page_size: 0\n  backend: sqlite\n");
+        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Stdio, None).expect_err("invalid");
+        let at = file.path().display();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "configuration validation failed:\n  \
+                 - database.name: required (file path) for the sqlite backend; set database.name in the config file\n  \
+                 - database.page_size: must be between 1 and 500 (from {at}:2:14)"
+            )
+        );
+    }
+
+    #[test]
+    fn higher_layer_source_wins_over_file_location() {
+        let file = write_file("database:\n  page_size: 0\n");
+        let mut provenance = Provenance::default();
+        provenance.set_source("database.page_size", Source::Env("DB_PAGE_SIZE".into()));
+        let mut cli = ConfigLayer::default();
+        cli.database.page_size = Some(501);
+        let error = Sources::read(Some(file.path()), &[], &no_env, &mut Vec::new())
+            .expect("read")
+            .resolve(cli, provenance, Transport::Stdio, None, &mut Vec::new())
+            .expect_err("invalid");
+        assert!(error.to_string().ends_with("(from DB_PAGE_SIZE)"), "{error}");
+    }
+
+    #[test]
+    fn invalid_secret_never_appears_in_validation_output() {
+        let file = write_file("http:\n  auth_token: '   '\n  host: 0.0.0.0\n");
+        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Http, None).expect_err("blank token");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("http.auth_token: must not be empty when set (from "),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("'   '"), "{rendered}");
     }
 
     #[test]
@@ -570,7 +703,7 @@ ssh:
                 .map(|(_, value)| (*value).to_owned())
         };
         let mut warnings = Vec::new();
-        let layer = parse_layer(Path::new("/cfg/dbmcp.yaml"), yaml, &lookup, &mut warnings);
+        let layer = parse_layer(Path::new("/cfg/dbmcp.yaml"), yaml, &lookup, &mut warnings).map(|(layer, _)| layer);
         (layer, warnings)
     }
 
@@ -643,7 +776,7 @@ ssh:
             error
                 .expect_err("keys stay literal")
                 .to_string()
-                .contains("unknown field `$KEY`")
+                .contains("database.$KEY: unknown field;")
         );
     }
 
@@ -672,7 +805,13 @@ ssh:
         let env = |name: &str| (name == "CERT_DIR").then(|| "certs".to_owned());
         let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
         let config = sources
-            .resolve(ConfigLayer::default(), Transport::Stdio, None, &mut Vec::new())
+            .resolve(
+                ConfigLayer::default(),
+                Provenance::default(),
+                Transport::Stdio,
+                None,
+                &mut Vec::new(),
+            )
             .expect("valid")
             .config;
         assert_eq!(
@@ -690,7 +829,13 @@ ssh:
         let env = |name: &str| (name == "WHO").then(|| "process".to_owned());
         let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
         let db = sources
-            .resolve(ConfigLayer::default(), Transport::Stdio, None, &mut Vec::new())
+            .resolve(
+                ConfigLayer::default(),
+                Provenance::default(),
+                Transport::Stdio,
+                None,
+                &mut Vec::new(),
+            )
             .expect("valid")
             .config
             .database;
@@ -722,10 +867,12 @@ ssh:
     fn load_validates_merged_config() {
         let file = write_file("database:\n  backend: sqlite\n");
         let error = load(ConfigLayer::default(), Some(file.path()), Transport::Stdio, None).expect_err("no name");
-        assert!(matches!(&error, LoadError::Invalid(e) if matches!(e[0], ConfigError::MissingSqliteDbName)));
+        assert!(
+            matches!(&error, LoadError::Invalid { errors: e, .. } if matches!(e[0], ConfigError::MissingSqliteDbName))
+        );
         assert_eq!(
             error.to_string(),
-            "configuration validation failed:\n  - DB_NAME (file path) is required for SQLite"
+            "configuration validation failed:\n  - database.name: required (file path) for the sqlite backend; set database.name in the config file"
         );
     }
 

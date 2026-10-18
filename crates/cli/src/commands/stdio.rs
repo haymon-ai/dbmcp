@@ -274,6 +274,64 @@ mod tests {
         assert!(!error.to_string().contains("not-a-port"));
     }
 
+    fn validation_message(args: &[&str]) -> String {
+        let error = load(args).expect_err("invalid");
+        assert!(matches!(error, LoadError::Invalid { .. }), "{error}");
+        error.to_string()
+    }
+
+    #[test]
+    fn unset_field_error_names_every_route() {
+        assert_eq!(
+            validation_message(&["_", "--db-backend", "sqlite"]),
+            "configuration validation failed:\n  - database.name: required (file path) for the sqlite backend; \
+             set --db-name, DB_NAME, or database.name in the config file"
+        );
+    }
+
+    #[test]
+    fn flag_and_dotenv_sources_are_named() {
+        assert!(validation_message(&["_", "--db-page-size", "0"]).ends_with(" (from --db-page-size)"));
+
+        let (dir, path) = config_file("");
+        let env = dir.path().join(".env");
+        std::fs::write(&env, "DB_PAGE_SIZE=0\n").expect("write .env");
+        let message = validation_message(&with_config(&path, &[]));
+        assert!(
+            message.ends_with(&format!(" (from DB_PAGE_SIZE in {}:1)", env.display())),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn cross_field_error_lists_file_and_flag_sources() {
+        let (_dir, path) = config_file("ssh:\n  host: bastion\n  user: deploy\n  password: pw\n");
+        let message = validation_message(&with_config(
+            &path,
+            &["--db-backend", "sqlite", "--db-name", ":memory:"],
+        ));
+        assert!(
+            message.contains(&format!(
+                "ssh.host: not supported with the sqlite backend (ssh.host from {}:2:9; database.backend from --db-backend)",
+                path.display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn every_setting_flag_has_a_route() {
+        let flags = common::tests_support::flag_routes::<StdioCommand>(StdioCommand::layer);
+        let longs: Vec<&str> = flags.iter().map(|flag| flag.0.as_str()).collect();
+        for arg in StdioCommand::command().get_arguments() {
+            let Some(long) = arg.get_long() else { continue };
+            if ["config", "env", "help"].contains(&long) {
+                continue;
+            }
+            assert!(longs.contains(&long), "--{long} has no config path");
+        }
+    }
+
     #[test]
     fn load_returns_warnings_on_failure() {
         let (dir, path) = config_file("database:\n  pasword: x\n");
@@ -340,14 +398,32 @@ mod tests {
             "--pii-ner",
         ])
         .expect_err("multi-section misconfig must fail");
-        let LoadError::Invalid(errors) = error else {
+        let LoadError::Invalid { errors, .. } = error else {
             panic!("expected validation error");
         };
         assert_eq!(errors.len(), 5);
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[3], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(
+            &errors[1],
+            ConfigError::FileNotFound {
+                field: "database.ssl_ca",
+                ..
+            }
+        ));
+        assert!(matches!(
+            &errors[2],
+            ConfigError::FileNotFound {
+                field: "database.ssl_cert",
+                ..
+            }
+        ));
+        assert!(matches!(
+            &errors[3],
+            ConfigError::FileNotFound {
+                field: "database.ssl_key",
+                ..
+            }
+        ));
         assert!(matches!(errors[4], ConfigError::PiiNerModelMissing));
     }
 }

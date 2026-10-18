@@ -22,8 +22,8 @@ use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches};
 use dbmcp_config::{
     Config, ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
-    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Resolved, Secret, Sources, SshLayer, StrictHostKeyChecking,
-    Transport, ssh,
+    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, Secret, Source, Sources, SshLayer,
+    StrictHostKeyChecking, Transport, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -136,19 +136,122 @@ fn try_load<C: CommandFactory + FromArgMatches>(
 ) -> Result<Resolved, LoadError> {
     let process_env = |name: &str| std::env::var(name).ok();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
-    let dotenv = dotenv_layer(matches, sources.dotenv(), to_layer)?;
+
+    let flags = flag_routes(to_layer);
+    let mut provenance = Provenance::default();
+    for flag in &flags {
+        let source = match matches.value_source(&flag.id) {
+            Some(ValueSource::CommandLine) => Some(Source::Flag(flag.flag())),
+            Some(ValueSource::EnvVariable) => flag.env.clone().map(Source::Env),
+            _ => None,
+        };
+        for path in &flag.paths {
+            provenance.add_route(path, flag.route());
+            if let Some(source) = &source {
+                provenance.set_source(path, source.clone());
+            }
+        }
+    }
+    let dotenv = dotenv_layer(matches, sources.dotenv(), &flags, &mut provenance, to_layer)?;
     sources.resolve(
         to_layer(cmd, matches).or(dotenv),
+        provenance,
         transport,
         ssh::home_dir().as_deref(),
         warnings,
     )
 }
 
+/// One flag of a subcommand and the config paths it sets.
+struct FlagRoute {
+    /// Clap argument id.
+    id: String,
+    /// Long name, without `--`.
+    long: String,
+    /// Bound env var, if any.
+    env: Option<String>,
+    /// Config paths the flag sets, e.g. `database.port`.
+    paths: Vec<&'static str>,
+}
+
+impl FlagRoute {
+    fn flag(&self) -> String {
+        format!("--{}", self.long)
+    }
+
+    fn route(&self) -> Route {
+        Route {
+            flag: self.flag(),
+            env: self.env.clone(),
+        }
+    }
+}
+
+/// Returns `C`'s command with every env var binding removed.
+///
+/// Parsing a single `--flag=value` with it yields a layer holding only
+/// that flag, whatever the process environment contains.
+fn bare_command<C: CommandFactory>() -> clap::Command {
+    C::command()
+        .no_binary_name(true)
+        .mut_args(|arg| arg.env(None::<&'static str>))
+}
+
+/// Parses `--long=value` alone into its layer.
+fn single_flag_layer<C: CommandFactory + FromArgMatches>(
+    long: &str,
+    value: &str,
+    to_layer: ToLayer<C>,
+) -> Result<ConfigLayer, clap::Error> {
+    let matches = bare_command::<C>().try_get_matches_from([format!("--{long}={value}")])?;
+    C::from_arg_matches(&matches).map(|cmd| to_layer(&cmd, &matches))
+}
+
+/// Discovers which config paths each flag of `C` sets.
+///
+/// Each flag is parsed alone with a sample value (its first possible
+/// value, or `1`); the paths set in the resulting layer are its paths.
+fn flag_routes<C: CommandFactory + FromArgMatches>(to_layer: ToLayer<C>) -> Vec<FlagRoute> {
+    C::command()
+        .get_arguments()
+        .filter_map(|arg| {
+            let long = arg.get_long()?;
+            let sample = arg
+                .get_possible_values()
+                .first()
+                .map_or_else(|| "1".to_owned(), |value| value.get_name().to_owned());
+            let paths = single_flag_layer(long, &sample, to_layer).ok()?.set_paths();
+            (!paths.is_empty()).then(|| FlagRoute {
+                id: arg.get_id().as_str().to_owned(),
+                long: long.to_owned(),
+                env: arg.get_env().and_then(OsStr::to_str).map(str::to_owned),
+                paths,
+            })
+        })
+        .collect()
+}
+
+/// Test access to private routing helpers.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::{CommandFactory, FromArgMatches, ToLayer};
+
+    /// Returns each discovered flag's long name and config paths.
+    pub(crate) fn flag_routes<C: CommandFactory + FromArgMatches>(
+        to_layer: ToLayer<C>,
+    ) -> Vec<(String, Vec<&'static str>)> {
+        super::flag_routes(to_layer)
+            .into_iter()
+            .map(|flag| (flag.long, flag.paths))
+            .collect()
+    }
+}
+
 /// Returns the layer of flags whose env var is defined only in a dotenv file.
 ///
 /// Each value is parsed by re-running clap on `--<flag>=<value>`, so it
-/// goes through exactly the parser its env var would.
+/// goes through exactly the parser its env var would. Records a
+/// [`Source::Dotenv`] for every path it fills.
 ///
 /// # Errors
 ///
@@ -157,29 +260,39 @@ fn try_load<C: CommandFactory + FromArgMatches>(
 fn dotenv_layer<C: CommandFactory + FromArgMatches>(
     matches: &ArgMatches,
     dotenv: &Dotenv,
+    flags: &[FlagRoute],
+    provenance: &mut Provenance,
     to_layer: ToLayer<C>,
 ) -> Result<ConfigLayer, LoadError> {
     let mut layer = ConfigLayer::default();
     let mut errors: Vec<(PathBuf, String)> = Vec::new();
-    for arg in C::command().get_arguments() {
-        let (Some(env), Some(long)) = (arg.get_env().and_then(OsStr::to_str), arg.get_long()) else {
-            continue;
-        };
-        if is_explicit(matches, arg.get_id().as_str()) {
+    for flag in flags {
+        if is_explicit(matches, &flag.id) {
             continue;
         }
-        let Some(var) = dotenv.get(env) else {
+        let Some((env, var)) = flag
+            .env
+            .as_deref()
+            .and_then(|env| dotenv.get(env).map(|var| (env, var)))
+        else {
             continue;
         };
-        let parsed = C::command()
-            .no_binary_name(true)
-            .try_get_matches_from([format!("--{long}={}", var.value)])
-            .and_then(|matches| C::from_arg_matches(&matches).map(|cmd| to_layer(&cmd, &matches)));
-        match parsed {
-            Ok(var_layer) => layer = layer.or(var_layer),
+        match single_flag_layer(&flag.long, &var.value, to_layer) {
+            Ok(flag_layer) => {
+                for path in flag_layer.set_paths() {
+                    provenance.set_source(
+                        path,
+                        Source::Dotenv {
+                            name: env.to_owned(),
+                            location: var.location(),
+                        },
+                    );
+                }
+                layer = layer.or(flag_layer);
+            }
             Err(_) => errors.push((
                 var.path.clone(),
-                format!("{}: {env}: invalid value for --{long}", var.location()),
+                format!("{}: {env}: invalid value for {}", var.location(), flag.flag()),
             )),
         }
     }
@@ -759,8 +872,8 @@ mod tests {
         assert_eq!(
             messages,
             [
-                "database.max_pool_size must be at least 1",
-                "database.connection_timeout must be at least 1"
+                "database.max_pool_size: must be at least 1",
+                "database.connection_timeout: must be at least 1"
             ]
         );
     }
@@ -818,7 +931,7 @@ mod tests {
         .expect_err("missing ssl cert files must fail");
         let cert_errors = errors
             .iter()
-            .filter(|e| matches!(e, ConfigError::FileNotFound(_, _)))
+            .filter(|e| matches!(e, ConfigError::FileNotFound { .. }))
             .count();
         assert_eq!(cert_errors, 3, "expected three FileNotFound errors, got {errors:?}");
     }
@@ -837,7 +950,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ConfigError::FileNotFound(name, path) if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"))
+                .any(|e| matches!(e, ConfigError::FileNotFound { field: name, path } if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"))
         );
     }
 
@@ -931,7 +1044,7 @@ mod tests {
             assert_eq!(errors.len(), 1, "{args:?}");
             assert_eq!(
                 errors[0].to_string(),
-                "SSH_HOST is required when other SSH_* options are set",
+                "ssh.host: required when other ssh options are set",
                 "{args:?}"
             );
         }
@@ -998,7 +1111,7 @@ mod tests {
         assert!(
             errors.iter().any(|e| matches!(
                 e,
-                ConfigError::FileNotFound(name, path) if name == "SSH_KEY" && *path == expected.display().to_string()
+                ConfigError::FileNotFound { field: name, path } if *name == "ssh.key" && *path == expected.display().to_string()
             )),
             "{errors:?}"
         );
