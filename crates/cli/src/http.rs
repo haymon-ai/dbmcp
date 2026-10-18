@@ -21,17 +21,18 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments, explicit};
+use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs, explicit};
 use crate::error::ErrorKind;
+use crate::server;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
 ///
 /// Each clap id is the setting's config path (`http.host`), so `host` and
-/// `port` don't collide with [`DatabaseArguments`] when both are flattened
+/// `port` don't collide with [`DatabaseArgs`] when both are flattened
 /// into [`HttpCommand`].
 #[derive(Debug, Args)]
 #[command(next_help_heading = "HTTP Transport")]
-struct HttpArguments {
+struct HttpArgs {
     /// Bind host for HTTP transport.
     #[arg(
         id = "http.host",
@@ -104,7 +105,7 @@ struct HttpArguments {
     dangerously_allow_unauthenticated: bool,
 }
 
-impl HttpArguments {
+impl HttpArgs {
     /// Returns the explicitly set HTTP flags as a layer.
     fn layer(self, matches: &ArgMatches) -> HttpLayer {
         HttpLayer {
@@ -130,23 +131,23 @@ impl HttpArguments {
 pub(crate) struct HttpCommand {
     /// Config-file and logging flags.
     #[command(flatten)]
-    shared: SharedArguments,
+    shared: SharedArgs,
 
     /// Shared database connection flags.
     #[command(flatten)]
-    database: DatabaseArguments,
+    database: DatabaseArgs,
 
     /// HTTP transport flags.
     #[command(flatten)]
-    http: HttpArguments,
+    http: HttpArgs,
 
     /// Shared PII flags.
     #[command(flatten)]
-    pii: PiiArguments,
+    pii: PiiArgs,
 
     /// Shared SSH tunnel flags.
     #[command(flatten)]
-    ssh: SshArguments,
+    ssh: SshArgs,
 }
 
 impl HttpCommand {
@@ -154,7 +155,7 @@ impl HttpCommand {
     ///
     /// # Panics
     ///
-    /// Panics if `matches` were not parsed by [`Self::command`].
+    /// Panics if `matches` were not parsed by [`HttpCommand::command`](clap::CommandFactory::command).
     pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
         let cmd = Self::from_arg_matches(matches).expect("matches were parsed by HttpCommand::command()");
         ConfigLayer {
@@ -181,11 +182,11 @@ impl HttpCommand {
     ///
     /// # Panics
     ///
-    /// Panics if `config.http` is `None`; [`Self::load`] always sets it.
+    /// Panics if `config.http` is `None`; [`ConfigLayer::resolve`] builds it for [`Transport::Http`](dbmcp_config::Transport::Http).
     pub(crate) async fn execute(config: Config) -> Result<(), ErrorKind> {
         let http_config = config.http.as_ref().expect("http config set by Transport::Http");
 
-        let (tunnel, server) = common::create_server(&config).await?;
+        let (tunnel, server) = server::create_server(&config).await?;
         let cancel_token = CancellationToken::new();
 
         let router = build_http_router(http_config, server.clone(), &cancel_token);
@@ -208,7 +209,7 @@ impl HttpCommand {
 
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
-                common::shutdown_signal().await;
+                server::shutdown_signal().await;
                 cancel_token.cancel();
             })
             .await?;
@@ -234,7 +235,7 @@ impl HttpCommand {
 /// which never carry credentials, are answered without authentication.
 fn build_http_router(
     http_config: &HttpConfig,
-    server: common::Server,
+    server: server::Server,
     cancel_token: &CancellationToken,
 ) -> axum::Router {
     let service = StreamableHttpService::new(
@@ -325,14 +326,14 @@ mod tests {
         ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved, Transport,
     };
 
-    use crate::commands::common::tests_support;
+    use crate::args::tests_support;
     use tower::ServiceExt;
 
     #[derive(Debug, Parser)]
     #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
-        http: HttpArguments,
+        http: HttpArgs,
     }
 
     /// Parses `args` and resolves them into an [`HttpConfig`].
@@ -383,7 +384,7 @@ mod tests {
             pii: PiiConfig::default(),
             ssh: None,
         };
-        let server = common::build_server(&config).expect("server builds in test");
+        let server = server::build_server(&config).expect("server builds in test");
         let cancel = CancellationToken::new();
         build_http_router(&http_config, server, &cancel)
     }
@@ -558,7 +559,7 @@ mod tests {
         }
     }
 
-    /// Pins `crate::commands::origin` to rmcp's private matcher.
+    /// Pins `dbmcp_config::origin` to rmcp's private matcher.
     ///
     /// Every case runs through both the CORS preflight and rmcp's
     /// validator, so an rmcp upgrade that changes Origin semantics fails

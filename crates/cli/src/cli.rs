@@ -1,6 +1,6 @@
 //! CLI argument parsing and application bootstrapping.
 //!
-//! Contains the [`Arguments`] struct (parsed by clap), the [`Command`]
+//! Contains the [`Args`] struct (parsed by clap), the [`Command`]
 //! subcommand enum, and the [`run`] entry point that resolves the
 //! configuration, initialises tracing, and dispatches to the active
 //! subcommand.
@@ -8,11 +8,11 @@
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use dbmcp_config::{Config, LogLevel, Transport};
 
-use crate::commands::common::{self, LayerFn};
+use crate::args::{self, LayerFn};
 
-use crate::commands::http::HttpCommand;
-use crate::commands::stdio::StdioCommand;
 use crate::error::{Error, ErrorKind};
+use crate::http::HttpCommand;
+use crate::stdio::StdioCommand;
 
 /// Maps a [`LogLevel`] onto the matching [`tracing::Level`].
 fn tracing_level(level: LogLevel) -> tracing::Level {
@@ -28,7 +28,7 @@ fn tracing_level(level: LogLevel) -> tracing::Level {
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
 #[command(about = "Database MCP Server")]
-struct Arguments {
+struct Args {
     /// Subcommand selector.
     #[command(subcommand)]
     command: Command,
@@ -47,7 +47,7 @@ enum Command {
 
 /// Builds the clap command for the binary named `bin` at `version`.
 fn command(bin: &'static str, version: &'static str) -> clap::Command {
-    Arguments::command().name(bin).version(version)
+    Args::command().name(bin).version(version)
 }
 
 /// Parses CLI arguments, resolves the configuration, initializes tracing, and runs the subcommand.
@@ -69,8 +69,8 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
     // need each argument's value source afterwards.
     let parsed = command(bin, version)
         .try_get_matches()
-        .and_then(|matches| Arguments::from_arg_matches(&matches).map(|arguments| (matches, arguments)));
-    let (matches, arguments) = match parsed {
+        .and_then(|matches| Args::from_arg_matches(&matches).map(|args| (matches, args)));
+    let (matches, args) = match parsed {
         Ok(parsed) => parsed,
         // `--help` and `--version` arrive as clap errors that print to stdout.
         // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
@@ -81,7 +81,7 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
         Err(error) => return Err(ErrorKind::from(error).into()),
     };
 
-    match arguments.command {
+    match args.command {
         Command::Version => {
             println!("{bin} {version}");
             Ok(())
@@ -109,14 +109,14 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
 
 /// Loads a subcommand's configuration, initialises tracing, and reports warnings.
 ///
-/// `command`, `matches`, `layer`, and `transport` are passed to [`common::load`].
+/// `command`, `matches`, `layer`, and `transport` are passed to [`args::load`].
 ///
 /// On success, warnings are logged once tracing runs at the resolved
 /// level. On failure, they are printed to stderr ahead of the error.
 #[allow(clippy::result_large_err)]
 fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn, transport: Transport) -> Result<Config, Error> {
     let mut warnings = Vec::new();
-    match common::load(command, matches, layer, transport, &mut warnings) {
+    match args::load(command, matches, layer, transport, &mut warnings) {
         Ok(resolved) => {
             init_tracing(resolved.log_level);
             for warning in &warnings {
@@ -155,7 +155,7 @@ fn init_tracing(level: LogLevel) {
 mod tests {
     use clap::CommandFactory;
 
-    use super::{Arguments, command};
+    use super::{Args, command};
 
     #[test]
     fn config_flags_are_grouped_under_config_file_heading() {
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn secret_env_values_are_hidden_from_help() {
-        let cmd = Arguments::command();
+        let cmd = Args::command();
         for subcommand in cmd.get_subcommands() {
             for arg in subcommand.get_arguments() {
                 let Some(env) = arg.get_env().and_then(|env| env.to_str()) else {
@@ -221,7 +221,7 @@ mod tests {
     }
 
     fn subcommand_help(name: &str) -> String {
-        let mut cmd = Arguments::command();
+        let mut cmd = Args::command();
         cmd.find_subcommand_mut(name)
             .expect("subcommand")
             .render_long_help()

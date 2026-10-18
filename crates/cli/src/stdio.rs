@@ -8,27 +8,28 @@ use dbmcp_config::{Config, ConfigLayer, HttpLayer};
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments};
+use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs};
 use crate::error::ErrorKind;
+use crate::server;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
 pub(crate) struct StdioCommand {
     /// Config-file and logging flags.
     #[command(flatten)]
-    shared: SharedArguments,
+    shared: SharedArgs,
 
     /// Shared database connection flags.
     #[command(flatten)]
-    database: DatabaseArguments,
+    database: DatabaseArgs,
 
     /// Shared PII flags.
     #[command(flatten)]
-    pii: PiiArguments,
+    pii: PiiArgs,
 
     /// Shared SSH tunnel flags.
     #[command(flatten)]
-    ssh: SshArguments,
+    ssh: SshArgs,
 }
 
 impl StdioCommand {
@@ -36,7 +37,7 @@ impl StdioCommand {
     ///
     /// # Panics
     ///
-    /// Panics if `matches` were not parsed by [`Self::command`].
+    /// Panics if `matches` were not parsed by [`StdioCommand::command`](clap::CommandFactory::command).
     pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
         let cmd = Self::from_arg_matches(matches).expect("matches were parsed by StdioCommand::command()");
         ConfigLayer {
@@ -58,7 +59,7 @@ impl StdioCommand {
     /// transport fails to initialize, or the server encounters a fatal
     /// protocol error.
     pub(crate) async fn execute(config: Config) -> Result<(), ErrorKind> {
-        let (tunnel, server) = common::create_server(&config).await?;
+        let (tunnel, server) = server::create_server(&config).await?;
 
         info!("Starting MCP server via stdio transport...");
         let transport = rmcp::transport::io::stdio();
@@ -73,7 +74,7 @@ impl StdioCommand {
                     error!("stdio server task terminated abnormally: {join_error}");
                 }
             }
-            () = common::shutdown_signal() => {}
+            () = server::shutdown_signal() => {}
         }
 
         server.shutdown().await;
@@ -95,7 +96,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::commands::common::tests_support::{self, config_file};
+    use crate::args::tests_support::{self, config_file};
 
     fn load(args: &[&str]) -> Result<Resolved, LoadError> {
         tests_support::load::<StdioCommand>(StdioCommand::layer, Transport::Stdio, args)
@@ -303,10 +304,10 @@ mod tests {
         let env = dir.path().join(".env");
         std::fs::create_dir(&env).expect("create unreadable .env");
         tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
-        let args = with_config(&path, &[]);
-        let matches = StdioCommand::command().try_get_matches_from(&args).expect("parse");
+        let argv = with_config(&path, &[]);
+        let matches = StdioCommand::command().try_get_matches_from(&argv).expect("parse");
         let mut warnings = Vec::new();
-        let result = common::load(
+        let result = crate::args::load(
             StdioCommand::command(),
             &matches,
             StdioCommand::layer,

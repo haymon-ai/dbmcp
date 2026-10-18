@@ -1,16 +1,13 @@
-//! Common building blocks reused across transport subcommands.
+//! Clap argument groups and config loading shared by transport subcommands.
 //!
-//! Hosts [`SharedArguments`], [`DatabaseArguments`], [`PiiArguments`], and
-//! [`SshArguments`] — clap argument groups bundling `--config`,
+//! Hosts [`SharedArgs`], [`DatabaseArgs`], [`PiiArgs`], and
+//! [`SshArgs`] — clap argument groups bundling `--config`,
 //! `--log-level`, and every `--db-*`, `--pii-*`, and `--ssh-*` flag so each
 //! is defined exactly once and embedded via `#[command(flatten)]` wherever
 //! needed. Each group converts into its [`ConfigLayer`] section, keeping
 //! only values set on the command line or through an env var; every
 //! setting flag's clap id is its config path. [`load`] fills the gaps from
-//! dotenv files and merges the result over the config file. Also provides [`create_server`],
-//! the backend-selection factory that maps a configured [`DatabaseBackend`]
-//! onto the matching concrete adapter, tunnelling through SSH when
-//! configured.
+//! dotenv files and merges the result over the config file.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -20,19 +17,10 @@ use clap::builder::BoolishValueParser;
 use clap::parser::ValueSource;
 use clap::{ArgAction, ArgMatches, Args, FromArgMatches};
 use dbmcp_config::{
-    Config, ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
+    ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
     PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources,
     SshLayer, StrictHostKeyChecking, Transport, ssh,
 };
-use dbmcp_mysql::MysqlHandler;
-use dbmcp_postgres::PostgresHandler;
-use dbmcp_sql::is_connection_error;
-use dbmcp_sqlite::SqliteHandler;
-use dbmcp_ssh::{Tunnel, TunnelHandle};
-use tracing::info;
-
-use dbmcp_server::ErrorContext;
-pub(crate) use dbmcp_server::Server;
 
 /// Returns `true` when argument `id` was set by flag or env var.
 fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
@@ -52,7 +40,7 @@ pub(crate) fn explicit<T>(matches: &ArgMatches, id: &str, value: Option<T>) -> O
 
 /// Config-file and logging flags shared by every transport subcommand.
 #[derive(Debug, Args)]
-pub(crate) struct SharedArguments {
+pub(crate) struct SharedArgs {
     /// Path to a YAML config file
     #[arg(long = "config", value_name = "PATH", help_heading = "Config File")]
     pub(crate) config: Option<PathBuf>,
@@ -74,7 +62,7 @@ pub(crate) struct SharedArguments {
     pub(crate) log_level: LogLevel,
 }
 
-impl SharedArguments {
+impl SharedArgs {
     /// Returns the log level when set by flag or env var.
     pub(crate) fn log_level(&self, matches: &ArgMatches) -> Option<LogLevel> {
         explicit(matches, "log_level", Some(self.log_level))
@@ -107,7 +95,7 @@ pub(crate) fn load(
     transport: Transport,
     warnings: &mut Vec<ConfigWarning>,
 ) -> Result<Resolved, LoadError> {
-    let shared = SharedArguments::from_arg_matches(matches).expect("matches were parsed by `command`");
+    let shared = SharedArgs::from_arg_matches(matches).expect("matches were parsed by `command`");
     let process_env: HashMap<String, String> = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
         .collect();
@@ -304,7 +292,7 @@ pub(crate) mod tests_support {
 /// Shared database connection flags embedded in transport subcommands.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Database")]
-pub(crate) struct DatabaseArguments {
+pub(crate) struct DatabaseArgs {
     /// Database backend
     #[arg(id = "database.backend", long = "db-backend", env = "DB_BACKEND", default_value_t = DatabaseConfig::DEFAULT_BACKEND)]
     pub(crate) backend: DatabaseBackend,
@@ -410,7 +398,7 @@ pub(crate) struct DatabaseArguments {
     pub(crate) page_size: u16,
 }
 
-impl DatabaseArguments {
+impl DatabaseArgs {
     /// Returns the explicitly set database flags as a layer.
     pub(crate) fn layer(self, matches: &ArgMatches) -> DatabaseLayer {
         DatabaseLayer {
@@ -438,7 +426,7 @@ impl DatabaseArguments {
 /// Shared PII flags embedded in transport subcommands.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "PII")]
-pub(crate) struct PiiArguments {
+pub(crate) struct PiiArgs {
     /// Enable PII redaction of query tool output
     #[arg(
         id = "pii.enabled", long = "pii",
@@ -480,7 +468,7 @@ pub(crate) struct PiiArguments {
     pub(crate) ner_model: Option<PathBuf>,
 }
 
-impl PiiArguments {
+impl PiiArgs {
     /// Returns the explicitly set PII flags as a layer.
     pub(crate) fn layer(self, matches: &ArgMatches) -> PiiLayer {
         PiiLayer {
@@ -496,12 +484,12 @@ impl PiiArguments {
 /// Shared SSH tunnel flags embedded in transport subcommands.
 ///
 /// Like every setting flag, each argument's clap id is its config path
-/// (`ssh.host`), which also keeps it apart from [`DatabaseArguments`]. Every
+/// (`ssh.host`), which also keeps it apart from [`DatabaseArgs`]. Every
 /// option stays `Option`: setting the host enables the tunnel, and the
 /// defaults are applied by [`ConfigLayer::resolve`].
 #[derive(Debug, Args)]
 #[command(next_help_heading = "SSH")]
-pub(crate) struct SshArguments {
+pub(crate) struct SshArgs {
     /// SSH server host; enables the tunnel when set
     #[arg(id = "ssh.host", long = "ssh-host", value_name = "HOST", env = "SSH_HOST")]
     pub(crate) host: Option<String>,
@@ -576,7 +564,7 @@ pub(crate) struct SshArguments {
     pub(crate) local_port: Option<u16>,
 }
 
-impl SshArguments {
+impl SshArgs {
     /// Returns the explicitly set SSH flags as a layer.
     pub(crate) fn layer(self, matches: &ArgMatches) -> SshLayer {
         SshLayer {
@@ -594,104 +582,6 @@ impl SshArguments {
     }
 }
 
-/// Logs the read-only banner and builds a [`Server`] for `config`.
-///
-/// Does **not** establish a database connection. Each adapter defers
-/// pool creation until the first tool invocation, allowing the MCP
-/// server to start and respond to protocol messages even when the
-/// database is unreachable. The caller is expected to pass a fully
-/// validated [`Config`].
-///
-/// When `config.ssh` is set, starts the SSH tunnel first and points the
-/// adapter at its loopback address. The returned [`TunnelHandle`] must
-/// outlive the [`Server`] so pool shutdown traffic reaches the database;
-/// binding the tuple in order (`let (tunnel, server)`) drops the server
-/// first on every return path. While the tunnel reports a failure, tool
-/// errors caused by an unreachable database gain a `(SSH tunnel: <cause>)`
-/// suffix before PII redaction; other errors are left alone.
-///
-/// # Errors
-///
-/// Returns [`crate::error::ErrorKind::Init`] when the SSH tunnel cannot start
-/// or a handler fails to initialise (e.g. a fail-closed NER model load).
-#[allow(clippy::result_large_err)]
-pub(crate) async fn create_server(config: &Config) -> Result<(Option<TunnelHandle>, Server), crate::error::ErrorKind> {
-    if config.database.read_only {
-        info!("Server running in READ-ONLY mode. Write operations are disabled.");
-    }
-
-    let Some(ssh) = &config.ssh else {
-        return Ok((None, build_server(config)?));
-    };
-
-    let tunnel = Tunnel::start(ssh, &config.database.host, config.database.port)
-        .await
-        .map_err(|e| crate::error::ErrorKind::Init(e.to_string()))?;
-    let local_addr = tunnel.local_addr();
-    let mut tunnelled = config.clone();
-    tunnelled.database.host = local_addr.ip().to_string();
-    tunnelled.database.port = local_addr.port();
-    let last_error = tunnel.last_error().clone();
-    let context = ErrorContext::new(move |error| {
-        is_connection_error(error)
-            .then(|| last_error.get())
-            .flatten()
-            .map(|cause| format!("SSH tunnel: {cause}"))
-    });
-    let server = build_server(&tunnelled)?.with_error_context(context);
-    Ok((Some(tunnel), server))
-}
-
-/// Builds the backend adapter selected by `config.database.backend`.
-#[allow(clippy::result_large_err)]
-pub(crate) fn build_server(config: &Config) -> Result<Server, crate::error::ErrorKind> {
-    match config.database.backend {
-        DatabaseBackend::Sqlite => init(SqliteHandler::new(config)),
-        DatabaseBackend::Postgres => init(PostgresHandler::new(config)),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => init(MysqlHandler::new(config)),
-    }
-}
-
-/// Maps a handler constructor result into a [`Server`], failing closed.
-#[allow(clippy::result_large_err)]
-fn init<H, E>(handler: Result<H, E>) -> Result<Server, crate::error::ErrorKind>
-where
-    H: Into<Server>,
-    E: std::fmt::Display,
-{
-    handler
-        .map(Into::into)
-        .map_err(|e| crate::error::ErrorKind::Init(e.to_string()))
-}
-
-/// Future that resolves when the process should shut down.
-///
-/// Listens for Ctrl-C on all platforms and `SIGTERM` on Unix, which
-/// is the signal `docker stop`, `systemctl stop`, and Kubernetes
-/// send to request graceful termination. Whichever arrives first
-/// wins. Shared by both transports.
-pub(crate) async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("failed to install Ctrl-C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => info!("Ctrl-C received, shutting down..."),
-        () = terminate => info!("SIGTERM received, shutting down..."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, FromArgMatches, Parser};
@@ -699,7 +589,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{DatabaseArguments, PiiArguments, SshArguments, explicit};
+    use super::{DatabaseArgs, PiiArgs, SshArgs, explicit};
     use dbmcp_config::{
         Config, ConfigError, ConfigErrors, ConfigLayer, DatabaseBackend, PiiCategory, PiiOperator,
         StrictHostKeyChecking, Transport,
@@ -709,11 +599,11 @@ mod tests {
     #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
-        db: DatabaseArguments,
+        db: DatabaseArgs,
         #[command(flatten)]
-        pii: PiiArguments,
+        pii: PiiArgs,
         #[command(flatten)]
-        ssh: SshArguments,
+        ssh: SshArgs,
     }
 
     /// Removes every env var bound to a [`TestCli`] flag.
