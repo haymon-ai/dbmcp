@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::yaml;
 
@@ -77,16 +78,15 @@ impl Dotenv {
     /// valid entries are still added.
     pub(crate) fn parse(&mut self, text: &str, path: &Path, process_env: &HashMap<String, String>) -> Vec<String> {
         let lines: Vec<&str> = text.lines().collect();
-        let mut properties = self.properties(process_env);
+        let mut properties = Rc::new(self.properties(process_env));
         let mut errors = Vec::new();
         let mut i = 0;
         while i < lines.len() {
             let line = i + 1;
-            let location = format!("{}:{line}", path.display());
             match parse_entry(&lines, &mut i, &properties) {
                 Ok(Some((key, value))) => {
                     if !process_env.contains_key(&key) {
-                        properties.insert(key.clone(), value.clone());
+                        Rc::make_mut(&mut properties).insert(key.clone(), value.clone());
                     }
                     self.vars.insert(
                         key,
@@ -98,7 +98,7 @@ impl Dotenv {
                     );
                 }
                 Ok(None) => {}
-                Err(reason) => errors.push(format!("{location}: {reason}")),
+                Err(reason) => errors.push(format!("{}:{line}: {reason}", path.display())),
             }
             i += 1;
         }
@@ -112,7 +112,7 @@ impl Dotenv {
 fn parse_entry(
     lines: &[&str],
     i: &mut usize,
-    properties: &HashMap<String, String>,
+    properties: &Rc<HashMap<String, String>>,
 ) -> Result<Option<(String, String)>, String> {
     let entry = lines[*i].trim_start();
     if entry.is_empty() || entry.starts_with('#') {
@@ -136,7 +136,7 @@ fn parse_entry(
         return Ok(Some((key.to_owned(), template)));
     }
 
-    let value = yaml::interpolate(&template, properties.clone())?;
+    let value = yaml::interpolate(&template, Rc::clone(properties))?;
     Ok(Some((key.to_owned(), value)))
 }
 

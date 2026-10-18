@@ -3,19 +3,16 @@
 //! Runs the MCP server over stdin/stdout for use with Claude Desktop,
 //! Cursor, and other MCP clients that communicate via stdio.
 
-use clap::{ArgMatches, Parser};
-use dbmcp_config::{Config, ConfigLayer, HttpLayer, Transport};
+use clap::{ArgMatches, FromArgMatches, Parser};
+use dbmcp_config::{Config, ConfigLayer, HttpLayer};
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
-use crate::commands::common::{
-    self, DatabaseArguments, LoadCommand, PiiArguments, SharedArguments, SshArguments, explicit,
-};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments};
 use crate::error::ErrorKind;
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
-#[command(mut_args(common::flag_conventions))]
 pub(crate) struct StdioCommand {
     /// Config-file and logging flags.
     #[command(flatten)]
@@ -34,25 +31,23 @@ pub(crate) struct StdioCommand {
     ssh: SshArguments,
 }
 
-impl LoadCommand for StdioCommand {
-    const TRANSPORT: Transport = Transport::Stdio;
-
-    fn shared(&self) -> &SharedArguments {
-        &self.shared
-    }
-
-    fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
+impl StdioCommand {
+    /// Returns the flags in `matches` set by flag or env var as a layer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `matches` were not parsed by [`Self::command`].
+    pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
+        let cmd = Self::from_arg_matches(matches).expect("matches were parsed by StdioCommand::command()");
         ConfigLayer {
-            log_level: explicit(matches, "log_level", Some(&self.shared.log_level)),
-            database: self.database.layer(matches),
+            log_level: cmd.shared.log_level(matches),
+            database: cmd.database.layer(matches),
             http: HttpLayer::default(),
-            pii: self.pii.layer(matches),
-            ssh: self.ssh.layer(matches),
+            pii: cmd.pii.layer(matches),
+            ssh: cmd.ssh.layer(matches),
         }
     }
-}
 
-impl StdioCommand {
     /// Builds the server for `config` and runs the stdio transport.
     ///
     /// Serves JSON-RPC over stdin/stdout.
@@ -93,17 +88,17 @@ impl StdioCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, FromArgMatches};
+    use clap::CommandFactory;
     use dbmcp_config::{
         ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, ExposeSecret, LoadError, LogLevel, PiiCategory,
-        Resolved,
+        Resolved, Transport,
     };
 
     use super::*;
     use crate::commands::common::tests_support::{self, config_file};
 
     fn load(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<StdioCommand>(args)
+        tests_support::load::<StdioCommand>(StdioCommand::layer, Transport::Stdio, args)
     }
 
     fn with_config<'a>(path: &'a std::path::Path, args: &[&'a str]) -> Vec<&'a str> {
@@ -299,7 +294,7 @@ mod tests {
 
     #[test]
     fn every_setting_flag_has_a_route() {
-        tests_support::check_routes::<StdioCommand>();
+        tests_support::check_routes::<StdioCommand>(StdioCommand::layer);
     }
 
     #[test]
@@ -310,9 +305,14 @@ mod tests {
         tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
         let args = with_config(&path, &[]);
         let matches = StdioCommand::command().try_get_matches_from(&args).expect("parse");
-        let cmd = StdioCommand::from_arg_matches(&matches).expect("from matches");
         let mut warnings = Vec::new();
-        let result = common::load(&cmd, &matches, &mut warnings);
+        let result = common::load(
+            StdioCommand::command(),
+            &matches,
+            StdioCommand::layer,
+            Transport::Stdio,
+            &mut warnings,
+        );
         assert!(matches!(result, Err(LoadError::Parse { .. })));
         assert_eq!(
             warnings,

@@ -248,15 +248,6 @@ impl ConfigLayer {
         }
     }
 
-    /// Returns the config path of every setting, e.g. `database.port`.
-    pub fn paths() -> impl Iterator<Item = &'static str> {
-        std::iter::once("log_level")
-            .chain(DatabaseLayer::PATHS.iter().copied())
-            .chain(HttpLayer::PATHS.iter().copied())
-            .chain(PiiLayer::PATHS.iter().copied())
-            .chain(SshLayer::PATHS.iter().copied())
-    }
-
     /// Returns the config path of every set setting, e.g. `database.port`.
     #[must_use]
     pub fn set_paths(&self) -> Vec<&'static str> {

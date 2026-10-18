@@ -6,9 +6,9 @@
 //! subcommand.
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
-use dbmcp_config::{Config, LogLevel};
+use dbmcp_config::{Config, LogLevel, Transport};
 
-use crate::commands::common::{self, LoadCommand};
+use crate::commands::common::{self, LayerFn};
 
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
@@ -86,25 +86,37 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
             println!("{bin} {version}");
             Ok(())
         }
-        Command::Stdio(cmd) => {
-            let config = start(&cmd, subcommand_matches(&matches))?;
+        Command::Stdio(_) => {
+            let config = start(
+                StdioCommand::command(),
+                subcommand_matches(&matches),
+                StdioCommand::layer,
+                Transport::Stdio,
+            )?;
             Ok(StdioCommand::execute(config).await?)
         }
-        Command::Http(cmd) => {
-            let config = start(&cmd, subcommand_matches(&matches))?;
+        Command::Http(_) => {
+            let config = start(
+                HttpCommand::command(),
+                subcommand_matches(&matches),
+                HttpCommand::layer,
+                Transport::Http,
+            )?;
             Ok(HttpCommand::execute(config).await?)
         }
     }
 }
 
-/// Loads `cmd`'s configuration, initialises tracing, and reports warnings.
+/// Loads a subcommand's configuration, initialises tracing, and reports warnings.
+///
+/// `command`, `matches`, `layer`, and `transport` are passed to [`common::load`].
 ///
 /// On success, warnings are logged once tracing runs at the resolved
 /// level. On failure, they are printed to stderr ahead of the error.
 #[allow(clippy::result_large_err)]
-fn start<C: LoadCommand>(cmd: &C, matches: &ArgMatches) -> Result<Config, Error> {
+fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn, transport: Transport) -> Result<Config, Error> {
     let mut warnings = Vec::new();
-    match common::load(cmd, matches, &mut warnings) {
+    match common::load(command, matches, layer, transport, &mut warnings) {
         Ok(resolved) => {
             init_tracing(resolved.log_level);
             for warning in &warnings {

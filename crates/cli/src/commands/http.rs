@@ -8,8 +8,9 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use clap::{ArgMatches, Args, Parser};
-use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString, Transport};
+use clap::builder::BoolishValueParser;
+use clap::{ArgAction, ArgMatches, Args, FromArgMatches, Parser};
+use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -20,9 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{
-    self, DatabaseArguments, LoadCommand, PiiArguments, SharedArguments, SshArguments, explicit, flag_conventions,
-};
+use crate::commands::common::{self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments, explicit};
 use crate::error::ErrorKind;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
@@ -98,27 +97,29 @@ struct HttpArguments {
     #[arg(
         id = "http.allow_unauthenticated",
         long = "dangerously-allow-unauthenticated",
-        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
+        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
+        default_value_t = false,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     dangerously_allow_unauthenticated: bool,
 }
 
 impl HttpArguments {
     /// Returns the explicitly set HTTP flags as a layer.
-    fn layer(&self, matches: &ArgMatches) -> HttpLayer {
+    fn layer(self, matches: &ArgMatches) -> HttpLayer {
         HttpLayer {
-            host: explicit(matches, "http.host", Some(&self.host)),
-            port: explicit(matches, "http.port", Some(&self.port)),
+            host: explicit(matches, "http.host", Some(self.host)),
+            port: explicit(matches, "http.port", Some(self.port)),
             // `--allowed-origins ""` arrives as `[""]`; dropping blanks turns
             // it into the empty list that disables Origin validation.
-            allowed_origins: explicit(matches, "http.allowed_origins", Some(&self.allowed_origins))
+            allowed_origins: explicit(matches, "http.allowed_origins", Some(self.allowed_origins))
                 .map(|origins| origins.into_iter().filter(|origin| !origin.trim().is_empty()).collect()),
-            allowed_hosts: explicit(matches, "http.allowed_hosts", Some(&self.allowed_hosts)),
-            auth_token: explicit(matches, "http.auth_token", self.auth_token.as_ref()),
+            allowed_hosts: explicit(matches, "http.allowed_hosts", Some(self.allowed_hosts)),
+            auth_token: explicit(matches, "http.auth_token", self.auth_token),
             allow_unauthenticated: explicit(
                 matches,
                 "http.allow_unauthenticated",
-                Some(&self.dangerously_allow_unauthenticated),
+                Some(self.dangerously_allow_unauthenticated),
             ),
         }
     }
@@ -126,7 +127,6 @@ impl HttpArguments {
 
 /// Runs the MCP server in HTTP mode.
 #[derive(Debug, Parser)]
-#[command(mut_args(flag_conventions))]
 pub(crate) struct HttpCommand {
     /// Config-file and logging flags.
     #[command(flatten)]
@@ -149,25 +149,23 @@ pub(crate) struct HttpCommand {
     ssh: SshArguments,
 }
 
-impl LoadCommand for HttpCommand {
-    const TRANSPORT: Transport = Transport::Http;
-
-    fn shared(&self) -> &SharedArguments {
-        &self.shared
-    }
-
-    fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
+impl HttpCommand {
+    /// Returns the flags in `matches` set by flag or env var as a layer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `matches` were not parsed by [`Self::command`].
+    pub(crate) fn layer(matches: &ArgMatches) -> ConfigLayer {
+        let cmd = Self::from_arg_matches(matches).expect("matches were parsed by HttpCommand::command()");
         ConfigLayer {
-            log_level: explicit(matches, "log_level", Some(&self.shared.log_level)),
-            database: self.database.layer(matches),
-            http: self.http.layer(matches),
-            pii: self.pii.layer(matches),
-            ssh: self.ssh.layer(matches),
+            log_level: cmd.shared.log_level(matches),
+            database: cmd.database.layer(matches),
+            http: cmd.http.layer(matches),
+            pii: cmd.pii.layer(matches),
+            ssh: cmd.ssh.layer(matches),
         }
     }
-}
 
-impl HttpCommand {
     /// Builds the server for `config` and runs the HTTP transport.
     ///
     /// Binds to the configured host/port and serves MCP requests over
@@ -322,14 +320,16 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
-    use clap::{CommandFactory, FromArgMatches, Parser};
-    use dbmcp_config::{ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved};
+    use clap::{CommandFactory, Parser};
+    use dbmcp_config::{
+        ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved, Transport,
+    };
 
     use crate::commands::common::tests_support;
     use tower::ServiceExt;
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true, mut_args(flag_conventions))]
+    #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
         http: HttpArguments,
@@ -411,7 +411,7 @@ mod tests {
 
     /// Parses `args` as the full `http` subcommand and loads its config.
     fn load_http(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<HttpCommand>(args)
+        tests_support::load::<HttpCommand>(HttpCommand::layer, Transport::Http, args)
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn every_setting_flag_has_a_route() {
-        tests_support::check_routes::<HttpCommand>();
+        tests_support::check_routes::<HttpCommand>(HttpCommand::layer);
     }
 
     #[test]

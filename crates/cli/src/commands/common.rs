@@ -10,17 +10,15 @@
 //! dotenv files and merges the result over the config file. Also provides [`create_server`],
 //! the backend-selection factory that maps a configured [`DatabaseBackend`]
 //! onto the matching concrete adapter, tunnelling through SSH when
-//! configured, and [`flag_conventions`], which shapes every flag by its
-//! value type.
+//! configured.
 
-use std::any::TypeId;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use clap::builder::BoolishValueParser;
 use clap::parser::ValueSource;
-use clap::{Arg, ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches};
+use clap::{ArgAction, ArgMatches, Args, FromArgMatches};
 use dbmcp_config::{
     Config, ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
     PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources,
@@ -36,38 +34,6 @@ use tracing::info;
 use dbmcp_server::ErrorContext;
 pub(crate) use dbmcp_server::Server;
 
-/// Applies the shared conventions for a flag's value type.
-///
-/// [`SecretString`] flags hide their env value from `--help`. `bool` flags with
-/// clap's default `SetTrue` action also accept an explicit value: bare
-/// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var accept
-/// `true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0` in any case. Empty
-/// and unknown values are rejected, so a blank or mistyped env var fails
-/// startup instead of flipping a security setting. Each transport
-/// subcommand applies it once, after
-/// flattening its flag groups, via `#[command(mut_args(flag_conventions))]`,
-/// so every flag it exposes inherits it.
-pub(crate) fn flag_conventions(arg: Arg) -> Arg {
-    let value_type = arg.get_value_parser().type_id();
-    if value_type == TypeId::of::<SecretString>() {
-        arg.hide_env_values(true)
-    } else if value_type == TypeId::of::<bool>() && matches!(arg.get_action(), ArgAction::SetTrue) {
-        let arg = arg
-            .action(ArgAction::Set)
-            .num_args(0..=1)
-            .default_missing_value("true")
-            .value_parser(BoolishValueParser::new());
-        // `ArgAction::Set` drops the implicit `false` default of `SetTrue`.
-        if arg.get_default_values().is_empty() {
-            arg.default_value("false")
-        } else {
-            arg
-        }
-    } else {
-        arg
-    }
-}
-
 /// Returns `true` when argument `id` was set by flag or env var.
 fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
     matches!(
@@ -80,8 +46,8 @@ fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
 ///
 /// Values that came from a clap default are dropped, so lower layers (the
 /// dotenv files, the config file, then the built-in defaults) can fill them.
-pub(crate) fn explicit<T: Clone>(matches: &ArgMatches, id: &str, value: Option<&T>) -> Option<T> {
-    is_explicit(matches, id).then(|| value.cloned()).flatten()
+pub(crate) fn explicit<T>(matches: &ArgMatches, id: &str, value: Option<T>) -> Option<T> {
+    if is_explicit(matches, id) { value } else { None }
 }
 
 /// Config-file and logging flags shared by every transport subcommand.
@@ -97,7 +63,9 @@ pub(crate) struct SharedArguments {
 
     /// Log level
     #[arg(
+        id = "log_level",
         long = "log-level",
+        value_name = "LOG_LEVEL",
         env = "LOG_LEVEL",
         default_value_t = LogLevel::DEFAULT,
         ignore_case = true,
@@ -106,132 +74,158 @@ pub(crate) struct SharedArguments {
     pub(crate) log_level: LogLevel,
 }
 
-/// A transport subcommand whose flags load into a [`ConfigLayer`].
-pub(crate) trait LoadCommand: CommandFactory + FromArgMatches {
-    /// Transport this subcommand runs.
-    const TRANSPORT: Transport;
-
-    /// Returns the config-file and logging flags.
-    fn shared(&self) -> &SharedArguments;
-
-    /// Returns the flags set on the command line or via env vars as a layer.
-    ///
-    /// `matches` must be the matches this command was parsed from.
-    fn layer(&self, matches: &ArgMatches) -> ConfigLayer;
+impl SharedArguments {
+    /// Returns the log level when set by flag or env var.
+    pub(crate) fn log_level(&self, matches: &ArgMatches) -> Option<LogLevel> {
+        explicit(matches, "log_level", Some(self.log_level))
+    }
 }
 
-/// Loads the configuration for the parsed subcommand `cmd`.
+/// Converts matches parsed by a subcommand's clap command into its layer.
+pub(crate) type LayerFn = fn(&ArgMatches) -> ConfigLayer;
+
+/// Loads the configuration of a transport subcommand.
 ///
-/// Reads the `--config` and dotenv files, fills every flag not set on the
-/// command line or via its env var from a dotenv variable of the same name,
-/// and merges the result over the config file. Warnings are appended to
+/// `command` is the subcommand's clap command, `matches` what it parsed,
+/// and `layer` turns matches parsed by `command` into a layer. Reads the
+/// `--config` and dotenv files, fills every flag not set on the command
+/// line or via its env var from a dotenv variable of the same name, and
+/// merges the result over the config file. Warnings are appended to
 /// `warnings`, including when loading fails.
 ///
 /// # Errors
 ///
 /// Returns [`LoadError`] from the first failing stage.
-pub(crate) fn load<C: LoadCommand>(
-    cmd: &C,
+///
+/// # Panics
+///
+/// Panics if `matches` were not parsed by `command`.
+pub(crate) fn load(
+    command: clap::Command,
     matches: &ArgMatches,
+    layer: LayerFn,
+    transport: Transport,
     warnings: &mut Vec<ConfigWarning>,
 ) -> Result<Resolved, LoadError> {
-    let shared = cmd.shared();
+    let shared = SharedArguments::from_arg_matches(matches).expect("matches were parsed by `command`");
     let process_env: HashMap<String, String> = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
         .collect();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
 
-    let command = C::command();
-    let flags = flag_routes(&command);
+    let routes = flag_routes(&command);
     let mut provenance = Provenance::default();
-    for flag in &flags {
-        provenance.add_route(flag.path, flag.route());
-        let source = match matches.value_source(flag.path) {
-            Some(ValueSource::CommandLine) => Some(Source::Flag(flag.flag())),
-            Some(ValueSource::EnvVariable) => flag.env.clone().map(Source::Env),
+    for (path, route) in &routes {
+        let source = match matches.value_source(path) {
+            Some(ValueSource::CommandLine) => Some(Source::Flag(route.flag.clone())),
+            Some(ValueSource::EnvVariable) => route.env.clone().map(Source::Env),
             _ => None,
         };
         if let Some(source) = source {
-            provenance.set_source(flag.path, source);
+            provenance.set_source(path, source);
         }
+        provenance.add_route(path, route.clone());
     }
-    let dotenv = if sources.dotenv().is_empty() {
-        ConfigLayer::default()
-    } else {
-        dotenv_layer::<C>(
-            matches,
-            sources.dotenv(),
-            &flags,
-            &bare_command(command),
-            &mut provenance,
-        )?
-    };
+
+    let dotenv = parse_dotenv(
+        matches,
+        sources.dotenv(),
+        &routes,
+        bare_command(command),
+        &mut provenance,
+    )?;
     sources.resolve(
-        cmd.layer(matches).or(dotenv),
+        layer(matches).or(layer(&dotenv)),
         provenance,
-        C::TRANSPORT,
+        transport,
         ssh::home_dir().as_deref(),
     )
 }
 
-/// One setting flag of a subcommand.
+/// Returns the config path and route of every setting flag of `command`.
 ///
-/// Its clap id is the config path it sets, e.g. `database.port`.
-struct FlagRoute {
-    /// Config path, which is also the clap argument id.
-    path: &'static str,
-    /// Long name, without `--`.
-    long: String,
-    /// Bound env var, if any.
-    env: Option<String>,
-}
-
-impl FlagRoute {
-    fn flag(&self) -> String {
-        format!("--{}", self.long)
-    }
-
-    fn route(&self) -> Route {
-        Route {
-            flag: self.flag(),
-            env: self.env.clone(),
-        }
-    }
-}
-
-/// Returns a route for every flag of `command` whose id is a config path.
-fn flag_routes(command: &clap::Command) -> Vec<FlagRoute> {
+/// A setting flag's clap id is its config path; `--config`, `--env`, and
+/// `--help` are not settings.
+fn flag_routes(command: &clap::Command) -> Vec<(String, Route)> {
     command
         .get_arguments()
+        .filter(|arg| !matches!(arg.get_id().as_str(), "config" | "env" | "help"))
         .filter_map(|arg| {
-            let path = ConfigLayer::paths().find(|path| *path == arg.get_id().as_str())?;
-            Some(FlagRoute {
-                path,
-                long: arg.get_long()?.to_owned(),
+            let route = Route {
+                flag: format!("--{}", arg.get_long()?),
                 env: arg.get_env().and_then(OsStr::to_str).map(str::to_owned),
-            })
+            };
+            Some((arg.get_id().to_string(), route))
         })
         .collect()
 }
 
-/// Returns `command` with every env var binding removed.
+/// Returns `command` without binary name and with every env var binding removed.
 ///
-/// Parsing a single `--flag=value` with it yields a layer holding only
-/// that flag, whatever the process environment contains.
+/// Parsing `--flag=value` arguments with it sets exactly those flags,
+/// whatever the process environment contains.
 fn bare_command(command: clap::Command) -> clap::Command {
     command
         .no_binary_name(true)
         .mut_args(|arg| arg.env(None::<&'static str>))
 }
 
-/// Parses `--long=value` alone with `bare` into its layer.
-fn single_flag_layer<C: LoadCommand>(
-    bare: &clap::Command,
-    long: &str,
-    value: &str,
-) -> Result<ConfigLayer, clap::Error> {
-    let matches = bare.clone().try_get_matches_from([format!("--{long}={value}")])?;
-    C::from_arg_matches(&matches).map(|cmd| cmd.layer(&matches))
+/// Parses the dotenv value of every flag not set by flag or env var.
+///
+/// Each value is parsed by `bare` as `--<flag>=<value>`, so it goes through
+/// exactly the parser its env var would, and gets a [`Source::Dotenv`] in
+/// `provenance`. Returns the matches of all of them together.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Env`] listing every invalid value from the first
+/// env file that has one.
+fn parse_dotenv(
+    matches: &ArgMatches,
+    dotenv: &Dotenv,
+    routes: &[(String, Route)],
+    mut bare: clap::Command,
+    provenance: &mut Provenance,
+) -> Result<ArgMatches, LoadError> {
+    let mut args = Vec::new();
+    let mut errors: Vec<(PathBuf, String)> = Vec::new();
+    for (path, route) in routes {
+        if is_explicit(matches, path) {
+            continue;
+        }
+        let Some((name, var)) = route
+            .env
+            .as_deref()
+            .and_then(|name| dotenv.get(name).map(|var| (name, var)))
+        else {
+            continue;
+        };
+        let arg = format!("{}={}", route.flag, var.value);
+        if bare.try_get_matches_from_mut([&arg]).is_err() {
+            let error = format!("{}: {name}: invalid value for {}", var.location(), route.flag);
+            errors.push((var.path.clone(), error));
+            continue;
+        }
+        let source = Source::Dotenv {
+            name: name.to_owned(),
+            location: var.location(),
+        };
+        provenance.set_source(path, source);
+        args.push(arg);
+    }
+
+    if let Some((first, _)) = errors.first() {
+        let path = first.clone();
+        let errors = errors
+            .into_iter()
+            .filter(|(p, _)| *p == path)
+            .map(|(_, error)| error)
+            .collect();
+        return Err(LoadError::Env { path, errors });
+    }
+    Ok(bare
+        .try_get_matches_from_mut(args)
+        .expect("each value parsed on its own and no flags conflict"))
 }
 
 /// Test helpers shared by the subcommand tests.
@@ -240,9 +234,9 @@ pub(crate) mod tests_support {
     use std::path::PathBuf;
 
     use clap::CommandFactory;
-    use dbmcp_config::{LoadError, Resolved};
+    use dbmcp_config::{LoadError, Resolved, Transport};
 
-    use super::{LoadCommand, bare_command, flag_routes, single_flag_layer};
+    use super::{LayerFn, bare_command, flag_routes};
 
     /// Removes every env var bound to a flag of `C`, except those in `keep`.
     pub(crate) fn clear_env<C: CommandFactory>(keep: &[&str]) {
@@ -257,13 +251,16 @@ pub(crate) mod tests_support {
     }
 
     /// Parses `args` as `C` (with `LOG_LEVEL` left alone) and loads its config.
-    pub(crate) fn load<C: LoadCommand>(args: &[&str]) -> Result<Resolved, LoadError> {
+    pub(crate) fn load<C: CommandFactory>(
+        layer: LayerFn,
+        transport: Transport,
+        args: &[&str],
+    ) -> Result<Resolved, LoadError> {
         clear_env::<C>(&["LOG_LEVEL"]);
         let matches = C::command()
             .try_get_matches_from(args)
             .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        let cmd = C::from_arg_matches(&matches).expect("from matches");
-        super::load(&cmd, &matches, &mut Vec::new())
+        super::load(C::command(), &matches, layer, transport, &mut Vec::new())
     }
 
     /// Writes `yaml` to a fresh `dbmcp.yaml` and returns its directory and path.
@@ -278,87 +275,29 @@ pub(crate) mod tests_support {
     ///
     /// Each flag is parsed alone with a sample value (its first possible
     /// value, or `1`).
-    pub(crate) fn check_routes<C: LoadCommand>() {
+    pub(crate) fn check_routes<C: CommandFactory>(layer: LayerFn) {
         let command = C::command();
         let routes = flag_routes(&command);
-        let bare = bare_command(command.clone());
+        let mut bare = bare_command(command.clone());
         for arg in command.get_arguments() {
             let Some(long) = arg.get_long() else { continue };
             if ["config", "env", "help"].contains(&long) {
                 continue;
             }
-            let route = routes
+            let flag = format!("--{long}");
+            let (path, _) = routes
                 .iter()
-                .find(|route| route.long == long)
-                .unwrap_or_else(|| panic!("--{long} id `{}` is not a config path", arg.get_id()));
+                .find(|(_, route)| route.flag == flag)
+                .unwrap_or_else(|| panic!("{flag} has no route"));
             let sample = arg
                 .get_possible_values()
                 .first()
                 .map_or_else(|| "1".to_owned(), |value| value.get_name().to_owned());
-            let layer = single_flag_layer::<C>(&bare, long, &sample)
-                .unwrap_or_else(|e| panic!("--{long}={sample} must parse: {e}"));
-            assert_eq!(layer.set_paths(), [route.path], "--{long}");
+            let matches = bare
+                .try_get_matches_from_mut([format!("{flag}={sample}")])
+                .unwrap_or_else(|e| panic!("{flag}={sample} must parse: {e}"));
+            assert_eq!(layer(&matches).set_paths(), [path.as_str()], "{flag}");
         }
-    }
-}
-
-/// Returns the layer of flags whose env var is defined only in a dotenv file.
-///
-/// Each value is parsed by re-running clap (`bare`) on `--<flag>=<value>`,
-/// so it goes through exactly the parser its env var would. Records a
-/// [`Source::Dotenv`] for every path it fills.
-///
-/// # Errors
-///
-/// Returns [`LoadError::Env`] listing every invalid value from the first
-/// env file that has one.
-fn dotenv_layer<C: LoadCommand>(
-    matches: &ArgMatches,
-    dotenv: &Dotenv,
-    flags: &[FlagRoute],
-    bare: &clap::Command,
-    provenance: &mut Provenance,
-) -> Result<ConfigLayer, LoadError> {
-    let mut layer = ConfigLayer::default();
-    let mut errors: Vec<(PathBuf, String)> = Vec::new();
-    for flag in flags {
-        if is_explicit(matches, flag.path) {
-            continue;
-        }
-        let Some((env, var)) = flag
-            .env
-            .as_deref()
-            .and_then(|env| dotenv.get(env).map(|var| (env, var)))
-        else {
-            continue;
-        };
-        match single_flag_layer::<C>(bare, &flag.long, &var.value) {
-            Ok(flag_layer) => {
-                provenance.set_source(
-                    flag.path,
-                    Source::Dotenv {
-                        name: env.to_owned(),
-                        location: var.location(),
-                    },
-                );
-                layer = layer.or(flag_layer);
-            }
-            Err(_) => errors.push((
-                var.path.clone(),
-                format!("{}: {env}: invalid value for {}", var.location(), flag.flag()),
-            )),
-        }
-    }
-    match errors.first() {
-        None => Ok(layer),
-        Some((path, _)) => Err(LoadError::Env {
-            path: path.clone(),
-            errors: errors
-                .iter()
-                .filter(|(p, _)| p == path)
-                .map(|(_, error)| error.clone())
-                .collect(),
-        }),
     }
 }
 
@@ -404,6 +343,7 @@ pub(crate) struct DatabaseArguments {
         id = "database.ssl", long = "db-ssl",
         env = "DB_SSL",
         default_value_t = DatabaseConfig::DEFAULT_SSL,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     pub(crate) ssl: bool,
 
@@ -424,6 +364,7 @@ pub(crate) struct DatabaseArguments {
         id = "database.ssl_verify_cert", long = "db-ssl-verify-cert",
         env = "DB_SSL_VERIFY_CERT",
         default_value_t = DatabaseConfig::DEFAULT_SSL_VERIFY_CERT,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     pub(crate) ssl_verify_cert: bool,
 
@@ -432,6 +373,7 @@ pub(crate) struct DatabaseArguments {
         id = "database.read_only", long = "db-read-only",
         env = "DB_READ_ONLY",
         default_value_t = DatabaseConfig::DEFAULT_READ_ONLY,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     pub(crate) read_only: bool,
 
@@ -470,25 +412,25 @@ pub(crate) struct DatabaseArguments {
 
 impl DatabaseArguments {
     /// Returns the explicitly set database flags as a layer.
-    pub(crate) fn layer(&self, matches: &ArgMatches) -> DatabaseLayer {
+    pub(crate) fn layer(self, matches: &ArgMatches) -> DatabaseLayer {
         DatabaseLayer {
-            backend: explicit(matches, "database.backend", Some(&self.backend)),
-            host: explicit(matches, "database.host", Some(&self.host)),
-            port: explicit(matches, "database.port", self.port.as_ref()),
-            user: explicit(matches, "database.user", self.user.as_ref()),
-            password: explicit(matches, "database.password", self.password.as_ref()),
-            name: explicit(matches, "database.name", self.name.as_ref()),
-            charset: explicit(matches, "database.charset", self.charset.as_ref()),
-            ssl: explicit(matches, "database.ssl", Some(&self.ssl)),
-            ssl_ca: explicit(matches, "database.ssl_ca", self.ssl_ca.as_ref()),
-            ssl_cert: explicit(matches, "database.ssl_cert", self.ssl_cert.as_ref()),
-            ssl_key: explicit(matches, "database.ssl_key", self.ssl_key.as_ref()),
-            ssl_verify_cert: explicit(matches, "database.ssl_verify_cert", Some(&self.ssl_verify_cert)),
-            read_only: explicit(matches, "database.read_only", Some(&self.read_only)),
-            max_pool_size: explicit(matches, "database.max_pool_size", Some(&self.max_pool_size)),
-            connection_timeout: explicit(matches, "database.connection_timeout", self.connection_timeout.as_ref()),
-            query_timeout: explicit(matches, "database.query_timeout", Some(&self.query_timeout)),
-            page_size: explicit(matches, "database.page_size", Some(&self.page_size)),
+            backend: explicit(matches, "database.backend", Some(self.backend)),
+            host: explicit(matches, "database.host", Some(self.host)),
+            port: explicit(matches, "database.port", self.port),
+            user: explicit(matches, "database.user", self.user),
+            password: explicit(matches, "database.password", self.password),
+            name: explicit(matches, "database.name", self.name),
+            charset: explicit(matches, "database.charset", self.charset),
+            ssl: explicit(matches, "database.ssl", Some(self.ssl)),
+            ssl_ca: explicit(matches, "database.ssl_ca", self.ssl_ca),
+            ssl_cert: explicit(matches, "database.ssl_cert", self.ssl_cert),
+            ssl_key: explicit(matches, "database.ssl_key", self.ssl_key),
+            ssl_verify_cert: explicit(matches, "database.ssl_verify_cert", Some(self.ssl_verify_cert)),
+            read_only: explicit(matches, "database.read_only", Some(self.read_only)),
+            max_pool_size: explicit(matches, "database.max_pool_size", Some(self.max_pool_size)),
+            connection_timeout: explicit(matches, "database.connection_timeout", self.connection_timeout),
+            query_timeout: explicit(matches, "database.query_timeout", Some(self.query_timeout)),
+            page_size: explicit(matches, "database.page_size", Some(self.page_size)),
         }
     }
 }
@@ -502,6 +444,7 @@ pub(crate) struct PiiArguments {
         id = "pii.enabled", long = "pii",
         env = "PII_ENABLE",
         default_value_t = PiiConfig::DEFAULT_ENABLED,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     pub(crate) enabled: bool,
 
@@ -528,6 +471,7 @@ pub(crate) struct PiiArguments {
         id = "pii.ner_enabled", long = "pii-ner",
         env = "PII_NER_ENABLE",
         default_value_t = PiiConfig::DEFAULT_NER_ENABLED,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true", value_parser = BoolishValueParser::new(),
     )]
     pub(crate) ner_enabled: bool,
 
@@ -538,13 +482,13 @@ pub(crate) struct PiiArguments {
 
 impl PiiArguments {
     /// Returns the explicitly set PII flags as a layer.
-    pub(crate) fn layer(&self, matches: &ArgMatches) -> PiiLayer {
+    pub(crate) fn layer(self, matches: &ArgMatches) -> PiiLayer {
         PiiLayer {
-            enabled: explicit(matches, "pii.enabled", Some(&self.enabled)),
-            operator: explicit(matches, "pii.operator", Some(&self.operator)),
-            categories: explicit(matches, "pii.categories", self.categories.as_ref()),
-            ner_enabled: explicit(matches, "pii.ner_enabled", Some(&self.ner_enabled)),
-            ner_model: explicit(matches, "pii.ner_model", self.ner_model.as_ref()),
+            enabled: explicit(matches, "pii.enabled", Some(self.enabled)),
+            operator: explicit(matches, "pii.operator", Some(self.operator)),
+            categories: explicit(matches, "pii.categories", self.categories),
+            ner_enabled: explicit(matches, "pii.ner_enabled", Some(self.ner_enabled)),
+            ner_model: explicit(matches, "pii.ner_model", self.ner_model),
         }
     }
 }
@@ -634,22 +578,18 @@ pub(crate) struct SshArguments {
 
 impl SshArguments {
     /// Returns the explicitly set SSH flags as a layer.
-    pub(crate) fn layer(&self, matches: &ArgMatches) -> SshLayer {
+    pub(crate) fn layer(self, matches: &ArgMatches) -> SshLayer {
         SshLayer {
-            host: explicit(matches, "ssh.host", self.host.as_ref()),
-            port: explicit(matches, "ssh.port", self.port.as_ref()),
-            user: explicit(matches, "ssh.user", self.user.as_ref()),
-            password: explicit(matches, "ssh.password", self.password.as_ref()),
-            key: explicit(matches, "ssh.key", self.key.as_ref()),
-            key_passphrase: explicit(matches, "ssh.key_passphrase", self.key_passphrase.as_ref()),
-            known_hosts: explicit(matches, "ssh.known_hosts", self.known_hosts.as_ref()),
-            strict_host_key_checking: explicit(
-                matches,
-                "ssh.strict_host_key_checking",
-                self.strict_host_key_checking.as_ref(),
-            ),
-            keepalive_interval: explicit(matches, "ssh.keepalive_interval", self.keepalive_interval.as_ref()),
-            local_port: explicit(matches, "ssh.local_port", self.local_port.as_ref()),
+            host: explicit(matches, "ssh.host", self.host),
+            port: explicit(matches, "ssh.port", self.port),
+            user: explicit(matches, "ssh.user", self.user),
+            password: explicit(matches, "ssh.password", self.password),
+            key: explicit(matches, "ssh.key", self.key),
+            key_passphrase: explicit(matches, "ssh.key_passphrase", self.key_passphrase),
+            known_hosts: explicit(matches, "ssh.known_hosts", self.known_hosts),
+            strict_host_key_checking: explicit(matches, "ssh.strict_host_key_checking", self.strict_host_key_checking),
+            keepalive_interval: explicit(matches, "ssh.keepalive_interval", self.keepalive_interval),
+            local_port: explicit(matches, "ssh.local_port", self.local_port),
         }
     }
 }
@@ -766,7 +706,7 @@ mod tests {
     };
 
     #[derive(Debug, Parser)]
-    #[command(no_binary_name = true, mut_args(super::flag_conventions))]
+    #[command(no_binary_name = true)]
     struct TestCli {
         #[command(flatten)]
         db: DatabaseArguments,
@@ -853,7 +793,7 @@ mod tests {
                 .no_binary_name(true)
                 .arg(clap::Arg::new("x").long("x").env(ENV).default_value("default"))
         };
-        let value = |matches: &clap::ArgMatches| explicit(matches, "x", matches.get_one::<String>("x"));
+        let value = |matches: &clap::ArgMatches| explicit(matches, "x", matches.get_one::<String>("x").cloned());
 
         let matches = cmd().try_get_matches_from(Vec::<&str>::new()).expect("parse");
         assert_eq!(value(&matches), None, "default value must be blanked");

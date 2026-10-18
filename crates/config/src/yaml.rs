@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt::{self, Write as _};
+use std::rc::Rc;
 
 use clap::builder::{BoolishValueParser, TypedValueParser};
 use serde::de::{self, DeserializeSeed, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Unexpected, Visitor};
@@ -152,10 +153,12 @@ pub(crate) struct ParseError {
 /// or the first failed substitution.
 pub(crate) fn parse(text: &str, properties: HashMap<String, String>) -> Result<Node, ParseError> {
     let root =
-        serde_saphyr::from_str_with_options::<Option<Node>>(text, options(properties)).map_err(|e| ParseError {
-            location: e.location(),
-            message: message(&e),
-            interpolation: is_interpolation_error(innermost(&e)),
+        serde_saphyr::from_str_with_options::<Option<Node>>(text, options(Rc::new(properties))).map_err(|e| {
+            ParseError {
+                location: e.location(),
+                message: message(&e),
+                interpolation: is_interpolation_error(innermost(&e)),
+            }
         })?;
     Ok(root.unwrap_or_else(|| Spanned::new(Value::Null, Location::UNKNOWN, Location::UNKNOWN)))
 }
@@ -165,7 +168,7 @@ pub(crate) fn parse(text: &str, properties: HashMap<String, String>) -> Result<N
 /// # Errors
 ///
 /// Returns the value-free reason the first substitution failed.
-pub(crate) fn interpolate(template: &str, properties: HashMap<String, String>) -> Result<String, String> {
+pub(crate) fn interpolate(template: &str, properties: Rc<HashMap<String, String>>) -> Result<String, String> {
     serde_saphyr::from_str_with_options::<String>(&double_quoted(template), options(properties))
         .map_err(|e| message(&e))
 }
@@ -190,13 +193,14 @@ fn double_quoted(text: &str) -> String {
 }
 
 /// Parser options: strict booleans, no snippets, Compose interpolation from `properties`.
-fn options(properties: HashMap<String, String>) -> serde_saphyr::Options {
-    serde_saphyr::options! {
+fn options(properties: Rc<HashMap<String, String>>) -> serde_saphyr::Options {
+    let mut options = serde_saphyr::options! {
         strict_booleans: true,
         with_snippet: false,
         property_syntax: PropertySyntax::DockerCompose,
-    }
-    .with_properties(properties)
+    };
+    options.property_map = Some(properties);
+    options
 }
 
 /// Renders `error` without its `at line …, column …` suffix or any value.
