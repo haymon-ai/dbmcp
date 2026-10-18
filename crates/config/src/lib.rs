@@ -11,7 +11,6 @@
 //! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
 //! - [`provenance`] — [`Provenance`]: the [`Source`] of each value, used to annotate errors
-//! - [`secret`] — [`Secret`] redacting string wrapper
 //! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`warning`] — [`ConfigWarning`] non-fatal loading problems
 //! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
@@ -26,8 +25,8 @@
 //! # Security
 //!
 //! The database password, SSH password and key passphrase, and HTTP auth
-//! token are stored as [`Secret`], so their values never reach [`Debug`]
-//! output.
+//! token are stored as [`SecretString`], so their values never reach
+//! [`Debug`] output and are zeroized on drop.
 
 pub mod config;
 pub mod database;
@@ -41,7 +40,6 @@ pub mod log_level;
 pub mod origin;
 pub mod pii;
 pub mod provenance;
-pub mod secret;
 pub mod ssh;
 mod value_enum;
 pub mod warning;
@@ -59,7 +57,7 @@ pub use log_level::LogLevel;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
 pub use provenance::{Provenance, Route, Source};
-pub use secret::Secret;
+pub use secrecy::{ExposeSecret, SecretString};
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use warning::ConfigWarning;
 

@@ -22,8 +22,8 @@ use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches};
 use dbmcp_config::{
     Config, ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
-    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, Secret, Source, Sources, SshLayer,
-    StrictHostKeyChecking, Transport, ssh,
+    PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources,
+    SshLayer, StrictHostKeyChecking, Transport, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -37,7 +37,7 @@ pub(crate) use dbmcp_server::Server;
 
 /// Applies the shared conventions for a flag's value type.
 ///
-/// [`Secret`] flags hide their env value from `--help`. `bool` flags with
+/// [`SecretString`] flags hide their env value from `--help`. `bool` flags with
 /// clap's default `SetTrue` action also accept an explicit value: bare
 /// `--flag` means `true`; `--flag=<v>`, `--flag <v>`, and the env var accept
 /// `true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0` in any case. Empty
@@ -48,7 +48,7 @@ pub(crate) use dbmcp_server::Server;
 /// so every flag it exposes inherits it.
 pub(crate) fn flag_conventions(arg: Arg) -> Arg {
     let value_type = arg.get_value_parser().type_id();
-    if value_type == TypeId::of::<Secret>() {
+    if value_type == TypeId::of::<SecretString>() {
         arg.hide_env_values(true)
     } else if value_type == TypeId::of::<bool>() && matches!(arg.get_action(), ArgAction::SetTrue) {
         let arg = arg
@@ -387,7 +387,7 @@ pub(crate) struct DatabaseArguments {
         env = "DB_PASSWORD",
         hide_env_values = true
     )]
-    pub(crate) password: Option<Secret>,
+    pub(crate) password: Option<SecretString>,
 
     /// Database name or `SQLite` file path
     #[arg(id = "database.name", long = "db-name", env = "DB_NAME")]
@@ -576,7 +576,7 @@ pub(crate) struct SshArguments {
         env = "SSH_PASSWORD",
         hide_env_values = true
     )]
-    pub(crate) password: Option<Secret>,
+    pub(crate) password: Option<SecretString>,
 
     /// Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)
     #[arg(id = "ssh.key", long = "ssh-key", value_name = "PATH", env = "SSH_KEY")]
@@ -590,7 +590,7 @@ pub(crate) struct SshArguments {
         env = "SSH_KEY_PASSPHRASE",
         hide_env_values = true
     )]
-    pub(crate) key_passphrase: Option<Secret>,
+    pub(crate) key_passphrase: Option<SecretString>,
 
     /// Path to known_hosts file (default: ~/.ssh/known_hosts)
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
@@ -1112,7 +1112,10 @@ mod tests {
         assert_eq!(config.host, "bastion");
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "deploy");
-        assert_eq!(config.password.as_ref().map(dbmcp_config::Secret::expose), Some("pw"));
+        assert_eq!(
+            config.password.as_ref().map(dbmcp_config::ExposeSecret::expose_secret),
+            Some("pw")
+        );
         assert_eq!(config.known_hosts, Some(home().join(".ssh").join("known_hosts")));
         assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::Yes);
         assert_eq!(config.keepalive_interval, Duration::from_secs(30));

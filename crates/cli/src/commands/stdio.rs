@@ -95,7 +95,8 @@ impl StdioCommand {
 mod tests {
     use clap::{CommandFactory, FromArgMatches};
     use dbmcp_config::{
-        ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, LoadError, LogLevel, PiiCategory, Resolved, Secret,
+        ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, ExposeSecret, LoadError, LogLevel, PiiCategory,
+        Resolved,
     };
 
     use super::*;
@@ -204,7 +205,10 @@ mod tests {
             .expect("valid")
             .config;
         let db = &config.database;
-        assert_eq!(db.password.as_ref().map(Secret::expose), Some("from-dotenv"));
+        assert_eq!(
+            db.password.as_ref().map(ExposeSecret::expose_secret),
+            Some("from-dotenv")
+        );
         assert_eq!(db.host, "flag-host", "flag beats dotenv");
         assert_eq!(db.user, "file-user", "file fills what dotenv leaves");
         assert!(!db.read_only, "dotenv values use the env parser");

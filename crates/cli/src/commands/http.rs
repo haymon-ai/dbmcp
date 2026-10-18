@@ -9,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::{ArgMatches, Args, Parser};
-use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, HttpConfig, HttpLayer, Secret, Transport};
+use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString, Transport};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -89,7 +89,7 @@ struct HttpArguments {
         value_name = "TOKEN",
         hide_env_values = true
     )]
-    auth_token: Option<Secret>,
+    auth_token: Option<SecretString>,
 
     /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
     ///
@@ -253,7 +253,7 @@ fn build_http_router(
     let mut router = axum::Router::new().nest_service("/mcp", service);
     if let Some(token) = &http_config.auth_token {
         router = router.layer(axum::middleware::from_fn_with_state(
-            BearerAuth::new(token.expose()),
+            BearerAuth::new(token.expose_secret()),
             require_bearer,
         ));
     }
@@ -374,7 +374,7 @@ mod tests {
             port: HttpConfig::DEFAULT_PORT,
             allowed_origins: origins,
             allowed_hosts: HttpConfig::default_allowed_hosts(),
-            auth_token: auth_token.map(Secret::from),
+            auth_token: auth_token.map(SecretString::from),
             allow_unauthenticated: false,
         };
         let config = Config {
@@ -653,7 +653,10 @@ mod tests {
     #[test]
     fn accepts_non_loopback_with_token() {
         let config = http_config(&["--host", "0.0.0.0", "--auth-token", TEST_TOKEN]).expect("token allows bind");
-        assert_eq!(config.auth_token.as_ref().map(Secret::expose), Some(TEST_TOKEN));
+        assert_eq!(
+            config.auth_token.as_ref().map(ExposeSecret::expose_secret),
+            Some(TEST_TOKEN)
+        );
     }
 
     #[test]

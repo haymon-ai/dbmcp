@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{DatabaseConfig, ExposeSecret};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
@@ -132,7 +132,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
         .username(&config.user);
 
     if let Some(ref password) = config.password {
-        conn_ops = conn_ops.password(password.expose());
+        conn_ops = conn_ops.password(password.expose_secret());
     }
     if !database.is_empty() {
         conn_ops = conn_ops.database(database);

@@ -21,8 +21,8 @@ use crate::error::{ConfigError, ConfigErrors};
 use crate::http::HttpConfig;
 use crate::log_level::LogLevel;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
-use crate::secret::Secret;
 use crate::ssh::{self, SshConfig, StrictHostKeyChecking};
+use secrecy::SecretString;
 
 /// Transport whose sections [`ConfigLayer::resolve`] builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +75,7 @@ pub struct DatabaseLayer {
     /// Database user.
     pub user: Option<String>,
     /// Database password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
     /// Database name or `SQLite` file path.
     pub name: Option<String>,
     /// Character set (MySQL/MariaDB only).
@@ -115,7 +115,7 @@ pub struct HttpLayer {
     /// Allowed host names.
     pub allowed_hosts: Option<Vec<String>>,
     /// Bearer token required on every request.
-    pub auth_token: Option<Secret>,
+    pub auth_token: Option<SecretString>,
     /// Permit a non-loopback bind without a token.
     pub allow_unauthenticated: Option<bool>,
 }
@@ -147,11 +147,11 @@ pub struct SshLayer {
     /// SSH user.
     pub user: Option<String>,
     /// SSH password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
     /// Path to the SSH private key.
     pub key: Option<PathBuf>,
     /// Passphrase for the private key.
-    pub key_passphrase: Option<Secret>,
+    pub key_passphrase: Option<SecretString>,
     /// Path to the `known_hosts` file.
     pub known_hosts: Option<PathBuf>,
     /// Host-key verification policy.
@@ -419,6 +419,7 @@ impl SshLayer {
 mod tests {
     use super::*;
     use crate::test_support::home;
+    use secrecy::ExposeSecret;
 
     fn resolve(layer: ConfigLayer, transport: Transport) -> Result<Resolved, ConfigErrors> {
         layer.resolve(transport, Some(&home()))
@@ -469,7 +470,7 @@ mod tests {
         assert_eq!(db.host, "upper");
         assert_eq!(db.port, 5432, "port default follows merged backend");
         assert_eq!(db.user, "app");
-        assert_eq!(db.password.as_ref().map(Secret::expose), Some("pw"));
+        assert_eq!(db.password.as_ref().map(ExposeSecret::expose_secret), Some("pw"));
         assert!(!db.read_only);
         assert_eq!(db.query_timeout, 0);
         assert_eq!(db.page_size, DatabaseConfig::DEFAULT_PAGE_SIZE);

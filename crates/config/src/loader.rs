@@ -535,7 +535,11 @@ ssh:
         assert_eq!(layer.database.backend, Some(DatabaseBackend::Postgres));
         assert_eq!(layer.database.port, Some(5432));
         assert_eq!(
-            layer.database.password.as_ref().map(crate::Secret::expose),
+            layer
+                .database
+                .password
+                .as_ref()
+                .map(secrecy::ExposeSecret::expose_secret),
             Some("hunter2")
         );
         assert_eq!(layer.database.query_timeout, Some(0));
@@ -750,7 +754,11 @@ ssh:
         let (layer, _) = interpolate_with(yaml, &[("DB_PASSWORD", "hunter2")]);
         let layer = layer.expect("set");
         assert_eq!(
-            layer.database.password.as_ref().map(crate::Secret::expose),
+            layer
+                .database
+                .password
+                .as_ref()
+                .map(secrecy::ExposeSecret::expose_secret),
             Some("hunter2")
         );
 
@@ -805,7 +813,7 @@ ssh:
                 .database
                 .password
                 .as_ref()
-                .map(crate::Secret::expose),
+                .map(secrecy::ExposeSecret::expose_secret),
             Some("pa$word")
         );
         let (error, _) = interpolate_with("database:\n  $KEY: x\n", &[("KEY", "host")]);
