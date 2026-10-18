@@ -13,9 +13,9 @@ fn parse<T: ValueEnum, E: Error>(value: &str) -> Result<T, E> {
         let names: Vec<String> = T::value_variants()
             .iter()
             .filter_map(ValueEnum::to_possible_value)
-            .map(|value| format!("`{}`", value.get_name()))
+            .map(|value| value.get_name().to_owned())
             .collect();
-        E::custom(format!("expected one of {}", names.join(", ")))
+        E::custom(format!("expected one of {}", crate::yaml::one_of(&names)))
     })
 }
 

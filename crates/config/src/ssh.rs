@@ -160,6 +160,7 @@ pub fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::home;
 
     fn ssh_config() -> SshConfig {
         SshConfig {
@@ -340,14 +341,6 @@ mod tests {
         assert_eq!(StrictHostKeyChecking::Yes.to_string(), "yes");
         assert_eq!(StrictHostKeyChecking::AcceptNew.to_string(), "accept-new");
         assert_eq!(StrictHostKeyChecking::No.to_string(), "no");
-    }
-
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
     }
 
     fn expand(path: &str) -> PathBuf {

@@ -25,8 +25,6 @@ pub enum Source {
     },
     /// A config-file value at `path:line:column`.
     File(String),
-    /// The built-in default.
-    Default,
 }
 
 impl std::fmt::Display for Source {
@@ -36,7 +34,6 @@ impl std::fmt::Display for Source {
             Self::Env(name) => f.write_str(name),
             Self::Dotenv { name, location } => write!(f, "{name} in {location}"),
             Self::File(location) => f.write_str(location),
-            Self::Default => f.write_str("default"),
         }
     }
 }
@@ -68,7 +65,7 @@ impl Provenance {
         self.routes.entry(path.to_owned()).or_insert(route);
     }
 
-    /// Returns where the value of `path` came from; `None` means [`Source::Default`].
+    /// Returns where the value of `path` came from; `None` means the built-in default.
     #[must_use]
     pub fn source(&self, path: &str) -> Option<&Source> {
         self.sources.get(path)
@@ -142,7 +139,6 @@ mod tests {
             Source::File("/abs/dbmcp.yaml:12:5".into()).to_string(),
             "/abs/dbmcp.yaml:12:5"
         );
-        assert_eq!(Source::Default.to_string(), "default");
     }
 
     #[test]

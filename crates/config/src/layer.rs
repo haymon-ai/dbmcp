@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
@@ -49,16 +49,16 @@ pub struct ConfigLayer {
     /// Log level.
     pub log_level: Option<LogLevel>,
     /// Database settings.
-    #[serde(default, deserialize_with = "nullable")]
+    #[serde(default)]
     pub database: DatabaseLayer,
     /// HTTP transport settings.
-    #[serde(default, deserialize_with = "nullable")]
+    #[serde(default)]
     pub http: HttpLayer,
     /// PII redaction settings.
-    #[serde(default, deserialize_with = "nullable")]
+    #[serde(default)]
     pub pii: PiiLayer,
     /// SSH tunnel settings.
-    #[serde(default, deserialize_with = "nullable")]
+    #[serde(default)]
     pub ssh: SshLayer,
 }
 
@@ -162,19 +162,13 @@ pub struct SshLayer {
     pub local_port: Option<u16>,
 }
 
-/// Deserializes a section, treating `null` as an empty section.
-fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
-
 /// Implements a field-wise `or` and `set_paths` for a layer section.
 macro_rules! impl_or {
     ($ty:ident, $section:literal { $($field:ident),* $(,)? }) => {
         impl $ty {
+            /// Config path of every field, in declaration order.
+            pub const PATHS: &'static [&'static str] = &[$(concat!($section, ".", stringify!($field))),*];
+
             /// Returns `self`, with every unset field taken from `lower`.
             #[must_use]
             pub fn or(self, lower: Self) -> Self {
@@ -252,6 +246,15 @@ impl ConfigLayer {
             pii: self.pii.or(lower.pii),
             ssh: self.ssh.or(lower.ssh),
         }
+    }
+
+    /// Returns the config path of every setting, e.g. `database.port`.
+    pub fn paths() -> impl Iterator<Item = &'static str> {
+        std::iter::once("log_level")
+            .chain(DatabaseLayer::PATHS.iter().copied())
+            .chain(HttpLayer::PATHS.iter().copied())
+            .chain(PiiLayer::PATHS.iter().copied())
+            .chain(SshLayer::PATHS.iter().copied())
     }
 
     /// Returns the config path of every set setting, e.g. `database.port`.
@@ -415,14 +418,7 @@ impl SshLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
-    }
+    use crate::test_support::home;
 
     fn resolve(layer: ConfigLayer, transport: Transport) -> Result<Resolved, ConfigErrors> {
         layer.resolve(transport, Some(&home()))

@@ -83,22 +83,23 @@ pub enum LoadError {
 
 impl From<ConfigErrors> for LoadError {
     fn from(errors: ConfigErrors) -> Self {
-        Self::Invalid {
-            errors,
-            notes: Vec::new(),
-        }
+        let notes = vec![String::new(); errors.len()];
+        Self::Invalid { errors, notes }
     }
 }
 
+/// Renders each error followed by its note, as [`Bullets`].
 struct Annotated<'a>(&'a ConfigErrors, &'a [String]);
 
 impl std::fmt::Display for Annotated<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, error) in self.0.iter().enumerate() {
-            let note = self.1.get(i).map_or("", String::as_str);
-            write!(f, "\n  - {error}{note}")?;
-        }
-        Ok(())
+        let lines: Vec<String> = self
+            .0
+            .iter()
+            .zip(self.1)
+            .map(|(error, note)| format!("{error}{note}"))
+            .collect();
+        Bullets(&lines).fmt(f)
     }
 }
 
@@ -163,28 +164,31 @@ impl<'a> Sources<'a> {
             .map(|path| {
                 read_text(path)
                     .map(|(path, text)| ConfigFile { path, text })
-                    .map_err(|(path, reason)| LoadError::Read { path, reason })
+                    .map_err(|e| LoadError::Read {
+                        path: e.path,
+                        reason: e.reason,
+                    })
             })
             .transpose()?;
 
         let mut dotenv = Dotenv::default();
         for path in env_files {
-            let (path, text) = read_text(path).map_err(|(path, reason)| LoadError::Env {
-                path,
-                errors: vec![reason],
+            let (path, text) = read_text(path).map_err(|e| LoadError::Env {
+                path: e.path,
+                errors: vec![e.reason],
             })?;
             parse_dotenv(&mut dotenv, &text, path, process_env, warnings)?;
         }
         if env_files.is_empty()
             && let Some(file) = &file
         {
-            let path = file.path.with_file_name(".env");
-            match std::fs::metadata(&path) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                _ => match read_text(&path) {
-                    Ok((path, text)) => parse_dotenv(&mut dotenv, &text, path, process_env, warnings)?,
-                    Err((path, reason)) => warnings.push(ConfigWarning::SkippedEnvFile { path, reason }),
-                },
+            match read_text(&file.path.with_file_name(".env")) {
+                Ok((path, text)) => parse_dotenv(&mut dotenv, &text, path, process_env, warnings)?,
+                Err(e) if e.missing => {}
+                Err(e) => warnings.push(ConfigWarning::SkippedEnvFile {
+                    path: e.path,
+                    reason: e.reason,
+                }),
             }
         }
         Ok(Self {
@@ -235,26 +239,24 @@ impl<'a> Sources<'a> {
         let Some(file) = &self.file else {
             return cli.resolve(transport, home).map_err(|e| annotate(&provenance, e));
         };
-        let lookup =
-            |name: &str| (self.process_env)(name).or_else(|| self.dotenv.get(name).map(|var| var.value.clone()));
+        let lookup = |name: &str| self.dotenv.lookup(self.process_env, name);
         let (mut file_layer, locations) = parse_layer(&file.path, &file.text, &lookup, warnings)?;
         for (path, location) in locations {
             provenance.set_source(&path, Source::File(location));
         }
+        // The file's `database.name` is a path only when it wins the merge
+        // and the merged backend is sqlite.
+        let backend = cli
+            .database
+            .backend
+            .or(file_layer.database.backend)
+            .unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
+        let name_is_path = cli.database.name.is_none() && backend == DatabaseBackend::Sqlite;
         let dir = file.path.parent().unwrap_or(Path::new("/"));
-        resolve_file_paths(&mut file_layer, dir, home);
-
-        let name_from_file = cli.database.name.is_none() && file_layer.database.name.is_some();
-        let mut merged = cli.or(file_layer);
-        let backend = merged.database.backend.unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
-        if name_from_file
-            && backend == DatabaseBackend::Sqlite
-            && let Some(name) = &mut merged.database.name
-            && !is_sqlite_special_name(name)
-        {
-            *name = resolve_path_string(name, dir, home);
-        }
-        merged.resolve(transport, home).map_err(|e| annotate(&provenance, e))
+        resolve_file_paths(&mut file_layer, dir, home, name_is_path);
+        cli.or(file_layer)
+            .resolve(transport, home)
+            .map_err(|e| annotate(&provenance, e))
     }
 }
 
@@ -275,8 +277,17 @@ fn parse_dotenv(
 }
 
 /// Resolves every path setting of a file layer against `dir`.
-fn resolve_file_paths(layer: &mut ConfigLayer, dir: &Path, home: Option<&Path>) {
+///
+/// `database.name` is included when `name_is_path` is set, unless it is
+/// `:memory:` or empty.
+fn resolve_file_paths(layer: &mut ConfigLayer, dir: &Path, home: Option<&Path>, name_is_path: bool) {
     let db = &mut layer.database;
+    if name_is_path
+        && let Some(name) = &mut db.name
+        && !is_sqlite_special_name(name)
+    {
+        *name = resolve_path_string(name, dir, home);
+    }
     for path in [&mut db.ssl_ca, &mut db.ssl_cert, &mut db.ssl_key]
         .into_iter()
         .flatten()
@@ -319,24 +330,36 @@ fn is_sqlite_special_name(name: &str) -> bool {
     name.is_empty() || name == ":memory:"
 }
 
+/// Why [`read_text`] failed.
+struct ReadError {
+    /// Absolute path (or the given one, when it cannot be made absolute).
+    path: PathBuf,
+    /// Why reading failed.
+    reason: String,
+    /// The file does not exist.
+    missing: bool,
+}
+
 /// Reads the regular file at `path`, returning its absolute path and contents.
-///
-/// On failure returns the absolute path (when known) and the reason.
-fn read_text(path: &Path) -> Result<(PathBuf, String), (PathBuf, String)> {
-    let path = std::path::absolute(path).map_err(|e| (path.to_path_buf(), e.to_string()))?;
+fn read_text(path: &Path) -> Result<(PathBuf, String), ReadError> {
+    let fail = |path: PathBuf, reason: String, missing: bool| ReadError { path, reason, missing };
+    let path = std::path::absolute(path).map_err(|e| fail(path.to_path_buf(), e.to_string(), false))?;
     let metadata = match std::fs::metadata(&path) {
         Ok(metadata) => metadata,
-        Err(e) => return Err((path, e.to_string())),
+        Err(e) => {
+            let missing = e.kind() == std::io::ErrorKind::NotFound;
+            return Err(fail(path, e.to_string(), missing));
+        }
     };
     if metadata.is_dir() {
-        return Err((path, "is a directory".into()));
+        return Err(fail(path, "is a directory".into(), false));
     }
     if !metadata.is_file() {
-        return Err((path, "not a regular file".into()));
+        return Err(fail(path, "not a regular file".into(), false));
     }
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok((path, text)),
-        Err(e) => Err((path, e.to_string())),
+        Err(e) => Err(fail(path, e.to_string(), false)),
     }
 }
 
@@ -356,32 +379,26 @@ fn parse_layer(
     };
     let at = |location: &serde_saphyr::Location| format!("{}:{}", path.display(), yaml::line_col(location));
 
-    let root = yaml::parse(text).map_err(|(location, message)| {
+    let mut root = yaml::parse(text).map_err(|(location, message)| {
         parse_error(match location {
             Some(location) => format!("{}: {message}", at(&location)),
             None => message,
         })
     })?;
-    let Some(mut root) = root else {
-        return Ok((ConfigLayer::default(), Vec::new()));
-    };
-    let mut unset = Vec::new();
-    let errors = yaml::interpolate(&mut root, lookup, &mut unset);
-    warnings.extend(unset.into_iter().map(|reference| ConfigWarning::UnsetVariable {
+    let found = yaml::interpolate(&mut root, lookup);
+    warnings.extend(found.unset.into_iter().map(|reference| ConfigWarning::UnsetVariable {
         name: reference.name,
         location: at(&reference.location),
     }));
-    if !errors.is_empty() {
+    if !found.errors.is_empty() {
         return Err(LoadError::Interpolate {
             path: path.to_path_buf(),
-            errors: errors
+            errors: found
+                .errors
                 .into_iter()
                 .map(|e| format!("{}: {}: {}", at(&e.location), e.path, e.error))
                 .collect(),
         });
-    }
-    if matches!(root.value, yaml::Value::Null) {
-        return Ok((ConfigLayer::default(), Vec::new()));
     }
     let layer = yaml::from_node(&root).map_err(|e| {
         parse_error(match (e.path.filter(|p| !p.is_empty()), e.location) {
@@ -390,7 +407,8 @@ fn parse_layer(
             (_, None) => e.message,
         })
     })?;
-    let locations = yaml::value_locations(&root)
+    let locations = found
+        .locations
         .into_iter()
         .map(|(config_path, location)| (config_path, at(&location)))
         .collect();
@@ -402,6 +420,7 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+    use crate::test_support::home;
     use crate::{ConfigError, LogLevel, PiiCategory, StrictHostKeyChecking};
 
     fn no_env(_: &str) -> Option<String> {
@@ -919,14 +938,6 @@ ssh:
         );
     }
 
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
-    }
-
     /// Writes `yaml` to `dbmcp.yaml` in a fresh directory.
     fn config_dir(yaml: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -999,7 +1010,7 @@ ssh:
         );
         let mut layer = parse(&std::fs::read_to_string(&path).expect("read")).expect("parse");
         layer.ssh.key = Some(PathBuf::from("~/id"));
-        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()));
+        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()), false);
         let db = &layer.database;
         assert_eq!(db.ssl_ca.as_deref().map(PathBuf::from), Some(home().join("ca.pem")));
         assert_eq!(db.ssl_cert.as_deref().map(PathBuf::from), Some(home().join("cert.pem")));
@@ -1014,7 +1025,7 @@ ssh:
         let absolute = home().join("ca.pem");
         let mut layer = ConfigLayer::default();
         layer.database.ssl_ca = Some(absolute.to_string_lossy().into_owned());
-        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()));
+        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()), false);
         assert_eq!(layer.database.ssl_ca.as_deref().map(PathBuf::from), Some(absolute));
     }
 

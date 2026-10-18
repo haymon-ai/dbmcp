@@ -4,11 +4,13 @@
 //! Cursor, and other MCP clients that communicate via stdio.
 
 use clap::{ArgMatches, Parser};
-use dbmcp_config::{Config, ConfigLayer, ConfigWarning, HttpLayer, LoadError, Resolved, Transport};
+use dbmcp_config::{Config, ConfigLayer, HttpLayer, Transport};
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments, explicit};
+use crate::commands::common::{
+    self, DatabaseArguments, LoadCommand, PiiArguments, SharedArguments, SshArguments, explicit,
+};
 use crate::error::ErrorKind;
 
 /// Runs the MCP server in stdio mode.
@@ -32,11 +34,14 @@ pub(crate) struct StdioCommand {
     ssh: SshArguments,
 }
 
-impl StdioCommand {
-    /// Returns the flags set on the command line or via env vars as a layer.
-    ///
-    /// `matches` must be the matches this command was parsed from.
-    pub(crate) fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
+impl LoadCommand for StdioCommand {
+    const TRANSPORT: Transport = Transport::Stdio;
+
+    fn shared(&self) -> &SharedArguments {
+        &self.shared
+    }
+
+    fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
         ConfigLayer {
             log_level: explicit(matches, "log_level", Some(&self.shared.log_level)),
             database: self.database.layer(matches),
@@ -45,14 +50,9 @@ impl StdioCommand {
             ssh: self.ssh.layer(matches),
         }
     }
+}
 
-    /// Loads the configuration from these flags, dotenv files, and `--config`.
-    ///
-    /// Returns the outcome together with every warning collected.
-    pub(crate) fn load(&self, matches: &ArgMatches) -> (Result<Resolved, LoadError>, Vec<ConfigWarning>) {
-        common::load(self, matches, &self.shared, Transport::Stdio, Self::layer)
-    }
-
+impl StdioCommand {
     /// Builds the server for `config` and runs the stdio transport.
     ///
     /// Serves JSON-RPC over stdin/stdout.
@@ -93,42 +93,16 @@ impl StdioCommand {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use clap::{CommandFactory, FromArgMatches};
-    use dbmcp_config::{ConfigError, DatabaseBackend, DatabaseConfig, LogLevel, PiiCategory, Secret};
+    use dbmcp_config::{
+        ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, LoadError, LogLevel, PiiCategory, Resolved, Secret,
+    };
 
     use super::*;
-
-    /// Removes every env var bound to a `stdio` flag except `LOG_LEVEL`.
-    fn clear_env() {
-        for arg in StdioCommand::command().get_arguments() {
-            if let Some(env) = arg.get_env().filter(|env| *env != "LOG_LEVEL") {
-                // SAFETY: tests in this crate only remove these env vars, never set them.
-                unsafe {
-                    std::env::remove_var(env);
-                }
-            }
-        }
-    }
+    use crate::commands::common::tests_support::{self, config_file};
 
     fn load(args: &[&str]) -> Result<Resolved, LoadError> {
-        clear_env();
-        let matches = StdioCommand::command()
-            .try_get_matches_from(args)
-            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        StdioCommand::from_arg_matches(&matches)
-            .expect("from matches")
-            .load(&matches)
-            .0
-    }
-
-    /// Writes `yaml` to a fresh `dbmcp.yaml` and returns its directory and path.
-    fn config_file(yaml: &str) -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("dbmcp.yaml");
-        std::fs::write(&path, yaml).expect("write config");
-        (dir, path)
+        tests_support::load::<StdioCommand>(args)
     }
 
     fn with_config<'a>(path: &'a std::path::Path, args: &[&'a str]) -> Vec<&'a str> {
@@ -321,7 +295,7 @@ mod tests {
 
     #[test]
     fn every_setting_flag_has_a_route() {
-        common::tests_support::check_routes::<StdioCommand>(StdioCommand::layer);
+        tests_support::check_routes::<StdioCommand>();
     }
 
     #[test]
@@ -329,12 +303,12 @@ mod tests {
         let (dir, path) = config_file("database:\n  pasword: x\n");
         let env = dir.path().join("x.env");
         std::fs::write(&env, "A=${UNSET_IN_TEST}\n").expect("write env");
-        clear_env();
+        tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
         let args = with_config(&path, &["--env", env.to_str().expect("utf-8")]);
         let matches = StdioCommand::command().try_get_matches_from(&args).expect("parse");
-        let (result, warnings) = StdioCommand::from_arg_matches(&matches)
-            .expect("from matches")
-            .load(&matches);
+        let cmd = StdioCommand::from_arg_matches(&matches).expect("from matches");
+        let mut warnings = Vec::new();
+        let result = common::load(&cmd, &matches, &mut warnings);
         assert!(matches!(result, Err(LoadError::Parse { .. })));
         assert_eq!(
             warnings,

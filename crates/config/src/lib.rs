@@ -62,3 +62,18 @@ pub use provenance::{Provenance, Route, Source};
 pub use secret::Secret;
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use warning::ConfigWarning;
+
+/// Helpers shared by this crate's unit tests.
+#[cfg(test)]
+mod test_support {
+    use std::path::PathBuf;
+
+    /// Returns a fixed home directory for `~` expansion tests.
+    pub(crate) fn home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\deploy")
+        } else {
+            PathBuf::from("/home/deploy")
+        }
+    }
+}

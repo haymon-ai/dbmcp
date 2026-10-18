@@ -4095,50 +4095,14 @@ async fn test_pii_redaction_applies_to_numeric_overflow_string() {
 #[path = "config_file.rs"]
 mod config_file;
 
-/// Returns the YAML config for this backend pointing at `host:port`.
-fn config_yaml(host: &str, port: &str) -> String {
-    format!("database:\n  backend: postgres\n  host: {host}\n  port: {port}\n  name: app\n  read_only: true\n")
-}
-
-/// Returns the database host and port from `DB_HOST`/`DB_PORT`.
-fn db_endpoint() -> (String, String) {
-    let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-    let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".into());
-    (host, port)
-}
-
 #[tokio::test]
 async fn test_config_file_supplies_connection_settings() {
-    let (host, port) = db_endpoint();
-    let client = config_file::connect(&config_yaml(&host, &port), &[], &[]).await;
-    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
-    assert_eq!(
-        result["rows"],
-        serde_json::json!([{ "name": "Alice Johnson" }]),
-        "{result}"
-    );
-    assert!(!client.exposes_write_query().await, "file read_only must apply");
-    client.shutdown().await;
+    let db = base_db_config(true);
+    config_file::assert_file_supplies_connection_settings("postgres", &db.host, db.port).await;
 }
 
 #[tokio::test]
 async fn test_env_overrides_config_file() {
-    let (host, port) = db_endpoint();
-    let env = [
-        ("DB_HOST", host.as_str()),
-        ("DB_PORT", port.as_str()),
-        ("DB_READ_ONLY", "false"),
-    ];
-    let client = config_file::connect(&config_yaml("invalid.invalid", "1"), &[], &env).await;
-    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
-    assert_eq!(
-        result["rows"],
-        serde_json::json!([{ "name": "Alice Johnson" }]),
-        "{result}"
-    );
-    assert!(
-        client.exposes_write_query().await,
-        "env DB_READ_ONLY must beat the file"
-    );
-    client.shutdown().await;
+    let db = base_db_config(true);
+    config_file::assert_env_overrides_file("postgres", &db.host, db.port).await;
 }

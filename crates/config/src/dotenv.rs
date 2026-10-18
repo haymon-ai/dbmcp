@@ -55,6 +55,17 @@ impl Dotenv {
         self.vars.get(name)
     }
 
+    /// Returns `true` when no loaded file defines any variable.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.vars.is_empty()
+    }
+
+    /// Looks `name` up in `process_env` first, then in these variables.
+    pub(crate) fn lookup(&self, process_env: Lookup<'_>, name: &str) -> Option<String> {
+        process_env(name).or_else(|| self.get(name).map(|var| var.value.clone()))
+    }
+
     /// Parses `text`, read from `path`, on top of the variables loaded so far.
     ///
     /// Returns one `path:line: reason` message per malformed entry; the
@@ -121,7 +132,7 @@ impl Dotenv {
             return Ok(Some((key.to_owned(), template)));
         }
 
-        let lookup = |name: &str| process_env(name).or_else(|| self.vars.get(name).map(|var| var.value.clone()));
+        let lookup = |name: &str| self.lookup(process_env, name);
         let mut unset = Vec::new();
         let value = interpolate::interpolate(&template, &lookup, &mut unset).map_err(|e| e.to_string())?;
         warnings.extend(unset.into_iter().map(|name| ConfigWarning::UnsetVariable {

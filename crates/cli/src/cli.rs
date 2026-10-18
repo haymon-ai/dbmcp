@@ -6,7 +6,9 @@
 //! subcommand.
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
-use dbmcp_config::{Config, ConfigWarning, LoadError, LogLevel, Resolved};
+use dbmcp_config::{Config, LogLevel};
+
+use crate::commands::common::{self, LoadCommand};
 
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
@@ -85,23 +87,24 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
             Ok(())
         }
         Command::Stdio(cmd) => {
-            let config = start(cmd.load(subcommand_matches(&matches)))?;
+            let config = start(&cmd, subcommand_matches(&matches))?;
             Ok(StdioCommand::execute(config).await?)
         }
         Command::Http(cmd) => {
-            let config = start(cmd.load(subcommand_matches(&matches)))?;
+            let config = start(&cmd, subcommand_matches(&matches))?;
             Ok(HttpCommand::execute(config).await?)
         }
     }
 }
 
-/// Initialises tracing from a load outcome and reports its warnings.
+/// Loads `cmd`'s configuration, initialises tracing, and reports warnings.
 ///
 /// On success, warnings are logged once tracing runs at the resolved
 /// level. On failure, they are printed to stderr ahead of the error.
 #[allow(clippy::result_large_err)]
-fn start((result, warnings): (Result<Resolved, LoadError>, Vec<ConfigWarning>)) -> Result<Config, Error> {
-    match result {
+fn start<C: LoadCommand>(cmd: &C, matches: &ArgMatches) -> Result<Config, Error> {
+    let mut warnings = Vec::new();
+    match common::load(cmd, matches, &mut warnings) {
         Ok(resolved) => {
             init_tracing(resolved.log_level);
             for warning in &warnings {

@@ -9,9 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::{ArgMatches, Args, Parser};
-use dbmcp_config::{
-    AllowedOrigins, Config, ConfigLayer, ConfigWarning, HttpConfig, HttpLayer, LoadError, Resolved, Secret, Transport,
-};
+use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, HttpConfig, HttpLayer, Secret, Transport};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -23,21 +21,21 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
 use crate::commands::common::{
-    self, DatabaseArguments, PiiArguments, SharedArguments, SshArguments, explicit, flag_conventions,
+    self, DatabaseArguments, LoadCommand, PiiArguments, SharedArguments, SshArguments, explicit, flag_conventions,
 };
 use crate::error::ErrorKind;
 
 /// HTTP transport flags embedded in [`HttpCommand`].
 ///
-/// `host` and `port` use explicit `id = "http-*"` overrides so their
-/// clap argument ids don't collide with the `host`/`port` fields in
-/// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
+/// Each clap id is the setting's config path (`http.host`), so `host` and
+/// `port` don't collide with [`DatabaseArguments`] when both are flattened
+/// into [`HttpCommand`].
 #[derive(Debug, Args)]
 #[command(next_help_heading = "HTTP Transport")]
 struct HttpArguments {
     /// Bind host for HTTP transport.
     #[arg(
-        id = "http-host",
+        id = "http.host",
         long = "host",
         env = "HTTP_HOST",
         value_name = "HOST",
@@ -47,7 +45,7 @@ struct HttpArguments {
 
     /// Bind port for HTTP transport.
     #[arg(
-        id = "http-port",
+        id = "http.port",
         long = "port",
         env = "HTTP_PORT",
         value_name = "PORT",
@@ -64,7 +62,7 @@ struct HttpArguments {
     /// (`--allowed-origins ""`) to disable server-side Origin validation
     /// and grant no CORS access — only do this for non-browser deployments.
     #[arg(
-        long = "allowed-origins",
+        id = "http.allowed_origins", long = "allowed-origins",
         env = "HTTP_ALLOWED_ORIGINS",
         value_delimiter = ',',
         default_values_t = HttpConfig::default_allowed_origins()
@@ -73,7 +71,7 @@ struct HttpArguments {
 
     /// Allowed host names (comma-separated).
     #[arg(
-        long = "allowed-hosts",
+        id = "http.allowed_hosts", long = "allowed-hosts",
         env = "HTTP_ALLOWED_HOSTS",
         value_delimiter = ',',
         default_values_t = HttpConfig::default_allowed_hosts()
@@ -85,6 +83,7 @@ struct HttpArguments {
     /// Required when binding a non-loopback host. Prefer the env var:
     /// command-line arguments are visible to other local users.
     #[arg(
+        id = "http.auth_token",
         long = "auth-token",
         env = "HTTP_AUTH_TOKEN",
         value_name = "TOKEN",
@@ -97,6 +96,7 @@ struct HttpArguments {
     /// Only for deployments where a reverse proxy authenticates callers.
     /// Anyone who can reach the port gets full access to the database.
     #[arg(
+        id = "http.allow_unauthenticated",
         long = "dangerously-allow-unauthenticated",
         env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
     )]
@@ -107,17 +107,17 @@ impl HttpArguments {
     /// Returns the explicitly set HTTP flags as a layer.
     fn layer(&self, matches: &ArgMatches) -> HttpLayer {
         HttpLayer {
-            host: explicit(matches, "http-host", Some(&self.host)),
-            port: explicit(matches, "http-port", Some(&self.port)),
+            host: explicit(matches, "http.host", Some(&self.host)),
+            port: explicit(matches, "http.port", Some(&self.port)),
             // `--allowed-origins ""` arrives as `[""]`; dropping blanks turns
             // it into the empty list that disables Origin validation.
-            allowed_origins: explicit(matches, "allowed_origins", Some(&self.allowed_origins))
+            allowed_origins: explicit(matches, "http.allowed_origins", Some(&self.allowed_origins))
                 .map(|origins| origins.into_iter().filter(|origin| !origin.trim().is_empty()).collect()),
-            allowed_hosts: explicit(matches, "allowed_hosts", Some(&self.allowed_hosts)),
-            auth_token: explicit(matches, "auth_token", self.auth_token.as_ref()),
+            allowed_hosts: explicit(matches, "http.allowed_hosts", Some(&self.allowed_hosts)),
+            auth_token: explicit(matches, "http.auth_token", self.auth_token.as_ref()),
             allow_unauthenticated: explicit(
                 matches,
-                "dangerously_allow_unauthenticated",
+                "http.allow_unauthenticated",
                 Some(&self.dangerously_allow_unauthenticated),
             ),
         }
@@ -149,11 +149,14 @@ pub(crate) struct HttpCommand {
     ssh: SshArguments,
 }
 
-impl HttpCommand {
-    /// Returns the flags set on the command line or via env vars as a layer.
-    ///
-    /// `matches` must be the matches this command was parsed from.
-    pub(crate) fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
+impl LoadCommand for HttpCommand {
+    const TRANSPORT: Transport = Transport::Http;
+
+    fn shared(&self) -> &SharedArguments {
+        &self.shared
+    }
+
+    fn layer(&self, matches: &ArgMatches) -> ConfigLayer {
         ConfigLayer {
             log_level: explicit(matches, "log_level", Some(&self.shared.log_level)),
             database: self.database.layer(matches),
@@ -162,14 +165,9 @@ impl HttpCommand {
             ssh: self.ssh.layer(matches),
         }
     }
+}
 
-    /// Loads the configuration from these flags, dotenv files, and `--config`.
-    ///
-    /// Returns the outcome together with every warning collected.
-    pub(crate) fn load(&self, matches: &ArgMatches) -> (Result<Resolved, LoadError>, Vec<ConfigWarning>) {
-        common::load(self, matches, &self.shared, Transport::Http, Self::layer)
-    }
-
+impl HttpCommand {
     /// Builds the server for `config` and runs the HTTP transport.
     ///
     /// Binds to the configured host/port and serves MCP requests over
@@ -325,7 +323,9 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
     use clap::{CommandFactory, FromArgMatches, Parser};
-    use dbmcp_config::{ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiConfig};
+    use dbmcp_config::{ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved};
+
+    use crate::commands::common::tests_support;
     use tower::ServiceExt;
 
     #[derive(Debug, Parser)]
@@ -337,7 +337,7 @@ mod tests {
 
     /// Parses `args` and resolves them into an [`HttpConfig`].
     fn http_config(args: &[&str]) -> Result<HttpConfig, ConfigErrors> {
-        clear_http_env();
+        tests_support::clear_env::<HttpCommand>(&[]);
         let matches = TestCli::command()
             .try_get_matches_from(args)
             .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
@@ -404,18 +404,6 @@ mod tests {
             .header(header::ACCEPT, "application/json, text/event-stream")
     }
 
-    fn clear_http_env() {
-        // SAFETY: tests in this file do not write HTTP_* env vars concurrently.
-        unsafe {
-            std::env::remove_var("HTTP_HOST");
-            std::env::remove_var("HTTP_PORT");
-            std::env::remove_var("HTTP_ALLOWED_ORIGINS");
-            std::env::remove_var("HTTP_ALLOWED_HOSTS");
-            std::env::remove_var("HTTP_AUTH_TOKEN");
-            std::env::remove_var("HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED");
-        }
-    }
-
     #[test]
     fn default_http_args_validate() {
         http_config(&[]).expect("default http args must validate");
@@ -423,14 +411,7 @@ mod tests {
 
     /// Parses `args` as the full `http` subcommand and loads its config.
     fn load_http(args: &[&str]) -> Result<Resolved, LoadError> {
-        clear_http_env();
-        let matches = HttpCommand::command()
-            .try_get_matches_from(args)
-            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        HttpCommand::from_arg_matches(&matches)
-            .expect("from matches")
-            .load(&matches)
-            .0
+        tests_support::load::<HttpCommand>(args)
     }
 
     #[test]
@@ -446,9 +427,7 @@ mod tests {
 
     #[test]
     fn load_reads_http_section_from_config_file() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("dbmcp.yaml");
-        std::fs::write(&path, "http:\n  port: 9100\n  allowed_hosts: [db.example]\n").expect("write config");
+        let (_dir, path) = tests_support::config_file("http:\n  port: 9100\n  allowed_hosts: [db.example]\n");
         let path = path.to_str().expect("utf-8 path");
         let resolved = load_http(&["_", "--config", path, "--allowed-hosts", "cli.example"]).expect("valid");
         let http = resolved.config.http.expect("http config");
@@ -459,7 +438,7 @@ mod tests {
 
     #[test]
     fn every_setting_flag_has_a_route() {
-        common::tests_support::check_routes::<HttpCommand>(HttpCommand::layer);
+        tests_support::check_routes::<HttpCommand>();
     }
 
     #[test]

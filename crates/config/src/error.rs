@@ -124,19 +124,6 @@ pub enum ConfigError {
     },
 }
 
-/// Every SSH option other than `ssh.host`.
-const SSH_OPTIONS: &[&str] = &[
-    "ssh.port",
-    "ssh.user",
-    "ssh.password",
-    "ssh.key",
-    "ssh.key_passphrase",
-    "ssh.known_hosts",
-    "ssh.strict_host_key_checking",
-    "ssh.keepalive_interval",
-    "ssh.local_port",
-];
-
 impl ConfigError {
     /// Returns the config paths this error is about; the first is its subject.
     #[must_use]
@@ -157,7 +144,7 @@ impl ConfigError {
             Self::PiiCategoriesEmpty => vec!["pii.categories"],
             Self::PiiNerModelMissing => vec!["pii.ner_model", "pii.ner_enabled"],
             Self::SshSqliteUnsupported => vec!["ssh.host", "database.backend"],
-            Self::MissingSshHost => std::iter::once("ssh.host").chain(SSH_OPTIONS.iter().copied()).collect(),
+            Self::MissingSshHost => crate::layer::SshLayer::PATHS.to_vec(),
             Self::EmptySshHost => vec!["ssh.host"],
             Self::MissingSshUser => vec!["ssh.user"],
             Self::MissingSshAuth => vec!["ssh.password"],
@@ -180,9 +167,7 @@ impl ConfigError {
             errors.push(Self::EmptyListEntry(field));
         }
         for (i, entry) in entries.iter().enumerate() {
-            let first = entries.iter().position(|e| e == entry) == Some(i);
-            let repeated = entries[i + 1..].contains(entry);
-            if first && repeated && !is_blank(entry) {
+            if !is_blank(entry) && !entries[..i].contains(entry) && entries[i + 1..].contains(entry) {
                 errors.push(Self::DuplicateListEntry {
                     field,
                     entry: entry.to_string(),

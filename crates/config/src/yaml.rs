@@ -47,17 +47,18 @@ pub(crate) enum Value {
 }
 
 impl Value {
-    /// Value-free description used in type errors.
-    fn unexpected(&self) -> Unexpected<'static> {
-        Unexpected::Other(match self {
-            Self::Null => "null",
-            Self::Bool(_) => "boolean",
-            Self::Int(_) | Self::UInt(_) => "integer",
-            Self::Float(_) => "float",
-            Self::Str(_) => "string",
-            Self::Seq(_) => "sequence",
-            Self::Map(_) => "mapping",
-        })
+    /// Describes this value for a type error; [`kind`] renders it value-free.
+    fn unexpected(&self) -> Unexpected<'_> {
+        match self {
+            Self::Null => Unexpected::Unit,
+            Self::Bool(v) => Unexpected::Bool(*v),
+            Self::Int(v) => Unexpected::Signed(*v),
+            Self::UInt(v) => Unexpected::Unsigned(*v),
+            Self::Float(v) => Unexpected::Float(*v),
+            Self::Str(v) => Unexpected::Str(v),
+            Self::Seq(_) => Unexpected::Seq,
+            Self::Map(_) => Unexpected::Map,
+        }
     }
 }
 
@@ -129,44 +130,26 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 }
 
-/// Parses a YAML document into a node tree; an empty document is `None`.
+/// Parses a YAML document into a node tree; an empty document is a null node.
 ///
 /// # Errors
 ///
 /// Returns the location (when known) and parser message for invalid YAML,
 /// without the parser's own `at line …, column …` suffix.
-pub(crate) fn parse(text: &str) -> Result<Option<Node>, (Option<Location>, String)> {
+pub(crate) fn parse(text: &str) -> Result<Node, (Option<Location>, String)> {
     let options = serde_saphyr::options! {
         strict_booleans: true,
         with_snippet: false,
     };
-    serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| {
+    let root = serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| {
         let message = e.to_string();
         let message = match message.rfind(" at line ") {
             Some(end) if e.location().is_some() => message[..end].to_owned(),
             _ => message,
         };
         (e.location(), message)
-    })
-}
-
-/// Returns the config path and location of every non-null, non-mapping value.
-pub(crate) fn value_locations(node: &Node) -> Vec<(String, Location)> {
-    let mut locations = Vec::new();
-    collect_locations(node, "", &mut locations);
-    locations
-}
-
-fn collect_locations(node: &Node, path: &str, locations: &mut Vec<(String, Location)>) {
-    match &node.value {
-        Value::Map(entries) => {
-            for (key, value) in entries {
-                collect_locations(value, &join(path, &key.value), locations);
-            }
-        }
-        Value::Null => {}
-        _ => locations.push((path.to_owned(), node.referenced)),
-    }
+    })?;
+    Ok(root.unwrap_or_else(|| Spanned::new(Value::Null, Location::UNKNOWN, Location::UNKNOWN)))
 }
 
 /// Returns `line:column` of `location`.
@@ -203,49 +186,54 @@ pub(crate) struct UnsetReference {
     pub(crate) location: Location,
 }
 
-/// Interpolates every string value under `node` in place; keys are left alone.
-///
-/// Returns every failure, sorted by config path.
-pub(crate) fn interpolate(
-    node: &mut Node,
-    lookup: Lookup<'_>,
-    unset: &mut Vec<UnsetReference>,
-) -> Vec<NodeInterpolateError> {
-    let mut errors = Vec::new();
-    walk(node, "", lookup, unset, &mut errors);
-    errors.sort_by(|a, b| a.path.cmp(&b.path));
-    errors
+/// What [`interpolate`] found while walking the tree.
+#[derive(Debug, Default)]
+pub(crate) struct Interpolation {
+    /// Every failure, sorted by config path.
+    pub(crate) errors: Vec<NodeInterpolateError>,
+    /// Every referenced variable that is unset.
+    pub(crate) unset: Vec<UnsetReference>,
+    /// Config path and location of every non-null setting (a list counts as one).
+    pub(crate) locations: Vec<(String, Location)>,
 }
 
-fn walk(
-    node: &mut Node,
-    path: &str,
-    lookup: Lookup<'_>,
-    unset: &mut Vec<UnsetReference>,
-    errors: &mut Vec<NodeInterpolateError>,
-) {
+/// Interpolates every string value under `node` in place; keys are left alone.
+pub(crate) fn interpolate(node: &mut Node, lookup: Lookup<'_>) -> Interpolation {
+    let mut found = Interpolation::default();
+    walk(node, "", true, lookup, &mut found);
+    found.errors.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
+/// Interpolates `node` at `path`, recording its location when `record` is set.
+fn walk(node: &mut Node, path: &str, record: bool, lookup: Lookup<'_>, found: &mut Interpolation) {
     let location = node.referenced;
+    if record && !matches!(node.value, Value::Null | Value::Map(_)) {
+        found.locations.push((path.to_owned(), location));
+    }
     match &mut node.value {
         Value::Str(text) => {
             let mut names = Vec::new();
             match interpolate::interpolate(text, lookup, &mut names) {
                 Ok(expanded) => *text = expanded,
-                Err(error) => errors.push(NodeInterpolateError {
+                Err(error) => found.errors.push(NodeInterpolateError {
                     path: path.to_owned(),
                     location,
                     error,
                 }),
             }
-            unset.extend(names.into_iter().map(|name| UnsetReference { name, location }));
+            found
+                .unset
+                .extend(names.into_iter().map(|name| UnsetReference { name, location }));
         }
         Value::Seq(items) => {
             for (i, item) in items.iter_mut().enumerate() {
-                walk(item, &format!("{path}[{i}]"), lookup, unset, errors);
+                walk(item, &format!("{path}[{i}]"), false, lookup, found);
             }
         }
         Value::Map(entries) => {
             for (key, value) in entries {
-                walk(value, &join(path, &key.value), lookup, unset, errors);
+                walk(value, &join(path, &key.value), record, lookup, found);
             }
         }
         Value::Null | Value::Bool(_) | Value::Int(_) | Value::UInt(_) | Value::Float(_) => {}
@@ -282,18 +270,15 @@ fn kind(unexpected: &Unexpected<'_>) -> &'static str {
         | Unexpected::NewtypeVariant
         | Unexpected::TupleVariant
         | Unexpected::StructVariant => "enum",
-        Unexpected::Other(other) => ["null", "boolean", "integer", "float", "string", "sequence", "mapping"]
-            .into_iter()
-            .find(|kind| kind == other)
-            .unwrap_or("value"),
+        Unexpected::Other(_) => "value",
     }
 }
 
 /// Renders `names` as `` `a`, `b` ``.
-fn one_of(names: &[&str]) -> String {
+pub(crate) fn one_of<S: AsRef<str>>(names: &[S]) -> String {
     names
         .iter()
-        .map(|name| format!("`{name}`"))
+        .map(|name| format!("`{}`", name.as_ref()))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -354,33 +339,36 @@ impl DeError {
 
 /// Deserializes `T` from `node`, the document root.
 ///
+/// Errors are tagged where a child node is entered (and here, for the
+/// root), so every error carries the path and location of the node it
+/// came from; the root's path is empty.
+///
 /// # Errors
 ///
 /// Returns the first [`DeError`], tagged with its config path and location.
 pub(crate) fn from_node<T: de::DeserializeOwned>(node: &Node) -> Result<T, DeError> {
-    T::deserialize(NodeDeserializer {
-        node,
-        path: String::new(),
-    })
+    T::deserialize(NodeDeserializer { node, path: "" }).map_err(|e| e.at("", node.referenced))
+}
+
+/// Deserializes `seed` from `node` at `path`, tagging any untagged error with them.
+fn child<'de, T: DeserializeSeed<'de>>(seed: T, node: &Node, path: &str) -> Result<T::Value, DeError> {
+    seed.deserialize(NodeDeserializer { node, path })
+        .map_err(|e| e.at(path, node.referenced))
 }
 
 /// Deserializer over one node at config path `path`.
 struct NodeDeserializer<'a> {
     node: &'a Node,
-    path: String,
+    path: &'a str,
 }
 
 impl NodeDeserializer<'_> {
-    fn tag<T>(&self, result: Result<T, DeError>) -> Result<T, DeError> {
-        result.map_err(|e| e.at(&self.path, self.node.referenced))
-    }
-
     fn invalid_type<T>(&self, expected: &dyn de::Expected) -> Result<T, DeError> {
-        self.tag(Err(DeError::invalid_type(self.node.value.unexpected(), expected)))
+        Err(DeError::invalid_type(self.node.value.unexpected(), expected))
     }
 
     fn integer<'de, V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
-        let result = match &self.node.value {
+        match &self.node.value {
             Value::Int(v) => visitor.visit_i64(*v),
             Value::UInt(v) => visitor.visit_u64(*v),
             Value::Str(text) => match parse_integer(text) {
@@ -388,9 +376,8 @@ impl NodeDeserializer<'_> {
                 Some(Err(v)) => visitor.visit_u64(v),
                 None => Err(DeError::custom("expected an integer")),
             },
-            _ => return self.invalid_type(&visitor),
-        };
-        self.tag(result)
+            _ => self.invalid_type(&visitor),
+        }
     }
 }
 
@@ -433,15 +420,14 @@ impl<'de> Deserializer<'de> for NodeDeserializer<'_> {
     }
 
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
-        let result = match &self.node.value {
+        match &self.node.value {
             Value::Bool(v) => visitor.visit_bool(*v),
             Value::Str(text) => match parse_boolish(text) {
                 Some(v) => visitor.visit_bool(v),
                 None => Err(DeError::custom("expected a boolean (true/false, yes/no, on/off, 1/0)")),
             },
-            _ => return self.invalid_type(&visitor),
-        };
-        self.tag(result)
+            _ => self.invalid_type(&visitor),
+        }
     }
 
     deserialize_integers!(
@@ -461,20 +447,16 @@ impl<'de> Deserializer<'de> for NodeDeserializer<'_> {
 
     #[allow(clippy::cast_precision_loss, reason = "YAML integers given for a float field")]
     fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
-        let result = match &self.node.value {
+        match &self.node.value {
             Value::Float(v) => visitor.visit_f64(*v),
             Value::Int(v) => visitor.visit_f64(*v as f64),
-            _ => return self.invalid_type(&visitor),
-        };
-        self.tag(result)
+            _ => self.invalid_type(&visitor),
+        }
     }
 
     fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         match &self.node.value {
-            Value::Str(text) => {
-                let result = visitor.visit_str(text);
-                self.tag(result)
-            }
+            Value::Str(text) => visitor.visit_str(text),
             _ => self.invalid_type(&visitor),
         }
     }
@@ -499,27 +481,21 @@ impl<'de> Deserializer<'de> for NodeDeserializer<'_> {
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         match &self.node.value {
-            Value::Seq(items) => {
-                let result = visitor.visit_seq(Items {
-                    items: items.iter().enumerate(),
-                    path: &self.path,
-                });
-                self.tag(result)
-            }
+            Value::Seq(items) => visitor.visit_seq(Items {
+                items: items.iter().enumerate(),
+                path: self.path,
+            }),
             _ => self.invalid_type(&visitor),
         }
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         match &self.node.value {
-            Value::Map(entries) => {
-                let result = visitor.visit_map(MapEntries {
-                    entries: entries.iter(),
-                    value: None,
-                    path: &self.path,
-                });
-                self.tag(result)
-            }
+            Value::Map(entries) => visitor.visit_map(MapEntries {
+                entries: entries.iter(),
+                value: None,
+                path: self.path,
+            }),
             _ => self.invalid_type(&visitor),
         }
     }
@@ -530,7 +506,15 @@ impl<'de> Deserializer<'de> for NodeDeserializer<'_> {
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, DeError> {
-        self.deserialize_map(visitor)
+        // A null section (`ssh:`, `ssh: ~`) or empty document is an empty one.
+        match &self.node.value {
+            Value::Null => visitor.visit_map(MapEntries {
+                entries: [].iter(),
+                value: None,
+                path: self.path,
+            }),
+            _ => self.deserialize_map(visitor),
+        }
     }
 
     fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
@@ -554,14 +538,7 @@ impl<'de, 'a, I: Iterator<Item = (usize, &'a Node)>> SeqAccess<'de> for Items<'_
     fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, DeError> {
         self.items
             .next()
-            .map(|(i, node)| {
-                let path = format!("{}[{i}]", self.path);
-                seed.deserialize(NodeDeserializer {
-                    node,
-                    path: path.clone(),
-                })
-                .map_err(|e| e.at(&path, node.referenced))
-            })
+            .map(|(i, node)| child(seed, node, &format!("{}[{i}]", self.path)))
             .transpose()
     }
 }
@@ -590,12 +567,6 @@ impl<'de, 'a, I: Iterator<Item = &'a (Spanned<String>, Node)>> MapAccess<'de> fo
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, DeError> {
         let (node, path) = self.value.take().ok_or_else(|| DeError::custom("value without key"))?;
-        // Errors raised after the child's deserializer returns (e.g. by a
-        // `Deserialize` impl validating a string) still belong to the child.
-        seed.deserialize(NodeDeserializer {
-            node,
-            path: path.clone(),
-        })
-        .map_err(|e| e.at(&path, node.referenced))
+        child(seed, node, &path)
     }
 }
