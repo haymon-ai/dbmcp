@@ -1,23 +1,26 @@
 //! Common building blocks reused across transport subcommands.
 //!
-//! Hosts [`DatabaseArguments`], [`PiiArguments`], and [`SshArguments`] —
-//! clap argument groups bundling every `--db-*`, `--pii-*`, and `--ssh-*`
-//! flag so each is defined exactly once and embedded via
-//! `#[command(flatten)]` wherever needed — and [`create_server`], the
-//! backend-selection factory that maps a configured [`DatabaseBackend`]
+//! Hosts [`SharedArguments`], [`DatabaseArguments`], [`PiiArguments`], and
+//! [`SshArguments`] — clap argument groups bundling `--config`,
+//! `--log-level`, and every `--db-*`, `--pii-*`, and `--ssh-*` flag so each
+//! is defined exactly once and embedded via `#[command(flatten)]` wherever
+//! needed. Each group converts into its [`ConfigLayer`] section, keeping
+//! only values set on the command line or through an env var, and [`load`]
+//! merges that layer over the config file. Also provides [`create_server`],
+//! the backend-selection factory that maps a configured [`DatabaseBackend`]
 //! onto the matching concrete adapter, tunnelling through SSH when
-//! configured. Also provides [`flag_conventions`], which shapes every
-//! flag by its value type.
+//! configured, and [`flag_conventions`], which shapes every flag by its
+//! value type.
 
 use std::any::TypeId;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
 use clap::builder::BoolishValueParser;
-use clap::{Arg, ArgAction, Args};
+use clap::parser::ValueSource;
+use clap::{Arg, ArgAction, ArgMatches, Args};
 use dbmcp_config::{
-    Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, Secret,
-    SshConfig, StrictHostKeyChecking, ssh,
+    Config, ConfigLayer, DatabaseBackend, DatabaseConfig, DatabaseLayer, LoadError, LogLevel, PiiCategory, PiiConfig,
+    PiiLayer, PiiOperator, Resolved, Secret, SshLayer, StrictHostKeyChecking, Transport, ssh,
 };
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
@@ -59,6 +62,45 @@ pub(crate) fn flag_conventions(arg: Arg) -> Arg {
     } else {
         arg
     }
+}
+
+/// Returns `value` only when argument `id` was set on the command line or via its env var.
+///
+/// Values that came from a clap default are dropped, so lower layers (the
+/// config file, then the built-in defaults) can fill them.
+pub(crate) fn explicit<T: Clone>(matches: &ArgMatches, id: &str, value: Option<&T>) -> Option<T> {
+    match matches.value_source(id) {
+        Some(ValueSource::CommandLine | ValueSource::EnvVariable) => value.cloned(),
+        _ => None,
+    }
+}
+
+/// Config-file and logging flags shared by every transport subcommand.
+#[derive(Debug, Args)]
+pub(crate) struct SharedArguments {
+    /// Path to a YAML config file
+    #[arg(long = "config", value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// Log level
+    #[arg(
+        long = "log-level",
+        env = "LOG_LEVEL",
+        default_value_t = LogLevel::DEFAULT,
+        ignore_case = true,
+        help_heading = "Logging"
+    )]
+    pub(crate) log_level: LogLevel,
+}
+
+/// Merges `layer` over the `--config` file and resolves the result.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] when the config file cannot be read or parsed, or
+/// when the merged configuration fails validation.
+pub(crate) fn load(shared: &SharedArguments, layer: ConfigLayer, transport: Transport) -> Result<Resolved, LoadError> {
+    dbmcp_config::load(layer, shared.config.as_deref(), transport, ssh::home_dir().as_deref())
 }
 
 /// Shared database connection flags embedded in transport subcommands.
@@ -133,25 +175,19 @@ pub(crate) struct DatabaseArguments {
     #[arg(
         long = "db-max-pool-size",
         env = "DB_MAX_POOL_SIZE",
-        default_value_t = DatabaseConfig::DEFAULT_MAX_POOL_SIZE,
-        value_parser = clap::value_parser!(u32).range(1..)
+        default_value_t = DatabaseConfig::DEFAULT_MAX_POOL_SIZE
     )]
     pub(crate) max_pool_size: u32,
 
     /// Connection timeout in seconds
-    #[arg(
-        long = "db-connection-timeout",
-        env = "DB_CONNECTION_TIMEOUT",
-        value_parser = clap::value_parser!(u64).range(1..)
-    )]
+    #[arg(long = "db-connection-timeout", env = "DB_CONNECTION_TIMEOUT")]
     pub(crate) connection_timeout: Option<u64>,
 
     /// Query execution timeout in seconds
     #[arg(
         long = "db-query-timeout",
         env = "DB_QUERY_TIMEOUT",
-        default_value_t = DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS,
-        value_parser = clap::value_parser!(u64)
+        default_value_t = DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS
     )]
     pub(crate) query_timeout: u64,
 
@@ -159,38 +195,33 @@ pub(crate) struct DatabaseArguments {
     #[arg(
         long = "db-page-size",
         env = "DB_PAGE_SIZE",
-        default_value_t = DatabaseConfig::DEFAULT_PAGE_SIZE,
-        value_parser = clap::value_parser!(u16).range(1..=i64::from(DatabaseConfig::MAX_PAGE_SIZE)),
+        default_value_t = DatabaseConfig::DEFAULT_PAGE_SIZE
     )]
     pub(crate) page_size: u16,
 }
 
-impl TryFrom<&DatabaseArguments> for DatabaseConfig {
-    type Error = ConfigErrors;
-
-    fn try_from(db: &DatabaseArguments) -> Result<Self, Self::Error> {
-        let backend = db.backend;
-        let candidate = Self {
-            backend,
-            host: db.host.clone(),
-            port: db.port.unwrap_or_else(|| backend.default_port()),
-            user: db.user.clone().unwrap_or_else(|| backend.default_user().into()),
-            password: db.password.clone(),
-            name: db.name.clone(),
-            charset: db.charset.clone(),
-            ssl: db.ssl,
-            ssl_ca: db.ssl_ca.clone(),
-            ssl_cert: db.ssl_cert.clone(),
-            ssl_key: db.ssl_key.clone(),
-            ssl_verify_cert: db.ssl_verify_cert,
-            read_only: db.read_only,
-            max_pool_size: db.max_pool_size,
-            connection_timeout: db.connection_timeout,
-            query_timeout: db.query_timeout,
-            page_size: db.page_size,
-        };
-        candidate.validate()?;
-        Ok(candidate)
+impl DatabaseArguments {
+    /// Returns the explicitly set database flags as a layer.
+    pub(crate) fn layer(&self, matches: &ArgMatches) -> DatabaseLayer {
+        DatabaseLayer {
+            backend: explicit(matches, "backend", Some(&self.backend)),
+            host: explicit(matches, "host", Some(&self.host)),
+            port: explicit(matches, "port", self.port.as_ref()),
+            user: explicit(matches, "user", self.user.as_ref()),
+            password: explicit(matches, "password", self.password.as_ref()),
+            name: explicit(matches, "name", self.name.as_ref()),
+            charset: explicit(matches, "charset", self.charset.as_ref()),
+            ssl: explicit(matches, "ssl", Some(&self.ssl)),
+            ssl_ca: explicit(matches, "ssl_ca", self.ssl_ca.as_ref()),
+            ssl_cert: explicit(matches, "ssl_cert", self.ssl_cert.as_ref()),
+            ssl_key: explicit(matches, "ssl_key", self.ssl_key.as_ref()),
+            ssl_verify_cert: explicit(matches, "ssl_verify_cert", Some(&self.ssl_verify_cert)),
+            read_only: explicit(matches, "read_only", Some(&self.read_only)),
+            max_pool_size: explicit(matches, "max_pool_size", Some(&self.max_pool_size)),
+            connection_timeout: explicit(matches, "connection_timeout", self.connection_timeout.as_ref()),
+            query_timeout: explicit(matches, "query_timeout", Some(&self.query_timeout)),
+            page_size: explicit(matches, "page_size", Some(&self.page_size)),
+        }
     }
 }
 
@@ -237,28 +268,25 @@ pub(crate) struct PiiArguments {
     pub(crate) ner_model: Option<PathBuf>,
 }
 
-impl TryFrom<&PiiArguments> for PiiConfig {
-    type Error = ConfigErrors;
-
-    fn try_from(args: &PiiArguments) -> Result<Self, Self::Error> {
-        let candidate = Self {
-            enabled: args.enabled,
-            operator: args.operator,
-            categories: args.categories.clone(),
-            ner_enabled: args.ner_enabled,
-            ner_model: args.ner_model.clone(),
-        };
-        candidate.validate()?;
-        Ok(candidate)
+impl PiiArguments {
+    /// Returns the explicitly set PII flags as a layer.
+    pub(crate) fn layer(&self, matches: &ArgMatches) -> PiiLayer {
+        PiiLayer {
+            enabled: explicit(matches, "enabled", Some(&self.enabled)),
+            operator: explicit(matches, "operator", Some(&self.operator)),
+            categories: explicit(matches, "categories", self.categories.as_ref()),
+            ner_enabled: explicit(matches, "ner_enabled", Some(&self.ner_enabled)),
+            ner_model: explicit(matches, "ner_model", self.ner_model.as_ref()),
+        }
     }
 }
 
 /// Shared SSH tunnel flags embedded in transport subcommands.
 ///
 /// Every argument uses an explicit `id = "ssh-*"` so its clap id doesn't
-/// collide with the same-named fields in [`DatabaseArguments`]. `port`, `strict_host_key_checking`, and `keepalive_interval` stay
-/// `Option` so [`SshArguments::to_config`] can tell whether they were set;
-/// their defaults are applied there.
+/// collide with the same-named fields in [`DatabaseArguments`]. Every
+/// option stays `Option`: setting the host enables the tunnel, and the
+/// defaults are applied by [`ConfigLayer::resolve`].
 #[derive(Debug, Args)]
 #[command(next_help_heading = "SSH")]
 pub(crate) struct SshArguments {
@@ -267,13 +295,7 @@ pub(crate) struct SshArguments {
     pub(crate) host: Option<String>,
 
     /// SSH server port
-    #[arg(
-        id = "ssh-port",
-        long = "ssh-port",
-        value_name = "PORT",
-        env = "SSH_PORT",
-        value_parser = clap::value_parser!(u16).range(1..),
-    )]
+    #[arg(id = "ssh-port", long = "ssh-port", value_name = "PORT", env = "SSH_PORT")]
     pub(crate) port: Option<u16>,
 
     /// SSH user
@@ -337,72 +359,30 @@ pub(crate) struct SshArguments {
         id = "ssh-local-port",
         long = "ssh-local-port",
         value_name = "PORT",
-        env = "SSH_LOCAL_PORT",
-        value_parser = clap::value_parser!(u16).range(1..),
+        env = "SSH_LOCAL_PORT"
     )]
     pub(crate) local_port: Option<u16>,
 }
 
 impl SshArguments {
-    /// Resolves the tunnel settings; `Ok(None)` when `SSH_HOST` is unset.
-    ///
-    /// Uses the process home directory for `~` expansion and the default
-    /// `known_hosts` path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigErrors`] when other `SSH_*` options are set
-    /// without a host, or when [`SshConfig::validate`] fails.
-    pub(crate) fn to_config(&self, backend: DatabaseBackend) -> Result<Option<SshConfig>, ConfigErrors> {
-        self.resolve(backend, ssh::home_dir().as_deref())
-    }
-
-    /// Resolves the tunnel settings against an explicit `home` directory.
-    fn resolve(&self, backend: DatabaseBackend, home: Option<&Path>) -> Result<Option<SshConfig>, ConfigErrors> {
-        let Some(host) = &self.host else {
-            return if self.any_set() {
-                Err(ConfigError::MissingSshHost.into())
-            } else {
-                Ok(None)
-            };
-        };
-
-        let known_hosts = match &self.known_hosts {
-            Some(path) => Some(ssh::expand_tilde(path, home)),
-            None => home.map(|home| home.join(".ssh").join("known_hosts")),
-        };
-        let candidate = SshConfig {
-            host: host.clone(),
-            port: self.port.unwrap_or(SshConfig::DEFAULT_PORT),
-            user: self.user.clone().unwrap_or_default(),
-            password: self.password.clone(),
-            key: self.key.as_deref().map(|key| ssh::expand_tilde(key, home)),
-            key_passphrase: self.key_passphrase.clone(),
-            known_hosts,
-            strict_host_key_checking: self
-                .strict_host_key_checking
-                .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
-            keepalive_interval: Duration::from_secs(
-                self.keepalive_interval
-                    .unwrap_or(SshConfig::DEFAULT_KEEPALIVE_INTERVAL_SECS),
+    /// Returns the explicitly set SSH flags as a layer.
+    pub(crate) fn layer(&self, matches: &ArgMatches) -> SshLayer {
+        SshLayer {
+            host: explicit(matches, "ssh-host", self.host.as_ref()),
+            port: explicit(matches, "ssh-port", self.port.as_ref()),
+            user: explicit(matches, "ssh-user", self.user.as_ref()),
+            password: explicit(matches, "ssh-password", self.password.as_ref()),
+            key: explicit(matches, "ssh-key", self.key.as_ref()),
+            key_passphrase: explicit(matches, "ssh-key-passphrase", self.key_passphrase.as_ref()),
+            known_hosts: explicit(matches, "ssh-known-hosts", self.known_hosts.as_ref()),
+            strict_host_key_checking: explicit(
+                matches,
+                "ssh-strict-host-key-checking",
+                self.strict_host_key_checking.as_ref(),
             ),
-            local_port: self.local_port,
-        };
-        candidate.validate(backend)?;
-        Ok(Some(candidate))
-    }
-
-    /// Returns `true` when any option other than `host` is set.
-    fn any_set(&self) -> bool {
-        self.port.is_some()
-            || self.user.is_some()
-            || self.password.is_some()
-            || self.key.is_some()
-            || self.key_passphrase.is_some()
-            || self.known_hosts.is_some()
-            || self.strict_host_key_checking.is_some()
-            || self.keepalive_interval.is_some()
-            || self.local_port.is_some()
+            keepalive_interval: explicit(matches, "ssh-keepalive-interval", self.keepalive_interval.as_ref()),
+            local_port: explicit(matches, "ssh-local-port", self.local_port.as_ref()),
+        }
     }
 }
 
@@ -506,15 +486,15 @@ pub(crate) async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser};
+    use clap::{CommandFactory, FromArgMatches, Parser};
 
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{DatabaseArguments, PiiArguments, SshArguments};
+    use super::{DatabaseArguments, PiiArguments, SshArguments, explicit};
     use dbmcp_config::{
-        ConfigError, DatabaseBackend, DatabaseConfig, PiiCategory, PiiConfig, PiiOperator, SshConfig,
-        StrictHostKeyChecking,
+        Config, ConfigError, ConfigErrors, ConfigLayer, DatabaseBackend, PiiCategory, PiiOperator,
+        StrictHostKeyChecking, Transport,
     };
 
     #[derive(Debug, Parser)]
@@ -528,71 +508,175 @@ mod tests {
         ssh: SshArguments,
     }
 
-    fn try_parse_with_page_size(value: &str) -> Result<u16, clap::Error> {
-        // SAFETY: no other test in this file writes DB_PAGE_SIZE concurrently;
-        // removing it here prevents a stale host value from leaking into clap.
-        unsafe {
-            std::env::remove_var("DB_PAGE_SIZE");
+    /// Removes every env var bound to a [`TestCli`] flag.
+    fn clear_env() {
+        for arg in TestCli::command().get_arguments() {
+            if let Some(env) = arg.get_env() {
+                // SAFETY: tests in this file only remove these env vars, never set them.
+                unsafe {
+                    std::env::remove_var(env);
+                }
+            }
         }
-        TestCli::try_parse_from(["--db-page-size", value]).map(|cli| cli.db.page_size)
+    }
+
+    fn try_parse(args: &[&str]) -> Result<TestCli, clap::Error> {
+        clear_env();
+        TestCli::try_parse_from(args)
+    }
+
+    /// Parses `args` and converts them into the CLI layer.
+    fn layer(args: &[&str]) -> ConfigLayer {
+        clear_env();
+        let matches = TestCli::command()
+            .try_get_matches_from(args)
+            .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
+        let cli = TestCli::from_arg_matches(&matches).expect("from matches");
+        ConfigLayer {
+            database: cli.db.layer(&matches),
+            pii: cli.pii.layer(&matches),
+            ssh: cli.ssh.layer(&matches),
+            ..ConfigLayer::default()
+        }
+    }
+
+    fn resolve_with_home(args: &[&str], home: Option<&Path>) -> Result<Config, ConfigErrors> {
+        layer(args)
+            .resolve(Transport::Stdio, home)
+            .map(|resolved| resolved.config)
+    }
+
+    fn resolve(args: &[&str]) -> Result<Config, ConfigErrors> {
+        resolve_with_home(args, Some(&home()))
+    }
+
+    fn home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\deploy")
+        } else {
+            PathBuf::from("/home/deploy")
+        }
     }
 
     #[test]
-    fn clap_rejects_page_size_zero() {
-        assert!(try_parse_with_page_size("0").is_err());
+    fn defaults_are_blanked_from_layer() {
+        let layer = layer(&[]);
+        assert_eq!(
+            format!("{layer:?}"),
+            format!("{:?}", ConfigLayer::default()),
+            "no flag set must yield an empty layer"
+        );
     }
 
     #[test]
-    fn clap_rejects_page_size_above_max() {
-        assert!(try_parse_with_page_size("501").is_err());
+    fn every_flag_reaches_the_layer() {
+        let empty = format!("{:?}", ConfigLayer::default());
+        for arg in TestCli::command().get_arguments() {
+            let Some(long) = arg.get_long().filter(|long| *long != "help") else {
+                continue;
+            };
+            let value = arg
+                .get_possible_values()
+                .first()
+                .map_or_else(|| "1".to_owned(), |value| value.get_name().to_owned());
+            let flag = format!("--{long}={value}");
+            assert_ne!(format!("{:?}", layer(&[&flag])), empty, "{flag} must reach the layer");
+        }
     }
 
     #[test]
-    fn clap_rejects_negative_page_size() {
-        assert!(try_parse_with_page_size("-1").is_err());
+    fn explicit_keeps_command_line_and_env_values_only() {
+        const ENV: &str = "DBMCP_TEST_EXPLICIT_ONLY";
+        let cmd = || {
+            clap::Command::new("t")
+                .no_binary_name(true)
+                .arg(clap::Arg::new("x").long("x").env(ENV).default_value("default"))
+        };
+        let value = |matches: &clap::ArgMatches| explicit(matches, "x", matches.get_one::<String>("x"));
+
+        let matches = cmd().try_get_matches_from(Vec::<&str>::new()).expect("parse");
+        assert_eq!(value(&matches), None, "default value must be blanked");
+
+        let matches = cmd().try_get_matches_from(["--x", "flag"]).expect("parse");
+        assert_eq!(value(&matches).as_deref(), Some("flag"));
+
+        // SAFETY: ENV is unique to this test.
+        unsafe {
+            std::env::set_var(ENV, "env");
+        }
+        let matches = cmd().try_get_matches_from(Vec::<&str>::new()).expect("parse");
+        // SAFETY: ENV is unique to this test.
+        unsafe {
+            std::env::remove_var(ENV);
+        }
+        assert_eq!(value(&matches).as_deref(), Some("env"));
+    }
+
+    #[test]
+    fn explicit_values_reach_the_resolved_config() {
+        let config = resolve(&[
+            "--db-backend",
+            "postgres",
+            "--db-user",
+            "pg",
+            "--db-name",
+            "app",
+            "--db-read-only=false",
+            "--db-query-timeout",
+            "0",
+        ])
+        .expect("valid");
+        assert_eq!(config.database.backend, DatabaseBackend::Postgres);
+        assert_eq!(config.database.port, 5432);
+        assert_eq!(config.database.user, "pg");
+        assert_eq!(config.database.name.as_deref(), Some("app"));
+        assert!(!config.database.read_only);
+        assert_eq!(config.database.query_timeout, 0);
+    }
+
+    #[test]
+    fn page_size_range_is_validated_after_merge() {
+        for value in ["0", "501"] {
+            let errors = resolve(&["--db-page-size", value]).expect_err("out of range");
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| matches!(e, ConfigError::OutOfRange { field, .. } if *field == "database.page_size")),
+                "{value}: {errors:?}"
+            );
+        }
+        for value in ["1", "500"] {
+            let config = resolve(&["--db-page-size", value]).expect("in range");
+            assert_eq!(config.database.page_size.to_string(), value);
+        }
+        assert_eq!(resolve(&[]).expect("default").database.page_size, 100);
     }
 
     #[test]
     fn clap_rejects_non_integer_page_size() {
-        assert!(try_parse_with_page_size("abc").is_err());
-    }
-
-    #[test]
-    fn clap_accepts_page_size_at_min() {
-        assert_eq!(try_parse_with_page_size("1").unwrap(), 1);
-    }
-
-    #[test]
-    fn clap_accepts_page_size_at_max() {
-        assert_eq!(try_parse_with_page_size("500").unwrap(), 500);
-    }
-
-    #[test]
-    fn clap_default_page_size_is_100() {
-        unsafe {
-            std::env::remove_var("DB_PAGE_SIZE");
+        for value in ["-1", "abc"] {
+            assert!(try_parse(&["--db-page-size", value]).is_err(), "{value}");
         }
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
-        assert_eq!(cli.db.page_size, 100);
     }
 
-    fn clear_pii_env() {
-        // SAFETY: tests in this file do not write PII_* env vars concurrently.
-        unsafe {
-            std::env::remove_var("PII_ENABLE");
-            std::env::remove_var("PII_OPERATOR");
-            std::env::remove_var("PII_CATEGORIES");
-            std::env::remove_var("PII_NER_ENABLE");
-            std::env::remove_var("PII_NER_MODEL");
-        }
+    #[test]
+    fn zero_pool_size_and_connection_timeout_are_rejected() {
+        let errors = resolve(&["--db-max-pool-size", "0", "--db-connection-timeout", "0"]).expect_err("zero");
+        let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            [
+                "database.max_pool_size must be at least 1",
+                "database.connection_timeout must be at least 1"
+            ]
+        );
     }
 
     #[test]
     fn clap_pii_operator_default_is_replace() {
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
-        assert!(!cli.pii.enabled);
-        assert_eq!(cli.pii.operator, PiiOperator::Replace);
+        let config = resolve(&[]).expect("valid");
+        assert!(!config.pii.enabled);
+        assert_eq!(config.pii.operator, PiiOperator::Replace);
     }
 
     #[test]
@@ -603,16 +687,14 @@ mod tests {
             ("redact", PiiOperator::Redact),
             ("hash", PiiOperator::Hash),
         ] {
-            clear_pii_env();
-            let cli = TestCli::try_parse_from(["--pii-operator", raw]).expect("valid operator parses");
+            let cli = try_parse(&["--pii-operator", raw]).expect("valid operator parses");
             assert_eq!(cli.pii.operator, expected, "operator {raw} must parse");
         }
     }
 
     #[test]
     fn clap_rejects_unknown_pii_operator() {
-        clear_pii_env();
-        let err = TestCli::try_parse_from(["--pii-operator", "xyz"]).expect_err("unknown operator must be rejected");
+        let err = try_parse(&["--pii-operator", "xyz"]).expect_err("unknown operator must be rejected");
         let msg = err.to_string();
         assert!(msg.contains("xyz"), "error must name the offending value: {msg}");
         for accepted in ["replace", "mask", "redact", "hash"] {
@@ -623,30 +705,15 @@ mod tests {
         }
     }
 
-    fn clear_db_env() {
-        // SAFETY: tests in this file do not write DB_* env vars concurrently.
-        unsafe {
-            std::env::remove_var("DB_BACKEND");
-            std::env::remove_var("DB_NAME");
-            std::env::remove_var("DB_SSL");
-            std::env::remove_var("DB_SSL_CA");
-            std::env::remove_var("DB_SSL_CERT");
-            std::env::remove_var("DB_SSL_KEY");
-        }
-    }
-
     #[test]
-    fn try_from_database_arguments_rejects_sqlite_without_db_name() {
-        clear_db_env();
-        let cli = TestCli::try_parse_from(["--db-backend", "sqlite"]).expect("clap parse");
-        let errors = DatabaseConfig::try_from(&cli.db).expect_err("sqlite without name must fail");
+    fn sqlite_without_db_name_is_rejected() {
+        let errors = resolve(&["--db-backend", "sqlite"]).expect_err("sqlite without name must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
     }
 
     #[test]
-    fn try_from_database_arguments_rejects_missing_ssl_cert_files() {
-        clear_db_env();
-        let cli = TestCli::try_parse_from([
+    fn missing_ssl_cert_files_are_rejected() {
+        let errors = resolve(&[
             "--db-ssl",
             "--db-ssl-ca",
             "/nonexistent/ca.pem",
@@ -655,8 +722,7 @@ mod tests {
             "--db-ssl-key",
             "/nonexistent/key.pem",
         ])
-        .expect("clap parse");
-        let errors = DatabaseConfig::try_from(&cli.db).expect_err("missing ssl cert files must fail");
+        .expect_err("missing ssl cert files must fail");
         let cert_errors = errors
             .iter()
             .filter(|e| matches!(e, ConfigError::FileNotFound(_, _)))
@@ -665,33 +731,21 @@ mod tests {
     }
 
     #[test]
-    fn try_from_database_arguments_accumulates_sqlite_name_and_ssl_errors() {
-        clear_db_env();
-        let cli = TestCli::try_parse_from([
+    fn sqlite_name_and_ssl_errors_accumulate() {
+        let errors = resolve(&[
             "--db-backend",
             "sqlite",
             "--db-ssl",
             "--db-ssl-ca",
             "/nonexistent/ca.pem",
         ])
-        .expect("clap parse");
-        let errors = DatabaseConfig::try_from(&cli.db).expect_err("multiple errors must accumulate");
+        .expect_err("multiple errors must accumulate");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(
             errors
                 .iter()
                 .any(|e| matches!(e, ConfigError::FileNotFound(name, path) if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"))
         );
-    }
-
-    #[test]
-    fn pii_config_validate_is_called_from_try_from_path() {
-        // Structural-presence guard: ensures PiiConfig::try_from invokes
-        // PiiConfig::validate. When a future rule fires on default args,
-        // this test deliberately fails — flagging the contributor.
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).expect("clap parse");
-        PiiConfig::try_from(&cli.pii).expect("default pii args must validate");
     }
 
     #[test]
@@ -707,118 +761,64 @@ mod tests {
 
     #[test]
     fn clap_pii_categories_default_unset() {
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
-        assert!(cli.pii.categories.is_none(), "categories must default to None");
+        assert!(resolve(&[]).expect("valid").pii.categories.is_none());
     }
 
     #[test]
     fn clap_pii_categories_comma_separated() {
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(["--pii-categories", "financial,government"])
-            .expect("comma-separated categories parse");
-        let cats = cli.pii.categories.expect("categories set");
-        assert_eq!(cats, vec![PiiCategory::Financial, PiiCategory::Government]);
+        let config = resolve(&["--pii-categories", "financial,government"]).expect("valid");
+        assert_eq!(
+            config.pii.categories,
+            Some(vec![PiiCategory::Financial, PiiCategory::Government])
+        );
     }
 
     #[test]
     fn clap_pii_categories_kebab_digital_identity() {
-        clear_pii_env();
-        let cli =
-            TestCli::try_parse_from(["--pii-categories", "digital-identity"]).expect("digital-identity kebab parses");
-        let cats = cli.pii.categories.expect("categories set");
-        assert_eq!(cats, vec![PiiCategory::DigitalIdentity]);
+        let config = resolve(&["--pii-categories", "digital-identity"]).expect("valid");
+        assert_eq!(config.pii.categories, Some(vec![PiiCategory::DigitalIdentity]));
     }
 
     #[test]
     fn clap_rejects_unknown_pii_category() {
-        clear_pii_env();
-        let err = TestCli::try_parse_from(["--pii-categories", "healthcare"]).expect_err("healthcare is not in v1");
+        let err = try_parse(&["--pii-categories", "healthcare"]).expect_err("healthcare is not in v1");
         let msg = err.to_string();
         assert!(msg.contains("healthcare"), "error must name the offending value: {msg}");
     }
 
     #[test]
-    fn pii_config_categories_empty_vec_errors_via_try_from() {
-        // clap normally never produces an empty Vec (num_args=1..), but the validator
-        // still defends against direct PiiConfig construction with Some(empty).
-        let cfg = PiiConfig {
-            enabled: true,
-            operator: PiiOperator::Replace,
-            categories: Some(Vec::new()),
-            ..PiiConfig::default()
-        };
-        let errors = cfg.validate().expect_err("empty categories must error");
+    fn duplicate_pii_categories_are_rejected() {
+        let errors = resolve(&["--pii-categories", "financial,financial"]).expect_err("duplicate");
         assert!(
-            errors.iter().any(|e| matches!(e, ConfigError::PiiCategoriesEmpty)),
-            "expected PiiCategoriesEmpty in {errors:?}"
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::DuplicateListEntry { .. }))
         );
     }
 
     #[test]
     fn clap_pii_ner_default_off() {
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).unwrap();
-        assert!(!cli.pii.ner_enabled, "ner must default off");
-        assert!(cli.pii.ner_model.is_none(), "ner model must default unset");
+        let config = resolve(&[]).expect("valid");
+        assert!(!config.pii.ner_enabled, "ner must default off");
+        assert!(config.pii.ner_model.is_none(), "ner model must default unset");
     }
 
     #[test]
     fn clap_pii_ner_flags_parse_and_convert() {
-        clear_pii_env();
-        let cli =
-            TestCli::try_parse_from(["--pii-ner", "true", "--pii-ner-model", "/models/ner"]).expect("ner flags parse");
-        let cfg = PiiConfig::try_from(&cli.pii).expect("ner config validates");
-        assert!(cfg.ner_enabled);
-        assert_eq!(cfg.ner_model, Some(std::path::PathBuf::from("/models/ner")));
+        let config = resolve(&["--pii-ner", "true", "--pii-ner-model", "/models/ner"]).expect("ner config validates");
+        assert!(config.pii.ner_enabled);
+        assert_eq!(config.pii.ner_model, Some(PathBuf::from("/models/ner")));
     }
 
     #[test]
-    fn pii_ner_enabled_without_model_errors_via_try_from() {
-        clear_pii_env();
-        let cli = TestCli::try_parse_from(["--pii-ner", "true"]).expect("clap parse");
-        let errors = PiiConfig::try_from(&cli.pii).expect_err("ner without model must fail");
+    fn pii_ner_enabled_without_model_is_rejected() {
+        let errors = resolve(&["--pii-ner", "true"]).expect_err("ner without model must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::PiiNerModelMissing)));
-    }
-
-    const SSH_ENV: [&str; 10] = [
-        "SSH_HOST",
-        "SSH_PORT",
-        "SSH_USER",
-        "SSH_PASSWORD",
-        "SSH_KEY",
-        "SSH_KEY_PASSPHRASE",
-        "SSH_KNOWN_HOSTS",
-        "SSH_STRICT_HOST_KEY_CHECKING",
-        "SSH_KEEPALIVE_INTERVAL",
-        "SSH_LOCAL_PORT",
-    ];
-
-    fn parse_ssh(args: &[&str]) -> SshArguments {
-        // SAFETY: tests in this file do not write SSH_* env vars concurrently.
-        unsafe {
-            for name in SSH_ENV {
-                std::env::remove_var(name);
-            }
-        }
-        TestCli::try_parse_from(args).expect("clap parse").ssh
-    }
-
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
-    }
-
-    fn resolve(args: &[&str], home: Option<&Path>) -> Result<Option<SshConfig>, dbmcp_config::ConfigErrors> {
-        parse_ssh(args).resolve(DatabaseBackend::Postgres, home)
     }
 
     #[test]
     fn ssh_disabled_without_any_option() {
-        assert!(resolve(&[], Some(&home())).expect("valid").is_none());
+        assert!(resolve(&[]).expect("valid").ssh.is_none());
     }
 
     #[test]
@@ -834,7 +834,7 @@ mod tests {
             &["--ssh-keepalive-interval", "0"],
             &["--ssh-local-port", "4000"],
         ] {
-            let errors = resolve(args, Some(&home())).expect_err("orphan option must fail");
+            let errors = resolve(args).expect_err("orphan option must fail");
             assert_eq!(errors.len(), 1, "{args:?}");
             assert_eq!(
                 errors[0].to_string(),
@@ -846,12 +846,10 @@ mod tests {
 
     #[test]
     fn ssh_defaults_are_resolved() {
-        let config = resolve(
-            &["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"],
-            Some(&home()),
-        )
-        .expect("valid")
-        .expect("tunnel enabled");
+        let config = resolve(&["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"])
+            .expect("valid")
+            .ssh
+            .expect("tunnel enabled");
         assert_eq!(config.host, "bastion");
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "deploy");
@@ -864,28 +862,26 @@ mod tests {
 
     #[test]
     fn ssh_explicit_values_override_defaults() {
-        let config = resolve(
-            &[
-                "--ssh-host",
-                "bastion",
-                "--ssh-port",
-                "2222",
-                "--ssh-user",
-                "deploy",
-                "--ssh-password",
-                "pw",
-                "--ssh-known-hosts",
-                "~/.ssh/custom_hosts",
-                "--ssh-strict-host-key-checking",
-                "accept-new",
-                "--ssh-keepalive-interval",
-                "0",
-                "--ssh-local-port",
-                "4000",
-            ],
-            Some(&home()),
-        )
+        let config = resolve(&[
+            "--ssh-host",
+            "bastion",
+            "--ssh-port",
+            "2222",
+            "--ssh-user",
+            "deploy",
+            "--ssh-password",
+            "pw",
+            "--ssh-known-hosts",
+            "~/.ssh/custom_hosts",
+            "--ssh-strict-host-key-checking",
+            "accept-new",
+            "--ssh-keepalive-interval",
+            "0",
+            "--ssh-local-port",
+            "4000",
+        ])
         .expect("valid")
+        .ssh
         .expect("tunnel enabled");
         assert_eq!(config.port, 2222);
         assert_eq!(config.known_hosts, Some(home().join(".ssh").join("custom_hosts")));
@@ -896,17 +892,14 @@ mod tests {
 
     #[test]
     fn ssh_key_path_is_tilde_expanded() {
-        let errors = resolve(
-            &[
-                "--ssh-host",
-                "bastion",
-                "--ssh-user",
-                "deploy",
-                "--ssh-key",
-                "~/.ssh/missing_key",
-            ],
-            Some(&home()),
-        )
+        let errors = resolve(&[
+            "--ssh-host",
+            "bastion",
+            "--ssh-user",
+            "deploy",
+            "--ssh-key",
+            "~/.ssh/missing_key",
+        ])
         .expect_err("missing key file must fail");
         let expected = home().join(".ssh").join("missing_key");
         assert!(
@@ -920,14 +913,14 @@ mod tests {
 
     #[test]
     fn ssh_known_hosts_unresolved_without_home() {
-        let errors = resolve(
+        let errors = resolve_with_home(
             &["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"],
             None,
         )
         .expect_err("no home must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshKnownHosts)));
 
-        let config = resolve(
+        let config = resolve_with_home(
             &[
                 "--ssh-host",
                 "bastion",
@@ -941,48 +934,64 @@ mod tests {
             None,
         )
         .expect("mode no needs no known_hosts")
+        .ssh
         .expect("tunnel enabled");
         assert_eq!(config.known_hosts, None);
     }
 
     #[test]
     fn ssh_missing_user_and_auth_accumulate() {
-        let errors = resolve(&["--ssh-host", "bastion"], Some(&home())).expect_err("must fail");
+        let errors = resolve(&["--ssh-host", "bastion"]).expect_err("must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshUser)));
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSshAuth)));
     }
 
     #[test]
     fn ssh_rejected_for_sqlite_backend() {
-        let errors = parse_ssh(&["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"])
-            .resolve(DatabaseBackend::Sqlite, Some(&home()))
-            .expect_err("sqlite must fail");
+        let errors = resolve(&[
+            "--db-backend",
+            "sqlite",
+            "--db-name",
+            ":memory:",
+            "--ssh-host",
+            "bastion",
+            "--ssh-user",
+            "deploy",
+            "--ssh-password",
+            "pw",
+        ])
+        .expect_err("sqlite must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::SshSqliteUnsupported)));
     }
 
     #[test]
     fn ssh_empty_host_is_rejected() {
-        let errors = resolve(
-            &["--ssh-host", "", "--ssh-user", "deploy", "--ssh-password", "pw"],
-            Some(&home()),
-        )
-        .expect_err("empty host must fail");
+        let errors = resolve(&["--ssh-host", "", "--ssh-user", "deploy", "--ssh-password", "pw"])
+            .expect_err("empty host must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptySshHost)));
     }
 
     #[test]
-    fn clap_rejects_ssh_port_zero_and_local_port_zero() {
-        parse_ssh(&[]);
-        assert!(TestCli::try_parse_from(["--ssh-port", "0"]).is_err());
-        assert!(TestCli::try_parse_from(["--ssh-local-port", "0"]).is_err());
+    fn ssh_port_zero_and_local_port_zero_are_rejected() {
+        let base = ["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"];
+        for (flag, field) in [("--ssh-port", "ssh.port"), ("--ssh-local-port", "ssh.local_port")] {
+            let mut args = base.to_vec();
+            args.extend([flag, "0"]);
+            let errors = resolve(&args).expect_err("zero port");
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| matches!(e, ConfigError::BelowMinimum { field: f, .. } if *f == field)),
+                "{flag}: {errors:?}"
+            );
+        }
     }
 
     #[test]
     fn clap_strict_host_key_checking_rejects_openssh_aliases() {
-        parse_ssh(&[]);
         for value in ["ask", "off"] {
             assert!(
-                TestCli::try_parse_from(["--ssh-strict-host-key-checking", value]).is_err(),
+                try_parse(&["--ssh-strict-host-key-checking", value]).is_err(),
                 "{value} must be rejected"
             );
         }

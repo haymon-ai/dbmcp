@@ -1,54 +1,25 @@
 //! CLI argument parsing and application bootstrapping.
 //!
 //! Contains the [`Arguments`] struct (parsed by clap), the [`Command`]
-//! subcommand enum, the [`LogLevel`] selector, and the [`run`] entry
-//! point that dispatches to the active subcommand.
+//! subcommand enum, and the [`run`] entry point that resolves the
+//! configuration, initialises tracing, and dispatches to the active
+//! subcommand.
 
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
+use dbmcp_config::LogLevel;
 
 use crate::commands::http::HttpCommand;
 use crate::commands::stdio::StdioCommand;
 use crate::error::{Error, ErrorKind};
 
-/// Log severity levels for the MCP server.
-///
-/// Maps directly to [`tracing::Level`] variants. Used as a
-/// [`clap::ValueEnum`] for type-safe CLI argument parsing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum LogLevel {
-    /// Only errors.
-    Error,
-    /// Warnings and above.
-    Warn,
-    /// Informational and above (default).
-    Info,
-    /// Debug and above.
-    Debug,
-    /// All trace output.
-    Trace,
-}
-
-impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Error => write!(f, "error"),
-            Self::Warn => write!(f, "warn"),
-            Self::Info => write!(f, "info"),
-            Self::Debug => write!(f, "debug"),
-            Self::Trace => write!(f, "trace"),
-        }
-    }
-}
-
-impl From<LogLevel> for tracing::Level {
-    fn from(level: LogLevel) -> Self {
-        match level {
-            LogLevel::Error => Self::ERROR,
-            LogLevel::Warn => Self::WARN,
-            LogLevel::Info => Self::INFO,
-            LogLevel::Debug => Self::DEBUG,
-            LogLevel::Trace => Self::TRACE,
-        }
+/// Maps a [`LogLevel`] onto the matching [`tracing::Level`].
+fn tracing_level(level: LogLevel) -> tracing::Level {
+    match level {
+        LogLevel::Error => tracing::Level::ERROR,
+        LogLevel::Warn => tracing::Level::WARN,
+        LogLevel::Info => tracing::Level::INFO,
+        LogLevel::Debug => tracing::Level::DEBUG,
+        LogLevel::Trace => tracing::Level::TRACE,
     }
 }
 
@@ -59,17 +30,6 @@ struct Arguments {
     /// Subcommand selector.
     #[command(subcommand)]
     command: Command,
-
-    /// Log level
-    #[arg(
-        long = "log-level",
-        env = "LOG_LEVEL",
-        default_value_t = LogLevel::Info,
-        ignore_case = true,
-        global = true,
-        help_heading = "Logging"
-    )]
-    log_level: LogLevel,
 }
 
 /// Top-level subcommand selector.
@@ -88,14 +48,14 @@ fn command(bin: &'static str, version: &'static str) -> clap::Command {
     Arguments::command().name(bin).version(version)
 }
 
-/// Parses CLI arguments, initializes tracing, and dispatches to the active subcommand.
+/// Parses CLI arguments, resolves the configuration, initializes tracing, and runs the subcommand.
 ///
 /// # Errors
 ///
-/// Returns an error if the command-line arguments are invalid,
-/// configuration validation fails, or the selected subcommand fails
-/// (transport initialization errors, TCP bind failures, fatal protocol
-/// errors).
+/// Returns an error if the command-line arguments are invalid, the config
+/// file cannot be loaded, configuration validation fails, or the selected
+/// subcommand fails (transport initialization errors, TCP bind failures,
+/// fatal protocol errors).
 ///
 /// `bin` and `version` are the installed binary's name and version, used
 /// in `--help`, `--version`, and the `version` subcommand. Must run
@@ -103,11 +63,13 @@ fn command(bin: &'static str, version: &'static str) -> clap::Command {
 /// already installed is kept.
 #[allow(clippy::result_large_err)]
 pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> {
+    // `from_arg_matches` leaves `matches` intact: the layer conversions
+    // need each argument's value source afterwards.
     let parsed = command(bin, version)
         .try_get_matches()
-        .and_then(|mut matches| Arguments::from_arg_matches_mut(&mut matches));
-    let arguments = match parsed {
-        Ok(arguments) => arguments,
+        .and_then(|matches| Arguments::from_arg_matches(&matches).map(|arguments| (matches, arguments)));
+    let (matches, arguments) = match parsed {
+        Ok(parsed) => parsed,
         // `--help` and `--version` arrive as clap errors that print to stdout.
         // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
         Err(error) if !error.use_stderr() => {
@@ -117,21 +79,40 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
         Err(error) => return Err(ErrorKind::from(error).into()),
     };
 
-    // Fails only if a subscriber is already installed; keep that one.
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_max_level(tracing::Level::from(arguments.log_level))
-        .with_ansi(false)
-        .try_init();
-
     match arguments.command {
         Command::Version => {
             println!("{bin} {version}");
             Ok(())
         }
-        Command::Stdio(cmd) => Ok(cmd.execute().await?),
-        Command::Http(cmd) => Ok(cmd.execute().await?),
+        Command::Stdio(cmd) => {
+            let resolved = cmd.load(subcommand_matches(&matches)).map_err(ErrorKind::from)?;
+            init_tracing(resolved.log_level);
+            Ok(StdioCommand::execute(resolved.config).await?)
+        }
+        Command::Http(cmd) => {
+            let resolved = cmd.load(subcommand_matches(&matches)).map_err(ErrorKind::from)?;
+            init_tracing(resolved.log_level);
+            Ok(HttpCommand::execute(resolved.config).await?)
+        }
     }
+}
+
+/// Returns the matches of the subcommand selected in `matches`.
+fn subcommand_matches(matches: &ArgMatches) -> &ArgMatches {
+    matches
+        .subcommand()
+        .map(|(_, sub)| sub)
+        .expect("subcommand is required")
+}
+
+/// Installs the stderr tracing subscriber at `level`.
+fn init_tracing(level: LogLevel) {
+    // Fails only if a subscriber is already installed; keep that one.
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(tracing_level(level))
+        .with_ansi(false)
+        .try_init();
 }
 
 #[cfg(test)]
@@ -139,6 +120,29 @@ mod tests {
     use clap::CommandFactory;
 
     use super::{Arguments, command};
+
+    #[test]
+    fn log_level_is_a_subcommand_option() {
+        assert!(
+            command("dbmcp", "0")
+                .try_get_matches_from(["dbmcp", "--log-level", "debug", "stdio"])
+                .is_err(),
+            "--log-level before the subcommand must not parse"
+        );
+        for subcommand in ["stdio", "http"] {
+            command("dbmcp", "0")
+                .try_get_matches_from(["dbmcp", subcommand, "--log-level", "debug"])
+                .unwrap_or_else(|e| panic!("{subcommand} --log-level must parse: {e}"));
+        }
+        for flag in ["--log-level=debug", "--config=dbmcp.yaml"] {
+            assert!(
+                command("dbmcp", "0")
+                    .try_get_matches_from(["dbmcp", "version", flag])
+                    .is_err(),
+                "version must reject {flag}"
+            );
+        }
+    }
 
     #[test]
     fn command_uses_given_name_and_version() {

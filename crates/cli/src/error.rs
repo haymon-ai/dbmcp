@@ -5,7 +5,7 @@
 
 use std::process::ExitCode;
 
-use dbmcp_config::ConfigErrors;
+use dbmcp_config::LoadError;
 
 /// Error returned when the CLI fails to start or run the server.
 ///
@@ -48,31 +48,19 @@ pub(crate) enum ErrorKind {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    /// Configuration validation failed with one or more errors.
-    #[error("{}", BulletList(.0))]
-    Config(#[from] ConfigErrors),
+    /// The config file could not be loaded or the configuration is invalid.
+    #[error(transparent)]
+    Config(#[from] LoadError),
 
     /// Server initialisation failed (e.g. fail-closed NER model load).
     #[error("server initialisation failed: {0}")]
     Init(String),
 }
 
-struct BulletList<'a>(&'a ConfigErrors);
-
-impl std::fmt::Display for BulletList<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "configuration validation failed:")?;
-        for error in self.0.iter() {
-            write!(f, "\n  - {error}")?;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::ConfigError;
+    use dbmcp_config::{ConfigError, ConfigErrors};
 
     #[test]
     fn config_error_display_bullets_each_error() {
@@ -81,7 +69,7 @@ mod tests {
             ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope".into()),
         ])
         .expect("non-empty");
-        let error = ErrorKind::Config(errors);
+        let error = ErrorKind::Config(errors.into());
         let rendered = error.to_string();
         assert!(rendered.starts_with("configuration validation failed:"));
         assert!(rendered.contains("\n  - DB_NAME (file path) is required for SQLite"));
@@ -89,9 +77,9 @@ mod tests {
     }
 
     #[test]
-    fn config_error_from_config_errors() {
+    fn config_error_from_load_error() {
         let errors: ConfigErrors = ConfigError::MissingSqliteDbName.into();
-        let error: ErrorKind = errors.into();
+        let error: ErrorKind = LoadError::from(errors).into();
         assert!(matches!(error, ErrorKind::Config(_)));
     }
 
@@ -105,7 +93,7 @@ mod tests {
     #[test]
     fn other_errors_exit_with_failure() {
         let errors: ConfigErrors = ConfigError::MissingSqliteDbName.into();
-        let error = Error::from(ErrorKind::from(errors));
+        let error = Error::from(ErrorKind::from(LoadError::from(errors)));
         assert_eq!(error.exit_code(), ExitCode::FAILURE);
     }
 }

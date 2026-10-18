@@ -109,7 +109,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by CLI parsing.
+    /// Range `1..=500`, enforced by [`Self::validate`].
     pub page_size: u16,
 }
 
@@ -144,6 +144,8 @@ impl DatabaseConfig {
     /// Rules enforced:
     /// - `backend == Sqlite` requires `name` to be `Some(non-empty)`.
     /// - `ssl == true` requires every set `ssl_ca` / `ssl_cert` / `ssl_key` path to exist.
+    /// - `max_pool_size` and a set `connection_timeout` must be at least 1.
+    /// - `page_size` must be in `1..=MAX_PAGE_SIZE`.
     ///
     /// # Errors
     ///
@@ -167,6 +169,26 @@ impl DatabaseConfig {
                     errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
                 }
             }
+        }
+
+        if self.max_pool_size < 1 {
+            errors.push(ConfigError::BelowMinimum {
+                field: "database.max_pool_size",
+                min: 1,
+            });
+        }
+        if self.connection_timeout == Some(0) {
+            errors.push(ConfigError::BelowMinimum {
+                field: "database.connection_timeout",
+                min: 1,
+            });
+        }
+        if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
+            errors.push(ConfigError::OutOfRange {
+                field: "database.page_size",
+                min: 1,
+                max: Self::MAX_PAGE_SIZE.into(),
+            });
         }
 
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
@@ -375,6 +397,41 @@ mod tests {
             e,
             ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"
         )));
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_numbers() {
+        let config = DatabaseConfig {
+            max_pool_size: 0,
+            connection_timeout: Some(0),
+            page_size: 0,
+            ..DatabaseConfig::default()
+        };
+        let errors: Vec<String> = config
+            .validate()
+            .expect_err("zero values must fail")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "database.max_pool_size must be at least 1",
+                "database.connection_timeout must be at least 1",
+                "database.page_size must be between 1 and 500",
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_page_size_bounds() {
+        for (page_size, ok) in [(1, true), (500, true), (501, false)] {
+            let config = DatabaseConfig {
+                page_size,
+                ..DatabaseConfig::default()
+            };
+            assert_eq!(config.validate().is_ok(), ok, "page_size {page_size}");
+        }
     }
 
     #[test]

@@ -81,6 +81,7 @@ impl SshConfig {
     /// - a password or a key is required; a passphrase requires a key.
     /// - a set `key` path must be an existing file.
     /// - `known_hosts` must be resolved unless host-key checking is `no`.
+    /// - `port` and a set `local_port` must be at least 1.
     ///
     /// # Errors
     ///
@@ -110,6 +111,18 @@ impl SshConfig {
         }
         if self.known_hosts.is_none() && self.strict_host_key_checking != StrictHostKeyChecking::No {
             errors.push(ConfigError::MissingSshKnownHosts);
+        }
+        if self.port < 1 {
+            errors.push(ConfigError::BelowMinimum {
+                field: "ssh.port",
+                min: 1,
+            });
+        }
+        if self.local_port == Some(0) {
+            errors.push(ConfigError::BelowMinimum {
+                field: "ssh.local_port",
+                min: 1,
+            });
         }
 
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
@@ -304,6 +317,19 @@ mod tests {
         assert!(matches!(errors[4], ConfigError::SshKeyPassphraseWithoutKey));
         assert!(matches!(errors[5], ConfigError::MissingSshKnownHosts));
         assert_eq!(errors.len(), 6);
+    }
+
+    #[test]
+    fn validate_rejects_zero_ports() {
+        let config = SshConfig {
+            port: 0,
+            local_port: Some(0),
+            ..ssh_config()
+        };
+        assert_eq!(
+            errors_of(&config, DatabaseBackend::Mysql),
+            ["ssh.port must be at least 1", "ssh.local_port must be at least 1"]
+        );
     }
 
     #[test]

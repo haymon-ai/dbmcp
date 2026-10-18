@@ -2148,3 +2148,68 @@ async fn test_version_reports_binary_name_and_version() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{args:?}");
     }
 }
+
+#[path = "config_file.rs"]
+mod config_file;
+
+/// Returns the YAML config for the `SQLite` file at `path`.
+fn config_yaml(path: &str, read_only: bool) -> String {
+    format!("database:\n  backend: sqlite\n  name: '{path}'\n  read_only: {read_only}\n")
+}
+
+#[tokio::test]
+async fn test_config_file_supplies_connection_settings() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let client = config_file::connect(&config_yaml(&path, true), &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "file read_only must apply");
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_env_overrides_config_file() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let env = [("DB_NAME", path.as_str()), ("DB_READ_ONLY", "false")];
+    let client = config_file::connect(&config_yaml("/nonexistent/other.db", true), &env).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(
+        client.exposes_write_query().await,
+        "env DB_READ_ONLY must beat the file"
+    );
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_invalid_config_file_fails_startup_with_exit_code_1() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("dbmcp.yaml");
+    std::fs::write(&path, "database:\n  pasword: hunter2\n").expect("write config");
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config"])
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("failed to parse config file"), "{stderr}");
+
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config", "a.yaml", "--config", "b.yaml"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    assert_eq!(output.status.code(), Some(2), "repeated --config is a usage error");
+}

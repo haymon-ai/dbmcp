@@ -1,9 +1,8 @@
 //! Configuration validation errors and their non-empty-collection wrapper.
 //!
-//! [`ConfigError`] enumerates rules reachable past clap parsing.
-//! [`ConfigErrors`] is a non-empty collection wrapper used as the
-//! `Error` type for every per-section `TryFrom<&FooArguments> for FooConfig`
-//! impl in the binary crate, and as the return type of every
+//! [`ConfigError`] enumerates rules reachable past parsing.
+//! [`ConfigErrors`] is a non-empty collection wrapper returned by
+//! [`ConfigLayer::resolve`](crate::ConfigLayer::resolve) and by every
 //! [`DatabaseConfig::validate`] / [`HttpConfig::validate`] /
 //! [`PiiConfig::validate`] / [`SshConfig::validate`] call.
 //!
@@ -12,10 +11,10 @@
 //! [`PiiConfig::validate`]: crate::PiiConfig::validate
 //! [`SshConfig::validate`]: crate::SshConfig::validate
 
-/// Errors produced by the `Arguments`-to-`Config` conversions.
+/// Rule violations found while validating a resolved [`Config`](crate::Config).
 ///
-/// Carries only rules reachable past clap parsing. Rules clap already
-/// rejects (integer ranges, enum membership) are not represented here.
+/// Type and enum-membership errors are rejected earlier, by clap or the
+/// config-file parser, and are not represented here.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// `DB_NAME` is required for `SQLite`.
@@ -83,15 +82,76 @@ pub enum ConfigError {
     /// `known_hosts` could not be resolved and host-key checking is on.
     #[error("SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
     MissingSshKnownHosts,
+
+    /// A numeric setting is below its minimum.
+    #[error("{field} must be at least {min}")]
+    BelowMinimum {
+        /// Config path of the setting.
+        field: &'static str,
+        /// Smallest accepted value.
+        min: u64,
+    },
+
+    /// A numeric setting is outside its accepted range.
+    #[error("{field} must be between {min} and {max}")]
+    OutOfRange {
+        /// Config path of the setting.
+        field: &'static str,
+        /// Smallest accepted value.
+        min: u64,
+        /// Largest accepted value.
+        max: u64,
+    },
+
+    /// A list setting contains an empty entry.
+    #[error("{0} must not contain empty entries")]
+    EmptyListEntry(&'static str),
+
+    /// A list setting contains the same entry more than once.
+    #[error("{field} contains duplicate entry '{entry}'")]
+    DuplicateListEntry {
+        /// Config path of the setting.
+        field: &'static str,
+        /// The repeated entry.
+        entry: String,
+    },
+}
+
+impl ConfigError {
+    /// Returns one error per problem found in the list setting `field`.
+    ///
+    /// Reports a single [`Self::EmptyListEntry`] when any entry is blank
+    /// and one [`Self::DuplicateListEntry`] per repeated entry.
+    pub(crate) fn check_list<T: PartialEq + std::fmt::Display>(
+        field: &'static str,
+        entries: &[T],
+        is_blank: impl Fn(&T) -> bool,
+    ) -> Vec<Self> {
+        let mut errors = Vec::new();
+        if entries.iter().any(&is_blank) {
+            errors.push(Self::EmptyListEntry(field));
+        }
+        for (i, entry) in entries.iter().enumerate() {
+            let first = entries.iter().position(|e| e == entry) == Some(i);
+            let repeated = entries[i + 1..].contains(entry);
+            if first && repeated && !is_blank(entry) {
+                errors.push(Self::DuplicateListEntry {
+                    field,
+                    entry: entry.to_string(),
+                });
+            }
+        }
+        errors
+    }
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.
 ///
 /// Externally observed wrappers always carry ≥ 1 error — [`Self::from_vec`]
 /// returns `None` for an empty input, and [`From<ConfigError>`] yields a
-/// single-element wrapper. Each transport's `TryFrom<&Command> for Config`
-/// impl owns its own multi-section accumulation (database → http → pii) and
-/// returns `Ok(value)` when nothing was collected, never an empty wrapper.
+/// single-element wrapper. [`ConfigLayer::resolve`](crate::ConfigLayer::resolve)
+/// accumulates across sections (database → http → pii → ssh) and returns
+/// `Ok(value)` when nothing was collected, never an empty wrapper.
 ///
 /// Derefs to `&[ConfigError]` so callers can use slice methods directly
 /// (`iter`, `len`, indexing). `Display` renders each contained error on its
