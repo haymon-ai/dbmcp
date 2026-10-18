@@ -293,9 +293,12 @@ fn resolve_file_paths(layer: &mut ConfigLayer, dir: &Path, home: Option<&Path>) 
 }
 
 /// Expands a leading `~` in `path`, then anchors a relative result at `dir`.
+///
+/// An empty path (often an unset `${VAR}`) stays empty, so validation
+/// reports it instead of silently pointing at `dir`.
 fn resolve_path(path: &Path, dir: &Path, home: Option<&Path>) -> PathBuf {
     let expanded = ssh::expand_tilde(path, home);
-    if expanded.is_absolute() {
+    if expanded.as_os_str().is_empty() || expanded.is_absolute() {
         expanded
     } else {
         dir.join(expanded)
@@ -308,8 +311,12 @@ fn resolve_path_string(path: &str, dir: &Path, home: Option<&Path>) -> String {
 }
 
 /// Returns `true` for `SQLite` names that are not file paths.
+///
+/// The backend opens `name` as a literal filename, so only `:memory:` (and
+/// the empty name validation rejects) are left untouched; a `file:` prefix
+/// is an ordinary relative path.
 fn is_sqlite_special_name(name: &str) -> bool {
-    name.is_empty() || name == ":memory:" || name.starts_with("file:")
+    name.is_empty() || name == ":memory:"
 }
 
 /// Reads the regular file at `path`, returning its absolute path and contents.
@@ -625,6 +632,17 @@ ssh:
             ),
             "{message}"
         );
+    }
+
+    #[test]
+    fn enum_errors_point_at_the_value_not_its_section() {
+        let message = parse("database:\n  host: x\n  backend: Postgres\n").expect_err("bad enum");
+        assert!(
+            message.contains("/cfg/dbmcp.yaml:3:12: database.backend: expected one of `mysql`"),
+            "{message}"
+        );
+        let message = parse("pii:\n  categories: [financial, bogus]\n").expect_err("bad element");
+        assert!(message.contains(": pii.categories[1]: expected one of"), "{message}");
     }
 
     #[test]
@@ -1048,12 +1066,40 @@ ssh:
     }
 
     #[test]
-    fn sqlite_memory_and_uri_names_pass_through() {
-        for name in [":memory:", "file:app.db?mode=ro"] {
-            let (_dir, path) = config_dir(&format!("database:\n  backend: sqlite\n  name: '{name}'\n"));
-            let config = load_file(&path, ConfigLayer::default()).config;
-            assert_eq!(config.database.name.as_deref(), Some(name));
-        }
+    fn sqlite_memory_name_passes_through() {
+        let (_dir, path) = config_dir("database:\n  backend: sqlite\n  name: ':memory:'\n");
+        let config = load_file(&path, ConfigLayer::default()).config;
+        assert_eq!(config.database.name.as_deref(), Some(":memory:"));
+    }
+
+    #[test]
+    fn sqlite_file_prefixed_name_is_a_relative_path() {
+        let (dir, path) = config_dir("database:\n  backend: sqlite\n  name: 'file:app.db'\n");
+        let config = load_file(&path, ConfigLayer::default()).config;
+        assert_eq!(
+            config.database.name.as_deref().map(PathBuf::from),
+            Some(dir.path().join("file:app.db"))
+        );
+    }
+
+    #[test]
+    fn empty_file_path_stays_empty_and_fails_validation() {
+        let (_dir, path) = config_dir("database:\n  ssl: true\n  ssl_ca: ${NOPE_CA}\n");
+        let sources = Sources::read(Some(&path), &[], &no_env, &mut Vec::new()).expect("read");
+        let error = sources
+            .resolve(
+                ConfigLayer::default(),
+                Provenance::default(),
+                Transport::Stdio,
+                None,
+                &mut Vec::new(),
+            )
+            .expect_err("empty ca must fail");
+        assert!(
+            matches!(&error, LoadError::Invalid { errors, .. }
+                if matches!(&errors[0], ConfigError::FileNotFound { field: "database.ssl_ca", path } if path.is_empty())),
+            "{error}"
+        );
     }
 
     #[test]

@@ -321,15 +321,7 @@ mod tests {
 
     #[test]
     fn every_setting_flag_has_a_route() {
-        let flags = common::tests_support::flag_routes::<StdioCommand>(StdioCommand::layer);
-        let longs: Vec<&str> = flags.iter().map(|flag| flag.0.as_str()).collect();
-        for arg in StdioCommand::command().get_arguments() {
-            let Some(long) = arg.get_long() else { continue };
-            if ["config", "env", "help"].contains(&long) {
-                continue;
-            }
-            assert!(longs.contains(&long), "--{long} has no config path");
-        }
+        common::tests_support::check_routes::<StdioCommand>(StdioCommand::layer);
     }
 
     #[test]

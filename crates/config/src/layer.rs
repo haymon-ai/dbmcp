@@ -408,15 +408,7 @@ impl SshLayer {
 
     /// Returns `true` when any option other than `host` is set.
     fn any_set(&self) -> bool {
-        self.port.is_some()
-            || self.user.is_some()
-            || self.password.is_some()
-            || self.key.is_some()
-            || self.key_passphrase.is_some()
-            || self.known_hosts.is_some()
-            || self.strict_host_key_checking.is_some()
-            || self.keepalive_interval.is_some()
-            || self.local_port.is_some()
+        self.set_paths().iter().any(|path| *path != "ssh.host")
     }
 }
 

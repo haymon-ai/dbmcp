@@ -555,10 +555,12 @@ impl<'de, 'a, I: Iterator<Item = (usize, &'a Node)>> SeqAccess<'de> for Items<'_
         self.items
             .next()
             .map(|(i, node)| {
+                let path = format!("{}[{i}]", self.path);
                 seed.deserialize(NodeDeserializer {
                     node,
-                    path: format!("{}[{i}]", self.path),
+                    path: path.clone(),
                 })
+                .map_err(|e| e.at(&path, node.referenced))
             })
             .transpose()
     }
@@ -588,6 +590,12 @@ impl<'de, 'a, I: Iterator<Item = &'a (Spanned<String>, Node)>> MapAccess<'de> fo
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, DeError> {
         let (node, path) = self.value.take().ok_or_else(|| DeError::custom("value without key"))?;
-        seed.deserialize(NodeDeserializer { node, path })
+        // Errors raised after the child's deserializer returns (e.g. by a
+        // `Deserialize` impl validating a string) still belong to the child.
+        seed.deserialize(NodeDeserializer {
+            node,
+            path: path.clone(),
+        })
+        .map_err(|e| e.at(&path, node.referenced))
     }
 }

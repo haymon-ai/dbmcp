@@ -193,7 +193,7 @@ Unquoted and double-quoted values are interpolated against the process environme
 
 Paths written **in the config file** — `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model` — first expand a leading `~` to your home directory, then resolve relative to the **config file's directory**. Absolute paths are left as they are. A file therefore means the same thing whatever directory dbmcp is started in.
 
-`database.name` follows the same rules only when the backend is `sqlite` (after merging all layers) and the name came from the file. `:memory:` and `file:` URIs pass through unchanged; for MySQL and PostgreSQL it is a plain database name.
+`database.name` follows the same rules only when the backend is `sqlite` (after merging all layers) and the name came from the file. `:memory:` passes through unchanged (a `file:` prefix is part of the file name, not a URI); for MySQL and PostgreSQL it is a plain database name.
 
 Paths from CLI flags and environment variables are unchanged: they resolve against the current directory, and only the SSH paths expand `~`.
 

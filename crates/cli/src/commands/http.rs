@@ -458,6 +458,11 @@ mod tests {
     }
 
     #[test]
+    fn every_setting_flag_has_a_route() {
+        common::tests_support::check_routes::<HttpCommand>(HttpCommand::layer);
+    }
+
+    #[test]
     fn clap_default_yields_loopback_origins() {
         let config = http_config(&[]).expect("default args are valid");
         assert_eq!(config.allowed_origins, HttpConfig::default_allowed_origins());

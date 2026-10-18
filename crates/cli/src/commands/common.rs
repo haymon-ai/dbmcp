@@ -67,7 +67,7 @@ pub(crate) fn flag_conventions(arg: Arg) -> Arg {
     }
 }
 
-/// Returns `true` when argument `id` was set on the command line or via its env var.
+/// Returns `true` when argument `id` was set by flag or env var.
 fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
     matches!(
         matches.value_source(id),
@@ -75,7 +75,7 @@ fn is_explicit(matches: &ArgMatches, id: &str) -> bool {
     )
 }
 
-/// Returns `value` only when argument `id` was set on the command line or via its env var.
+/// Returns `value` only when argument `id` was set by flag or env var.
 ///
 /// Values that came from a clap default are dropped, so lower layers (the
 /// dotenv files, the config file, then the built-in defaults) can fill them.
@@ -137,22 +137,22 @@ fn try_load<C: CommandFactory + FromArgMatches>(
     let process_env = |name: &str| std::env::var(name).ok();
     let sources = Sources::read(shared.config.as_deref(), &shared.env, &process_env, warnings)?;
 
-    let flags = flag_routes(to_layer);
+    let command = C::command();
+    let flags = flag_routes(&command);
+    let bare = bare_command(command);
     let mut provenance = Provenance::default();
     for flag in &flags {
-        let source = match matches.value_source(&flag.id) {
+        provenance.add_route(flag.path, flag.route());
+        let source = match matches.value_source(flag.id) {
             Some(ValueSource::CommandLine) => Some(Source::Flag(flag.flag())),
             Some(ValueSource::EnvVariable) => flag.env.clone().map(Source::Env),
             _ => None,
         };
-        for path in &flag.paths {
-            provenance.add_route(path, flag.route());
-            if let Some(source) = &source {
-                provenance.set_source(path, source.clone());
-            }
+        if let Some(source) = source {
+            provenance.set_source(flag.path, source);
         }
     }
-    let dotenv = dotenv_layer(matches, sources.dotenv(), &flags, &mut provenance, to_layer)?;
+    let dotenv = dotenv_layer(matches, sources.dotenv(), &flags, &bare, &mut provenance, to_layer)?;
     sources.resolve(
         to_layer(cmd, matches).or(dotenv),
         provenance,
@@ -162,16 +162,63 @@ fn try_load<C: CommandFactory + FromArgMatches>(
     )
 }
 
-/// One flag of a subcommand and the config paths it sets.
+/// Config path set by each clap argument id that maps to a setting.
+///
+/// Mirrors the `layer()` conversions; `tests_support::check_routes` keeps
+/// both in step. Ids absent from a subcommand (e.g. `http-host` under
+/// `stdio`) are skipped.
+const FLAG_PATHS: &[(&str, &str)] = &[
+    ("log_level", "log_level"),
+    ("backend", "database.backend"),
+    ("host", "database.host"),
+    ("port", "database.port"),
+    ("user", "database.user"),
+    ("password", "database.password"),
+    ("name", "database.name"),
+    ("charset", "database.charset"),
+    ("ssl", "database.ssl"),
+    ("ssl_ca", "database.ssl_ca"),
+    ("ssl_cert", "database.ssl_cert"),
+    ("ssl_key", "database.ssl_key"),
+    ("ssl_verify_cert", "database.ssl_verify_cert"),
+    ("read_only", "database.read_only"),
+    ("max_pool_size", "database.max_pool_size"),
+    ("connection_timeout", "database.connection_timeout"),
+    ("query_timeout", "database.query_timeout"),
+    ("page_size", "database.page_size"),
+    ("http-host", "http.host"),
+    ("http-port", "http.port"),
+    ("allowed_origins", "http.allowed_origins"),
+    ("allowed_hosts", "http.allowed_hosts"),
+    ("auth_token", "http.auth_token"),
+    ("dangerously_allow_unauthenticated", "http.allow_unauthenticated"),
+    ("enabled", "pii.enabled"),
+    ("operator", "pii.operator"),
+    ("categories", "pii.categories"),
+    ("ner_enabled", "pii.ner_enabled"),
+    ("ner_model", "pii.ner_model"),
+    ("ssh-host", "ssh.host"),
+    ("ssh-port", "ssh.port"),
+    ("ssh-user", "ssh.user"),
+    ("ssh-password", "ssh.password"),
+    ("ssh-key", "ssh.key"),
+    ("ssh-key-passphrase", "ssh.key_passphrase"),
+    ("ssh-known-hosts", "ssh.known_hosts"),
+    ("ssh-strict-host-key-checking", "ssh.strict_host_key_checking"),
+    ("ssh-keepalive-interval", "ssh.keepalive_interval"),
+    ("ssh-local-port", "ssh.local_port"),
+];
+
+/// One flag of a subcommand and the config path it sets.
 struct FlagRoute {
     /// Clap argument id.
-    id: String,
+    id: &'static str,
     /// Long name, without `--`.
     long: String,
     /// Bound env var, if any.
     env: Option<String>,
-    /// Config paths the flag sets, e.g. `database.port`.
-    paths: Vec<&'static str>,
+    /// Config path the flag sets, e.g. `database.port`.
+    path: &'static str,
 }
 
 impl FlagRoute {
@@ -187,63 +234,73 @@ impl FlagRoute {
     }
 }
 
-/// Returns `C`'s command with every env var binding removed.
-///
-/// Parsing a single `--flag=value` with it yields a layer holding only
-/// that flag, whatever the process environment contains.
-fn bare_command<C: CommandFactory>() -> clap::Command {
-    C::command()
-        .no_binary_name(true)
-        .mut_args(|arg| arg.env(None::<&'static str>))
-}
-
-/// Parses `--long=value` alone into its layer.
-fn single_flag_layer<C: CommandFactory + FromArgMatches>(
-    long: &str,
-    value: &str,
-    to_layer: ToLayer<C>,
-) -> Result<ConfigLayer, clap::Error> {
-    let matches = bare_command::<C>().try_get_matches_from([format!("--{long}={value}")])?;
-    C::from_arg_matches(&matches).map(|cmd| to_layer(&cmd, &matches))
-}
-
-/// Discovers which config paths each flag of `C` sets.
-///
-/// Each flag is parsed alone with a sample value (its first possible
-/// value, or `1`); the paths set in the resulting layer are its paths.
-fn flag_routes<C: CommandFactory + FromArgMatches>(to_layer: ToLayer<C>) -> Vec<FlagRoute> {
-    C::command()
-        .get_arguments()
-        .filter_map(|arg| {
-            let long = arg.get_long()?;
-            let sample = arg
-                .get_possible_values()
-                .first()
-                .map_or_else(|| "1".to_owned(), |value| value.get_name().to_owned());
-            let paths = single_flag_layer(long, &sample, to_layer).ok()?.set_paths();
-            (!paths.is_empty()).then(|| FlagRoute {
-                id: arg.get_id().as_str().to_owned(),
-                long: long.to_owned(),
+/// Returns the [`FLAG_PATHS`] routes of the flags `command` defines.
+fn flag_routes(command: &clap::Command) -> Vec<FlagRoute> {
+    FLAG_PATHS
+        .iter()
+        .filter_map(|&(id, path)| {
+            let arg = command.get_arguments().find(|arg| arg.get_id().as_str() == id)?;
+            Some(FlagRoute {
+                id,
+                long: arg.get_long()?.to_owned(),
                 env: arg.get_env().and_then(OsStr::to_str).map(str::to_owned),
-                paths,
+                path,
             })
         })
         .collect()
 }
 
-/// Test access to private routing helpers.
+/// Returns `command` with every env var binding removed.
+///
+/// Parsing a single `--flag=value` with it yields a layer holding only
+/// that flag, whatever the process environment contains.
+fn bare_command(command: clap::Command) -> clap::Command {
+    command
+        .no_binary_name(true)
+        .mut_args(|arg| arg.env(None::<&'static str>))
+}
+
+/// Parses `--long=value` alone with `bare` into its layer.
+fn single_flag_layer<C: FromArgMatches>(
+    bare: &clap::Command,
+    long: &str,
+    value: &str,
+    to_layer: ToLayer<C>,
+) -> Result<ConfigLayer, clap::Error> {
+    let matches = bare.clone().try_get_matches_from([format!("--{long}={value}")])?;
+    C::from_arg_matches(&matches).map(|cmd| to_layer(&cmd, &matches))
+}
+
+/// Test helpers for the flag routing table.
 #[cfg(test)]
 pub(crate) mod tests_support {
-    use super::{CommandFactory, FromArgMatches, ToLayer};
+    use super::{CommandFactory, FromArgMatches, ToLayer, bare_command, flag_routes, single_flag_layer};
 
-    /// Returns each discovered flag's long name and config paths.
-    pub(crate) fn flag_routes<C: CommandFactory + FromArgMatches>(
-        to_layer: ToLayer<C>,
-    ) -> Vec<(String, Vec<&'static str>)> {
-        super::flag_routes(to_layer)
-            .into_iter()
-            .map(|flag| (flag.long, flag.paths))
-            .collect()
+    /// Asserts every setting flag of `C` has a route that matches its layer conversion.
+    ///
+    /// Each routed flag is parsed alone with a sample value (its first
+    /// possible value, or `1`) and must set exactly its routed path.
+    pub(crate) fn check_routes<C: CommandFactory + FromArgMatches>(to_layer: ToLayer<C>) {
+        let command = C::command();
+        let routes = flag_routes(&command);
+        let bare = bare_command(command.clone());
+        for arg in command.get_arguments() {
+            let Some(long) = arg.get_long() else { continue };
+            if ["config", "env", "help"].contains(&long) {
+                continue;
+            }
+            let route = routes
+                .iter()
+                .find(|route| route.long == long)
+                .unwrap_or_else(|| panic!("--{long} has no entry in FLAG_PATHS"));
+            let sample = arg
+                .get_possible_values()
+                .first()
+                .map_or_else(|| "1".to_owned(), |value| value.get_name().to_owned());
+            let layer = single_flag_layer(&bare, long, &sample, to_layer)
+                .unwrap_or_else(|e| panic!("--{long}={sample} must parse: {e}"));
+            assert_eq!(layer.set_paths(), [route.path], "--{long}");
+        }
     }
 }
 
@@ -257,17 +314,18 @@ pub(crate) mod tests_support {
 ///
 /// Returns [`LoadError::Env`] listing every invalid value from the first
 /// env file that has one.
-fn dotenv_layer<C: CommandFactory + FromArgMatches>(
+fn dotenv_layer<C: FromArgMatches>(
     matches: &ArgMatches,
     dotenv: &Dotenv,
     flags: &[FlagRoute],
+    bare: &clap::Command,
     provenance: &mut Provenance,
     to_layer: ToLayer<C>,
 ) -> Result<ConfigLayer, LoadError> {
     let mut layer = ConfigLayer::default();
     let mut errors: Vec<(PathBuf, String)> = Vec::new();
     for flag in flags {
-        if is_explicit(matches, &flag.id) {
+        if is_explicit(matches, flag.id) {
             continue;
         }
         let Some((env, var)) = flag
@@ -277,17 +335,15 @@ fn dotenv_layer<C: CommandFactory + FromArgMatches>(
         else {
             continue;
         };
-        match single_flag_layer(&flag.long, &var.value, to_layer) {
+        match single_flag_layer(bare, &flag.long, &var.value, to_layer) {
             Ok(flag_layer) => {
-                for path in flag_layer.set_paths() {
-                    provenance.set_source(
-                        path,
-                        Source::Dotenv {
-                            name: env.to_owned(),
-                            location: var.location(),
-                        },
-                    );
-                }
+                provenance.set_source(
+                    flag.path,
+                    Source::Dotenv {
+                        name: env.to_owned(),
+                        location: var.location(),
+                    },
+                );
                 layer = layer.or(flag_layer);
             }
             Err(_) => errors.push((

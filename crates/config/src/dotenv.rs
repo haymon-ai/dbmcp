@@ -140,10 +140,13 @@ fn is_valid_key(key: &str) -> bool {
 }
 
 /// Returns an unquoted value without its inline comment and trailing blanks.
+///
+/// `raw` starts after the blanks that follow the separator, so a leading
+/// `#` begins a comment too.
 fn unquoted(raw: &str) -> &str {
     let end = raw
         .char_indices()
-        .find(|&(i, c)| c == '#' && raw[..i].ends_with([' ', '\t']))
+        .find(|&(i, c)| c == '#' && (i == 0 || raw[..i].ends_with([' ', '\t'])))
         .map_or(raw.len(), |(i, _)| i);
     raw[..end].trim_end()
 }
@@ -238,8 +241,9 @@ mod tests {
 
     #[test]
     fn basic_forms_comments_and_export() {
-        let (dotenv, errors, _) =
-            parse("# comment\n\nA=1\n  B = two words  \nexport C=3\nD: four\nE=five # trailing\nF=a#b\nG=\n");
+        let (dotenv, errors, _) = parse(
+            "# comment\n\nA=1\n  B = two words  \nexport C=3\nD: four\nE=five # trailing\nF=a#b\nG=\nH= # set me\n",
+        );
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(value(&dotenv, "A"), "1");
         assert_eq!(value(&dotenv, "B"), "two words");
@@ -248,6 +252,11 @@ mod tests {
         assert_eq!(value(&dotenv, "E"), "five");
         assert_eq!(value(&dotenv, "F"), "a#b");
         assert_eq!(value(&dotenv, "G"), "");
+        assert_eq!(
+            value(&dotenv, "H"),
+            "",
+            "a comment right after `=` leaves the value empty"
+        );
         assert_eq!(dotenv.get("A").expect("A").line, 3);
         assert_eq!(dotenv.get("A").expect("A").location(), "/cfg/.env:3");
     }

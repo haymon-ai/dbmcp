@@ -1,7 +1,8 @@
 //! Config-file deserialization for [`clap::ValueEnum`] types.
 //!
 //! File values use the exact kebab-case tokens the CLI accepts, matched
-//! case-sensitively, so a value valid in one layer is valid in every layer.
+//! case-sensitively. The CLI is at least as lenient (`--log-level` also
+//! ignores case), so a value valid in the file is valid in every layer.
 
 use clap::ValueEnum;
 use serde::de::{Deserialize, Deserializer, Error};
