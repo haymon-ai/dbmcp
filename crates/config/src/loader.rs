@@ -3,11 +3,17 @@
 //! [`load`] is the single entry point: it reads the optional config file,
 //! stacks the CLI layer on top, and resolves the result into a validated
 //! [`Config`](crate::Config). Each stage fails fast with a [`LoadError`].
+//!
+//! Paths written in the file expand a leading `~` and then resolve
+//! relative to the file's directory, so the file means the same thing
+//! whatever the current directory is. CLI and env paths are left alone.
 
 use std::path::{Path, PathBuf};
 
+use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::error::ConfigErrors;
 use crate::layer::{ConfigLayer, Resolved, Transport};
+use crate::ssh;
 
 /// Failure of one [`load`] stage.
 ///
@@ -51,8 +57,11 @@ impl std::fmt::Display for Bullets<'_> {
 
 /// Merges `cli` over the optional config `file` and resolves the result.
 ///
-/// A relative `file` path resolves against the current directory. `home`
-/// is forwarded to [`ConfigLayer::resolve`].
+/// A relative `file` path resolves against the current directory. Path
+/// settings read from the file resolve against the file's directory, after
+/// expanding a leading `~` against `home`; `database.name` does so only when
+/// it came from the file and the merged backend is `sqlite`. `home` is also
+/// forwarded to [`ConfigLayer::resolve`].
 ///
 /// # Errors
 ///
@@ -66,15 +75,66 @@ pub fn load(
     transport: Transport,
     home: Option<&Path>,
 ) -> Result<Resolved, LoadError> {
-    let file_layer = match file {
-        Some(path) => read_file(path)?,
-        None => ConfigLayer::default(),
+    let Some(file) = file else {
+        return Ok(cli.resolve(transport, home)?);
     };
-    Ok(cli.or(file_layer).resolve(transport, home)?)
+    let (path, mut file_layer) = read_file(file)?;
+    let dir = path.parent().unwrap_or(Path::new("/"));
+    resolve_file_paths(&mut file_layer, dir, home);
+
+    let name_from_file = cli.database.name.is_none() && file_layer.database.name.is_some();
+    let mut merged = cli.or(file_layer);
+    let backend = merged.database.backend.unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
+    if name_from_file
+        && backend == DatabaseBackend::Sqlite
+        && let Some(name) = &mut merged.database.name
+        && !is_sqlite_special_name(name)
+    {
+        *name = resolve_path_string(name, dir, home);
+    }
+    Ok(merged.resolve(transport, home)?)
 }
 
-/// Reads and parses the config file at `path`.
-fn read_file(path: &Path) -> Result<ConfigLayer, LoadError> {
+/// Resolves every path setting of a file layer against `dir`.
+fn resolve_file_paths(layer: &mut ConfigLayer, dir: &Path, home: Option<&Path>) {
+    let db = &mut layer.database;
+    for path in [&mut db.ssl_ca, &mut db.ssl_cert, &mut db.ssl_key]
+        .into_iter()
+        .flatten()
+    {
+        *path = resolve_path_string(path, dir, home);
+    }
+    let ssh = &mut layer.ssh;
+    for path in [&mut ssh.key, &mut ssh.known_hosts, &mut layer.pii.ner_model]
+        .into_iter()
+        .flatten()
+    {
+        *path = resolve_path(path, dir, home);
+    }
+}
+
+/// Expands a leading `~` in `path`, then anchors a relative result at `dir`.
+fn resolve_path(path: &Path, dir: &Path, home: Option<&Path>) -> PathBuf {
+    let expanded = ssh::expand_tilde(path, home);
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        dir.join(expanded)
+    }
+}
+
+/// [`resolve_path`] for settings stored as strings.
+fn resolve_path_string(path: &str, dir: &Path, home: Option<&Path>) -> String {
+    resolve_path(Path::new(path), dir, home).to_string_lossy().into_owned()
+}
+
+/// Returns `true` for `SQLite` names that are not file paths.
+fn is_sqlite_special_name(name: &str) -> bool {
+    name.is_empty() || name == ":memory:" || name.starts_with("file:")
+}
+
+/// Reads and parses the config file at `path`, returning its absolute path.
+fn read_file(path: &Path) -> Result<(PathBuf, ConfigLayer), LoadError> {
     let read_error = |path: PathBuf, reason: String| LoadError::Read { path, reason };
     let path = std::path::absolute(path).map_err(|e| read_error(path.to_path_buf(), e.to_string()))?;
     let metadata = std::fs::metadata(&path).map_err(|e| read_error(path.clone(), e.to_string()))?;
@@ -85,7 +145,10 @@ fn read_file(path: &Path) -> Result<ConfigLayer, LoadError> {
         return Err(read_error(path, "not a regular file".into()));
     }
     let text = std::fs::read_to_string(&path).map_err(|e| read_error(path.clone(), e.to_string()))?;
-    parse(&text).map_err(|message| LoadError::Parse { path, message })
+    match parse(&text) {
+        Ok(layer) => Ok((path, layer)),
+        Err(message) => Err(LoadError::Parse { path, message }),
+    }
 }
 
 /// Parses a config document; an empty or `null` document is an empty layer.
@@ -104,7 +167,7 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use crate::{ConfigError, DatabaseBackend, DatabaseConfig, LogLevel, PiiCategory, StrictHostKeyChecking};
+    use crate::{ConfigError, LogLevel, PiiCategory, StrictHostKeyChecking};
 
     fn parse_ok(text: &str) -> ConfigLayer {
         parse(text).unwrap_or_else(|e| panic!("{text:?} must parse: {e}"))
@@ -315,6 +378,171 @@ ssh:
             error
                 .to_string()
                 .starts_with(&format!("failed to parse config file {}:\n  - ", file.path().display()))
+        );
+    }
+
+    fn home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\deploy")
+        } else {
+            PathBuf::from("/home/deploy")
+        }
+    }
+
+    /// Writes `yaml` to `dbmcp.yaml` in a fresh directory.
+    fn config_dir(yaml: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("dbmcp.yaml");
+        std::fs::write(&path, yaml).expect("write config");
+        (dir, path)
+    }
+
+    fn load_file(path: &Path, cli: ConfigLayer) -> Resolved {
+        load(cli, Some(path), Transport::Stdio, Some(&home())).expect("valid")
+    }
+
+    #[test]
+    fn relative_file_paths_resolve_against_config_dir() {
+        let (dir, path) = config_dir(
+            "database:\n  ssl_ca: certs/ca.pem\n  ssl_cert: ./cert.pem\n  ssl_key: ../key.pem\n\
+             pii:\n  ner_model: models/ner\n\
+             ssh:\n  host: bastion\n  user: deploy\n  password: pw\n  known_hosts: kh\n",
+        );
+        let config = load_file(&path, ConfigLayer::default()).config;
+        let base = dir.path();
+        let db = &config.database;
+        assert_eq!(db.ssl_ca.as_deref().map(PathBuf::from), Some(base.join("certs/ca.pem")));
+        assert_eq!(db.ssl_cert.as_deref().map(PathBuf::from), Some(base.join("./cert.pem")));
+        assert_eq!(db.ssl_key.as_deref().map(PathBuf::from), Some(base.join("../key.pem")));
+        assert_eq!(config.pii.ner_model, Some(base.join("models/ner")));
+        assert_eq!(config.ssh.expect("tunnel").known_hosts, Some(base.join("kh")));
+    }
+
+    // A relative path to a temp dir on another drive is impossible on Windows.
+    #[cfg(unix)]
+    #[test]
+    fn relative_config_path_still_anchors_file_paths_at_its_directory() {
+        let (dir, path) = config_dir("database:\n  ssl_ca: certs/ca.pem\n");
+        std::fs::create_dir(dir.path().join("certs")).expect("certs dir");
+        let cwd = std::env::current_dir().expect("cwd");
+        let relative = pathdiff(&path, &cwd);
+        assert!(relative.is_relative());
+        let config = load_file(&relative, ConfigLayer::default()).config;
+        let ssl_ca = PathBuf::from(config.database.ssl_ca.expect("ssl_ca"));
+        assert!(ssl_ca.is_absolute(), "{}", ssl_ca.display());
+        assert_eq!(ssl_ca.file_name(), Some("ca.pem".as_ref()));
+        let canonical = |p: &Path| std::fs::canonicalize(p).expect("canonicalize");
+        assert_eq!(
+            canonical(ssl_ca.parent().expect("parent")),
+            canonical(&dir.path().join("certs"))
+        );
+    }
+
+    /// Returns `path` relative to `base` using `..` components.
+    #[cfg(unix)]
+    fn pathdiff(path: &Path, base: &Path) -> PathBuf {
+        let path: Vec<_> = path.components().collect();
+        let base: Vec<_> = base.components().collect();
+        let common = path.iter().zip(&base).take_while(|(a, b)| a == b).count();
+        let mut relative = PathBuf::new();
+        for _ in common..base.len() {
+            relative.push("..");
+        }
+        relative.extend(&path[common..]);
+        relative
+    }
+
+    #[test]
+    fn tilde_expands_in_every_file_path_field() {
+        let (_dir, path) = config_dir(
+            "database:\n  ssl_ca: ~/ca.pem\n  ssl_cert: ~/cert.pem\n  ssl_key: ~/key.pem\n\
+             pii:\n  ner_model: ~/ner\n\
+             ssh:\n  host: bastion\n  user: deploy\n  password: pw\n  known_hosts: ~/kh\n",
+        );
+        let mut layer = read_file(&path).expect("parse").1;
+        layer.ssh.key = Some(PathBuf::from("~/id"));
+        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()));
+        let db = &layer.database;
+        assert_eq!(db.ssl_ca.as_deref().map(PathBuf::from), Some(home().join("ca.pem")));
+        assert_eq!(db.ssl_cert.as_deref().map(PathBuf::from), Some(home().join("cert.pem")));
+        assert_eq!(db.ssl_key.as_deref().map(PathBuf::from), Some(home().join("key.pem")));
+        assert_eq!(layer.pii.ner_model, Some(home().join("ner")));
+        assert_eq!(layer.ssh.key, Some(home().join("id")));
+        assert_eq!(layer.ssh.known_hosts, Some(home().join("kh")));
+    }
+
+    #[test]
+    fn absolute_file_paths_are_untouched() {
+        let absolute = home().join("ca.pem");
+        let mut layer = ConfigLayer::default();
+        layer.database.ssl_ca = Some(absolute.to_string_lossy().into_owned());
+        resolve_file_paths(&mut layer, Path::new("/cfg"), Some(&home()));
+        assert_eq!(layer.database.ssl_ca.as_deref().map(PathBuf::from), Some(absolute));
+    }
+
+    #[test]
+    fn sqlite_name_from_file_resolves_against_config_dir() {
+        let (dir, path) = config_dir("database:\n  backend: sqlite\n  name: data/app.db\n");
+        let config = load_file(&path, ConfigLayer::default()).config;
+        assert_eq!(
+            config.database.name.as_deref().map(PathBuf::from),
+            Some(dir.path().join("data/app.db"))
+        );
+    }
+
+    #[test]
+    fn sqlite_name_from_cli_stays_relative_to_cwd() {
+        let (_dir, path) = config_dir("database:\n  backend: sqlite\n  name: data/app.db\n");
+        let mut cli = ConfigLayer::default();
+        cli.database.name = Some("data/app.db".into());
+        let config = load_file(&path, cli).config;
+        assert_eq!(config.database.name.as_deref(), Some("data/app.db"));
+    }
+
+    #[test]
+    fn sqlite_name_follows_merged_backend() {
+        let (dir, path) = config_dir("database:\n  name: app.db\n");
+        let mut cli = ConfigLayer::default();
+        cli.database.backend = Some(DatabaseBackend::Sqlite);
+        let config = load_file(&path, cli).config;
+        assert_eq!(
+            config.database.name.as_deref().map(PathBuf::from),
+            Some(dir.path().join("app.db"))
+        );
+    }
+
+    #[test]
+    fn cli_paths_are_not_resolved_against_config_dir() {
+        let (_dir, path) = config_dir("database:\n  ssl_ca: file-ca.pem\n");
+        let mut cli = ConfigLayer::default();
+        cli.database.ssl_ca = Some("certs/ca.pem".into());
+        let config = load_file(&path, cli).config;
+        assert_eq!(config.database.ssl_ca.as_deref(), Some("certs/ca.pem"));
+    }
+
+    #[test]
+    fn non_sqlite_name_is_a_plain_database_name() {
+        let (_dir, path) = config_dir("database:\n  backend: postgres\n  name: app\n");
+        let config = load_file(&path, ConfigLayer::default()).config;
+        assert_eq!(config.database.name.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn sqlite_memory_and_uri_names_pass_through() {
+        for name in [":memory:", "file:app.db?mode=ro"] {
+            let (_dir, path) = config_dir(&format!("database:\n  backend: sqlite\n  name: '{name}'\n"));
+            let config = load_file(&path, ConfigLayer::default()).config;
+            assert_eq!(config.database.name.as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn sqlite_name_tilde_expands() {
+        let (_dir, path) = config_dir("database:\n  backend: sqlite\n  name: ~/app.db\n");
+        let config = load_file(&path, ConfigLayer::default()).config;
+        assert_eq!(
+            config.database.name.as_deref().map(PathBuf::from),
+            Some(home().join("app.db"))
         );
     }
 
