@@ -28,6 +28,19 @@ pub struct HttpConfig {
     pub allow_unauthenticated: bool,
 }
 
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            host: Self::DEFAULT_HOST.into(),
+            port: Self::DEFAULT_PORT,
+            allowed_origins: Self::default_allowed_origins(),
+            allowed_hosts: Self::default_allowed_hosts(),
+            auth_token: None,
+            allow_unauthenticated: false,
+        }
+    }
+}
+
 impl HttpConfig {
     /// Default HTTP bind host.
     pub const DEFAULT_HOST: &'static str = "127.0.0.1";

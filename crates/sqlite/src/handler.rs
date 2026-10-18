@@ -128,7 +128,7 @@ mod tests {
                 read_only,
                 ..DatabaseConfig::default()
             },
-            http: None,
+            http: dbmcp_config::HttpConfig::default(),
             pii: dbmcp_config::PiiConfig::default(),
             ssh: None,
         })

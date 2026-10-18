@@ -3,14 +3,14 @@
 //! Runs the MCP server over stdin/stdout for use with Claude Desktop,
 //! Cursor, and other MCP clients that communicate via stdio.
 
-use clap::{ArgMatches, FromArgMatches, Parser};
-use dbmcp_config::{Config, ConfigLayer, HttpLayer};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
+use dbmcp_config::{ConfigLayer, HttpLayer};
 use rmcp::ServiceExt;
 use tracing::{error, info};
 
 use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs};
 use crate::error::ErrorKind;
-use crate::server;
+use crate::{cli, server};
 
 /// Runs the MCP server in stdio mode.
 #[derive(Debug, Parser)]
@@ -49,16 +49,17 @@ impl StdioCommand {
         }
     }
 
-    /// Builds the server for `config` and runs the stdio transport.
+    /// Loads the config from `matches` and runs the stdio transport.
     ///
     /// Serves JSON-RPC over stdin/stdout.
     ///
     /// # Errors
     ///
-    /// Returns an error if the server cannot be built, the stdio
-    /// transport fails to initialize, or the server encounters a fatal
-    /// protocol error.
-    pub(crate) async fn execute(config: Config) -> Result<(), ErrorKind> {
+    /// Returns an error if the configuration cannot be loaded, the server
+    /// cannot be built, the stdio transport fails to initialize, or the
+    /// server encounters a fatal protocol error.
+    pub(crate) async fn run(matches: &ArgMatches) -> Result<(), ErrorKind> {
+        let config = cli::start(Self::command(), matches, Self::layer)?;
         let (tunnel, server) = server::create_server(&config).await?;
 
         info!("Starting MCP server via stdio transport...");
@@ -89,17 +90,16 @@ impl StdioCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
     use dbmcp_config::{
         ConfigError, ConfigWarning, DatabaseBackend, DatabaseConfig, ExposeSecret, LoadError, LogLevel, PiiCategory,
-        Resolved, Transport,
+        Resolved,
     };
 
     use super::*;
     use crate::args::tests_support::{self, config_file};
 
     fn load(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<StdioCommand>(StdioCommand::layer, Transport::Stdio, args)
+        tests_support::load::<StdioCommand>(StdioCommand::layer, args)
     }
 
     fn with_config<'a>(path: &'a std::path::Path, args: &[&'a str]) -> Vec<&'a str> {
@@ -307,13 +307,7 @@ mod tests {
         let argv = with_config(&path, &[]);
         let matches = StdioCommand::command().try_get_matches_from(&argv).expect("parse");
         let mut warnings = Vec::new();
-        let result = crate::args::load(
-            StdioCommand::command(),
-            &matches,
-            StdioCommand::layer,
-            Transport::Stdio,
-            &mut warnings,
-        );
+        let result = crate::args::load(StdioCommand::command(), &matches, StdioCommand::layer, &mut warnings);
         assert!(matches!(result, Err(LoadError::Parse { .. })));
         assert_eq!(
             warnings,
@@ -325,10 +319,13 @@ mod tests {
     }
 
     #[test]
-    fn http_section_is_ignored_under_stdio() {
+    fn http_section_is_validated_under_stdio() {
         let (_dir, path) = config_file("http:\n  host: ''\n");
-        let config = load(&with_config(&path, &[])).expect("stdio ignores http").config;
-        assert!(config.http.is_none());
+        let error = load(&with_config(&path, &[])).expect_err("stdio validates http");
+        let LoadError::Invalid { errors, .. } = error else {
+            panic!("expected validation error");
+        };
+        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
     }
 
     #[test]

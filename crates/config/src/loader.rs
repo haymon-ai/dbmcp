@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::Dotenv;
 use crate::error::ConfigErrors;
-use crate::layer::{ConfigLayer, Resolved, Transport};
+use crate::layer::{ConfigLayer, Resolved};
 use crate::provenance::{Provenance, Source};
 use crate::ssh;
 use crate::warning::ConfigWarning;
@@ -228,7 +228,6 @@ impl<'a> Sources<'a> {
         &self,
         cli: ConfigLayer,
         mut provenance: Provenance,
-        transport: Transport,
         home: Option<&Path>,
     ) -> Result<Resolved, LoadError> {
         let annotate = |provenance: &Provenance, errors: ConfigErrors| {
@@ -236,7 +235,7 @@ impl<'a> Sources<'a> {
             LoadError::Invalid { errors, notes }
         };
         let Some(file) = &self.file else {
-            return cli.resolve(transport, home).map_err(|e| annotate(&provenance, e));
+            return cli.resolve(home).map_err(|e| annotate(&provenance, e));
         };
         let properties = self.dotenv.properties(self.process_env);
         let (mut file_layer, locations) = parse_layer(&file.path, &file.text, properties)?;
@@ -253,9 +252,7 @@ impl<'a> Sources<'a> {
         let name_is_path = cli.database.name.is_none() && backend == DatabaseBackend::Sqlite;
         let dir = file.path.parent().unwrap_or(Path::new("/"));
         resolve_file_paths(&mut file_layer, dir, home, name_is_path);
-        cli.or(file_layer)
-            .resolve(transport, home)
-            .map_err(|e| annotate(&provenance, e))
+        cli.or(file_layer).resolve(home).map_err(|e| annotate(&provenance, e))
     }
 }
 
@@ -423,13 +420,8 @@ mod tests {
     }
 
     /// Reads `file` without env files and resolves `cli` over it.
-    fn load(
-        cli: ConfigLayer,
-        file: Option<&Path>,
-        transport: Transport,
-        home: Option<&Path>,
-    ) -> Result<Resolved, LoadError> {
-        Sources::read(file, &[], &NO_ENV, &mut Vec::new())?.resolve(cli, Provenance::default(), transport, home)
+    fn load(cli: ConfigLayer, file: Option<&Path>, home: Option<&Path>) -> Result<Resolved, LoadError> {
+        Sources::read(file, &[], &NO_ENV, &mut Vec::new())?.resolve(cli, Provenance::default(), home)
     }
 
     /// Parses a config document without any variables set.
@@ -680,7 +672,7 @@ ssh:
     #[test]
     fn validation_errors_name_file_sources() {
         let file = write_file("database:\n  page_size: 0\n  backend: sqlite\n");
-        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Stdio, None).expect_err("invalid");
+        let error = load(ConfigLayer::default(), Some(file.path()), None).expect_err("invalid");
         let at = file.path().display();
         assert_eq!(
             error.to_string(),
@@ -701,7 +693,7 @@ ssh:
         cli.database.page_size = Some(501);
         let error = Sources::read(Some(file.path()), &[], &NO_ENV, &mut Vec::new())
             .expect("read")
-            .resolve(cli, provenance, Transport::Stdio, None)
+            .resolve(cli, provenance, None)
             .expect_err("invalid");
         assert!(error.to_string().ends_with("(from DB_PAGE_SIZE)"), "{error}");
     }
@@ -709,7 +701,7 @@ ssh:
     #[test]
     fn invalid_secret_never_appears_in_validation_output() {
         let file = write_file("http:\n  auth_token: '   '\n  host: 0.0.0.0\n");
-        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Http, None).expect_err("blank token");
+        let error = load(ConfigLayer::default(), Some(file.path()), None).expect_err("blank token");
         let rendered = error.to_string();
         assert!(
             rendered.contains("http.auth_token: must not be empty when set (from "),
@@ -837,7 +829,7 @@ ssh:
         let env = env(&[("CERT_DIR", "certs")]);
         let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
         let config = sources
-            .resolve(ConfigLayer::default(), Provenance::default(), Transport::Stdio, None)
+            .resolve(ConfigLayer::default(), Provenance::default(), None)
             .expect("valid")
             .config;
         assert_eq!(
@@ -855,7 +847,7 @@ ssh:
         let env = env(&[("WHO", "process")]);
         let sources = Sources::read(Some(&path), &[], &env, &mut Vec::new()).expect("read");
         let db = sources
-            .resolve(ConfigLayer::default(), Provenance::default(), Transport::Stdio, None)
+            .resolve(ConfigLayer::default(), Provenance::default(), None)
             .expect("valid")
             .config
             .database;
@@ -875,7 +867,7 @@ ssh:
         let sources = Sources::read(Some(&path), &[], &NO_ENV, &mut Vec::new()).expect("read");
         let expanded = dotenv_value(&sources, "EXPANDED").expect("set");
         let user = sources
-            .resolve(ConfigLayer::default(), Provenance::default(), Transport::Stdio, None)
+            .resolve(ConfigLayer::default(), Provenance::default(), None)
             .expect("valid")
             .config
             .database
@@ -894,7 +886,7 @@ ssh:
         let file = write_file("database:\n  backend: postgres\n  host: file-host\n  user: file-user\n");
         let mut cli = ConfigLayer::default();
         cli.database.host = Some("cli-host".into());
-        let resolved = load(cli, Some(file.path()), Transport::Stdio, None).expect("valid");
+        let resolved = load(cli, Some(file.path()), None).expect("valid");
         let db = resolved.config.database;
         assert_eq!(db.backend, DatabaseBackend::Postgres);
         assert_eq!(db.host, "cli-host", "CLI beats file");
@@ -905,14 +897,14 @@ ssh:
 
     #[test]
     fn load_without_file_resolves_cli_layer() {
-        let resolved = load(ConfigLayer::default(), None, Transport::Stdio, None).expect("valid");
+        let resolved = load(ConfigLayer::default(), None, None).expect("valid");
         assert_eq!(resolved.config.database.backend, DatabaseConfig::DEFAULT_BACKEND);
     }
 
     #[test]
     fn load_validates_merged_config() {
         let file = write_file("database:\n  backend: sqlite\n");
-        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Stdio, None).expect_err("no name");
+        let error = load(ConfigLayer::default(), Some(file.path()), None).expect_err("no name");
         assert!(
             matches!(&error, LoadError::Invalid { errors: e, .. } if matches!(e[0], ConfigError::MissingSqliteDbName))
         );
@@ -926,7 +918,7 @@ ssh:
     fn load_rejects_missing_directory_and_unparsable_files() {
         let dir = tempfile::tempdir().expect("temp dir");
         let missing = dir.path().join("missing.yaml");
-        let error = load(ConfigLayer::default(), Some(&missing), Transport::Stdio, None).expect_err("missing");
+        let error = load(ConfigLayer::default(), Some(&missing), None).expect_err("missing");
         assert!(matches!(&error, LoadError::Read { path, .. } if *path == missing));
         assert!(
             error
@@ -934,11 +926,11 @@ ssh:
                 .starts_with(&format!("failed to read config file {}: ", missing.display()))
         );
 
-        let error = load(ConfigLayer::default(), Some(dir.path()), Transport::Stdio, None).expect_err("dir");
+        let error = load(ConfigLayer::default(), Some(dir.path()), None).expect_err("dir");
         assert!(error.to_string().ends_with(": is a directory"), "{error}");
 
         let file = write_file("database: [unclosed\n");
-        let error = load(ConfigLayer::default(), Some(file.path()), Transport::Stdio, None).expect_err("bad yaml");
+        let error = load(ConfigLayer::default(), Some(file.path()), None).expect_err("bad yaml");
         assert!(matches!(error, LoadError::Parse { .. }), "{error}");
         assert!(
             error
@@ -956,7 +948,7 @@ ssh:
     }
 
     fn load_file(path: &Path, cli: ConfigLayer) -> Resolved {
-        load(cli, Some(path), Transport::Stdio, Some(&home())).expect("valid")
+        load(cli, Some(path), Some(&home())).expect("valid")
     }
 
     #[test]
@@ -1107,7 +1099,7 @@ ssh:
         let (_dir, path) = config_dir("database:\n  ssl: true\n  ssl_ca: ${NOPE_CA}\n");
         let sources = Sources::read(Some(&path), &[], &NO_ENV, &mut Vec::new()).expect("read");
         let error = sources
-            .resolve(ConfigLayer::default(), Provenance::default(), Transport::Stdio, None)
+            .resolve(ConfigLayer::default(), Provenance::default(), None)
             .expect_err("empty ca must fail");
         assert!(
             matches!(&error, LoadError::Invalid { errors, .. }
@@ -1251,25 +1243,13 @@ ssh:
     #[cfg(unix)]
     #[test]
     fn load_rejects_non_regular_file() {
-        let error = load(
-            ConfigLayer::default(),
-            Some(Path::new("/dev/null")),
-            Transport::Stdio,
-            None,
-        )
-        .expect_err("device");
+        let error = load(ConfigLayer::default(), Some(Path::new("/dev/null")), None).expect_err("device");
         assert!(error.to_string().ends_with(": not a regular file"), "{error}");
     }
 
     #[test]
     fn load_makes_relative_path_absolute() {
-        let error = load(
-            ConfigLayer::default(),
-            Some(Path::new("no-such-dbmcp.yaml")),
-            Transport::Stdio,
-            None,
-        )
-        .expect_err("missing");
+        let error = load(ConfigLayer::default(), Some(Path::new("no-such-dbmcp.yaml")), None).expect_err("missing");
         let LoadError::Read { path, .. } = error else {
             panic!("expected read error");
         };

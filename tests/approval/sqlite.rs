@@ -5,7 +5,7 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig};
 use dbmcp_server::Server;
 use dbmcp_sqlite::SqliteHandler;
 use rmcp::RoleClient;
@@ -27,7 +27,7 @@ fn server_with_pii(read_only: bool, pii: PiiConfig) -> Server {
             read_only,
             ..DatabaseConfig::default()
         },
-        http: None,
+        http: HttpConfig::default(),
         pii,
         ssh: None,
     };

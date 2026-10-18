@@ -6,10 +6,9 @@
 //! subcommand.
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
-use dbmcp_config::{Config, LogLevel, Transport};
+use dbmcp_config::{Config, LogLevel};
 
 use crate::args::{self, LayerFn};
-
 use crate::error::{Error, ErrorKind};
 use crate::http::HttpCommand;
 use crate::stdio::StdioCommand;
@@ -81,42 +80,33 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
         Err(error) => return Err(ErrorKind::from(error).into()),
     };
 
+    let Some((_, sub)) = matches.subcommand() else {
+        unreachable!("clap requires a subcommand");
+    };
     match args.command {
         Command::Version => {
             println!("{bin} {version}");
             Ok(())
         }
-        Command::Stdio(_) => {
-            let config = start(
-                StdioCommand::command(),
-                subcommand_matches(&matches),
-                StdioCommand::layer,
-                Transport::Stdio,
-            )?;
-            Ok(StdioCommand::execute(config).await?)
-        }
-        Command::Http(_) => {
-            let config = start(
-                HttpCommand::command(),
-                subcommand_matches(&matches),
-                HttpCommand::layer,
-                Transport::Http,
-            )?;
-            Ok(HttpCommand::execute(config).await?)
-        }
+        Command::Stdio(_) => Ok(StdioCommand::run(sub).await?),
+        Command::Http(_) => Ok(HttpCommand::run(sub).await?),
     }
 }
 
 /// Loads a subcommand's configuration, initialises tracing, and reports warnings.
 ///
-/// `command`, `matches`, `layer`, and `transport` are passed to [`args::load`].
+/// `command`, `matches`, and `layer` are passed to [`args::load`].
 ///
 /// On success, warnings are logged once tracing runs at the resolved
 /// level. On failure, they are printed to stderr ahead of the error.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::Config`] if the configuration cannot be loaded.
 #[allow(clippy::result_large_err)]
-fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn, transport: Transport) -> Result<Config, Error> {
+pub(crate) fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn) -> Result<Config, ErrorKind> {
     let mut warnings = Vec::new();
-    match args::load(command, matches, layer, transport, &mut warnings) {
+    match args::load(command, matches, layer, &mut warnings) {
         Ok(resolved) => {
             init_tracing(resolved.log_level);
             for warning in &warnings {
@@ -128,17 +118,9 @@ fn start(command: clap::Command, matches: &ArgMatches, layer: LayerFn, transport
             for warning in &warnings {
                 eprintln!("warning: {warning}");
             }
-            Err(ErrorKind::from(error).into())
+            Err(error.into())
         }
     }
-}
-
-/// Returns the matches of the subcommand selected in `matches`.
-fn subcommand_matches(matches: &ArgMatches) -> &ArgMatches {
-    matches
-        .subcommand()
-        .map(|(_, sub)| sub)
-        .expect("subcommand is required")
 }
 
 /// Installs the stderr tracing subscriber at `level`.

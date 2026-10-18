@@ -7,7 +7,7 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig, PiiOperator};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use indexmap::IndexMap;
@@ -36,7 +36,7 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
     };
     PostgresHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -47,7 +47,7 @@ fn handler(read_only: bool) -> PostgresHandler {
     let config = base_db_config(read_only);
     PostgresHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -399,7 +399,7 @@ async fn test_query_timeout_cancels_slow_query() {
     };
     let handler = PostgresHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -432,7 +432,7 @@ async fn test_query_timeout_disabled_with_zero() {
     };
     let handler = PostgresHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -3681,7 +3681,7 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
 fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
     PostgresHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: redact_pii,
             operator: PiiOperator::Replace,
@@ -3695,7 +3695,7 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
 fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
     PostgresHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: true,
             operator,

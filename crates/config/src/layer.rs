@@ -24,15 +24,6 @@ use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
 use crate::ssh::{self, SshConfig, StrictHostKeyChecking};
 use secrecy::SecretString;
 
-/// Transport whose sections [`ConfigLayer::resolve`] builds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Transport {
-    /// Stdio transport; the `http` section is ignored.
-    Stdio,
-    /// Streamable HTTP transport.
-    Http,
-}
-
 /// Fully resolved settings produced by [`ConfigLayer::resolve`].
 #[derive(Debug)]
 pub struct Resolved {
@@ -264,17 +255,16 @@ impl ConfigLayer {
 
     /// Applies defaults to every unset setting and validates the result.
     ///
-    /// The `http` section is built only for [`Transport::Http`]. `home`
-    /// expands a leading `~` in SSH paths and locates the default
+    /// `home` expands a leading `~` in SSH paths and locates the default
     /// `known_hosts` file.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigErrors`] with every rule violation across the
     /// database, http, pii, and ssh sections, in that order.
-    pub fn resolve(self, transport: Transport, home: Option<&Path>) -> Result<Resolved, ConfigErrors> {
+    pub fn resolve(self, home: Option<&Path>) -> Result<Resolved, ConfigErrors> {
         let database = self.database.resolve();
-        let http = (transport == Transport::Http).then(|| self.http.resolve());
+        let http = self.http.resolve();
         let pii = self.pii.resolve();
         let ssh = self.ssh.resolve(home);
 
@@ -282,7 +272,7 @@ impl ConfigLayer {
         if let Err(e) = database.validate() {
             errors.extend(e);
         }
-        if let Some(Err(e)) = http.as_ref().map(HttpConfig::validate) {
+        if let Err(e) = http.validate() {
             errors.extend(e);
         }
         if let Err(e) = pii.validate() {
@@ -412,8 +402,8 @@ mod tests {
     use crate::test_support::home;
     use secrecy::ExposeSecret;
 
-    fn resolve(layer: ConfigLayer, transport: Transport) -> Result<Resolved, ConfigErrors> {
-        layer.resolve(transport, Some(&home()))
+    fn resolve(layer: ConfigLayer) -> Result<Resolved, ConfigErrors> {
+        layer.resolve(Some(&home()))
     }
 
     fn messages(errors: &ConfigErrors) -> Vec<String> {
@@ -422,7 +412,7 @@ mod tests {
 
     #[test]
     fn empty_layer_resolves_to_defaults() {
-        let resolved = resolve(ConfigLayer::default(), Transport::Http).expect("defaults validate");
+        let resolved = resolve(ConfigLayer::default()).expect("defaults validate");
         assert_eq!(resolved.log_level, LogLevel::Info);
         let config = resolved.config;
         let db = config.database;
@@ -433,7 +423,7 @@ mod tests {
         assert_eq!(db.max_pool_size, DatabaseConfig::DEFAULT_MAX_POOL_SIZE);
         assert_eq!(db.query_timeout, DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS);
         assert_eq!(db.page_size, DatabaseConfig::DEFAULT_PAGE_SIZE);
-        let http = config.http.expect("http transport builds http");
+        let http = config.http;
         assert_eq!(http.host, HttpConfig::DEFAULT_HOST);
         assert_eq!(http.allowed_origins, HttpConfig::default_allowed_origins());
         assert!(!config.pii.enabled);
@@ -553,7 +543,7 @@ mod tests {
             },
             ..ConfigLayer::default()
         };
-        let errors = resolve(layer, Transport::Stdio).expect_err("orphan ssh option");
+        let errors = resolve(layer).expect_err("orphan ssh option");
         assert_eq!(messages(&errors), ["ssh.host: required when other ssh options are set"]);
     }
 
@@ -574,12 +564,12 @@ mod tests {
             },
             ..ConfigLayer::default()
         };
-        let config = resolve(upper.or(lower), Transport::Stdio).expect("valid").config;
+        let config = resolve(upper.or(lower)).expect("valid").config;
         assert_eq!(config.ssh.expect("enabled").user, "deploy");
     }
 
     #[test]
-    fn http_section_is_ignored_under_stdio() {
+    fn http_section_is_validated() {
         let layer = ConfigLayer {
             http: HttpLayer {
                 host: Some(String::new()),
@@ -587,11 +577,7 @@ mod tests {
             },
             ..ConfigLayer::default()
         };
-        let config = resolve(layer.clone(), Transport::Stdio)
-            .expect("stdio ignores http")
-            .config;
-        assert!(config.http.is_none());
-        let errors = resolve(layer, Transport::Http).expect_err("http validates http");
+        let errors = resolve(layer).expect_err("http validates http");
         assert_eq!(messages(&errors), ["http.host: must not be empty"]);
     }
 
@@ -616,7 +602,7 @@ mod tests {
             },
             ..ConfigLayer::default()
         };
-        let errors = resolve(layer, Transport::Http).expect_err("must fail");
+        let errors = resolve(layer).expect_err("must fail");
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
         assert!(matches!(errors[1], ConfigError::EmptyHttpHost));
         assert!(matches!(errors[2], ConfigError::PiiNerModelMissing));
@@ -640,7 +626,7 @@ mod tests {
             },
             ..ConfigLayer::default()
         };
-        let errors = resolve(layer, Transport::Stdio).expect_err("sqlite cannot tunnel");
+        let errors = resolve(layer).expect_err("sqlite cannot tunnel");
         assert!(matches!(errors[0], ConfigError::SshSqliteUnsupported));
     }
 

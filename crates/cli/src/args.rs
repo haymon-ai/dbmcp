@@ -19,7 +19,7 @@ use clap::{ArgAction, ArgMatches, Args, FromArgMatches};
 use dbmcp_config::{
     ConfigLayer, ConfigWarning, DatabaseBackend, DatabaseConfig, DatabaseLayer, Dotenv, LoadError, LogLevel,
     PiiCategory, PiiConfig, PiiLayer, PiiOperator, Provenance, Resolved, Route, SecretString, Source, Sources,
-    SshLayer, StrictHostKeyChecking, Transport, ssh,
+    SshLayer, StrictHostKeyChecking, ssh,
 };
 
 /// Returns `true` when argument `id` was set by flag or env var.
@@ -92,7 +92,6 @@ pub(crate) fn load(
     command: clap::Command,
     matches: &ArgMatches,
     layer: LayerFn,
-    transport: Transport,
     warnings: &mut Vec<ConfigWarning>,
 ) -> Result<Resolved, LoadError> {
     let shared = SharedArgs::from_arg_matches(matches).expect("matches were parsed by `command`");
@@ -125,7 +124,6 @@ pub(crate) fn load(
     sources.resolve(
         layer(matches).or(layer(&dotenv)),
         provenance,
-        transport,
         ssh::home_dir().as_deref(),
     )
 }
@@ -222,7 +220,7 @@ pub(crate) mod tests_support {
     use std::path::PathBuf;
 
     use clap::CommandFactory;
-    use dbmcp_config::{LoadError, Resolved, Transport};
+    use dbmcp_config::{LoadError, Resolved};
 
     use super::{LayerFn, bare_command, flag_routes};
 
@@ -239,16 +237,12 @@ pub(crate) mod tests_support {
     }
 
     /// Parses `args` as `C` (with `LOG_LEVEL` left alone) and loads its config.
-    pub(crate) fn load<C: CommandFactory>(
-        layer: LayerFn,
-        transport: Transport,
-        args: &[&str],
-    ) -> Result<Resolved, LoadError> {
+    pub(crate) fn load<C: CommandFactory>(layer: LayerFn, args: &[&str]) -> Result<Resolved, LoadError> {
         clear_env::<C>(&["LOG_LEVEL"]);
         let matches = C::command()
             .try_get_matches_from(args)
             .unwrap_or_else(|e| panic!("{args:?} must parse: {e}"));
-        super::load(C::command(), &matches, layer, transport, &mut Vec::new())
+        super::load(C::command(), &matches, layer, &mut Vec::new())
     }
 
     /// Writes `yaml` to a fresh `dbmcp.yaml` and returns its directory and path.
@@ -592,7 +586,7 @@ mod tests {
     use super::{DatabaseArgs, PiiArgs, SshArgs, explicit};
     use dbmcp_config::{
         Config, ConfigError, ConfigErrors, ConfigLayer, DatabaseBackend, PiiCategory, PiiOperator,
-        StrictHostKeyChecking, Transport,
+        StrictHostKeyChecking,
     };
 
     #[derive(Debug, Parser)]
@@ -632,9 +626,7 @@ mod tests {
     }
 
     fn resolve_with_home(args: &[&str], home: Option<&Path>) -> Result<Config, ConfigErrors> {
-        layer(args)
-            .resolve(Transport::Stdio, home)
-            .map(|resolved| resolved.config)
+        layer(args).resolve(home).map(|resolved| resolved.config)
     }
 
     fn resolve(args: &[&str]) -> Result<Config, ConfigErrors> {

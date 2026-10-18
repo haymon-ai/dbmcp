@@ -49,7 +49,7 @@ pub use database::{DatabaseBackend, DatabaseConfig};
 pub use dotenv::{Dotenv, DotenvVar};
 pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
-pub use layer::{ConfigLayer, DatabaseLayer, HttpLayer, PiiLayer, Resolved, SshLayer, Transport};
+pub use layer::{ConfigLayer, DatabaseLayer, HttpLayer, PiiLayer, Resolved, SshLayer};
 pub use loader::{LoadError, Sources};
 pub use log_level::LogLevel;
 pub use origin::AllowedOrigins;

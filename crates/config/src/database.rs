@@ -226,6 +226,7 @@ impl Default for DatabaseConfig {
 mod tests {
     use super::*;
     use crate::Config;
+    use crate::http::HttpConfig;
     use crate::pii::PiiConfig;
 
     fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
@@ -240,7 +241,7 @@ mod tests {
     fn base_config(backend: DatabaseBackend) -> Config {
         Config {
             database: db_config(backend),
-            http: None,
+            http: HttpConfig::default(),
             pii: PiiConfig::default(),
             ssh: None,
         }

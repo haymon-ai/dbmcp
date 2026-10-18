@@ -9,8 +9,8 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use clap::builder::BoolishValueParser;
-use clap::{ArgAction, ArgMatches, Args, FromArgMatches, Parser};
-use dbmcp_config::{AllowedOrigins, Config, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString};
+use clap::{ArgAction, ArgMatches, Args, CommandFactory, FromArgMatches, Parser};
+use dbmcp_config::{AllowedOrigins, ConfigLayer, ExposeSecret, HttpConfig, HttpLayer, SecretString};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -23,7 +23,7 @@ use tracing::{info, warn};
 
 use crate::args::{DatabaseArgs, PiiArgs, SharedArgs, SshArgs, explicit};
 use crate::error::ErrorKind;
-use crate::server;
+use crate::{cli, server};
 
 /// HTTP transport flags embedded in [`HttpCommand`].
 ///
@@ -167,7 +167,7 @@ impl HttpCommand {
         }
     }
 
-    /// Builds the server for `config` and runs the HTTP transport.
+    /// Loads the config from `matches` and runs the HTTP transport.
     ///
     /// Binds to the configured host/port and serves MCP requests over
     /// Streamable HTTP. Each session clones the internally-built handler,
@@ -176,15 +176,12 @@ impl HttpCommand {
     ///
     /// # Errors
     ///
-    /// Returns an error if the server cannot be built, TCP bind fails
-    /// (port in use, permission denied), or the HTTP service fails to
-    /// serve.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `config.http` is `None`; [`ConfigLayer::resolve`] builds it for [`Transport::Http`](dbmcp_config::Transport::Http).
-    pub(crate) async fn execute(config: Config) -> Result<(), ErrorKind> {
-        let http_config = config.http.as_ref().expect("http config set by Transport::Http");
+    /// Returns an error if the configuration cannot be loaded, the server
+    /// cannot be built, TCP bind fails (port in use, permission denied), or
+    /// the HTTP service fails to serve.
+    pub(crate) async fn run(matches: &ArgMatches) -> Result<(), ErrorKind> {
+        let config = cli::start(Self::command(), matches, Self::layer)?;
+        let http_config = &config.http;
 
         let (tunnel, server) = server::create_server(&config).await?;
         let cancel_token = CancellationToken::new();
@@ -321,9 +318,9 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
-    use clap::{CommandFactory, Parser};
+    use clap::Parser;
     use dbmcp_config::{
-        ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved, Transport,
+        Config, ConfigError, ConfigErrors, DatabaseBackend, DatabaseConfig, LoadError, PiiConfig, Resolved,
     };
 
     use crate::args::tests_support;
@@ -347,8 +344,7 @@ mod tests {
             http: cli.http.layer(&matches),
             ..ConfigLayer::default()
         };
-        let resolved = layer.resolve(Transport::Http, None)?;
-        Ok(resolved.config.http.expect("http transport builds http"))
+        Ok(layer.resolve(None)?.config.http)
     }
 
     fn sqlite_memory_db_config() -> DatabaseConfig {
@@ -380,7 +376,7 @@ mod tests {
         };
         let config = Config {
             database: sqlite_memory_db_config(),
-            http: Some(http_config.clone()),
+            http: http_config.clone(),
             pii: PiiConfig::default(),
             ssh: None,
         };
@@ -412,7 +408,7 @@ mod tests {
 
     /// Parses `args` as the full `http` subcommand and loads its config.
     fn load_http(args: &[&str]) -> Result<Resolved, LoadError> {
-        tests_support::load::<HttpCommand>(HttpCommand::layer, Transport::Http, args)
+        tests_support::load::<HttpCommand>(HttpCommand::layer, args)
     }
 
     #[test]
@@ -431,7 +427,7 @@ mod tests {
         let (_dir, path) = tests_support::config_file("http:\n  port: 9100\n  allowed_hosts: [db.example]\n");
         let path = path.to_str().expect("utf-8 path");
         let resolved = load_http(&["_", "--config", path, "--allowed-hosts", "cli.example"]).expect("valid");
-        let http = resolved.config.http.expect("http config");
+        let http = resolved.config.http;
         assert_eq!(http.port, 9100, "file fills unset flag");
         assert_eq!(http.allowed_hosts, ["cli.example"], "flag replaces file list");
         assert_eq!(http.host, HttpConfig::DEFAULT_HOST, "default fills the rest");

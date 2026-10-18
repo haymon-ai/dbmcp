@@ -10,7 +10,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig, PiiOperator};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
@@ -34,7 +34,7 @@ fn handler(read_only: bool) -> SqliteHandler {
     let config = base_db_config(read_only);
     SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -48,7 +48,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
     };
     SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -181,7 +181,7 @@ async fn test_query_timeout_fast_query_succeeds() {
     };
     let handler = SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -203,7 +203,7 @@ async fn test_query_timeout_disabled_with_zero() {
     };
     let handler = SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -1920,7 +1920,7 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
 fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
     SqliteHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: redact_pii,
             operator: PiiOperator::Replace,
@@ -1934,7 +1934,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
 fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
     SqliteHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: true,
             operator,

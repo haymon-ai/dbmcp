@@ -174,7 +174,7 @@ mod tests {
                 read_only,
                 ..base_config()
             },
-            http: None,
+            http: dbmcp_config::HttpConfig::default(),
             pii: dbmcp_config::PiiConfig::default(),
             ssh: None,
         })
@@ -189,7 +189,7 @@ mod tests {
                 name: Some("mydb".into()),
                 ..base_config()
             },
-            http: None,
+            http: dbmcp_config::HttpConfig::default(),
             pii: dbmcp_config::PiiConfig::default(),
             ssh: None,
         })
@@ -203,7 +203,7 @@ mod tests {
                 name: Some("mydb".into()),
                 ..base_config()
             },
-            http: None,
+            http: dbmcp_config::HttpConfig::default(),
             pii: dbmcp_config::PiiConfig::default(),
             ssh: None,
         })
