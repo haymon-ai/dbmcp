@@ -15,13 +15,4 @@ pub enum ConfigWarning {
         /// Why reading failed.
         reason: String,
     },
-
-    /// A variable referenced in a dotenv file is unset and was replaced with `""`.
-    #[error("variable {name} is not set; substituting an empty string ({location})")]
-    UnsetVariable {
-        /// Variable name.
-        name: String,
-        /// Where it was referenced, e.g. `/abs/.env:3`.
-        location: String,
-    },
 }

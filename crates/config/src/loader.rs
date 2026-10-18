@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::Dotenv;
 use crate::error::ConfigErrors;
-use crate::interpolate::Lookup;
 use crate::layer::{ConfigLayer, Resolved, Transport};
 use crate::provenance::{Provenance, Source};
 use crate::ssh;
@@ -161,7 +160,6 @@ impl<'a> Sources<'a> {
         process_env: &'a HashMap<String, String>,
         warnings: &mut Vec<ConfigWarning>,
     ) -> Result<Self, LoadError> {
-        let lookup = |name: &str| process_env.get(name).cloned();
         let file = config
             .map(|path| {
                 read_text(path)
@@ -179,13 +177,13 @@ impl<'a> Sources<'a> {
                 path: e.path,
                 errors: vec![e.reason],
             })?;
-            parse_dotenv(&mut dotenv, &text, path, &lookup, warnings)?;
+            parse_dotenv(&mut dotenv, &text, path, process_env)?;
         }
         if env_files.is_empty()
             && let Some(file) = &file
         {
             match read_text(&file.path.with_file_name(".env")) {
-                Ok((path, text)) => parse_dotenv(&mut dotenv, &text, path, &lookup, warnings)?,
+                Ok((path, text)) => parse_dotenv(&mut dotenv, &text, path, process_env)?,
                 Err(e) if e.missing => {}
                 Err(e) => warnings.push(ConfigWarning::SkippedEnvFile {
                     path: e.path,
@@ -266,10 +264,9 @@ fn parse_dotenv(
     dotenv: &mut Dotenv,
     text: &str,
     path: PathBuf,
-    process_env: Lookup<'_>,
-    warnings: &mut Vec<ConfigWarning>,
+    process_env: &HashMap<String, String>,
 ) -> Result<(), LoadError> {
-    let errors = dotenv.parse(text, &path, process_env, warnings);
+    let errors = dotenv.parse(text, &path, process_env);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -864,6 +861,32 @@ ssh:
             .database;
         assert_eq!(db.user, "process");
         assert_eq!(db.host, "dotenv-host");
+    }
+
+    #[test]
+    fn file_and_dotenv_interpolate_alike() {
+        let template = "${WHO:-anon}@${HOST:+set}-$$ $";
+        let (dir, path) = config_dir(&format!("database:\n  user: '{template}'\n"));
+        std::fs::write(
+            dir.path().join(".env"),
+            format!("HOST=h\nFROM_ENV='{template}'\nEXPANDED=\"{template}\"\n"),
+        )
+        .expect("write .env");
+        let sources = Sources::read(Some(&path), &[], &NO_ENV, &mut Vec::new()).expect("read");
+        let expanded = dotenv_value(&sources, "EXPANDED").expect("set");
+        let user = sources
+            .resolve(ConfigLayer::default(), Provenance::default(), Transport::Stdio, None)
+            .expect("valid")
+            .config
+            .database
+            .user;
+        assert_eq!(expanded, "anon@set-$ $");
+        assert_eq!(
+            dotenv_value(&sources, "FROM_ENV").as_deref(),
+            Some(template),
+            "single quotes stay literal"
+        );
+        assert_eq!(user, expanded);
     }
 
     #[test]

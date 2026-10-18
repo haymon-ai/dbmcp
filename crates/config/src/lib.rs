@@ -33,7 +33,6 @@ pub mod database;
 pub mod dotenv;
 pub mod error;
 pub mod http;
-mod interpolate;
 pub mod layer;
 pub mod loader;
 pub mod log_level;

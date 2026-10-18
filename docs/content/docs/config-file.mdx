@@ -160,7 +160,7 @@ Every value in the file — strings and each list element — is interpolated be
 | `${VAR+alt}` | `alt` if `VAR` is set, else `""` |
 | `$$` | A literal `$` |
 
-Defaults, messages, and alternatives can nest: `${PRIMARY:-${FALLBACK}}`. A `$` followed by anything other than a name, `{`, or `$` is kept as a literal `$` (in `.env` files it is an error, so prefer `$$` for a literal dollar sign).
+Defaults, messages, and alternatives can nest: `${PRIMARY:-${FALLBACK}}`. A `$` followed by anything other than a name, `{`, or `$` is kept as a literal `$`; `$$` always is one.
 
 Variables are looked up in the process environment first, then in the loaded `.env` files.
 
@@ -187,7 +187,7 @@ BANNER="line one
 line two"                        # quoted values may span lines
 ```
 
-Unquoted and double-quoted values are interpolated against the process environment, then against keys defined earlier.
+Unquoted and double-quoted values are interpolated with the same syntax and rules as the config file, against the process environment, then against keys defined earlier.
 
 ## Path Resolution
 

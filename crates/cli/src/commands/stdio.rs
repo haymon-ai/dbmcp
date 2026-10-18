@@ -305,10 +305,10 @@ mod tests {
     #[test]
     fn load_returns_warnings_on_failure() {
         let (dir, path) = config_file("database:\n  pasword: x\n");
-        let env = dir.path().join("x.env");
-        std::fs::write(&env, "A=${UNSET_IN_TEST}\n").expect("write env");
+        let env = dir.path().join(".env");
+        std::fs::create_dir(&env).expect("create unreadable .env");
         tests_support::clear_env::<StdioCommand>(&["LOG_LEVEL"]);
-        let args = with_config(&path, &["--env", env.to_str().expect("utf-8")]);
+        let args = with_config(&path, &[]);
         let matches = StdioCommand::command().try_get_matches_from(&args).expect("parse");
         let cmd = StdioCommand::from_arg_matches(&matches).expect("from matches");
         let mut warnings = Vec::new();
@@ -316,9 +316,9 @@ mod tests {
         assert!(matches!(result, Err(LoadError::Parse { .. })));
         assert_eq!(
             warnings,
-            [ConfigWarning::UnsetVariable {
-                name: "UNSET_IN_TEST".into(),
-                location: format!("{}:1", env.display())
+            [ConfigWarning::SkippedEnvFile {
+                path: env,
+                reason: "is a directory".into()
             }]
         );
     }

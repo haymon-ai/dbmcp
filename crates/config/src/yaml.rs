@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use clap::builder::{BoolishValueParser, TypedValueParser};
 use serde::de::{self, DeserializeSeed, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Unexpected, Visitor};
@@ -151,31 +151,65 @@ pub(crate) struct ParseError {
 /// Returns the location (when known) and parser message for invalid YAML
 /// or the first failed substitution.
 pub(crate) fn parse(text: &str, properties: HashMap<String, String>) -> Result<Node, ParseError> {
-    let mut options = serde_saphyr::options! {
+    let root =
+        serde_saphyr::from_str_with_options::<Option<Node>>(text, options(properties)).map_err(|e| ParseError {
+            location: e.location(),
+            message: message(&e),
+            interpolation: is_interpolation_error(innermost(&e)),
+        })?;
+    Ok(root.unwrap_or_else(|| Spanned::new(Value::Null, Location::UNKNOWN, Location::UNKNOWN)))
+}
+
+/// Expands every substitution in `template` with the same rules as [`parse`].
+///
+/// # Errors
+///
+/// Returns the value-free reason the first substitution failed.
+pub(crate) fn interpolate(template: &str, properties: HashMap<String, String>) -> Result<String, String> {
+    serde_saphyr::from_str_with_options::<String>(&double_quoted(template), options(properties))
+        .map_err(|e| message(&e))
+}
+
+/// Returns `text` as a YAML double-quoted scalar that parses back to `text`.
+fn double_quoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            // Everything YAML does not allow unescaped (`c-printable`).
+            c if c.is_control() || matches!(c, '\u{FFFE}' | '\u{FFFF}') => {
+                write!(out, "\\u{:04x}", u32::from(c)).expect("writing to a String cannot fail");
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Parser options: strict booleans, no snippets, Compose interpolation from `properties`.
+fn options(properties: HashMap<String, String>) -> serde_saphyr::Options {
+    serde_saphyr::options! {
         strict_booleans: true,
         with_snippet: false,
         property_syntax: PropertySyntax::DockerCompose,
-    };
-    options = options.with_properties(properties);
-    let root = serde_saphyr::from_str_with_options::<Option<Node>>(text, options).map_err(|e| {
-        let inner = innermost(&e);
-        let message = if matches!(inner, serde_saphyr::Error::InvalidPropertyName { .. }) {
-            // The parser quotes the rest of the scalar, which may be a secret.
-            INVALID_SUBSTITUTION.to_owned()
-        } else {
-            let message = e.to_string();
-            match message.rfind(" at line ") {
-                Some(end) if e.location().is_some() => message[..end].to_owned(),
-                _ => message,
-            }
-        };
-        ParseError {
-            location: e.location(),
-            message,
-            interpolation: is_interpolation_error(inner),
-        }
-    })?;
-    Ok(root.unwrap_or_else(|| Spanned::new(Value::Null, Location::UNKNOWN, Location::UNKNOWN)))
+    }
+    .with_properties(properties)
+}
+
+/// Renders `error` without its `at line …, column …` suffix or any value.
+fn message(error: &serde_saphyr::Error) -> String {
+    if matches!(innermost(error), serde_saphyr::Error::InvalidPropertyName { .. }) {
+        // The parser quotes the rest of the scalar, which may be a secret.
+        return INVALID_SUBSTITUTION.to_owned();
+    }
+    let message = error.to_string();
+    match message.rfind(" at line ") {
+        Some(end) if error.location().is_some() => message[..end].to_owned(),
+        _ => message,
+    }
 }
 
 /// Value-free message for a malformed `${...}`.
