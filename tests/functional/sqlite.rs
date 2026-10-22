@@ -10,7 +10,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig, PiiOperator};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
@@ -34,7 +34,7 @@ fn handler(read_only: bool) -> SqliteHandler {
     let config = base_db_config(read_only);
     SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -48,7 +48,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
     };
     SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -181,7 +181,7 @@ async fn test_query_timeout_fast_query_succeeds() {
     };
     let handler = SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -203,7 +203,7 @@ async fn test_query_timeout_disabled_with_zero() {
     };
     let handler = SqliteHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -1920,7 +1920,7 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
 fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
     SqliteHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: redact_pii,
             operator: PiiOperator::Replace,
@@ -1934,7 +1934,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
 fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
     SqliteHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: true,
             operator,
@@ -2147,4 +2147,133 @@ async fn test_version_reports_binary_name_and_version() {
         assert!(output.status.success(), "{args:?} must succeed");
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{args:?}");
     }
+}
+
+#[path = "config_file.rs"]
+mod config_file;
+
+/// Returns the YAML config for the `SQLite` file at `path`.
+fn config_yaml(path: &str, read_only: bool) -> String {
+    format!("database:\n  backend: sqlite\n  name: '{path}'\n  read_only: {read_only}\n")
+}
+
+#[tokio::test]
+async fn test_config_file_supplies_connection_settings() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let client = config_file::connect(&config_yaml(&path, true), &[], &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "file read_only must apply");
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_env_overrides_config_file() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let env = [("DB_NAME", path.as_str()), ("DB_READ_ONLY", "false")];
+    let client = config_file::connect(&config_yaml("/nonexistent/other.db", true), &[], &env).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(
+        client.exposes_write_query().await,
+        "env DB_READ_ONLY must beat the file"
+    );
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_invalid_config_file_fails_startup_with_exit_code_1() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("dbmcp.yaml");
+    std::fs::write(&path, "database:\n  pasword: hunter2\n").expect("write config");
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config"])
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("failed to parse config file"), "{stderr}");
+
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config", "a.yaml", "--config", "b.yaml"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    assert_eq!(output.status.code(), Some(2), "repeated --config is a usage error");
+}
+
+#[tokio::test]
+async fn test_dotenv_beside_config_file_is_loaded() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let dotenv = format!("DB_NAME='{path}'\nDB_READ_ONLY=true\n");
+    let yaml = "database:\n  backend: sqlite\n";
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "dotenv DB_READ_ONLY must apply");
+    client.shutdown().await;
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[("DB_READ_ONLY", "false")]).await;
+    assert!(client.exposes_write_query().await, "process env must beat dotenv");
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_config_file_interpolates_from_dotenv_and_process_env() {
+    let path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let yaml = "database:\n  backend: sqlite\n  name: ${DB_FILE:?set DB_FILE}\n  read_only: ${RO:-true}\n";
+    let dotenv = format!("DB_FILE='{path}'\n");
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[]).await;
+    let result = client.read_query("SELECT name FROM users WHERE id = 1").await;
+    assert_eq!(
+        result["rows"],
+        serde_json::json!([{ "name": "Alice Johnson" }]),
+        "{result}"
+    );
+    assert!(!client.exposes_write_query().await, "default read_only applies");
+    client.shutdown().await;
+
+    let client = config_file::connect(yaml, &[(".env", &dotenv)], &[("RO", "no")]).await;
+    assert!(client.exposes_write_query().await, "process env feeds interpolation");
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_missing_required_variable_fails_startup() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("dbmcp.yaml");
+    std::fs::write(&path, "database:\n  password: ${DBMCP_TEST_UNSET_SECRET:?}\n").expect("write config");
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .args(["stdio", "--config"])
+        .arg(&path)
+        .env_remove("DBMCP_TEST_UNSET_SECRET")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("failed to interpolate config file"), "{stderr}");
+    assert!(
+        stderr.contains(":2:13: missing property `DBMCP_TEST_UNSET_SECRET`"),
+        "{stderr}"
+    );
 }

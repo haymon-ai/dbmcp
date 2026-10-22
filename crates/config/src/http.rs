@@ -4,7 +4,7 @@ use std::net::IpAddr;
 
 use crate::error::{ConfigError, ConfigErrors};
 use crate::origin;
-use crate::secret::Secret;
+use secrecy::{ExposeSecret, SecretString};
 
 /// HTTP transport binding and security settings.
 #[derive(Clone, Debug)]
@@ -22,10 +22,23 @@ pub struct HttpConfig {
     pub allowed_hosts: Vec<String>,
 
     /// Bearer token required on every request; `None` disables authentication.
-    pub auth_token: Option<Secret>,
+    pub auth_token: Option<SecretString>,
 
     /// Permits a non-loopback bind without an `auth_token`.
     pub allow_unauthenticated: bool,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            host: Self::DEFAULT_HOST.into(),
+            port: Self::DEFAULT_PORT,
+            allowed_origins: Self::default_allowed_origins(),
+            allowed_hosts: Self::default_allowed_hosts(),
+            auth_token: None,
+            allow_unauthenticated: false,
+        }
+    }
 }
 
 impl HttpConfig {
@@ -80,6 +93,8 @@ impl HttpConfig {
     ///   `allow_unauthenticated` is set.
     /// - Every `allowed_origins` entry MUST parse as an origin
     ///   (`<scheme>://<host>[:<port>|:*]` or `null`).
+    /// - `allowed_origins` and `allowed_hosts` MUST NOT contain empty or
+    ///   duplicate entries.
     ///
     /// # Errors
     ///
@@ -89,7 +104,11 @@ impl HttpConfig {
         if self.host.trim().is_empty() {
             errors.push(ConfigError::EmptyHttpHost);
         }
-        if self.auth_token.as_ref().is_some_and(|t| t.expose().trim().is_empty()) {
+        if self
+            .auth_token
+            .as_ref()
+            .is_some_and(|t| t.expose_secret().trim().is_empty())
+        {
             errors.push(ConfigError::EmptyHttpAuthToken);
         }
         if !self.host.trim().is_empty()
@@ -99,12 +118,23 @@ impl HttpConfig {
         {
             errors.push(ConfigError::UnauthenticatedNonLoopbackBind(self.host.clone()));
         }
+        let blank = |entry: &String| entry.trim().is_empty();
+        errors.extend(ConfigError::check_list(
+            "http.allowed_origins",
+            &self.allowed_origins,
+            blank,
+        ));
         errors.extend(
             self.allowed_origins
                 .iter()
-                .filter(|entry| !origin::is_valid_entry(entry))
+                .filter(|entry| !blank(entry) && !origin::is_valid_entry(entry))
                 .map(|entry| ConfigError::InvalidAllowedOrigin(entry.clone())),
         );
+        errors.extend(ConfigError::check_list(
+            "http.allowed_hosts",
+            &self.allowed_hosts,
+            blank,
+        ));
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
     }
 }
@@ -219,7 +249,40 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(rejected, ["localhost", "", "https://app.example:443:*"]);
+        assert_eq!(rejected, ["localhost", "https://app.example:443:*"]);
+    }
+
+    #[test]
+    fn validate_rejects_empty_and_duplicate_list_entries() {
+        let config = HttpConfig {
+            allowed_origins: vec!["http://a.example:*".into(), " ".into(), "http://a.example:*".into()],
+            allowed_hosts: vec!["localhost".into(), "localhost".into(), String::new()],
+            ..config_with_host(HttpConfig::DEFAULT_HOST)
+        };
+        let errors: Vec<String> = config
+            .validate()
+            .expect_err("bad lists must fail")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "http.allowed_origins: must not contain empty entries",
+                "http.allowed_origins: contains duplicate entry 'http://a.example:*'",
+                "http.allowed_hosts: must not contain empty entries",
+                "http.allowed_hosts: contains duplicate entry 'localhost'",
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_accepts_empty_origin_list() {
+        let config = HttpConfig {
+            allowed_origins: Vec::new(),
+            ..config_with_host(HttpConfig::DEFAULT_HOST)
+        };
+        config.validate().expect("empty list disables origin checks");
     }
 
     #[test]

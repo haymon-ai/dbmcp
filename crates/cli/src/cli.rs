@@ -1,75 +1,36 @@
 //! CLI argument parsing and application bootstrapping.
 //!
-//! Contains the [`Arguments`] struct (parsed by clap), the [`Command`]
-//! subcommand enum, the [`LogLevel`] selector, and the [`run`] entry
-//! point that dispatches to the active subcommand.
+//! Contains the [`Args`] struct (parsed by clap), the [`Command`]
+//! subcommand enum, the [`run`] entry point that dispatches to the active
+//! subcommand, and [`start`], which each subcommand calls to resolve its
+//! configuration and initialise tracing.
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use dbmcp_config::{Config, ConfigLayer, LogLevel};
 
-use crate::commands::http::HttpCommand;
-use crate::commands::stdio::StdioCommand;
+use crate::args::{self, SharedArgs};
 use crate::error::{Error, ErrorKind};
+use crate::http::HttpCommand;
+use crate::stdio::StdioCommand;
 
-/// Log severity levels for the MCP server.
-///
-/// Maps directly to [`tracing::Level`] variants. Used as a
-/// [`clap::ValueEnum`] for type-safe CLI argument parsing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum LogLevel {
-    /// Only errors.
-    Error,
-    /// Warnings and above.
-    Warn,
-    /// Informational and above (default).
-    Info,
-    /// Debug and above.
-    Debug,
-    /// All trace output.
-    Trace,
-}
-
-impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Error => write!(f, "error"),
-            Self::Warn => write!(f, "warn"),
-            Self::Info => write!(f, "info"),
-            Self::Debug => write!(f, "debug"),
-            Self::Trace => write!(f, "trace"),
-        }
-    }
-}
-
-impl From<LogLevel> for tracing::Level {
-    fn from(level: LogLevel) -> Self {
-        match level {
-            LogLevel::Error => Self::ERROR,
-            LogLevel::Warn => Self::WARN,
-            LogLevel::Info => Self::INFO,
-            LogLevel::Debug => Self::DEBUG,
-            LogLevel::Trace => Self::TRACE,
-        }
+/// Maps a [`LogLevel`] onto the matching [`tracing::Level`].
+fn tracing_level(level: LogLevel) -> tracing::Level {
+    match level {
+        LogLevel::Error => tracing::Level::ERROR,
+        LogLevel::Warn => tracing::Level::WARN,
+        LogLevel::Info => tracing::Level::INFO,
+        LogLevel::Debug => tracing::Level::DEBUG,
+        LogLevel::Trace => tracing::Level::TRACE,
     }
 }
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(about = "Database MCP Server")]
-struct Arguments {
+#[command(name = "dbmcp", version, about = "Database MCP Server")]
+struct Args {
     /// Subcommand selector.
     #[command(subcommand)]
     command: Command,
-
-    /// Log level
-    #[arg(
-        long = "log-level",
-        env = "LOG_LEVEL",
-        default_value_t = LogLevel::Info,
-        ignore_case = true,
-        global = true,
-        help_heading = "Logging"
-    )]
-    log_level: LogLevel,
 }
 
 /// Top-level subcommand selector.
@@ -83,73 +44,127 @@ enum Command {
     Http(HttpCommand),
 }
 
-/// Builds the clap command for the binary named `bin` at `version`.
-fn command(bin: &'static str, version: &'static str) -> clap::Command {
-    Arguments::command().name(bin).version(version)
-}
-
-/// Parses CLI arguments, initializes tracing, and dispatches to the active subcommand.
+/// Parses CLI arguments and runs the selected subcommand.
+///
+/// Invalid arguments, `--help`, and `--version` are handled by clap,
+/// which prints and exits the process. Must run inside a Tokio runtime.
+/// A global tracing subscriber that is already installed is kept.
 ///
 /// # Errors
 ///
-/// Returns an error if the command-line arguments are invalid,
-/// configuration validation fails, or the selected subcommand fails
-/// (transport initialization errors, TCP bind failures, fatal protocol
-/// errors).
-///
-/// `bin` and `version` are the installed binary's name and version, used
-/// in `--help`, `--version`, and the `version` subcommand. Must run
-/// inside a Tokio runtime. A global tracing subscriber that is
-/// already installed is kept.
+/// Returns an error if the config file cannot be loaded, configuration
+/// validation fails, or the selected subcommand fails (transport
+/// initialization errors, TCP bind failures, fatal protocol errors).
 #[allow(clippy::result_large_err)]
-pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> {
-    let parsed = command(bin, version)
-        .try_get_matches()
-        .and_then(|mut matches| Arguments::from_arg_matches_mut(&mut matches));
-    let arguments = match parsed {
-        Ok(arguments) => arguments,
-        // `--help` and `--version` arrive as clap errors that print to stdout.
-        // Print failures (e.g. a closed pipe) are ignored, as `clap::Error::exit` does.
-        Err(error) if !error.use_stderr() => {
-            let _ = error.print();
-            return Ok(());
+pub async fn run() -> Result<(), Error> {
+    match Args::parse().command {
+        Command::Version => {
+            print!("{}", Args::command().render_version());
+            Ok(())
         }
-        Err(error) => return Err(ErrorKind::from(error).into()),
-    };
+        Command::Stdio(cmd) => Ok(cmd.run().await?),
+        Command::Http(cmd) => Ok(cmd.run().await?),
+    }
+}
 
+/// Loads a subcommand's configuration, initialises tracing, and reports warnings.
+///
+/// `cli`, `shared`, and `layer` are passed to [`args::load`].
+///
+/// On success, warnings are logged once tracing runs at the resolved
+/// level. On failure, they are printed to stderr ahead of the error.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::Config`] if the configuration cannot be loaded.
+#[allow(clippy::result_large_err)]
+pub(crate) fn start<C: CommandFactory + FromArgMatches>(
+    cli: &C,
+    shared: &SharedArgs,
+    layer: fn(&C) -> ConfigLayer,
+) -> Result<Config, ErrorKind> {
+    let mut warnings = Vec::new();
+    match args::load(cli, shared, layer, &mut warnings) {
+        Ok(resolved) => {
+            init_tracing(resolved.log_level);
+            for warning in &warnings {
+                tracing::warn!("{warning}");
+            }
+            Ok(resolved.config)
+        }
+        Err(error) => {
+            for warning in &warnings {
+                eprintln!("warning: {warning}");
+            }
+            Err(error.into())
+        }
+    }
+}
+
+/// Installs the stderr tracing subscriber at `level`.
+fn init_tracing(level: LogLevel) {
     // Fails only if a subscriber is already installed; keep that one.
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_max_level(tracing::Level::from(arguments.log_level))
+        .with_max_level(tracing_level(level))
         .with_ansi(false)
         .try_init();
-
-    match arguments.command {
-        Command::Version => {
-            println!("{bin} {version}");
-            Ok(())
-        }
-        Command::Stdio(cmd) => Ok(cmd.execute().await?),
-        Command::Http(cmd) => Ok(cmd.execute().await?),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
 
-    use super::{Arguments, command};
+    use super::Args;
 
     #[test]
-    fn command_uses_given_name_and_version() {
-        let cmd = command("dbmcp", "1.2.3");
+    fn config_flags_are_grouped_under_config_file_heading() {
+        for name in ["stdio", "http"] {
+            let help = subcommand_help(name);
+            let heading = help.find("Config File:").expect("Config File heading");
+            for flag in ["--config <PATH>", "--env <PATH>"] {
+                let pos = help.find(flag).unwrap_or_else(|| panic!("{flag} in {name} --help"));
+                assert!(heading < pos, "{flag} must follow the Config File heading:\n{help}");
+            }
+            assert!(help.contains("Path to a YAML config file"));
+            assert!(help.contains("Path to a dotenv file; repeatable, later wins. Replaces the .env beside --config"));
+            assert!(help.find("Logging:").expect("Logging heading") < help.find("--log-level").expect("--log-level"));
+        }
+    }
+
+    #[test]
+    fn log_level_is_a_subcommand_option() {
+        assert!(
+            Args::command()
+                .try_get_matches_from(["dbmcp", "--log-level", "debug", "stdio"])
+                .is_err(),
+            "--log-level before the subcommand must not parse"
+        );
+        for subcommand in ["stdio", "http"] {
+            Args::command()
+                .try_get_matches_from(["dbmcp", subcommand, "--log-level", "debug"])
+                .unwrap_or_else(|e| panic!("{subcommand} --log-level must parse: {e}"));
+        }
+        for flag in ["--log-level=debug", "--config=dbmcp.yaml"] {
+            assert!(
+                Args::command()
+                    .try_get_matches_from(["dbmcp", "version", flag])
+                    .is_err(),
+                "version must reject {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_uses_binary_name_and_package_version() {
+        let cmd = Args::command();
         assert_eq!(cmd.get_name(), "dbmcp");
-        assert_eq!(cmd.get_version(), Some("1.2.3"));
+        assert_eq!(cmd.get_version(), Some(env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
     fn secret_env_values_are_hidden_from_help() {
-        let cmd = Arguments::command();
+        let cmd = Args::command();
         for subcommand in cmd.get_subcommands() {
             for arg in subcommand.get_arguments() {
                 let Some(env) = arg.get_env().and_then(|env| env.to_str()) else {
@@ -166,7 +181,7 @@ mod tests {
     }
 
     fn subcommand_help(name: &str) -> String {
-        let mut cmd = Arguments::command();
+        let mut cmd = Args::command();
         cmd.find_subcommand_mut(name)
             .expect("subcommand")
             .render_long_help()

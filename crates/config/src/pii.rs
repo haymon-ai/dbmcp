@@ -100,15 +100,16 @@ impl PiiConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)` or when
-    /// `ner_enabled` is set without a `ner_model` path. clap already rejects
-    /// unknown values for `--pii-categories`, so that check lives there.
+    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)` or
+    /// repeats a category, or when `ner_enabled` is set without a
+    /// `ner_model` path. Unknown category names are rejected while parsing.
     pub fn validate(&self) -> Result<(), ConfigErrors> {
         let mut errors = Vec::new();
-        if let Some(cats) = &self.categories
-            && cats.is_empty()
-        {
-            errors.push(ConfigError::PiiCategoriesEmpty);
+        if let Some(cats) = &self.categories {
+            if cats.is_empty() {
+                errors.push(ConfigError::PiiCategoriesEmpty);
+            }
+            errors.extend(ConfigError::check_list("pii.categories", cats, |_| false));
         }
         if self.ner_enabled && self.ner_model.is_none() {
             errors.push(ConfigError::PiiNerModelMissing);
@@ -166,6 +167,24 @@ mod tests {
             ..PiiConfig::default()
         };
         cfg.validate().expect("ner with model path must validate");
+    }
+
+    #[test]
+    fn duplicate_categories_error() {
+        let cfg = PiiConfig {
+            categories: Some(vec![
+                PiiCategory::Financial,
+                PiiCategory::Contact,
+                PiiCategory::Financial,
+            ]),
+            ..PiiConfig::default()
+        };
+        let errors = cfg.validate().expect_err("duplicates must error");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].to_string(),
+            "pii.categories: contains duplicate entry 'financial'"
+        );
     }
 
     #[test]

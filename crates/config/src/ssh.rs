@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::database::DatabaseBackend;
 use crate::error::{ConfigError, ConfigErrors};
-use crate::secret::Secret;
+use secrecy::SecretString;
 
 /// Host-key verification policy for the SSH tunnel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -44,13 +44,13 @@ pub struct SshConfig {
     pub user: String,
 
     /// SSH password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Path to the SSH private key.
     pub key: Option<PathBuf>,
 
     /// Passphrase for the SSH private key.
-    pub key_passphrase: Option<Secret>,
+    pub key_passphrase: Option<SecretString>,
 
     /// Path to the `known_hosts` file (`None` only when unverified and no home).
     pub known_hosts: Option<PathBuf>,
@@ -81,6 +81,7 @@ impl SshConfig {
     /// - a password or a key is required; a passphrase requires a key.
     /// - a set `key` path must be an existing file.
     /// - `known_hosts` must be resolved unless host-key checking is `no`.
+    /// - `port` and a set `local_port` must be at least 1.
     ///
     /// # Errors
     ///
@@ -103,13 +104,28 @@ impl SshConfig {
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound("SSH_KEY".into(), key.display().to_string()));
+            errors.push(ConfigError::FileNotFound {
+                field: "ssh.key",
+                path: key.display().to_string(),
+            });
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
             errors.push(ConfigError::SshKeyPassphraseWithoutKey);
         }
         if self.known_hosts.is_none() && self.strict_host_key_checking != StrictHostKeyChecking::No {
             errors.push(ConfigError::MissingSshKnownHosts);
+        }
+        if self.port < 1 {
+            errors.push(ConfigError::BelowMinimum {
+                field: "ssh.port",
+                min: 1,
+            });
+        }
+        if self.local_port == Some(0) {
+            errors.push(ConfigError::BelowMinimum {
+                field: "ssh.local_port",
+                min: 1,
+            });
         }
 
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
@@ -144,6 +160,7 @@ pub fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::home;
 
     fn ssh_config() -> SshConfig {
         SshConfig {
@@ -178,7 +195,7 @@ mod tests {
     fn validate_rejects_sqlite_backend() {
         assert_eq!(
             errors_of(&ssh_config(), DatabaseBackend::Sqlite),
-            ["SSH_HOST is not supported with the sqlite backend"]
+            ["ssh.host: not supported with the sqlite backend"]
         );
     }
 
@@ -190,7 +207,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_HOST must not be empty"]
+            ["ssh.host: must not be empty"]
         );
     }
 
@@ -202,7 +219,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Postgres),
-            ["SSH_USER is required when SSH_HOST is set"]
+            ["ssh.user: required when ssh.host is set"]
         );
     }
 
@@ -214,7 +231,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set"]
+            ["ssh.password: required when ssh.host is set and ssh.key is not"]
         );
     }
 
@@ -228,12 +245,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             &errors[0],
-            ConfigError::FileNotFound(name, _) if name == "SSH_KEY"
+            ConfigError::FileNotFound { field: name, path: _ } if *name == "ssh.key"
         ));
         assert_eq!(
             errors[0].to_string(),
             format!(
-                "SSH_KEY file not found: {}",
+                "ssh.key: file not found: {}",
                 Path::new("/nonexistent/id_ed25519").display()
             )
         );
@@ -246,7 +263,7 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate(DatabaseBackend::Mysql).expect_err("must fail");
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound { .. }));
     }
 
     #[test]
@@ -257,7 +274,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_KEY_PASSPHRASE requires SSH_KEY"]
+            ["ssh.key_passphrase: requires ssh.key"]
         );
     }
 
@@ -271,7 +288,7 @@ mod tests {
             };
             assert_eq!(
                 errors_of(&config, DatabaseBackend::Mysql),
-                ["SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
+                ["ssh.known_hosts: required when the home directory cannot be determined"],
                 "mode {mode}"
             );
         }
@@ -307,18 +324,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_zero_ports() {
+        let config = SshConfig {
+            port: 0,
+            local_port: Some(0),
+            ..ssh_config()
+        };
+        assert_eq!(
+            errors_of(&config, DatabaseBackend::Mysql),
+            ["ssh.port: must be at least 1", "ssh.local_port: must be at least 1"]
+        );
+    }
+
+    #[test]
     fn strict_host_key_checking_display_matches_value_names() {
         assert_eq!(StrictHostKeyChecking::Yes.to_string(), "yes");
         assert_eq!(StrictHostKeyChecking::AcceptNew.to_string(), "accept-new");
         assert_eq!(StrictHostKeyChecking::No.to_string(), "no");
-    }
-
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
     }
 
     fn expand(path: &str) -> PathBuf {

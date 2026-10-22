@@ -8,7 +8,7 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig, PiiOperator};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
@@ -34,7 +34,7 @@ fn handler(read_only: bool) -> MysqlHandler {
     let config = base_db_config(read_only);
     MysqlHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -48,7 +48,7 @@ fn handler_with_page_size(page_size: u16) -> MysqlHandler {
     };
     MysqlHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -398,7 +398,7 @@ async fn test_query_timeout_cancels_slow_query() {
     };
     let handler = MysqlHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -431,7 +431,7 @@ async fn test_query_timeout_disabled_with_zero() {
     };
     let handler = MysqlHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -1179,7 +1179,7 @@ async fn test_timeout_on_list_tables() {
     config.query_timeout = 1;
     let handler = MysqlHandler::new(&Config {
         database: config,
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     })
@@ -4109,7 +4109,7 @@ async fn test_list_views_detailed_session_context_fields_populated() {
 fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
     MysqlHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: redact_pii,
             operator: PiiOperator::Replace,
@@ -4123,7 +4123,7 @@ fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
 fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
     MysqlHandler::new(&Config {
         database: base_db_config(false),
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig {
             enabled: true,
             operator,
@@ -4378,4 +4378,19 @@ async fn test_read_float_column_full_range() {
     );
     assert!(matches!(by_label["negative"]["f"], Value::Number(_)));
     assert!(matches!(by_label["overflow"]["f"], Value::Number(_)));
+}
+
+#[path = "config_file.rs"]
+mod config_file;
+
+#[tokio::test]
+async fn test_config_file_supplies_connection_settings() {
+    let db = base_db_config(true);
+    config_file::assert_file_supplies_connection_settings("mysql", &db.host, db.port).await;
+}
+
+#[tokio::test]
+async fn test_env_overrides_config_file() {
+    let db = base_db_config(true);
+    config_file::assert_env_overrides_file("mysql", &db.host, db.port).await;
 }

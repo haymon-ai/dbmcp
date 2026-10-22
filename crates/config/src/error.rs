@@ -1,9 +1,8 @@
 //! Configuration validation errors and their non-empty-collection wrapper.
 //!
-//! [`ConfigError`] enumerates rules reachable past clap parsing.
-//! [`ConfigErrors`] is a non-empty collection wrapper used as the
-//! `Error` type for every per-section `TryFrom<&FooArguments> for FooConfig`
-//! impl in the binary crate, and as the return type of every
+//! [`ConfigError`] enumerates rules reachable past parsing.
+//! [`ConfigErrors`] is a non-empty collection wrapper returned by
+//! [`ConfigLayer::resolve`](crate::ConfigLayer::resolve) and by every
 //! [`DatabaseConfig::validate`] / [`HttpConfig::validate`] /
 //! [`PiiConfig::validate`] / [`SshConfig::validate`] call.
 //!
@@ -12,86 +11,180 @@
 //! [`PiiConfig::validate`]: crate::PiiConfig::validate
 //! [`SshConfig::validate`]: crate::SshConfig::validate
 
-/// Errors produced by the `Arguments`-to-`Config` conversions.
+/// Rule violations found while validating a resolved [`Config`](crate::Config).
 ///
-/// Carries only rules reachable past clap parsing. Rules clap already
-/// rejects (integer ranges, enum membership) are not represented here.
+/// Type and enum-membership errors are rejected earlier, by clap or the
+/// config-file parser, and are not represented here. Every message starts
+/// with the config path it is about; [`Self::fields`] lists every config
+/// path involved, so callers can say where each value came from.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// `DB_NAME` is required for `SQLite`.
-    #[error("DB_NAME (file path) is required for SQLite")]
+    /// `database.name` is required for `SQLite`.
+    #[error("database.name: required (file path) for the sqlite backend")]
     MissingSqliteDbName,
 
     /// A configured file (SSL certificate, SSH key) was not found.
-    #[error("{0} file not found: {1}")]
-    FileNotFound(String, String),
+    #[error("{field}: file not found: {path}")]
+    FileNotFound {
+        /// Config path of the setting.
+        field: &'static str,
+        /// The missing path.
+        path: String,
+    },
 
     /// HTTP bind host is empty or whitespace.
-    #[error("HTTP_HOST must not be empty")]
+    #[error("http.host: must not be empty")]
     EmptyHttpHost,
 
     /// HTTP bearer token was supplied but is empty or whitespace.
-    #[error("HTTP_AUTH_TOKEN must not be empty when set")]
+    #[error("http.auth_token: must not be empty when set")]
     EmptyHttpAuthToken,
 
     /// HTTP bind host is not loopback and no bearer token is configured.
     #[error(
-        "refusing to bind HTTP transport to non-loopback host '{0}' without authentication; \
-         set HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
+        "http.host: refusing to bind non-loopback host '{0}' without authentication; \
+         set http.auth_token or http.allow_unauthenticated"
     )]
     UnauthenticatedNonLoopbackBind(String),
 
     /// An allowed-origins entry is not a valid origin.
     #[error(
-        "HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
+        "http.allowed_origins: entry '{0}' is not a valid origin; \
          expected `<scheme>://<host>[:<port>|:*]` or `null`"
     )]
     InvalidAllowedOrigin(String),
 
-    /// `PII_CATEGORIES` was supplied but the resolved list is empty.
-    #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
+    /// `pii.categories` was supplied but the resolved list is empty.
+    #[error("pii.categories: must not be empty when set; remove it to fall back to defaults")]
     PiiCategoriesEmpty,
 
-    /// `--pii-ner` was enabled without a `--pii-ner-model` path.
-    #[error("PII_NER_MODEL (model directory) is required when PII_NER_ENABLE is set")]
+    /// `pii.ner_enabled` was set without a `pii.ner_model` path.
+    #[error("pii.ner_model: required (model directory) when pii.ner_enabled is set")]
     PiiNerModelMissing,
 
     /// SSH tunnelling was requested for the `SQLite` backend.
-    #[error("SSH_HOST is not supported with the sqlite backend")]
+    #[error("ssh.host: not supported with the sqlite backend")]
     SshSqliteUnsupported,
 
-    /// Other `SSH_*` options were set without `SSH_HOST`.
-    #[error("SSH_HOST is required when other SSH_* options are set")]
+    /// Other SSH options were set without `ssh.host`.
+    #[error("ssh.host: required when other ssh options are set")]
     MissingSshHost,
 
-    /// `SSH_HOST` was set to an empty string.
-    #[error("SSH_HOST must not be empty")]
+    /// `ssh.host` was set to an empty string.
+    #[error("ssh.host: must not be empty")]
     EmptySshHost,
 
-    /// `SSH_HOST` was set without `SSH_USER`.
-    #[error("SSH_USER is required when SSH_HOST is set")]
+    /// `ssh.host` was set without `ssh.user`.
+    #[error("ssh.user: required when ssh.host is set")]
     MissingSshUser,
 
-    /// `SSH_HOST` was set without a password or key.
-    #[error("SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set")]
+    /// `ssh.host` was set without a password or key.
+    #[error("ssh.password: required when ssh.host is set and ssh.key is not")]
     MissingSshAuth,
 
-    /// `SSH_KEY_PASSPHRASE` was set without `SSH_KEY`.
-    #[error("SSH_KEY_PASSPHRASE requires SSH_KEY")]
+    /// `ssh.key_passphrase` was set without `ssh.key`.
+    #[error("ssh.key_passphrase: requires ssh.key")]
     SshKeyPassphraseWithoutKey,
 
     /// `known_hosts` could not be resolved and host-key checking is on.
-    #[error("SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    #[error("ssh.known_hosts: required when the home directory cannot be determined")]
     MissingSshKnownHosts,
+
+    /// A numeric setting is below its minimum.
+    #[error("{field}: must be at least {min}")]
+    BelowMinimum {
+        /// Config path of the setting.
+        field: &'static str,
+        /// Smallest accepted value.
+        min: u64,
+    },
+
+    /// A numeric setting is outside its accepted range.
+    #[error("{field}: must be between {min} and {max}")]
+    OutOfRange {
+        /// Config path of the setting.
+        field: &'static str,
+        /// Smallest accepted value.
+        min: u64,
+        /// Largest accepted value.
+        max: u64,
+    },
+
+    /// A list setting contains an empty entry.
+    #[error("{0}: must not contain empty entries")]
+    EmptyListEntry(&'static str),
+
+    /// A list setting contains the same entry more than once.
+    #[error("{field}: contains duplicate entry '{entry}'")]
+    DuplicateListEntry {
+        /// Config path of the setting.
+        field: &'static str,
+        /// The repeated entry.
+        entry: String,
+    },
+}
+
+impl ConfigError {
+    /// Returns the config paths this error is about; the first is its subject.
+    #[must_use]
+    pub fn fields(&self) -> Vec<&'static str> {
+        match self {
+            Self::MissingSqliteDbName => vec!["database.name"],
+            Self::FileNotFound { field, .. }
+            | Self::BelowMinimum { field, .. }
+            | Self::OutOfRange { field, .. }
+            | Self::EmptyListEntry(field)
+            | Self::DuplicateListEntry { field, .. } => vec![field],
+            Self::EmptyHttpHost => vec!["http.host"],
+            Self::EmptyHttpAuthToken => vec!["http.auth_token"],
+            Self::UnauthenticatedNonLoopbackBind(_) => {
+                vec!["http.host", "http.auth_token", "http.allow_unauthenticated"]
+            }
+            Self::InvalidAllowedOrigin(_) => vec!["http.allowed_origins"],
+            Self::PiiCategoriesEmpty => vec!["pii.categories"],
+            Self::PiiNerModelMissing => vec!["pii.ner_model", "pii.ner_enabled"],
+            Self::SshSqliteUnsupported => vec!["ssh.host", "database.backend"],
+            Self::MissingSshHost => crate::layer::SshLayer::PATHS.to_vec(),
+            Self::EmptySshHost => vec!["ssh.host"],
+            Self::MissingSshUser => vec!["ssh.user"],
+            Self::MissingSshAuth => vec!["ssh.password"],
+            Self::SshKeyPassphraseWithoutKey => vec!["ssh.key_passphrase", "ssh.key"],
+            Self::MissingSshKnownHosts => vec!["ssh.known_hosts"],
+        }
+    }
+
+    /// Returns one error per problem found in the list setting `field`.
+    ///
+    /// Reports a single [`Self::EmptyListEntry`] when any entry is blank
+    /// and one [`Self::DuplicateListEntry`] per repeated entry.
+    pub(crate) fn check_list<T: PartialEq + std::fmt::Display>(
+        field: &'static str,
+        entries: &[T],
+        is_blank: impl Fn(&T) -> bool,
+    ) -> Vec<Self> {
+        let mut errors = Vec::new();
+        if entries.iter().any(&is_blank) {
+            errors.push(Self::EmptyListEntry(field));
+        }
+        for (i, entry) in entries.iter().enumerate() {
+            if !is_blank(entry) && !entries[..i].contains(entry) && entries[i + 1..].contains(entry) {
+                errors.push(Self::DuplicateListEntry {
+                    field,
+                    entry: entry.to_string(),
+                });
+            }
+        }
+        errors
+    }
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.
 ///
 /// Externally observed wrappers always carry ≥ 1 error — [`Self::from_vec`]
 /// returns `None` for an empty input, and [`From<ConfigError>`] yields a
-/// single-element wrapper. Each transport's `TryFrom<&Command> for Config`
-/// impl owns its own multi-section accumulation (database → http → pii) and
-/// returns `Ok(value)` when nothing was collected, never an empty wrapper.
+/// single-element wrapper. [`ConfigLayer::resolve`](crate::ConfigLayer::resolve)
+/// accumulates across sections (database → http → pii → ssh) and returns
+/// `Ok(value)` when nothing was collected, never an empty wrapper.
 ///
 /// Derefs to `&[ConfigError]` so callers can use slice methods directly
 /// (`iter`, `len`, indexing). `Display` renders each contained error on its
@@ -155,7 +248,10 @@ mod tests {
     }
 
     fn missing_ca() -> ConfigError {
-        ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope/ca.pem".into())
+        ConfigError::FileNotFound {
+            field: "database.ssl_ca",
+            path: "/nope/ca.pem".into(),
+        }
     }
 
     #[test]
@@ -168,7 +264,7 @@ mod tests {
         let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
         assert_eq!(errors.len(), 2);
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(errors[1], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(errors[1], ConfigError::FileNotFound { .. }));
     }
 
     #[test]
@@ -201,6 +297,6 @@ mod tests {
         let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
         let collected: Vec<ConfigError> = errors.into_iter().collect();
         assert!(matches!(collected[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(collected[1], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(collected[1], ConfigError::FileNotFound { .. }));
     }
 }

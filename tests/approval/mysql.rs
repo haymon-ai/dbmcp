@@ -4,7 +4,7 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, HttpConfig, PiiConfig};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_server::Server;
 
@@ -24,7 +24,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
             read_only,
             ..DatabaseConfig::default()
         },
-        http: None,
+        http: HttpConfig::default(),
         pii: PiiConfig::default(),
         ssh: None,
     };

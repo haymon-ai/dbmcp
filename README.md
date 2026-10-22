@@ -138,11 +138,27 @@ HTTP_AUTH_TOKEN=change-me dbmcp http --db-backend mysql --db-user root --db-name
 DB_BACKEND=mysql DB_USER=root DB_NAME=mydb dbmcp stdio
 ```
 
+### Using a config file
+
+```yaml
+# dbmcp.yaml
+database:
+  backend: postgres
+  host: db.internal
+  user: app
+  password: ${DB_PASSWORD:?}   # from the environment or a .env beside this file
+  name: app
+```
+
+```bash
+dbmcp stdio --config /abs/path/to/dbmcp.yaml
+```
+
 ## Configuration ⚙️
 
 Configuration is loaded with clear precedence:
 
-**CLI flags > environment variables > defaults**
+**CLI flags > environment variables > .env file > config file > defaults**
 
 Environment variables are typically set by your MCP client (via `env` or `envFile` in the server config).
 
@@ -210,6 +226,15 @@ The tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client (no 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
 | `--log-level` | `LOG_LEVEL` | `info` | Log level (trace/debug/info/warn/error) |
+
+### Config File Options
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `--config` | | *(unset)* | Path to a YAML config file |
+| `--env` | | *(unset)* | Path to a dotenv file; repeatable, later wins. Replaces the `.env` beside `--config` |
+
+See [Config File](https://dbmcp.haymon.ai/docs/config-file) for the schema, `${VAR}` interpolation, `.env` files, and path resolution.
 
 ### HTTP-only Options (only available with `http` subcommand)
 

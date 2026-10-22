@@ -1,7 +1,7 @@
 //! Database connection settings and backend enum.
 
 use crate::error::{ConfigError, ConfigErrors};
-use crate::secret::Secret;
+use secrecy::SecretString;
 
 /// Supported database backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -68,7 +68,7 @@ pub struct DatabaseConfig {
     pub user: String,
 
     /// Database password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Database name or `SQLite` file path.
     pub name: Option<String>,
@@ -109,7 +109,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by CLI parsing.
+    /// Range `1..=500`, enforced by [`Self::validate`].
     pub page_size: u16,
 }
 
@@ -144,6 +144,8 @@ impl DatabaseConfig {
     /// Rules enforced:
     /// - `backend == Sqlite` requires `name` to be `Some(non-empty)`.
     /// - `ssl == true` requires every set `ssl_ca` / `ssl_cert` / `ssl_key` path to exist.
+    /// - `max_pool_size` and a set `connection_timeout` must be at least 1.
+    /// - `page_size` must be in `1..=MAX_PAGE_SIZE`.
     ///
     /// # Errors
     ///
@@ -157,16 +159,39 @@ impl DatabaseConfig {
 
         if self.ssl {
             for (name, path) in [
-                ("DB_SSL_CA", &self.ssl_ca),
-                ("DB_SSL_CERT", &self.ssl_cert),
-                ("DB_SSL_KEY", &self.ssl_key),
+                ("database.ssl_ca", &self.ssl_ca),
+                ("database.ssl_cert", &self.ssl_cert),
+                ("database.ssl_key", &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
+                    errors.push(ConfigError::FileNotFound {
+                        field: name,
+                        path: path.clone(),
+                    });
                 }
             }
+        }
+
+        if self.max_pool_size < 1 {
+            errors.push(ConfigError::BelowMinimum {
+                field: "database.max_pool_size",
+                min: 1,
+            });
+        }
+        if self.connection_timeout == Some(0) {
+            errors.push(ConfigError::BelowMinimum {
+                field: "database.connection_timeout",
+                min: 1,
+            });
+        }
+        if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
+            errors.push(ConfigError::OutOfRange {
+                field: "database.page_size",
+                min: 1,
+                max: Self::MAX_PAGE_SIZE.into(),
+            });
         }
 
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
@@ -201,6 +226,7 @@ impl Default for DatabaseConfig {
 mod tests {
     use super::*;
     use crate::Config;
+    use crate::http::HttpConfig;
     use crate::pii::PiiConfig;
 
     fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
@@ -215,7 +241,7 @@ mod tests {
     fn base_config(backend: DatabaseBackend) -> Config {
         Config {
             database: db_config(backend),
-            http: None,
+            http: HttpConfig::default(),
             pii: PiiConfig::default(),
             ssh: None,
         }
@@ -329,8 +355,8 @@ mod tests {
         let errors = config.validate().expect_err("missing ssl ca must fail");
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, path)
-                if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"
+            ConfigError::FileNotFound { field: name, path }
+                if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"
         )));
     }
 
@@ -345,9 +371,13 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_ca"));
+        assert!(
+            matches!(&errors[1], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_cert")
+        );
+        assert!(
+            matches!(&errors[2], ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_key")
+        );
     }
 
     #[test]
@@ -373,8 +403,43 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"
+            ConfigError::FileNotFound { field: name, path: _ } if *name == "database.ssl_ca"
         )));
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_numbers() {
+        let config = DatabaseConfig {
+            max_pool_size: 0,
+            connection_timeout: Some(0),
+            page_size: 0,
+            ..DatabaseConfig::default()
+        };
+        let errors: Vec<String> = config
+            .validate()
+            .expect_err("zero values must fail")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "database.max_pool_size: must be at least 1",
+                "database.connection_timeout: must be at least 1",
+                "database.page_size: must be between 1 and 500",
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_page_size_bounds() {
+        for (page_size, ok) in [(1, true), (500, true), (501, false)] {
+            let config = DatabaseConfig {
+                page_size,
+                ..DatabaseConfig::default()
+            };
+            assert_eq!(config.validate().is_ok(), ok, "page_size {page_size}");
+        }
     }
 
     #[test]

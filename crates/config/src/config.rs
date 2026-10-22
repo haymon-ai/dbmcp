@@ -7,19 +7,18 @@ use crate::ssh::SshConfig;
 
 /// Runtime configuration for the MCP server.
 ///
-/// Composes [`DatabaseConfig`] with an optional [`HttpConfig`], a
-/// [`PiiConfig`], and an optional [`SshConfig`]. HTTP config is present
-/// only when the HTTP transport is selected (via subcommand or
-/// `MCP_TRANSPORT` env var); PII config is always present; SSH config is
-/// present only when `SSH_HOST` is set. Logging is configured directly from CLI arguments
-/// before `Config` is constructed, so it is not part of this struct.
+/// Composes [`DatabaseConfig`] with an [`HttpConfig`], a [`PiiConfig`],
+/// and an optional [`SshConfig`]. SSH config is present only when an SSH
+/// host is set. The log level is
+/// resolved alongside it in [`Resolved`](crate::Resolved), so it is not
+/// part of this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Database connection and behavior settings.
     pub database: DatabaseConfig,
 
-    /// HTTP transport settings (present only when HTTP transport is active).
-    pub http: Option<HttpConfig>,
+    /// HTTP transport settings.
+    pub http: HttpConfig,
 
     /// PII redaction settings.
     pub pii: PiiConfig,
@@ -44,7 +43,7 @@ mod tests {
                 password: Some("secret".into()),
                 ..DatabaseConfig::default()
             },
-            http: None,
+            http: HttpConfig::default(),
             pii: PiiConfig::default(),
             ssh: None,
         }
@@ -76,14 +75,10 @@ mod tests {
                 password: Some("hunter2-db-password".into()),
                 ..DatabaseConfig::default()
             },
-            http: Some(HttpConfig {
-                host: HttpConfig::DEFAULT_HOST.into(),
-                port: HttpConfig::DEFAULT_PORT,
-                allowed_origins: HttpConfig::default_allowed_origins(),
-                allowed_hosts: HttpConfig::default_allowed_hosts(),
+            http: HttpConfig {
                 auth_token: Some("hunter2-token".into()),
-                allow_unauthenticated: false,
-            }),
+                ..HttpConfig::default()
+            },
             ssh: Some(SshConfig {
                 host: "bastion".into(),
                 port: SshConfig::DEFAULT_PORT,

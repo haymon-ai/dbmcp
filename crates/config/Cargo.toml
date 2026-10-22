@@ -10,7 +10,13 @@ repository.workspace = true
 [dependencies]
 clap = { workspace = true }
 http = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde-saphyr = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
