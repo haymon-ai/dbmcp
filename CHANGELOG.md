@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.15.1](https://github.com/haymon-ai/dbmcp/compare/3a643969991d5f8fbe4600b1e191640990d23199..v0.15.1) - 2026-10-22
+#### Bug Fixes
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**cli**) harden CLI secret handling and boolean flags (#242) - ([3a64396](https://github.com/haymon-ai/dbmcp/commit/3a643969991d5f8fbe4600b1e191640990d23199)) - [@athopen](https://github.com/athopen)
+- (**deps**) bump rustls-webpki and webpki roots for emSign advisories (#258) - ([6db2f00](https://github.com/haymon-ai/dbmcp/commit/6db2f0001656dfc7829852e4e87efd8cfcaca382)) - [@athopen](https://github.com/athopen)
+#### Refactoring
+- (**cli**) extract CLI into dbmcp-cli crate (#244) - ([f5beb94](https://github.com/haymon-ai/dbmcp/commit/f5beb94f14178a6e047e22bc4ecb2e8f68745d24)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**server**) deepen pagination into a listing module (#245) - ([c421468](https://github.com/haymon-ai/dbmcp/commit/c42146821ad86abbe722eb665547d5814a1d6c7d)) - [@athopen](https://github.com/athopen)
+- (**sqlx-json**) decode rows into cells behind one JSON encoder (#246) - ([a1ccacb](https://github.com/haymon-ai/dbmcp/commit/a1ccacb271a5df613d691d00959d7f9bbf8e08a0)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.15.0](https://github.com/haymon-ai/dbmcp/compare/1413a41701a4aa2324ca6d01d5c16b73c8072876..v0.15.0) - 2026-10-17
 #### Features
 - (**server**) align with rmcp 3.5 and return tool errors in-band (#215) - ([1413a41](https://github.com/haymon-ai/dbmcp/commit/1413a41701a4aa2324ca6d01d5c16b73c8072876)) - [@athopen](https://github.com/athopen)
