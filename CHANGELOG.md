@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.15.2](https://github.com/haymon-ai/dbmcp/compare/e17717a3059b4ec33ecf78e7abe0d36938ad0785..v0.15.2) - 2026-10-26
+#### Bug Fixes
+- (**deps**) bump crypto-bigint and ctutils for RUSTSEC advisories (#262) - ([e17717a](https://github.com/haymon-ai/dbmcp/commit/e17717a3059b4ec33ecf78e7abe0d36938ad0785)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.15.1](https://github.com/haymon-ai/dbmcp/compare/3a643969991d5f8fbe4600b1e191640990d23199..v0.15.1) - 2026-10-22
 #### Bug Fixes
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**cli**) harden CLI secret handling and boolean flags (#242) - ([3a64396](https://github.com/haymon-ai/dbmcp/commit/3a643969991d5f8fbe4600b1e191640990d23199)) - [@athopen](https://github.com/athopen)
