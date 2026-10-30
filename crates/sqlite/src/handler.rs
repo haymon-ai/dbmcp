@@ -76,7 +76,7 @@ impl SqliteHandler {
         Ok(Self {
             config: config.database.clone(),
             connection: SqliteConnection::new(&config.database),
-            redactor: Redactor::from_config(&config.pii)?,
+            redactor: Redactor::from_config(config.pii.as_ref())?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
         })
     }
@@ -122,6 +122,7 @@ mod tests {
 
     fn handler(read_only: bool) -> SqliteHandler {
         SqliteHandler::new(&Config {
+            transport: dbmcp_config::Transport::Stdio,
             database: DatabaseConfig {
                 backend: DatabaseBackend::Sqlite,
                 name: Some(":memory:".into()),
@@ -129,7 +130,7 @@ mod tests {
                 ..DatabaseConfig::default()
             },
             http: None,
-            pii: dbmcp_config::PiiConfig::default(),
+            pii: None,
             ssh: None,
         })
         .expect("handler builds in test")

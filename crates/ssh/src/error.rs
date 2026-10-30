@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
     /// Neither a password nor a private key is configured.
-    #[error("SSH_PASSWORD or SSH_KEY is required for SSH authentication")]
+    #[error("DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required for SSH authentication")]
     MissingCredentials,
 
     /// The private key file could not be read.
@@ -32,7 +32,7 @@ pub enum SshError {
     },
 
     /// The private key is encrypted but no passphrase is configured.
-    #[error("SSH key {} is encrypted; set SSH_KEY_PASSPHRASE", path.display())]
+    #[error("SSH key {} is encrypted; set DBMCP_SSH_KEY_PASSPHRASE", path.display())]
     KeyEncrypted {
         /// Path of the key file.
         path: PathBuf,

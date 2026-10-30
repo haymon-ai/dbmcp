@@ -1,15 +1,15 @@
-//! HTTP transport command.
+//! HTTP transport.
 //!
 //! Runs the MCP server over Streamable HTTP with CORS support and
 //! optional bearer-token authentication. Each HTTP session clones the
-//! internally-built handler, sharing the underlying connection pools.
+//! server, sharing the underlying connection pools.
 
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use clap::{Args, Parser};
-use dbmcp_config::{AllowedOrigins, Config, ConfigError, ConfigErrors, DatabaseConfig, HttpConfig, PiiConfig, Secret};
+use dbmcp_config::{AllowedOrigins, HttpConfig};
+use dbmcp_server::Server;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -20,219 +20,45 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::commands::common::{self, DatabaseArguments, PiiArguments, SshArguments, flag_conventions};
 use crate::error::ErrorKind;
+use crate::server::shutdown_signal;
 
-/// HTTP transport flags embedded in [`HttpCommand`].
+/// Serves MCP over Streamable HTTP on the configured host and port.
 ///
-/// `host` and `port` use explicit `id = "http-*"` overrides so their
-/// clap argument ids don't collide with the `host`/`port` fields in
-/// [`DatabaseArguments`] when both are flattened into [`HttpCommand`].
-#[derive(Debug, Args)]
-#[command(next_help_heading = "HTTP Transport")]
-struct HttpArguments {
-    /// Bind host for HTTP transport.
-    #[arg(
-        id = "http-host",
-        long = "host",
-        env = "HTTP_HOST",
-        value_name = "HOST",
-        default_value = HttpConfig::DEFAULT_HOST,
-    )]
-    host: String,
+/// Each session clones `server`, sharing the underlying database
+/// connection pools. Shuts down gracefully on Ctrl-C or `SIGTERM`.
+///
+/// # Errors
+///
+/// Returns an error if TCP bind fails (port in use, permission denied)
+/// or the HTTP service fails to serve.
+pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), ErrorKind> {
+    let cancel_token = CancellationToken::new();
+    let router = build_http_router(config, server, &cancel_token);
 
-    /// Bind port for HTTP transport.
-    #[arg(
-        id = "http-port",
-        long = "port",
-        env = "HTTP_PORT",
-        value_name = "PORT",
-        default_value_t = HttpConfig::DEFAULT_PORT
-    )]
-    port: u16,
+    let bind_addr = format!("{}:{}", config.host, config.port);
+    info!("Starting MCP server via HTTP transport on {bind_addr}...");
 
-    /// Allowed browser origins (comma-separated, RFC 6454 `<scheme>://<host>[:<port>]` or `null`).
-    ///
-    /// Drives BOTH the CORS preflight allowlist AND the rmcp server-side
-    /// Origin validator. Use `:*` to match any port or give an explicit
-    /// port; entries without a port are deprecated. Malformed entries are
-    /// rejected at startup. Pass an empty list
-    /// (`--allowed-origins ""`) to disable server-side Origin validation
-    /// and grant no CORS access — only do this for non-browser deployments.
-    #[arg(
-        long = "allowed-origins",
-        env = "HTTP_ALLOWED_ORIGINS",
-        value_delimiter = ',',
-        default_values_t = HttpConfig::default_allowed_origins()
-    )]
-    allowed_origins: Vec<String>,
-
-    /// Allowed host names (comma-separated).
-    #[arg(
-        long = "allowed-hosts",
-        env = "HTTP_ALLOWED_HOSTS",
-        value_delimiter = ',',
-        default_values_t = HttpConfig::default_allowed_hosts()
-    )]
-    allowed_hosts: Vec<String>,
-
-    /// Bearer token clients MUST send as `Authorization: Bearer <token>`.
-    ///
-    /// Required when binding a non-loopback host. Prefer the env var:
-    /// command-line arguments are visible to other local users.
-    #[arg(
-        long = "auth-token",
-        env = "HTTP_AUTH_TOKEN",
-        value_name = "TOKEN",
-        hide_env_values = true
-    )]
-    auth_token: Option<Secret>,
-
-    /// Allow binding a non-loopback host without `HTTP_AUTH_TOKEN`.
-    ///
-    /// Only for deployments where a reverse proxy authenticates callers.
-    /// Anyone who can reach the port gets full access to the database.
-    #[arg(
-        long = "dangerously-allow-unauthenticated",
-        env = "HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED"
-    )]
-    dangerously_allow_unauthenticated: bool,
-}
-
-impl TryFrom<&HttpArguments> for HttpConfig {
-    type Error = ConfigErrors;
-
-    fn try_from(http: &HttpArguments) -> Result<Self, Self::Error> {
-        let candidate = Self {
-            host: http.host.clone(),
-            port: http.port,
-            // `--allowed-origins ""` arrives as `[""]`; dropping blanks turns
-            // it into the empty list that disables Origin validation.
-            allowed_origins: http
-                .allowed_origins
-                .iter()
-                .filter(|origin| !origin.trim().is_empty())
-                .cloned()
-                .collect(),
-            allowed_hosts: http.allowed_hosts.clone(),
-            auth_token: http.auth_token.clone(),
-            allow_unauthenticated: http.dangerously_allow_unauthenticated,
-        };
-        candidate.validate()?;
-        Ok(candidate)
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("Listening on http://{bind_addr}/mcp");
+    if config.auth_token.is_some() {
+        info!("Bearer token authentication enabled");
+    } else if config.is_loopback() {
+        info!("Bearer token authentication disabled (loopback bind)");
+    } else {
+        warn!(
+            "Bearer token authentication DISABLED on non-loopback bind {bind_addr}; \
+             anyone who can reach this port can access the database"
+        );
     }
-}
 
-/// Runs the MCP server in HTTP mode.
-#[derive(Debug, Parser)]
-#[command(mut_args(flag_conventions))]
-pub(crate) struct HttpCommand {
-    /// Shared database connection flags.
-    #[command(flatten)]
-    database: DatabaseArguments,
-
-    /// HTTP transport flags.
-    #[command(flatten)]
-    http: HttpArguments,
-
-    /// Shared PII flags.
-    #[command(flatten)]
-    pii: PiiArguments,
-
-    /// Shared SSH tunnel flags.
-    #[command(flatten)]
-    ssh: SshArguments,
-}
-
-impl TryFrom<&HttpCommand> for Config {
-    type Error = ConfigErrors;
-
-    fn try_from(cmd: &HttpCommand) -> Result<Self, Self::Error> {
-        match (
-            DatabaseConfig::try_from(&cmd.database),
-            HttpConfig::try_from(&cmd.http),
-            PiiConfig::try_from(&cmd.pii),
-            cmd.ssh.to_config(cmd.database.backend),
-        ) {
-            (Ok(database), Ok(http), Ok(pii), Ok(ssh)) => Ok(Self {
-                database,
-                http: Some(http),
-                pii,
-                ssh,
-            }),
-            (database, http, pii, ssh) => {
-                let mut errors: Vec<ConfigError> = Vec::new();
-                if let Err(e) = database {
-                    errors.extend(e);
-                }
-                if let Err(e) = http {
-                    errors.extend(e);
-                }
-                if let Err(e) = pii {
-                    errors.extend(e);
-                }
-                if let Err(e) = ssh {
-                    errors.extend(e);
-                }
-                Err(ConfigErrors::from_vec(errors).expect("non-Ok branch implies at least one Err"))
-            }
-        }
-    }
-}
-
-impl HttpCommand {
-    /// Builds the database configuration, server, and runs the HTTP transport.
-    ///
-    /// Binds to the configured host/port and serves MCP requests over
-    /// Streamable HTTP. Each session clones the internally-built handler,
-    /// sharing the underlying database connection pools. Shuts down
-    /// gracefully on Ctrl-C or `SIGTERM`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if configuration validation fails, TCP bind
-    /// fails (port in use, permission denied), or the HTTP service
-    /// fails to serve.
-    pub(crate) async fn execute(&self) -> Result<(), ErrorKind> {
-        let config = Config::try_from(self)?;
-        let http_config = config.http.as_ref().expect("http config set by TryFrom impl");
-
-        let (tunnel, server) = common::create_server(&config).await?;
-        let cancel_token = CancellationToken::new();
-
-        let router = build_http_router(http_config, server.clone(), &cancel_token);
-
-        let bind_addr = format!("{}:{}", http_config.host, http_config.port);
-        info!("Starting MCP server via HTTP transport on {bind_addr}...");
-
-        let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-        info!("Listening on http://{bind_addr}/mcp");
-        if http_config.auth_token.is_some() {
-            info!("Bearer token authentication enabled");
-        } else if http_config.is_loopback() {
-            info!("Bearer token authentication disabled (loopback bind)");
-        } else {
-            warn!(
-                "Bearer token authentication DISABLED on non-loopback bind {bind_addr}; \
-                 anyone who can reach this port can access the database"
-            );
-        }
-
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                common::shutdown_signal().await;
-                cancel_token.cancel();
-            })
-            .await?;
-
-        server.shutdown().await;
-        info!("All connection pools closed.");
-
-        // Pools close through the tunnel, so it must outlive the server.
-        drop(server);
-        drop(tunnel);
-        Ok(())
-    }
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            cancel_token.cancel();
+        })
+        .await?;
+    Ok(())
 }
 
 /// Builds the axum router that serves MCP over Streamable HTTP.
@@ -244,11 +70,7 @@ impl HttpCommand {
 /// browsers stay blocked. When an auth token is configured, every request
 /// must pass [`require_bearer`] before it reaches the MCP service. CORS stays outermost so browser preflights,
 /// which never carry credentials, are answered without authentication.
-fn build_http_router(
-    http_config: &HttpConfig,
-    server: common::Server,
-    cancel_token: &CancellationToken,
-) -> axum::Router {
+fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &CancellationToken) -> axum::Router {
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         Arc::new(NeverSessionManager::default()),
@@ -332,27 +154,8 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
-    use clap::Parser;
-    use dbmcp_config::DatabaseBackend;
+    use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Secret, Transport};
     use tower::ServiceExt;
-
-    #[derive(Debug, Parser)]
-    #[command(no_binary_name = true, mut_args(flag_conventions))]
-    struct TestCli {
-        #[command(flatten)]
-        http: HttpArguments,
-    }
-
-    fn parse_http_args(args: &[&str]) -> HttpArguments {
-        // SAFETY: tests don't run concurrently against these env vars.
-        unsafe {
-            std::env::remove_var("HTTP_ALLOWED_ORIGINS");
-            std::env::remove_var("HTTP_ALLOWED_HOSTS");
-            std::env::remove_var("HTTP_AUTH_TOKEN");
-            std::env::remove_var("HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED");
-        }
-        TestCli::try_parse_from(args).expect("clap parse").http
-    }
 
     fn sqlite_memory_db_config() -> DatabaseConfig {
         DatabaseConfig {
@@ -382,12 +185,13 @@ mod tests {
             allow_unauthenticated: false,
         };
         let config = Config {
+            transport: Transport::Http,
             database: sqlite_memory_db_config(),
             http: Some(http_config.clone()),
-            pii: PiiConfig::default(),
+            pii: None,
             ssh: None,
         };
-        let server = common::build_server(&config).expect("server builds in test");
+        let server = crate::server::build_server(&config).expect("server builds in test");
         let cancel = CancellationToken::new();
         build_http_router(&http_config, server, &cancel)
     }
@@ -406,70 +210,6 @@ mod tests {
             .header(header::HOST, "localhost")
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
-    }
-
-    fn clear_http_env() {
-        // SAFETY: tests in this file do not write HTTP_* env vars concurrently.
-        unsafe {
-            std::env::remove_var("HTTP_HOST");
-            std::env::remove_var("HTTP_PORT");
-            std::env::remove_var("HTTP_ALLOWED_ORIGINS");
-            std::env::remove_var("HTTP_ALLOWED_HOSTS");
-            std::env::remove_var("HTTP_AUTH_TOKEN");
-            std::env::remove_var("HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED");
-        }
-    }
-
-    #[test]
-    fn http_config_validate_is_called_from_try_from_path() {
-        // Structural-presence guard: ensures HttpConfig::try_from invokes
-        // HttpConfig::validate. When a future rule fires on default args,
-        // this test deliberately fails — flagging the contributor.
-        let args = parse_http_args(&[]);
-        HttpConfig::try_from(&args).expect("default http args must validate");
-    }
-
-    #[test]
-    fn top_level_try_from_http_accumulates_only_database_errors_today() {
-        // HttpConfig::validate and PiiConfig::validate are no-ops today, so
-        // only DatabaseConfig errors propagate. When http or pii gain a rule
-        // that fires on default args, widen the assertion to verify
-        // db→http→pii ordering (FR-006).
-        clear_http_env();
-        let cmd = HttpCommand::try_parse_from(["_", "--db-backend", "sqlite"]).expect("clap parse");
-        let errors = Config::try_from(&cmd).expect_err("sqlite without name must fail");
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-    }
-
-    #[test]
-    fn clap_default_yields_loopback_origins() {
-        let args = parse_http_args(&[]);
-        let config = HttpConfig::try_from(&args).expect("default args are valid");
-        assert_eq!(config.allowed_origins, HttpConfig::default_allowed_origins());
-    }
-
-    #[test]
-    fn try_from_rejects_empty_host() {
-        clear_http_env();
-        let cli = TestCli::try_parse_from(["--host", ""]).expect("clap must accept empty host");
-        let errors = HttpConfig::try_from(&cli.http).expect_err("empty host must be rejected by validate");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
-    }
-
-    #[test]
-    fn try_from_rejects_whitespace_host() {
-        clear_http_env();
-        let cli = TestCli::try_parse_from(["--host", "   "]).expect("clap must accept whitespace host");
-        let errors = HttpConfig::try_from(&cli.http).expect_err("whitespace host must be rejected by validate");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
-    }
-
-    #[test]
-    fn clap_accepts_default_host() {
-        clear_http_env();
-        let cli = TestCli::try_parse_from(Vec::<&str>::new()).expect("clap parse");
-        assert_eq!(cli.http.host, HttpConfig::DEFAULT_HOST);
     }
 
     #[tokio::test]
@@ -567,7 +307,7 @@ mod tests {
         }
     }
 
-    /// Pins `crate::commands::origin` to rmcp's private matcher.
+    /// Pins [`AllowedOrigins`] to rmcp's private matcher.
     ///
     /// Every case runs through both the CORS preflight and rmcp's
     /// validator, so an rmcp upgrade that changes Origin semantics fails
@@ -631,64 +371,6 @@ mod tests {
             .expect("build request");
         let (status, _body) = send(router, request).await;
         assert_ne!(status, StatusCode::FORBIDDEN, "empty allowlist must not reject Origin");
-    }
-
-    #[test]
-    fn empty_allowed_origins_flag_yields_empty_list() {
-        let args = parse_http_args(&["--allowed-origins", ""]);
-        let config = HttpConfig::try_from(&args).expect("empty origins must validate");
-        assert!(config.allowed_origins.is_empty(), "{:?}", config.allowed_origins);
-    }
-
-    #[test]
-    fn try_from_rejects_malformed_origin() {
-        let args = parse_http_args(&["--allowed-origins", "http://localhost:*,localhost"]);
-        let errors = HttpConfig::try_from(&args).expect_err("malformed origin must be rejected");
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::InvalidAllowedOrigin(entry) if entry == "localhost"))
-        );
-    }
-
-    #[test]
-    fn try_from_rejects_non_loopback_without_token() {
-        let args = parse_http_args(&["--host", "0.0.0.0"]);
-        let errors = HttpConfig::try_from(&args).expect_err("0.0.0.0 without token must be rejected");
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::UnauthenticatedNonLoopbackBind(_)))
-        );
-    }
-
-    #[test]
-    fn try_from_accepts_non_loopback_with_token() {
-        let args = parse_http_args(&["--host", "0.0.0.0", "--auth-token", TEST_TOKEN]);
-        let config = HttpConfig::try_from(&args).expect("token must allow non-loopback bind");
-        assert_eq!(config.auth_token.as_ref().map(Secret::expose), Some(TEST_TOKEN));
-    }
-
-    #[test]
-    fn try_from_accepts_non_loopback_with_opt_out() {
-        let args = parse_http_args(&["--host", "0.0.0.0", "--dangerously-allow-unauthenticated"]);
-        let config = HttpConfig::try_from(&args).expect("opt-out must allow non-loopback bind");
-        assert!(config.allow_unauthenticated);
-        assert!(config.auth_token.is_none());
-    }
-
-    #[test]
-    fn dangerously_allow_unauthenticated_accepts_explicit_values() {
-        assert!(!parse_http_args(&[]).dangerously_allow_unauthenticated);
-        assert!(parse_http_args(&["--dangerously-allow-unauthenticated=true"]).dangerously_allow_unauthenticated);
-        for value in ["false", "0", "no", "off"] {
-            let arg = format!("--dangerously-allow-unauthenticated={value}");
-            assert!(!parse_http_args(&[&arg]).dangerously_allow_unauthenticated, "{value:?}");
-        }
-        for value in ["", "disabled", "never"] {
-            let arg = format!("--dangerously-allow-unauthenticated={value}");
-            assert!(TestCli::try_parse_from([&arg]).is_err(), "{value:?} must be rejected");
-        }
     }
 
     async fn assert_unauthorized(request: Request<Body>) {

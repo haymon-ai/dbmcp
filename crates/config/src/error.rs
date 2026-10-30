@@ -18,8 +18,8 @@
 /// rejects (integer ranges, enum membership) are not represented here.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// `DB_NAME` is required for `SQLite`.
-    #[error("DB_NAME (file path) is required for SQLite")]
+    /// `DBMCP_DB_NAME` is required for `SQLite`.
+    #[error("DBMCP_DB_NAME (file path) is required for SQLite")]
     MissingSqliteDbName,
 
     /// A configured file (SSL certificate, SSH key) was not found.
@@ -27,61 +27,61 @@ pub enum ConfigError {
     FileNotFound(String, String),
 
     /// HTTP bind host is empty or whitespace.
-    #[error("HTTP_HOST must not be empty")]
+    #[error("DBMCP_HTTP_HOST must not be empty")]
     EmptyHttpHost,
 
     /// HTTP bearer token was supplied but is empty or whitespace.
-    #[error("HTTP_AUTH_TOKEN must not be empty when set")]
+    #[error("DBMCP_HTTP_AUTH_TOKEN must not be empty when set")]
     EmptyHttpAuthToken,
 
     /// HTTP bind host is not loopback and no bearer token is configured.
     #[error(
         "refusing to bind HTTP transport to non-loopback host '{0}' without authentication; \
-         set HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
+         set DBMCP_HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
     )]
     UnauthenticatedNonLoopbackBind(String),
 
     /// An allowed-origins entry is not a valid origin.
     #[error(
-        "HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
+        "DBMCP_HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
          expected `<scheme>://<host>[:<port>|:*]` or `null`"
     )]
     InvalidAllowedOrigin(String),
 
-    /// `PII_CATEGORIES` was supplied but the resolved list is empty.
-    #[error("PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
+    /// `DBMCP_PII_CATEGORIES` was supplied but the resolved list is empty.
+    #[error("DBMCP_PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
     PiiCategoriesEmpty,
 
     /// `--pii-ner` was enabled without a `--pii-ner-model` path.
-    #[error("PII_NER_MODEL (model directory) is required when PII_NER_ENABLE is set")]
+    #[error("DBMCP_PII_NER_MODEL (model directory) is required when DBMCP_PII_NER_ENABLE is set")]
     PiiNerModelMissing,
 
     /// SSH tunnelling was requested for the `SQLite` backend.
-    #[error("SSH_HOST is not supported with the sqlite backend")]
+    #[error("DBMCP_SSH_HOST is not supported with the sqlite backend")]
     SshSqliteUnsupported,
 
-    /// Other `SSH_*` options were set without `SSH_HOST`.
-    #[error("SSH_HOST is required when other SSH_* options are set")]
+    /// Other `DBMCP_SSH_*` options were set without `DBMCP_SSH_HOST`.
+    #[error("DBMCP_SSH_HOST is required when other DBMCP_SSH_* options are set")]
     MissingSshHost,
 
-    /// `SSH_HOST` was set to an empty string.
-    #[error("SSH_HOST must not be empty")]
+    /// `DBMCP_SSH_HOST` was set to an empty string.
+    #[error("DBMCP_SSH_HOST must not be empty")]
     EmptySshHost,
 
-    /// `SSH_HOST` was set without `SSH_USER`.
-    #[error("SSH_USER is required when SSH_HOST is set")]
+    /// `DBMCP_SSH_HOST` was set without `DBMCP_SSH_USER`.
+    #[error("DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set")]
     MissingSshUser,
 
-    /// `SSH_HOST` was set without a password or key.
-    #[error("SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set")]
+    /// `DBMCP_SSH_HOST` was set without a password or key.
+    #[error("DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set")]
     MissingSshAuth,
 
-    /// `SSH_KEY_PASSPHRASE` was set without `SSH_KEY`.
-    #[error("SSH_KEY_PASSPHRASE requires SSH_KEY")]
+    /// `DBMCP_SSH_KEY_PASSPHRASE` was set without `DBMCP_SSH_KEY`.
+    #[error("DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY")]
     SshKeyPassphraseWithoutKey,
 
     /// `known_hosts` could not be resolved and host-key checking is on.
-    #[error("SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    #[error("DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
     MissingSshKnownHosts,
 }
 
@@ -155,7 +155,7 @@ mod tests {
     }
 
     fn missing_ca() -> ConfigError {
-        ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope/ca.pem".into())
+        ConfigError::FileNotFound("DBMCP_DB_SSL_CA".into(), "/nope/ca.pem".into())
     }
 
     #[test]

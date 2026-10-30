@@ -10,7 +10,7 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
@@ -33,9 +33,10 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
 fn handler(read_only: bool) -> SqliteHandler {
     let config = base_db_config(read_only);
     SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -47,9 +48,10 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         ..base_db_config(false)
     };
     SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -180,9 +182,10 @@ async fn test_query_timeout_fast_query_succeeds() {
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -202,9 +205,10 @@ async fn test_query_timeout_disabled_with_zero() {
         ..base_db_config(false)
     };
     let handler = SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -1919,13 +1923,13 @@ async fn test_list_triggers_detailed_omits_null_sql_rows_brief_lists_them() {
 
 fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
     SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: redact_pii,
+        pii: redact_pii.then(|| PiiConfig {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")
@@ -1933,13 +1937,13 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
 
 fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
     SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: true,
+        pii: Some(PiiConfig {
             operator,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")
@@ -2073,13 +2077,13 @@ async fn read_query_hash_operator_emits_stable_digest() {
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }
 
-/// Returns whether a server started with `DB_READ_ONLY=value` exposes `writeQuery`.
+/// Returns whether a server started with `DBMCP_DB_READ_ONLY=value` exposes `writeQuery`.
 async fn exposes_write_query(value: &str) -> bool {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
     command
-        .args(["stdio", "--db-backend", "sqlite", "--db-name"])
+        .args(["--db-backend", "sqlite", "--db-name"])
         .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
-        .env("DB_READ_ONLY", value);
+        .env("DBMCP_DB_READ_ONLY", value);
     let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
     let client = ().serve(transport).await.expect("mcp handshake");
     let tools = client.list_all_tools().await.expect("tools/list");
@@ -2091,23 +2095,32 @@ async fn exposes_write_query(value: &str) -> bool {
 async fn test_db_read_only_env_accepts_explicit_values() {
     // The full value table is covered by the CLI unit tests; this only
     // proves the env var reaches the same parser.
-    assert!(exposes_write_query("0").await, "DB_READ_ONLY=0 must disable read-only");
-    assert!(!exposes_write_query("1").await, "DB_READ_ONLY=1 must keep read-only");
+    assert!(
+        exposes_write_query("0").await,
+        "DBMCP_DB_READ_ONLY=0 must disable read-only"
+    );
+    assert!(
+        !exposes_write_query("1").await,
+        "DBMCP_DB_READ_ONLY=1 must keep read-only"
+    );
 }
 
 #[tokio::test]
 async fn test_db_read_only_env_rejects_blank_and_unknown_values() {
     for value in ["", "disabled"] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
-            .args(["stdio", "--db-backend", "sqlite", "--db-name"])
+            .args(["--db-backend", "sqlite", "--db-name"])
             .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
-            .env("DB_READ_ONLY", value)
+            .env("DBMCP_DB_READ_ONLY", value)
             .stdin(std::process::Stdio::null())
             .output()
             .await
             .expect("run dbmcp");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "DB_READ_ONLY={value:?} must fail startup");
+        assert!(
+            !output.status.success(),
+            "DBMCP_DB_READ_ONLY={value:?} must fail startup"
+        );
         assert!(stderr.contains("--db-read-only"), "{stderr}");
     }
 }
@@ -2115,22 +2128,19 @@ async fn test_db_read_only_env_rejects_blank_and_unknown_values() {
 #[tokio::test]
 async fn test_help_hides_secret_env_values() {
     const SECRET: &str = "hunter2-help-secret";
-    for subcommand in ["stdio", "http"] {
-        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
-            .arg(subcommand)
-            .arg("--help")
-            .env("DB_PASSWORD", SECRET)
-            .env("SSH_PASSWORD", SECRET)
-            .env("SSH_KEY_PASSPHRASE", SECRET)
-            .env("HTTP_AUTH_TOKEN", SECRET)
-            .output()
-            .await
-            .expect("run dbmcp --help");
-        assert!(output.status.success(), "{subcommand} --help must succeed");
-        let help = String::from_utf8_lossy(&output.stdout);
-        assert!(help.contains("DB_PASSWORD"), "{help}");
-        assert!(!help.contains(SECRET), "{subcommand} --help leaked a secret:\n{help}");
-    }
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+        .arg("--help")
+        .env("DBMCP_DB_PASSWORD", SECRET)
+        .env("DBMCP_SSH_PASSWORD", SECRET)
+        .env("DBMCP_SSH_KEY_PASSPHRASE", SECRET)
+        .env("DBMCP_HTTP_AUTH_TOKEN", SECRET)
+        .output()
+        .await
+        .expect("run dbmcp --help");
+    assert!(output.status.success(), "--help must succeed");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("DBMCP_DB_PASSWORD"), "{help}");
+    assert!(!help.contains(SECRET), "--help leaked a secret:\n{help}");
 }
 
 #[tokio::test]
@@ -2138,13 +2148,11 @@ async fn test_version_reports_binary_name_and_version() {
     let binary = Path::new(env!("CARGO_BIN_EXE_dbmcp"));
     let name = binary.file_stem().and_then(|stem| stem.to_str()).expect("binary name");
     let expected = format!("{name} {}\n", env!("CARGO_PKG_VERSION"));
-    for args in [&["version"][..], &["--version"][..]] {
-        let output = tokio::process::Command::new(binary)
-            .args(args)
-            .output()
-            .await
-            .expect("run dbmcp version");
-        assert!(output.status.success(), "{args:?} must succeed");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{args:?}");
-    }
+    let output = tokio::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .await
+        .expect("run dbmcp --version");
+    assert!(output.status.success(), "--version must succeed");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
 }

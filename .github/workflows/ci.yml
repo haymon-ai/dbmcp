@@ -104,26 +104,26 @@ jobs:
       - name: Approval tests
         run: cargo test --test approval_mysql -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 3306
       - name: Functional tests
         run: cargo test --test functional_mysql -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 3306
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
-          DB_BACKEND: mysql
-          DB_HOST: mariadb
-          DB_PORT: 3306
-          SSH_HOST: 127.0.0.1
-          SSH_PORT: 2222
-          SSH_USER: dbmcp
-          SSH_PASSWORD: dbmcp
-          SSH_STRICT_HOST_KEY_CHECKING: "no"
+          DBMCP_DB_BACKEND: mysql
+          DBMCP_DB_HOST: mariadb
+          DBMCP_DB_PORT: 3306
+          DBMCP_SSH_HOST: 127.0.0.1
+          DBMCP_SSH_PORT: 2222
+          DBMCP_SSH_USER: dbmcp
+          DBMCP_SSH_PASSWORD: dbmcp
+          DBMCP_SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   mysql:
@@ -166,13 +166,13 @@ jobs:
       - name: Approval tests
         run: cargo test --test approval_mysql -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 3306
       - name: Functional tests
         run: cargo test --test functional_mysql -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 3306
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: Export MySQL CA certificate
@@ -181,14 +181,14 @@ jobs:
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
           TLS_TEST_CA: ${{ runner.temp }}/mysql_ca.pem
-          DB_BACKEND: mysql
-          DB_HOST: mysql
-          DB_PORT: 3306
-          SSH_HOST: 127.0.0.1
-          SSH_PORT: 2222
-          SSH_USER: dbmcp
-          SSH_PASSWORD: dbmcp
-          SSH_STRICT_HOST_KEY_CHECKING: "no"
+          DBMCP_DB_BACKEND: mysql
+          DBMCP_DB_HOST: mysql
+          DBMCP_DB_PORT: 3306
+          DBMCP_SSH_HOST: 127.0.0.1
+          DBMCP_SSH_PORT: 2222
+          DBMCP_SSH_USER: dbmcp
+          DBMCP_SSH_PASSWORD: dbmcp
+          DBMCP_SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   postgres:
@@ -231,26 +231,26 @@ jobs:
       - name: Approval tests
         run: cargo test --test approval_postgres -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 5432
       - name: Functional tests
         run: cargo test --test functional_postgres -- --test-threads=1
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
+          DBMCP_DB_HOST: 127.0.0.1
+          DBMCP_DB_PORT: 5432
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
         run: cargo test --test functional_ssh -- --test-threads=1
         env:
-          DB_BACKEND: postgres
-          DB_HOST: postgres
-          DB_PORT: 5432
-          SSH_HOST: 127.0.0.1
-          SSH_PORT: 2222
-          SSH_USER: dbmcp
-          SSH_PASSWORD: dbmcp
-          SSH_STRICT_HOST_KEY_CHECKING: "no"
+          DBMCP_DB_BACKEND: postgres
+          DBMCP_DB_HOST: postgres
+          DBMCP_DB_PORT: 5432
+          DBMCP_SSH_HOST: 127.0.0.1
+          DBMCP_SSH_PORT: 2222
+          DBMCP_SSH_USER: dbmcp
+          DBMCP_SSH_PASSWORD: dbmcp
+          DBMCP_SSH_STRICT_HOST_KEY_CHECKING: "no"
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   sqlite:

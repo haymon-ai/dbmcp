@@ -217,7 +217,7 @@ mod tests {
             assert_eq!(
                 err.to_string(),
                 format!(
-                    "SSH key {} is encrypted; set SSH_KEY_PASSPHRASE",
+                    "SSH key {} is encrypted; set DBMCP_SSH_KEY_PASSPHRASE",
                     fixture(name).display()
                 )
             );

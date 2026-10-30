@@ -7,7 +7,7 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use indexmap::IndexMap;
@@ -16,13 +16,13 @@ use serde_json::Value;
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
         backend: DatabaseBackend::Postgres,
-        host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-        port: std::env::var("DB_PORT")
+        host: std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        port: std::env::var("DBMCP_DB_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(5432),
-        user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".into()),
-        password: std::env::var("DB_PASSWORD").ok().map(Into::into),
+        user: std::env::var("DBMCP_DB_USER").unwrap_or_else(|_| "postgres".into()),
+        password: std::env::var("DBMCP_DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
@@ -35,9 +35,10 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
         ..base_db_config(false)
     };
     PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -46,9 +47,10 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
 fn handler(read_only: bool) -> PostgresHandler {
     let config = base_db_config(read_only);
     PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -398,9 +400,10 @@ async fn test_query_timeout_cancels_slow_query() {
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -431,9 +434,10 @@ async fn test_query_timeout_disabled_with_zero() {
         ..base_db_config(false)
     };
     let handler = PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -3680,13 +3684,13 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
 
 fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
     PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: redact_pii,
+        pii: redact_pii.then(|| PiiConfig {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")
@@ -3694,13 +3698,13 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
 
 fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
     PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: true,
+        pii: Some(PiiConfig {
             operator,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")

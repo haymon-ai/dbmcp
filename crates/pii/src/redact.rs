@@ -143,7 +143,7 @@ impl Redactor {
 
     /// Resolve a [`dbmcp_config::PiiConfig`] to an optional [`Redactor`].
     ///
-    /// Returns `None` when `cfg.enabled` is `false`. When enabled, the
+    /// Returns `None` when `cfg` is `None` (redaction off). Otherwise, the
     /// redactor runs the context-aware confidence boost over every leaf and
     /// drops candidates whose post-boost score falls below the
     /// `min_score_with_context` floor — so weak-pattern recognizers (CVV,
@@ -154,10 +154,10 @@ impl Redactor {
     /// Returns [`RedactorInitError`] when the optional NER engine is enabled
     /// but fails to load. Startup must abort — the redactor is fail-closed and
     /// never degrades to regex-only when NER was requested.
-    pub fn from_config(cfg: &dbmcp_config::PiiConfig) -> Result<Option<Self>, RedactorInitError> {
-        if !cfg.enabled {
+    pub fn from_config(cfg: Option<&dbmcp_config::PiiConfig>) -> Result<Option<Self>, RedactorInitError> {
+        let Some(cfg) = cfg else {
             return Ok(None);
-        }
+        };
         let mut analyzer = crate::Analyzer::from_config(cfg);
         attach_ner(&mut analyzer, cfg)?;
         Ok(Some(Self::new(analyzer, cfg.operator.into())))
@@ -943,8 +943,7 @@ mod tests {
 
     #[test]
     fn from_config_disabled_is_none() {
-        let cfg = dbmcp_config::PiiConfig::default();
-        assert!(Redactor::from_config(&cfg).expect("ok").is_none());
+        assert!(Redactor::from_config(None).expect("ok").is_none());
     }
 
     fn rr(entity: Entity, start: usize, end: usize, score: f32) -> RecognizerResult {
@@ -996,12 +995,11 @@ mod tests {
     #[test]
     fn from_config_bad_model_path_fails_closed() {
         let cfg = dbmcp_config::PiiConfig {
-            enabled: true,
             ner_enabled: true,
             ner_model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
             ..dbmcp_config::PiiConfig::default()
         };
-        let err = Redactor::from_config(&cfg).expect_err("unreadable model must fail closed");
+        let err = Redactor::from_config(Some(&cfg)).expect_err("unreadable model must fail closed");
         assert!(matches!(err, RedactorInitError::Ner(_)));
     }
 
@@ -1075,12 +1073,11 @@ mod tests {
             return;
         };
         let cfg = dbmcp_config::PiiConfig {
-            enabled: true,
             ner_enabled: true,
             ner_model: Some(dir),
             ..dbmcp_config::PiiConfig::default()
         };
-        let r = Redactor::from_config(&cfg)
+        let r = Redactor::from_config(Some(&cfg))
             .expect("config ok")
             .expect("redactor present");
         let mut rows = vec![json!({

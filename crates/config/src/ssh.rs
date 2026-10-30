@@ -30,7 +30,7 @@ impl std::fmt::Display for StrictHostKeyChecking {
 
 /// Resolved SSH tunnel settings.
 ///
-/// Present on [`Config`](crate::Config) only when `SSH_HOST` is set.
+/// Present on [`Config`](crate::Config) only when `DBMCP_SSH_HOST` is set.
 /// Paths are already `~`-expanded and the `known_hosts` default is resolved.
 #[derive(Clone, Debug)]
 pub struct SshConfig {
@@ -103,7 +103,10 @@ impl SshConfig {
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound("SSH_KEY".into(), key.display().to_string()));
+            errors.push(ConfigError::FileNotFound(
+                "DBMCP_SSH_KEY".into(),
+                key.display().to_string(),
+            ));
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
             errors.push(ConfigError::SshKeyPassphraseWithoutKey);
@@ -178,7 +181,7 @@ mod tests {
     fn validate_rejects_sqlite_backend() {
         assert_eq!(
             errors_of(&ssh_config(), DatabaseBackend::Sqlite),
-            ["SSH_HOST is not supported with the sqlite backend"]
+            ["DBMCP_SSH_HOST is not supported with the sqlite backend"]
         );
     }
 
@@ -190,7 +193,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_HOST must not be empty"]
+            ["DBMCP_SSH_HOST must not be empty"]
         );
     }
 
@@ -202,7 +205,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Postgres),
-            ["SSH_USER is required when SSH_HOST is set"]
+            ["DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set"]
         );
     }
 
@@ -214,7 +217,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_PASSWORD or SSH_KEY is required when SSH_HOST is set"]
+            ["DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set"]
         );
     }
 
@@ -228,12 +231,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             &errors[0],
-            ConfigError::FileNotFound(name, _) if name == "SSH_KEY"
+            ConfigError::FileNotFound(name, _) if name == "DBMCP_SSH_KEY"
         ));
         assert_eq!(
             errors[0].to_string(),
             format!(
-                "SSH_KEY file not found: {}",
+                "DBMCP_SSH_KEY file not found: {}",
                 Path::new("/nonexistent/id_ed25519").display()
             )
         );
@@ -257,7 +260,7 @@ mod tests {
         };
         assert_eq!(
             errors_of(&config, DatabaseBackend::Mysql),
-            ["SSH_KEY_PASSPHRASE requires SSH_KEY"]
+            ["DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY"]
         );
     }
 
@@ -271,7 +274,7 @@ mod tests {
             };
             assert_eq!(
                 errors_of(&config, DatabaseBackend::Mysql),
-                ["SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
+                ["DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
                 "mode {mode}"
             );
         }

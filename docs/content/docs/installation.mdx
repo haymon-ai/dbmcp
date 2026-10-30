@@ -128,12 +128,12 @@ docker pull ghcr.io/haymon-ai/dbmcp:latest
 
 ```bash
 docker run -i --rm \
-  -e DB_BACKEND=postgres \
-  -e DB_HOST=host.docker.internal \
-  -e DB_USER=postgres \
-  # -e PII_ENABLE=true \
-  # -e PII_OPERATOR=replace \
-  # -e PII_CATEGORIES=financial,government \
+  -e DBMCP_DB_BACKEND=postgres \
+  -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres \
+  # -e DBMCP_PII_ENABLE=true \
+  # -e DBMCP_PII_OPERATOR=replace \
+  # -e DBMCP_PII_CATEGORIES=financial,government \
   ghcr.io/haymon-ai/dbmcp
 ```
 
@@ -141,28 +141,28 @@ docker run -i --rm \
 
 ```bash
 docker run --rm \
-  -e DB_BACKEND=postgres \
-  -e DB_HOST=host.docker.internal \
-  -e DB_USER=postgres \
-  # -e PII_ENABLE=true \
-  # -e PII_OPERATOR=replace \
-  # -e PII_CATEGORIES=financial,government \
-  -e HTTP_AUTH_TOKEN=change-me \
+  -e DBMCP_DB_BACKEND=postgres \
+  -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres \
+  # -e DBMCP_PII_ENABLE=true \
+  # -e DBMCP_PII_OPERATOR=replace \
+  # -e DBMCP_PII_CATEGORIES=financial,government \
+  -e DBMCP_HTTP_AUTH_TOKEN=change-me \
   -p 9001:9001 \
-  ghcr.io/haymon-ai/dbmcp http --host 0.0.0.0
+  ghcr.io/haymon-ai/dbmcp --transport http --host 0.0.0.0
 ```
 
-Binding `0.0.0.0` requires `HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`).
+Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`).
 
 **SQLite with a mounted volume**:
 
 ```bash
 docker run -i --rm \
-  -e DB_BACKEND=sqlite \
-  -e DB_NAME=/data/my.db \
-  # -e PII_ENABLE=true \
-  # -e PII_OPERATOR=replace \
-  # -e PII_CATEGORIES=financial,government \
+  -e DBMCP_DB_BACKEND=sqlite \
+  -e DBMCP_DB_NAME=/data/my.db \
+  # -e DBMCP_PII_ENABLE=true \
+  # -e DBMCP_PII_OPERATOR=replace \
+  # -e DBMCP_PII_CATEGORIES=financial,government \
   -v /path/to/local/db:/data \
   ghcr.io/haymon-ai/dbmcp
 ```
