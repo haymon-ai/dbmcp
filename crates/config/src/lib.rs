@@ -1,21 +1,10 @@
 //! Configuration loading and types for the dbmcp project.
 //!
 //! [`load`] builds a validated [`Config`] from the process env, an optional
-//! env file, and an optional YAML file. Each concern lives in its own
-//! module:
-//! - [`options`] — [`LoadOptions`], the loader inputs
-//! - [`loader`] — [`load`], [`Loaded`], and [`LoadError`]
-//! - [`env`](mod@env) — one constant per setting: YAML key, `DBMCP_*` name, and value kind
-//! - [`source`] — [`Source`], where a setting's value came from
-//! - [`log`] — [`LogLevel`] selector
-//! - [`config`] — top-level [`Config`] composing the transport and four sections
-//! - [`database`] — [`DatabaseConfig`] and [`DatabaseBackend`]
-//! - [`http`] — [`HttpConfig`]
-//! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
-//! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
-//! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
-//! - [`transport`] — [`Transport`] MCP transport selector
-//! - [`error`] — [`ConfigError`] and [`Diagnostic`], one shape for every cast and rule error
+//! env file, and an optional YAML file. The crate's interface is [`load`],
+//! its inputs ([`LoadOptions`], [`home_dir`]), its outcome ([`Loaded`],
+//! [`LoadError`]), and the plain configuration types; the setting table,
+//! sources, and diagnostics stay internal.
 //!
 //! Settings resolve with this precedence: non-empty process env >
 //! non-empty env file value > YAML value > default. All defaults
@@ -28,33 +17,31 @@
 //! token are stored as [`secrecy::SecretString`], so their values never
 //! reach [`Debug`] output.
 
-pub mod config;
-pub mod database;
+mod config;
+mod database;
 mod dotenv;
-pub mod env;
-pub mod error;
-pub mod http;
+mod env;
+mod error;
+mod http;
 mod interpolate;
-pub mod loader;
-pub mod log;
+mod loader;
+mod log;
 mod node;
-pub mod options;
-pub mod origin;
-pub mod pii;
-pub mod source;
-pub mod ssh;
+mod options;
+mod origin;
+mod pii;
+mod source;
+mod ssh;
 mod template;
-pub mod transport;
+mod transport;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
-pub use error::{ConfigError, Diagnostic};
 pub use http::HttpConfig;
 pub use loader::{LoadError, Loaded, load};
 pub use log::LogLevel;
-pub use options::LoadOptions;
+pub use options::{LoadOptions, home_dir};
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
-pub use source::Source;
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use transport::Transport;

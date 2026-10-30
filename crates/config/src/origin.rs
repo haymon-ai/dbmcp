@@ -20,8 +20,8 @@ pub struct AllowedOrigins(Vec<Origin>);
 impl AllowedOrigins {
     /// Parses each entry, skipping unparseable ones like rmcp does.
     ///
-    /// [`HttpConfig::validate`](crate::HttpConfig::validate) rejects such
-    /// entries, so a validated config never has any to skip.
+    /// [`load`](crate::load) rejects such
+    /// entries, so a loaded config never has any to skip.
     #[must_use]
     pub fn new(entries: &[String]) -> Self {
         Self(entries.iter().filter_map(|raw| parse_entry(raw)).collect())

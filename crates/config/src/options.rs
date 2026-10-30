@@ -1,4 +1,4 @@
-//! Loader inputs: the explicit file paths and the process environment.
+//! Loader inputs: the explicit file paths, the process environment, and the home directory.
 //!
 //! The CLI fills it from its two flags and the process, and the loader
 //! never reads `std::env` itself.
@@ -19,4 +19,10 @@ pub struct LoadOptions {
     pub working_dir: PathBuf,
     /// Home directory for `~` expansion and the default `known_hosts`.
     pub home: Option<PathBuf>,
+}
+
+/// Returns the user's home directory, treating an empty path as absent.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
 }

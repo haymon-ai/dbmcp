@@ -9,7 +9,7 @@
 //! 3. `${}`-interpolate every string value against process env, then env file.
 //! 4. Check keys, then resolve each setting: non-empty process env >
 //!    non-empty env file > YAML > default, casting text by setting type.
-//! 5. Run every section's `validate()` on the result.
+//! 5. Run [`Config::validate`] on the result.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -75,19 +75,6 @@ enum LoadErrorKind {
 
     #[error("configuration validation failed:{}", Bullets(.0))]
     Invalid(Vec<Diagnostic>),
-}
-
-impl LoadError {
-    /// Returns the cast and validation problems, if that stage failed.
-    ///
-    /// Empty when loading stopped earlier (reading, parsing, interpolation).
-    #[must_use]
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        match &self.kind {
-            LoadErrorKind::Invalid(diagnostics) => diagnostics,
-            _ => &[],
-        }
-    }
 }
 
 struct Bullets<'a, T>(&'a [T]);
@@ -584,10 +571,11 @@ impl<'a> Resolver<'a> {
             .push(Diagnostic::new(ConfigError::InvalidValue { path, reason }).involving(&[setting]));
     }
 
-    /// Resolves every setting into a [`Config`] and runs `validate()`.
+    /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
     ///
-    /// Cast errors stop before validation, since rules on half-cast values
-    /// would only add noise.
+    /// Activation rules run here: a section exists only when its trigger is
+    /// set, and SSH settings without `ssh.host` are an error. Cast errors stop
+    /// before validation, since rules on half-cast values would only add noise.
     fn build(&mut self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
             .enumeration(env::TRANSPORT, Transport::CHOICES)
@@ -601,55 +589,31 @@ impl<'a> Resolver<'a> {
             .copied()
             .filter(|setting| setting.path.starts_with("ssh.") && self.is_set(*setting))
             .collect();
-        let ssh = if ssh_set.contains(&env::SSH_HOST) {
-            Some(Ok(self.ssh()))
-        } else if ssh_set.is_empty() {
-            None
-        } else {
-            Some(Err(Diagnostic::new(ConfigError::MissingSshHost)
-                .involving(&ssh_set)
-                .missing(&[env::SSH_HOST])))
-        };
+        let ssh = ssh_set.contains(&env::SSH_HOST).then(|| self.ssh());
+        let missing_ssh_host = ssh.is_none() && !ssh_set.is_empty();
         if !self.diagnostics.is_empty() {
             return Err(std::mem::take(&mut self.diagnostics));
         }
 
-        let mut diagnostics = Vec::new();
-        diagnostics.extend(database.validate().err().into_iter().flatten());
-        if let Some(http) = &http {
-            diagnostics.extend(http.validate().err().into_iter().flatten());
-        }
-        if let Some(pii) = &pii {
-            diagnostics.extend(pii.validate().err().into_iter().flatten());
-        }
-        if !ssh_set.is_empty() && database.backend == DatabaseBackend::Sqlite {
-            diagnostics
-                .push(Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]));
-        }
-        let ssh = match ssh {
-            Some(Ok(ssh)) => {
-                diagnostics.extend(ssh.validate().err().into_iter().flatten());
-                Some(ssh)
-            }
-            Some(Err(diagnostic)) => {
-                diagnostics.push(diagnostic);
-                None
-            }
-            None => None,
+        let config = Config {
+            transport,
+            database,
+            http,
+            pii,
+            ssh,
         };
+        let mut diagnostics = config.validate().err().unwrap_or_default();
+        if missing_ssh_host {
+            diagnostics.push(
+                Diagnostic::new(ConfigError::MissingSshHost)
+                    .involving(&ssh_set)
+                    .missing(&[env::SSH_HOST]),
+            );
+        }
         if !diagnostics.is_empty() {
             return Err(diagnostics);
         }
-        Ok((
-            Config {
-                transport,
-                database,
-                http,
-                pii,
-                ssh,
-            },
-            log_level,
-        ))
+        Ok((config, log_level))
     }
 
     fn database(&mut self) -> DatabaseConfig {
@@ -771,6 +735,14 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Returns the cast and validation problems, if that stage failed.
+    fn diagnostics(error: &LoadError) -> &[Diagnostic] {
+        match &error.kind {
+            LoadErrorKind::Invalid(diagnostics) => diagnostics,
+            _ => &[],
+        }
+    }
 
     /// A scratch working directory with helpers to write files and load.
     struct Fixture {
@@ -1224,7 +1196,7 @@ mod tests {
             .config("dbmcp.yaml", "ssh:\n  user: deploy\n")
             .env("DBMCP_SSH_PORT", "2222");
         let error = fixture.load().expect_err("ssh without host");
-        let [diagnostic] = error.diagnostics() else {
+        let [diagnostic] = diagnostics(&error) else {
             panic!("one diagnostic: {error}");
         };
         assert!(matches!(diagnostic.error, ConfigError::MissingSshHost));
@@ -1258,7 +1230,7 @@ mod tests {
             .env("DBMCP_DB_BACKEND", "sqlite")
             .load()
             .expect_err("bad port");
-        let [diagnostic] = error.diagnostics() else {
+        let [diagnostic] = diagnostics(&error) else {
             panic!("only the cast error: {error}");
         };
         assert!(matches!(
@@ -1276,7 +1248,7 @@ mod tests {
             .env("DBMCP_CONFIG", "missing.yaml")
             .load()
             .expect_err("missing file");
-        assert!(error.diagnostics().is_empty());
+        assert!(diagnostics(&error).is_empty());
     }
 
     #[test]
