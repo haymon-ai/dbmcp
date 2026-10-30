@@ -116,17 +116,12 @@ impl TryFrom<&Arguments> for Config {
             Transport::Http => HttpConfig::try_from(&args.http).map(Some),
         };
         let pii = args.pii.enabled.then(|| PiiConfig::try_from(&args.pii)).transpose();
-        let mut ssh = args.ssh.is_set().then(|| SshConfig::try_from(&args.ssh)).transpose();
+        let ssh_set = args.ssh.is_set();
+        let ssh = ssh_set.then(|| SshConfig::try_from(&args.ssh)).transpose();
         // Needs both sections, so it lives here rather than in `SshConfig::validate`.
-        if args.ssh.is_set() && args.database.backend == DatabaseBackend::Sqlite {
-            let mut errors = vec![ConfigError::SshSqliteUnsupported];
-            if let Err(e) = ssh {
-                errors.extend(e);
-            }
-            ssh = Err(ConfigErrors::from_vec(errors).expect("holds SshSqliteUnsupported"));
-        }
+        let ssh_on_sqlite = ssh_set && args.database.backend == DatabaseBackend::Sqlite;
         match (DatabaseConfig::try_from(&args.database), http, pii, ssh) {
-            (Ok(database), Ok(http), Ok(pii), Ok(ssh)) => Ok(Self {
+            (Ok(database), Ok(http), Ok(pii), Ok(ssh)) if !ssh_on_sqlite => Ok(Self {
                 transport: args.transport,
                 database,
                 http,
@@ -143,6 +138,9 @@ impl TryFrom<&Arguments> for Config {
                 }
                 if let Err(e) = pii {
                     errors.extend(e);
+                }
+                if ssh_on_sqlite {
+                    errors.push(ConfigError::SshSqliteUnsupported);
                 }
                 if let Err(e) = ssh {
                     errors.extend(e);
@@ -628,7 +626,7 @@ impl SshArguments {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser};
+    use clap::{CommandFactory, FromArgMatches};
 
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -649,16 +647,11 @@ mod tests {
 
     /// Fallible [`parse`] for tests that expect clap to reject `args`.
     fn try_parse(args: &[&str]) -> Result<Arguments, clap::Error> {
-        // SAFETY: no test in this crate writes these env vars; removing them
-        // keeps inherited host values out of clap.
-        unsafe {
-            for arg in Arguments::command().get_arguments() {
-                if let Some(env) = arg.get_env() {
-                    std::env::remove_var(env);
-                }
-            }
-        }
-        Arguments::try_parse_from(std::iter::once("dbmcp").chain(args.iter().copied()))
+        // Drop every env binding so inherited host values never reach clap.
+        let mut matches = Arguments::command()
+            .mut_args(|arg| arg.env(None::<&str>))
+            .try_get_matches_from(std::iter::once("dbmcp").chain(args.iter().copied()))?;
+        Arguments::from_arg_matches_mut(&mut matches)
     }
 
     #[test]

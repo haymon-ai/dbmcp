@@ -89,9 +89,9 @@ pub enum ConfigError {
 ///
 /// Externally observed wrappers always carry ≥ 1 error — [`Self::from_vec`]
 /// returns `None` for an empty input, and [`From<ConfigError>`] yields a
-/// single-element wrapper. Each transport's `TryFrom<&Command> for Config`
-/// impl owns its own multi-section accumulation (database → http → pii) and
-/// returns `Ok(value)` when nothing was collected, never an empty wrapper.
+/// single-element wrapper. The CLI's `TryFrom<&Arguments> for Config` impl
+/// accumulates across sections (database → http → pii → ssh) and returns
+/// `Ok(value)` when nothing was collected, never an empty wrapper.
 ///
 /// Derefs to `&[ConfigError]` so callers can use slice methods directly
 /// (`iter`, `len`, indexing). `Display` renders each contained error on its
