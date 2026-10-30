@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::error::{ConfigError, ConfigErrors};
+use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::secret::Secret;
 
 /// Host-key verification policy for the SSH tunnel.
@@ -83,44 +83,65 @@ impl SshConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.host.is_empty() {
-            errors.push(ConfigError::EmptySshHost);
+            errors.push(Diagnostic::new(ConfigError::EmptySshHost).involving(&["ssh.host"]));
         }
         if self.user.is_empty() {
-            errors.push(ConfigError::MissingSshUser);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSshUser)
+                    .involving(&["ssh.host"])
+                    .missing(&["ssh.user"]),
+            );
         }
         if self.password.is_none() && self.key.is_none() {
-            errors.push(ConfigError::MissingSshAuth);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSshAuth)
+                    .involving(&["ssh.host"])
+                    .missing(&["ssh.password", "ssh.key"]),
+            );
         }
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound("ssh.key", key.display().to_string()));
+            errors.push(
+                Diagnostic::new(ConfigError::FileNotFound("ssh.key", key.display().to_string()))
+                    .involving(&["ssh.key"]),
+            );
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
-            errors.push(ConfigError::SshKeyPassphraseWithoutKey);
+            errors.push(
+                Diagnostic::new(ConfigError::SshKeyPassphraseWithoutKey)
+                    .involving(&["ssh.key_passphrase"])
+                    .missing(&["ssh.key"]),
+            );
         }
         if self.known_hosts.is_none() && self.strict_host_key_checking != StrictHostKeyChecking::No {
-            errors.push(ConfigError::MissingSshKnownHosts);
+            errors.push(Diagnostic::new(ConfigError::MissingSshKnownHosts).missing(&["ssh.known_hosts"]));
         }
         if self.port < 1 {
-            errors.push(ConfigError::OutOfRange {
-                path: "ssh.port",
-                expected: "at least 1",
-            });
+            errors.push(
+                Diagnostic::new(ConfigError::OutOfRange {
+                    path: "ssh.port",
+                    expected: "at least 1",
+                })
+                .involving(&["ssh.port"]),
+            );
         }
         if self.local_port == Some(0) {
-            errors.push(ConfigError::OutOfRange {
-                path: "ssh.local_port",
-                expected: "at least 1",
-            });
+            errors.push(
+                Diagnostic::new(ConfigError::OutOfRange {
+                    path: "ssh.local_port",
+                    expected: "at least 1",
+                })
+                .involving(&["ssh.local_port"]),
+            );
         }
 
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -173,7 +194,7 @@ mod tests {
             .validate()
             .expect_err("must fail")
             .iter()
-            .map(ToString::to_string)
+            .map(|diagnostic| diagnostic.error.to_string())
             .collect()
     }
 
@@ -218,7 +239,7 @@ mod tests {
         let errors = config.validate().expect_err("must fail");
         assert_eq!(errors.len(), 1);
         assert!(matches!(
-            &errors[0],
+            &errors[0].error,
             ConfigError::FileNotFound(name, _) if *name == "ssh.key"
         ));
         assert_eq!(
@@ -237,7 +258,7 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(&errors[0].error, ConfigError::FileNotFound(_, _)));
     }
 
     #[test]
@@ -283,11 +304,11 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(matches!(errors[0], ConfigError::EmptySshHost));
-        assert!(matches!(errors[1], ConfigError::MissingSshUser));
-        assert!(matches!(errors[2], ConfigError::MissingSshAuth));
-        assert!(matches!(errors[3], ConfigError::SshKeyPassphraseWithoutKey));
-        assert!(matches!(errors[4], ConfigError::MissingSshKnownHosts));
+        assert!(matches!(errors[0].error, ConfigError::EmptySshHost));
+        assert!(matches!(errors[1].error, ConfigError::MissingSshUser));
+        assert!(matches!(errors[2].error, ConfigError::MissingSshAuth));
+        assert!(matches!(errors[3].error, ConfigError::SshKeyPassphraseWithoutKey));
+        assert!(matches!(errors[4].error, ConfigError::MissingSshKnownHosts));
         assert_eq!(errors.len(), 5);
     }
 

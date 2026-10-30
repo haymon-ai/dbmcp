@@ -22,7 +22,7 @@ use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::{self, EnvFile};
 use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, SETTINGS, Setting};
-use crate::error::ConfigError;
+use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::interpolate;
 use crate::log::LogLevel;
@@ -76,12 +76,25 @@ enum LoadErrorKind {
     Interpolate { path: PathBuf, errors: Vec<String> },
 
     #[error("configuration validation failed:{}", Bullets(.0))]
-    Invalid(Vec<String>),
+    Invalid(Vec<Diagnostic>),
 }
 
-struct Bullets<'a>(&'a [String]);
+impl LoadError {
+    /// Returns the cast and validation problems, if that stage failed.
+    ///
+    /// Empty when loading stopped earlier (reading, parsing, interpolation).
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        match &self.kind {
+            LoadErrorKind::Invalid(diagnostics) => diagnostics,
+            _ => &[],
+        }
+    }
+}
 
-impl fmt::Display for Bullets<'_> {
+struct Bullets<'a, T>(&'a [T]);
+
+impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for error in self.0 {
             write!(f, "\n  - {error}")?;
@@ -163,21 +176,19 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         file: file.as_ref().map(|(path, _)| path.as_path()),
         leaves,
         sources: HashMap::new(),
-        errors: Vec::new(),
+        diagnostics: Vec::new(),
     };
-    let built = resolver.build();
-    if !resolver.errors.is_empty() {
-        return Err(fail(warnings, LoadErrorKind::Invalid(resolver.errors)));
-    }
-    match built {
+    match resolver.build() {
         Ok((config, log_level)) => Ok(Loaded {
             config,
             log_level,
             warnings,
         }),
-        Err(errors) => {
-            let errors = errors.iter().map(|e| resolver.describe(e)).collect();
-            Err(fail(warnings, LoadErrorKind::Invalid(errors)))
+        Err(mut diagnostics) => {
+            for diagnostic in &mut diagnostics {
+                diagnostic.attach_sources(&resolver.sources);
+            }
+            Err(fail(warnings, LoadErrorKind::Invalid(diagnostics)))
         }
     }
 }
@@ -393,7 +404,8 @@ struct Resolver<'a> {
     file: Option<&'a Path>,
     leaves: HashMap<&'static str, &'a SpannedNode>,
     sources: HashMap<&'static str, Source>,
-    errors: Vec<String>,
+    /// Cast errors collected while resolving settings.
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'a> Resolver<'a> {
@@ -423,15 +435,9 @@ impl<'a> Resolver<'a> {
         Some(raw)
     }
 
-    /// Returns `true` when any source sets `path`.
-    fn is_set(&self, path: &'static str) -> bool {
-        let env = env::by_path(path).env;
-        non_empty(&self.options.environment, env).is_some()
-            || self
-                .env_file
-                .and_then(|file| file.get(env))
-                .is_some_and(|value| !value.is_empty())
-            || self.leaves.contains_key(path)
+    /// Returns `true` when any source sets `path`, recording that source.
+    fn is_set(&mut self, path: &'static str) -> bool {
+        self.raw(path).is_some()
     }
 
     /// Resolves `path` and casts it; records a value-free error on failure.
@@ -440,8 +446,7 @@ impl<'a> Resolver<'a> {
         match cast(&raw) {
             Ok(value) => Some(value),
             Err(reason) => {
-                let source = &self.sources[path];
-                self.errors.push(format!("{path}: {reason} (from {source})"));
+                self.invalid(path, reason);
                 None
             }
         }
@@ -526,11 +531,7 @@ impl<'a> Resolver<'a> {
                 .filter_map(ValueEnum::to_possible_value)
                 .map(|value| value.get_name().to_owned())
                 .collect();
-            let source = &self.sources[path];
-            self.errors.push(format!(
-                "{path}: expected items from {} (from {source})",
-                names.join(", ")
-            ));
+            self.invalid(path, format!("expected items from {}", names.join(", ")));
         }
         parsed
     }
@@ -556,52 +557,65 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Records a cast error for `path`; its source is attached on failure.
+    fn invalid(&mut self, path: &'static str, reason: String) {
+        self.diagnostics
+            .push(Diagnostic::new(ConfigError::InvalidValue { path, reason }).involving(&[path]));
+    }
+
     /// Resolves every setting into a [`Config`] and runs `validate()`.
-    fn build(&mut self) -> Result<(Config, LogLevel), Vec<ConfigError>> {
+    ///
+    /// Cast errors stop before validation, since rules on half-cast values
+    /// would only add noise.
+    fn build(&mut self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self.enumeration("transport").unwrap_or(Transport::Stdio);
         let log_level = self.enumeration("log_level").unwrap_or_default();
         let database = self.database();
         let http = (transport == Transport::Http).then(|| self.http());
         let pii = self.bool("pii.enabled").unwrap_or(false).then(|| self.pii());
-        let ssh_paths = SETTINGS.iter().filter(|s| s.path.starts_with("ssh.")).map(|s| s.path);
-        let ssh_set = ssh_paths.clone().any(|path| self.is_set(path));
-        let ssh = if ssh_set {
-            if self.is_set("ssh.host") {
-                Some(Ok(self.ssh()))
-            } else {
-                Some(Err(ConfigError::MissingSshHost))
-            }
-        } else {
+        let ssh_set: Vec<&'static str> = SETTINGS
+            .iter()
+            .map(|s| s.path)
+            .filter(|path| path.starts_with("ssh.") && self.is_set(path))
+            .collect();
+        let ssh = if ssh_set.contains(&"ssh.host") {
+            Some(Ok(self.ssh()))
+        } else if ssh_set.is_empty() {
             None
+        } else {
+            Some(Err(Diagnostic::new(ConfigError::MissingSshHost)
+                .involving(&ssh_set)
+                .missing(&["ssh.host"])))
         };
-        if !self.errors.is_empty() {
-            return Err(Vec::new());
+        if !self.diagnostics.is_empty() {
+            return Err(std::mem::take(&mut self.diagnostics));
         }
 
-        let mut errors: Vec<ConfigError> = Vec::new();
-        errors.extend(database.validate().err().into_iter().flatten());
+        let mut diagnostics = Vec::new();
+        diagnostics.extend(database.validate().err().into_iter().flatten());
         if let Some(http) = &http {
-            errors.extend(http.validate().err().into_iter().flatten());
+            diagnostics.extend(http.validate().err().into_iter().flatten());
         }
         if let Some(pii) = &pii {
-            errors.extend(pii.validate().err().into_iter().flatten());
+            diagnostics.extend(pii.validate().err().into_iter().flatten());
         }
-        if ssh_set && database.backend == DatabaseBackend::Sqlite {
-            errors.push(ConfigError::SshSqliteUnsupported);
+        if !ssh_set.is_empty() && database.backend == DatabaseBackend::Sqlite {
+            diagnostics
+                .push(Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&["ssh.host", "database.backend"]));
         }
         let ssh = match ssh {
             Some(Ok(ssh)) => {
-                errors.extend(ssh.validate().err().into_iter().flatten());
+                diagnostics.extend(ssh.validate().err().into_iter().flatten());
                 Some(ssh)
             }
-            Some(Err(error)) => {
-                errors.push(error);
+            Some(Err(diagnostic)) => {
+                diagnostics.push(diagnostic);
                 None
             }
             None => None,
         };
-        if !errors.is_empty() {
-            return Err(errors);
+        if !diagnostics.is_empty() {
+            return Err(diagnostics);
         }
         Ok((
             Config {
@@ -717,26 +731,6 @@ impl<'a> Resolver<'a> {
                     .unwrap_or(SshConfig::DEFAULT_KEEPALIVE_INTERVAL_SECS),
             ),
             local_port: self.int("ssh.local_port", "1 and 65535"),
-        }
-    }
-
-    /// Renders a validation error with the source of every involved setting.
-    fn describe(&self, error: &ConfigError) -> String {
-        let sources: Vec<(&str, &Source)> = error
-            .paths()
-            .iter()
-            .filter_map(|path| self.sources.get(path).map(|source| (*path, source)))
-            .collect();
-        match sources.as_slice() {
-            [] => error.to_string(),
-            [(_, source)] if error.paths().len() == 1 => format!("{error} (from {source})"),
-            many => {
-                let list: Vec<String> = many
-                    .iter()
-                    .map(|(path, source)| format!("{path} from {source}"))
-                    .collect();
-                format!("{error} ({})", list.join("; "))
-            }
         }
     }
 }
@@ -1180,6 +1174,67 @@ mod tests {
         let fixture = Fixture::new().config("dbmcp.yaml", "database: [1, 2\n");
         let error = fixture.err();
         assert!(error.starts_with("failed to parse config file"), "{error}");
+    }
+
+    #[test]
+    fn diagnostics_are_typed_and_carry_their_sources() {
+        let fixture = Fixture::new()
+            .config("dbmcp.yaml", "ssh:\n  user: deploy\n")
+            .env("DBMCP_SSH_PORT", "2222");
+        let error = fixture.load().expect_err("ssh without host");
+        let [diagnostic] = error.diagnostics() else {
+            panic!("one diagnostic: {error}");
+        };
+        assert!(matches!(diagnostic.error, ConfigError::MissingSshHost));
+        assert_eq!(diagnostic.missing, ["ssh.host"]);
+        let file = fixture.dir.path().join("dbmcp.yaml");
+        assert_eq!(
+            diagnostic.involved,
+            [
+                ("ssh.port", Some(Source::Env("DBMCP_SSH_PORT"))),
+                (
+                    "ssh.user",
+                    Some(Source::File {
+                        path: file.clone(),
+                        line: 2,
+                        column: 9
+                    })
+                ),
+            ]
+        );
+        assert!(error.to_string().contains(&format!(
+            "ssh.host is required when other ssh settings are set; set DBMCP_SSH_HOST or ssh.host in the config file \
+             (ssh.port from DBMCP_SSH_PORT; ssh.user from {}:2:9)",
+            file.display()
+        )));
+    }
+
+    #[test]
+    fn cast_errors_stop_before_validation() {
+        let error = Fixture::new()
+            .env("DBMCP_DB_PORT", "x")
+            .env("DBMCP_DB_PAGE_SIZE", "0")
+            .load()
+            .expect_err("bad port");
+        let [diagnostic] = error.diagnostics() else {
+            panic!("only the cast error: {error}");
+        };
+        assert!(matches!(
+            &diagnostic.error,
+            ConfigError::InvalidValue {
+                path: "database.port",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn earlier_stages_have_no_diagnostics() {
+        let error = Fixture::new()
+            .env("DBMCP_CONFIG", "missing.yaml")
+            .load()
+            .expect_err("missing file");
+        assert!(error.diagnostics().is_empty());
     }
 
     #[test]

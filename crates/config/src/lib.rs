@@ -16,7 +16,7 @@
 //! - [`secret`] — [`Secret`] redacting string wrapper
 //! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`transport`] — [`Transport`] MCP transport selector
-//! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
+//! - [`error`] — [`ConfigError`] and [`Diagnostic`], one shape for every cast and rule error
 //!
 //! Settings resolve with this precedence: non-empty process env >
 //! non-empty env file value > YAML value > default. All defaults
@@ -50,7 +50,7 @@ pub mod transport;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
-pub use error::{ConfigError, ConfigErrors};
+pub use error::{ConfigError, Diagnostic};
 pub use http::HttpConfig;
 pub use loader::{LoadError, Loaded, load};
 pub use log::LogLevel;

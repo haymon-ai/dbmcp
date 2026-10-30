@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::error::{ConfigError, ConfigErrors, duplicates};
+use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
 /// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -98,20 +98,24 @@ impl PiiConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when `categories` is empty or repeats an
+    /// Returns one [`Diagnostic`] per problem: `categories` is empty or repeats an
     /// entry, or when `ner_enabled` is set without a `ner_model` path.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
-                errors.push(ConfigError::EmptyList("pii.categories"));
+                errors.push(Diagnostic::new(ConfigError::EmptyList("pii.categories")).involving(&["pii.categories"]));
             }
             errors.extend(duplicates("pii.categories", categories));
         }
         if self.ner_enabled && self.ner_model.is_none() {
-            errors.push(ConfigError::PiiNerModelMissing);
+            errors.push(
+                Diagnostic::new(ConfigError::PiiNerModelMissing)
+                    .involving(&["pii.ner_enabled"])
+                    .missing(&["pii.ner_model"]),
+            );
         }
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -145,7 +149,9 @@ mod tests {
         };
         let errors = cfg.validate().expect_err("ner without model must error");
         assert!(
-            errors.iter().any(|e| matches!(e, ConfigError::PiiNerModelMissing)),
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::PiiNerModelMissing)),
             "expected PiiNerModelMissing in {errors:?}"
         );
     }

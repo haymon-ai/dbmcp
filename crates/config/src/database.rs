@@ -1,6 +1,6 @@
 //! Database connection settings and backend enum.
 
-use crate::error::{ConfigError, ConfigErrors};
+use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::secret::Secret;
 
 /// Supported database backends.
@@ -149,12 +149,16 @@ impl DatabaseConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.backend == DatabaseBackend::Sqlite && self.name.as_deref().unwrap_or_default().is_empty() {
-            errors.push(ConfigError::MissingSqliteDbName);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSqliteDbName)
+                    .involving(&["database.backend"])
+                    .missing(&["database.name"]),
+            );
         }
 
         if self.ssl {
@@ -166,31 +170,40 @@ impl DatabaseConfig {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::FileNotFound(name, path.clone()));
+                    errors.push(Diagnostic::new(ConfigError::FileNotFound(name, path.clone())).involving(&[name]));
                 }
             }
         }
 
         if self.max_pool_size < 1 {
-            errors.push(ConfigError::OutOfRange {
-                path: "database.max_pool_size",
-                expected: "at least 1",
-            });
+            errors.push(
+                Diagnostic::new(ConfigError::OutOfRange {
+                    path: "database.max_pool_size",
+                    expected: "at least 1",
+                })
+                .involving(&["database.max_pool_size"]),
+            );
         }
         if self.connection_timeout == Some(0) {
-            errors.push(ConfigError::OutOfRange {
-                path: "database.connection_timeout",
-                expected: "at least 1",
-            });
+            errors.push(
+                Diagnostic::new(ConfigError::OutOfRange {
+                    path: "database.connection_timeout",
+                    expected: "at least 1",
+                })
+                .involving(&["database.connection_timeout"]),
+            );
         }
         if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
-            errors.push(ConfigError::OutOfRange {
-                path: "database.page_size",
-                expected: "between 1 and 500",
-            });
+            errors.push(
+                Diagnostic::new(ConfigError::OutOfRange {
+                    path: "database.page_size",
+                    expected: "between 1 and 500",
+                })
+                .involving(&["database.page_size"]),
+            );
         }
 
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -327,7 +340,11 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("sqlite without name must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
     }
 
     #[test]
@@ -338,7 +355,11 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("empty sqlite name must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
     }
 
     #[test]
@@ -350,7 +371,7 @@ mod tests {
         };
         let errors = config.validate().expect_err("missing ssl ca must fail");
         assert!(errors.iter().any(|e| matches!(
-            e,
+            &e.error,
             ConfigError::FileNotFound(name, path)
                 if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"
         )));
@@ -367,9 +388,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if *name == "database.ssl_cert"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if *name == "database.ssl_key"));
+        assert!(matches!(&errors[0].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"));
+        assert!(matches!(&errors[1].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_cert"));
+        assert!(matches!(&errors[2].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_key"));
     }
 
     #[test]
@@ -392,9 +413,13 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
         assert!(errors.iter().any(|e| matches!(
-            e,
+            &e.error,
             ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"
         )));
     }
