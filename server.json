@@ -23,47 +23,15 @@
       "runtimeHint": "docker",
       "transport": {
         "type": "streamable-http",
-        "url": "http://{--host}:{--port}/mcp"
+        "url": "http://{DBMCP_HTTP_HOST}:{DBMCP_HTTP_PORT}/mcp"
       },
-      "packageArguments": [
+      "environmentVariables": [
         {
-          "type": "named",
-          "name": "--transport",
-          "value": "http",
+          "name": "DBMCP_TRANSPORT",
           "description": "MCP transport",
+          "value": "http",
           "isRequired": true
         },
-        {
-          "type": "named",
-          "name": "--host",
-          "description": "HTTP bind host",
-          "default": "127.0.0.1"
-        },
-        {
-          "type": "named",
-          "name": "--port",
-          "description": "HTTP bind port",
-          "default": "9001"
-        },
-        {
-          "type": "named",
-          "name": "--allowed-origins",
-          "description": "Allowed CORS origins (comma-separated)",
-          "isRepeated": true
-        },
-        {
-          "type": "named",
-          "name": "--allowed-hosts",
-          "description": "Allowed host names (comma-separated)",
-          "isRepeated": true
-        },
-        {
-          "type": "named",
-          "name": "--dangerously-allow-unauthenticated",
-          "description": "Allow a non-loopback bind without DBMCP_HTTP_AUTH_TOKEN (only behind an authenticating reverse proxy)"
-        }
-      ],
-      "environmentVariables": [
         {
           "name": "DBMCP_HTTP_HOST",
           "description": "HTTP bind host",
@@ -87,191 +55,14 @@
           "name": "DBMCP_HTTP_AUTH_TOKEN",
           "description": "Bearer token required on every request; mandatory for non-loopback binds",
           "isSecret": true
+        },
+        {
+          "name": "DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
+          "description": "Allow a non-loopback bind without DBMCP_HTTP_AUTH_TOKEN (only behind an authenticating reverse proxy)",
+          "format": "boolean",
+          "default": "false"
         }
       ]
-    }
-  ],
-  "packageArguments": [
-    {
-      "type": "named",
-      "name": "--db-backend",
-      "description": "Database backend",
-      "default": "mysql"
-    },
-    {
-      "type": "named",
-      "name": "--db-host",
-      "description": "Database host (as seen from the SSH server when tunnelling)",
-      "default": "localhost"
-    },
-    {
-      "type": "named",
-      "name": "--db-port",
-      "description": "Database port (default: backend-dependent)"
-    },
-    {
-      "type": "named",
-      "name": "--db-user",
-      "description": "Database user (default: backend-dependent)"
-    },
-    {
-      "type": "named",
-      "name": "--db-password",
-      "description": "Database password"
-    },
-    {
-      "type": "named",
-      "name": "--db-name",
-      "description": "Database name or SQLite file path"
-    },
-    {
-      "type": "named",
-      "name": "--db-charset",
-      "description": "Character set (MySQL/MariaDB only)"
-    },
-    {
-      "type": "named",
-      "name": "--db-ssl",
-      "description": "Enable SSL for database connection"
-    },
-    {
-      "type": "named",
-      "name": "--db-ssl-ca",
-      "description": "Path to CA certificate"
-    },
-    {
-      "type": "named",
-      "name": "--db-ssl-cert",
-      "description": "Path to client certificate"
-    },
-    {
-      "type": "named",
-      "name": "--db-ssl-key",
-      "description": "Path to client key"
-    },
-    {
-      "type": "named",
-      "name": "--db-ssl-verify-cert",
-      "description": "Verify server certificate",
-      "default": "true"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-host",
-      "description": "SSH server host; enables the tunnel when set"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-port",
-      "description": "SSH server port",
-      "default": "22"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-user",
-      "description": "SSH user"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-password",
-      "description": "SSH password"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-key",
-      "description": "Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-key-passphrase",
-      "description": "Passphrase for the SSH private key"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-known-hosts",
-      "description": "Path to known_hosts file (default: ~/.ssh/known_hosts)"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-strict-host-key-checking",
-      "description": "Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure)",
-      "default": "yes",
-      "choices": ["yes", "accept-new", "no"]
-    },
-    {
-      "type": "named",
-      "name": "--ssh-keepalive-interval",
-      "description": "SSH keepalive interval in seconds (0 disables)",
-      "default": "30"
-    },
-    {
-      "type": "named",
-      "name": "--ssh-local-port",
-      "description": "Local tunnel port (default: ephemeral)"
-    },
-    {
-      "type": "named",
-      "name": "--db-read-only",
-      "description": "Enable read-only mode",
-      "default": "true"
-    },
-    {
-      "type": "named",
-      "name": "--db-max-pool-size",
-      "description": "Maximum connection pool size",
-      "default": "5"
-    },
-    {
-      "type": "named",
-      "name": "--db-connection-timeout",
-      "description": "Connection timeout in seconds"
-    },
-    {
-      "type": "named",
-      "name": "--db-query-timeout",
-      "description": "Query execution timeout in seconds",
-      "default": "30"
-    },
-    {
-      "type": "named",
-      "name": "--db-page-size",
-      "description": "Maximum items returned in a single paginated tool response (1-500)",
-      "default": "100"
-    },
-    {
-      "type": "named",
-      "name": "--pii",
-      "description": "Enable PII redaction of query tool output",
-      "default": "false"
-    },
-    {
-      "type": "named",
-      "name": "--pii-operator",
-      "description": "Operator applied to detected PII spans",
-      "default": "replace",
-      "choices": ["replace", "mask", "redact", "hash"]
-    },
-    {
-      "type": "named",
-      "name": "--pii-categories",
-      "description": "Comma-separated PII categories to detect (default: all). Values: personal, financial, government, contact, network, digital-identity, crypto"
-    },
-    {
-      "type": "named",
-      "name": "--pii-ner",
-      "description": "Enable the optional ML/NER pass (person & location detection)",
-      "default": "false"
-    },
-    {
-      "type": "named",
-      "name": "--pii-ner-model",
-      "description": "Path to the NER model directory (required with --pii-ner)"
-    },
-    {
-      "type": "named",
-      "name": "--log-level",
-      "description": "Log level: error, warn, info, debug, trace",
-      "default": "info"
     }
   ],
   "environmentVariables": [

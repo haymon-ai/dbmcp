@@ -7,8 +7,9 @@ A single-binary MCP (Model Context Protocol) server for MySQL, MariaDB, PostgreS
 ```bash
 cargo build                                    # debug build
 cargo build --release                          # release build
-cargo run -- --db-backend mysql --db-user root # stdio transport
-cargo run -- --transport http --db-backend mysql --db-user root --host 127.0.0.1 --port 9001
+DBMCP_DB_BACKEND=mysql DBMCP_DB_USER=root cargo run          # stdio transport
+DBMCP_TRANSPORT=http DBMCP_DB_BACKEND=mysql cargo run         # HTTP on 127.0.0.1:9001
+cargo run -- --config dbmcp.yaml --env .env                   # YAML config + env file
 
 cargo test                          # all tests
 cargo test --workspace --lib --bins # unit tests only
@@ -28,8 +29,8 @@ cargo fmt                     # apply formatting
 Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Workspace members use `"crates/*"` glob.
 
 - **`src/main.rs`** — Binary shim. Installs mimalloc as the global allocator, owns `#[tokio::main]`, and calls `dbmcp_cli::run` with the binary's name and version.
-- **`crates/cli/`** (`dbmcp-cli`) — CLI crate; public API is the async `run(bin, version)` and the opaque `Error` (with `exit_code()`). `cli.rs` owns `run` (parse → tracing → build `Config` → serve the selected transport → shutdown). `args.rs` hosts the flat top-level `Arguments` (no subcommands), its flag groups (`HttpArguments`, `DatabaseArguments`, `PiiArguments`, `SshArguments`), `LogLevel`, `flag_conventions`, and the single `TryFrom<&Arguments> for Config` builder. `server.rs` hosts the `create_server` factory and `shutdown_signal`. `stdio.rs` and `http.rs` each expose `serve`, which runs until client disconnect or a shutdown signal.
-- **`crates/config/`** (`dbmcp-config`) — `Config`, `DatabaseConfig`, `HttpConfig` structs, `Transport` enum (`Stdio`, `Http`), `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`. `origin` module: `AllowedOrigins` mirrors rmcp's private `Origin` matching (`:*` port wildcard) for the HTTP CORS layer; `HttpConfig::validate()` rejects malformed entries.
+- **`crates/cli/`** (`dbmcp-cli`) — CLI crate; public API is the async `run(bin, version)` and the opaque `Error` (with `exit_code()`). `cli.rs` owns `run` (parse → `dbmcp_config::load` → tracing at the loaded log level → serve the selected transport → shutdown). `args.rs` hosts `Arguments`: only `--config` and `--env` (plus help/version), converted into `LoadOptions`. No setting has a flag. `server.rs` hosts the `create_server` factory and `shutdown_signal`. `stdio.rs` and `http.rs` each expose `serve`, which runs until client disconnect or a shutdown signal.
+- **`crates/config/`** (`dbmcp-config`) — layered loader plus the config types. `load(&LoadOptions)` reads the env file and YAML file, `${}`-interpolates the YAML tree, resolves each setting (non-empty process env > non-empty env file > YAML > default), casts it, runs `validate()`, and tags errors with each value's `Source`. Modules: `options` (`LoadOptions`), `env` (`SETTINGS`: YAML key path ↔ `DBMCP_*` name), `dotenv` (env file parser), `template` (`${}` engine), `interpolate`, `node` (spanned YAML tree via serde-saphyr), `loader`, `source`, `log` (`LogLevel`). Also `Config`, `DatabaseConfig`, `HttpConfig` structs, `Transport` enum (`Stdio`, `Http`), `DatabaseBackend` enum (`Mysql`, `Mariadb`, `Postgres`, `Sqlite` via `clap::ValueEnum`). `DatabaseConfig::validate()` and `HttpConfig::validate()` accumulate errors into `Result<(), Vec<ConfigError>>`. `origin` module: `AllowedOrigins` mirrors rmcp's private `Origin` matching (`:*` port wildcard) for the HTTP CORS layer; `HttpConfig::validate()` rejects malformed entries.
 - **`crates/sql/`** (`dbmcp-sql`) — Shared `SqlError` type, SQL read-only validation (`validation` module), identifier quoting (`sanitize` module), `LIMIT`/`OFFSET` rewriting (`pagination` module), query timeouts (`timeout` module), and the `Connection` trait shared by every backend (`connection` module).
 - **`crates/server/`** (`dbmcp-server`) — Shared MCP tool implementations (`tools` module) and `server_info()`. Reused by all three database handler crates.
 - **`crates/pii/`** (`dbmcp-pii`) — Regex-based PII detection (46 built-in entity types covering personal, financial, government, contact, network, digital-identity, and crypto categories) tagged by `Category` (`Personal`, `Financial`, `Government`, `Contact`, `Network`, `DigitalIdentity`, `Crypto`), four anonymisation operators (`replace`, `mask`, `redact`, `hash`), and an `Analyzer::builder()` entry point for category-filtered registries. Wired into query tool output behind `PiiConfig`. Canonical entity list: `crates/pii/src/entity.rs` (`Entity` enum); registration order: `crates/pii/src/recognizers/mod.rs` (`all()`).
@@ -39,17 +40,17 @@ Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Work
 - **`crates/sql-lineage/`** (`dbmcp-sql-lineage`) — Column-level SQL lineage extraction: maps each output column of a statement to its physical `table.column` sources.
 - **`crates/ssh/`** (`dbmcp-ssh`) — Embedded SSH client that tunnels database connections through a bastion via a loopback listener (`Tunnel::start` → `TunnelHandle`).
 - **`crates/sqlx-json/`** (`sqlx-json`) — `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow`.
-- **Transport**: `--transport <stdio|http>` (`DBMCP_TRANSPORT`, default `stdio`); no subcommands. `stdio` serves Claude Desktop/Cursor; `http` serves Streamable HTTP with CORS via axum + tower-http. HTTP options are ignored under stdio.
+- **Transport**: `transport` setting (`DBMCP_TRANSPORT`, default `stdio`); no subcommands. `stdio` serves Claude Desktop/Cursor; `http` serves Streamable HTTP with CORS via axum + tower-http. HTTP options are ignored under stdio.
 
 ## Configuration
 
-**Precedence**: CLI flags > environment variables > defaults
+**Precedence**: process env (`DBMCP_*`) > env file (`--env` / `DBMCP_ENV_FILE`) > YAML config file (`--config` / `DBMCP_CONFIG`) > defaults. Empty `DBMCP_*` values count as unset. No file is auto-discovered.
 
 - Env vars are set by the MCP client (via `env` or `envFile` in server config)
-- Run `cargo run -- --help` for the full list of flags and env var mappings
+- Every setting (YAML key, env name) is listed in `crates/config/src/env.rs` and `docs/content/docs/configuration.mdx`
 - `DBMCP_DB_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
-- Pinning a database name (`--db-name` / `DBMCP_DB_NAME`) hides the cross-database tools (`listDatabases`, `createDatabase`, `dropDatabase`) on MySQL/PostgreSQL
-- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`; `Config.pii` is `Some` only when PII is enabled, just as `Config.http` is `Some` only for `--transport http`. The toggle (`--pii` / `DBMCP_PII_ENABLE`) defaults to **off**; the operator (`--pii-operator` / `DBMCP_PII_OPERATOR`) defaults to `replace`. Optional category subset via `--pii-categories` / `DBMCP_PII_CATEGORIES` (comma-separated kebab values; unset = all built-ins).
+- Pinning a database name (`database.name` / `DBMCP_DB_NAME`) hides the cross-database tools (`listDatabases`, `createDatabase`, `dropDatabase`) on MySQL/PostgreSQL
+- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`; `Config.pii` is `Some` only when PII is enabled, just as `Config.http` is `Some` only for the `http` transport. The toggle (`pii.enabled` / `DBMCP_PII_ENABLE`) defaults to **off**; the operator (`pii.operator` / `DBMCP_PII_OPERATOR`) defaults to `replace`. Optional category subset via `pii.categories` / `DBMCP_PII_CATEGORIES` (YAML list or comma-separated kebab values; unset = all built-ins).
 
 ## Code Style
 
@@ -69,7 +70,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and d
 - **MULTI_STATEMENTS**: **NEVER** enable the MULTI_STATEMENTS client flag. The connection MUST clear it to prevent multi-statement SQL injection.
 - **Parameterized queries**: **NEVER** interpolate user values into SQL strings. Use parameterized queries exclusively.
 - **Identifier validation**: **ALWAYS** validate database/table names (alphanumeric and underscore). Never use string interpolation for identifiers — use proper quoting per backend.
-- **PII redaction**: opt-in defense-in-depth applied to query tool output payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex only, no NER). **MUST NOT** be removed or bypassed without an explicit user request. Off by default; operators enable via `--pii` / `DBMCP_PII_ENABLE`. The redactor walks every string leaf at any depth inside `json`/`jsonb` columns; JSON object keys are preserved verbatim (only values are inspected).
+- **PII redaction**: opt-in defense-in-depth applied to query tool output payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex only, no NER). **MUST NOT** be removed or bypassed without an explicit user request. Off by default; operators enable via `pii.enabled` / `DBMCP_PII_ENABLE`. The redactor walks every string leaf at any depth inside `json`/`jsonb` columns; JSON object keys are preserved verbatim (only values are inspected).
 
 ## Never Do
 

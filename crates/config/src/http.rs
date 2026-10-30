@@ -2,7 +2,7 @@
 
 use std::net::IpAddr;
 
-use crate::error::{ConfigError, ConfigErrors};
+use crate::error::{ConfigError, ConfigErrors, duplicates};
 use crate::origin;
 use crate::secret::Secret;
 
@@ -79,7 +79,10 @@ impl HttpConfig {
     /// - A non-loopback `host` MUST have an `auth_token` unless
     ///   `allow_unauthenticated` is set.
     /// - Every `allowed_origins` entry MUST parse as an origin
-    ///   (`<scheme>://<host>[:<port>|:*]` or `null`).
+    ///   (`<scheme>://<host>[:<port>|:*]` or `null`). An empty list is
+    ///   allowed: it disables server-side Origin validation.
+    /// - `allowed_hosts` MUST NOT be empty.
+    /// - Neither list may repeat an entry.
     ///
     /// # Errors
     ///
@@ -105,6 +108,11 @@ impl HttpConfig {
                 .filter(|entry| !origin::is_valid_entry(entry))
                 .map(|entry| ConfigError::InvalidAllowedOrigin(entry.clone())),
         );
+        if self.allowed_hosts.is_empty() {
+            errors.push(ConfigError::EmptyList("http.allowed_hosts"));
+        }
+        errors.extend(duplicates("http.allowed_origins", &self.allowed_origins));
+        errors.extend(duplicates("http.allowed_hosts", &self.allowed_hosts));
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
     }
 }

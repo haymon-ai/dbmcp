@@ -1,6 +1,13 @@
-//! Configuration types for the dbmcp project.
+//! Configuration loading and types for the dbmcp project.
 //!
-//! Each concern lives in its own module:
+//! [`load`] builds a validated [`Config`] from the process env, an optional
+//! env file, and an optional YAML file. Each concern lives in its own
+//! module:
+//! - [`options`] — [`LoadOptions`], the loader inputs
+//! - [`loader`] — [`load`], [`Loaded`], and [`LoadError`]
+//! - [`env`](mod@env) — the table pairing each YAML key path with its `DBMCP_*` name
+//! - [`source`] — [`Source`], where a setting's value came from
+//! - [`log`] — [`LogLevel`] selector
 //! - [`config`] — top-level [`Config`] composing the transport and four sections
 //! - [`database`] — [`DatabaseConfig`] and [`DatabaseBackend`]
 //! - [`http`] — [`HttpConfig`]
@@ -11,13 +18,10 @@
 //! - [`transport`] — [`Transport`] MCP transport selector
 //! - [`error`] — [`ConfigError`] and the [`ConfigErrors`] wrapper
 //!
-//! Database connection is configured via individual variables
-//! (`DBMCP_DB_HOST`, `DBMCP_DB_PORT`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, `DBMCP_DB_NAME`,
-//! `DBMCP_DB_BACKEND`) instead of a single DSN URL. Values are resolved with
-//! clear precedence: CLI flags > environment variables > defaults. All
-//! defaults (backend-aware port, user, host) are resolved at construction
-//! time in the binary's CLI conversion — consumers access plain
-//! values directly.
+//! Settings resolve with this precedence: non-empty process env >
+//! non-empty env file value > YAML value > default. All defaults
+//! (backend-aware port, user, host) are resolved by the loader, so
+//! consumers access plain values directly.
 //!
 //! # Security
 //!
@@ -27,20 +31,33 @@
 
 pub mod config;
 pub mod database;
+mod dotenv;
+pub mod env;
 pub mod error;
 pub mod http;
+mod interpolate;
+pub mod loader;
+pub mod log;
+mod node;
+pub mod options;
 pub mod origin;
 pub mod pii;
 pub mod secret;
+pub mod source;
 pub mod ssh;
+mod template;
 pub mod transport;
 
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
 pub use error::{ConfigError, ConfigErrors};
 pub use http::HttpConfig;
+pub use loader::{LoadError, Loaded, load};
+pub use log::LogLevel;
+pub use options::LoadOptions;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
 pub use secret::Secret;
+pub use source::Source;
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use transport::Transport;

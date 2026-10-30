@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use crate::error::{ConfigError, ConfigErrors};
+use crate::error::{ConfigError, ConfigErrors, duplicates};
 
-/// Supported PII redaction operators exposed on the CLI.
+/// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum PiiOperator {
     /// Replace each detected span with an entity-aware placeholder (default).
@@ -29,7 +29,7 @@ impl std::fmt::Display for PiiOperator {
     }
 }
 
-/// PII categories exposed on the CLI as `--pii-categories <comma-separated>`.
+/// PII categories selectable via the `pii.categories` setting.
 ///
 /// Mirror enum of [`dbmcp_pii::Category`]; the binary layer converts. The
 /// wire format (kebab-case) lives in `dbmcp-config` so `dbmcp-pii` stays
@@ -98,15 +98,15 @@ impl PiiConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)` or when
-    /// `ner_enabled` is set without a `ner_model` path. clap already rejects
-    /// unknown values for `--pii-categories`, so that check lives there.
+    /// Returns [`ConfigErrors`] when `categories` is empty or repeats an
+    /// entry, or when `ner_enabled` is set without a `ner_model` path.
     pub fn validate(&self) -> Result<(), ConfigErrors> {
         let mut errors = Vec::new();
-        if let Some(cats) = &self.categories
-            && cats.is_empty()
-        {
-            errors.push(ConfigError::PiiCategoriesEmpty);
+        if let Some(categories) = &self.categories {
+            if categories.is_empty() {
+                errors.push(ConfigError::EmptyList("pii.categories"));
+            }
+            errors.extend(duplicates("pii.categories", categories));
         }
         if self.ner_enabled && self.ner_model.is_none() {
             errors.push(ConfigError::PiiNerModelMissing);

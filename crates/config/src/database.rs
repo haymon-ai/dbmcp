@@ -52,7 +52,7 @@ impl DatabaseBackend {
 /// Database connection and behavior settings.
 ///
 /// All fields are fully resolved — no `Option` indirection for connection
-/// fields. Defaults are applied during construction in the binary's CLI conversion.
+/// fields. Defaults are applied by the loader.
 #[derive(Clone, Debug)]
 pub struct DatabaseConfig {
     /// Database backend type.
@@ -109,7 +109,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by CLI parsing.
+    /// Range `1..=500`, enforced by [`Self::validate`].
     pub page_size: u16,
 }
 
@@ -144,6 +144,8 @@ impl DatabaseConfig {
     /// Rules enforced:
     /// - `backend == Sqlite` requires `name` to be `Some(non-empty)`.
     /// - `ssl == true` requires every set `ssl_ca` / `ssl_cert` / `ssl_key` path to exist.
+    /// - `max_pool_size` and a set `connection_timeout` are at least 1.
+    /// - `page_size` is between 1 and [`Self::MAX_PAGE_SIZE`].
     ///
     /// # Errors
     ///
@@ -157,16 +159,35 @@ impl DatabaseConfig {
 
         if self.ssl {
             for (name, path) in [
-                ("DBMCP_DB_SSL_CA", &self.ssl_ca),
-                ("DBMCP_DB_SSL_CERT", &self.ssl_cert),
-                ("DBMCP_DB_SSL_KEY", &self.ssl_key),
+                ("database.ssl_ca", &self.ssl_ca),
+                ("database.ssl_cert", &self.ssl_cert),
+                ("database.ssl_key", &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
+                    errors.push(ConfigError::FileNotFound(name, path.clone()));
                 }
             }
+        }
+
+        if self.max_pool_size < 1 {
+            errors.push(ConfigError::OutOfRange {
+                path: "database.max_pool_size",
+                expected: "at least 1",
+            });
+        }
+        if self.connection_timeout == Some(0) {
+            errors.push(ConfigError::OutOfRange {
+                path: "database.connection_timeout",
+                expected: "at least 1",
+            });
+        }
+        if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
+            errors.push(ConfigError::OutOfRange {
+                path: "database.page_size",
+                expected: "between 1 and 500",
+            });
         }
 
         ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
@@ -331,7 +352,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(
             e,
             ConfigError::FileNotFound(name, path)
-                if name == "DBMCP_DB_SSL_CA" && path == "/nonexistent/ca.pem"
+                if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"
         )));
     }
 
@@ -346,9 +367,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_KEY"));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"));
+        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if *name == "database.ssl_cert"));
+        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if *name == "database.ssl_key"));
     }
 
     #[test]
@@ -374,7 +395,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"
+            ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"
         )));
     }
 

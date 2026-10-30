@@ -1,0 +1,317 @@
+---
+title: Config File
+description: Configure dbmcp with a YAML config file, an env file, and environment variables
+---
+
+Besides `DBMCP_*` environment variables, Database MCP can read its settings from a YAML **config file** and a dotenv-style **env file**. All three are optional and work together. This page covers the file formats and loading rules; the full list of settings lives in [Configuration](/docs/configuration).
+
+## Quick Start
+
+Create a `dbmcp.yaml` (any file name works):
+
+```yaml
+database:
+  backend: postgres
+  host: localhost
+  user: postgres
+  password: ${DB_PASSWORD:?set DB_PASSWORD}
+  name: myapp
+```
+
+Point the server at it with `--config`. In an MCP client config such as `.mcp.json`, use an **absolute path**:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": ["--config", "/home/me/projects/myapp/dbmcp.yaml"],
+      "env": {
+        "DB_PASSWORD": "secret"
+      }
+    }
+  }
+}
+```
+
+<Callout type="warn">
+Relative `--config` and `--env` paths resolve against the working directory of the `dbmcp` process. MCP clients choose that directory themselves and it is often not your project root, so always pass absolute paths from client configs.
+</Callout>
+
+## Flags
+
+The command line only names files; every setting comes from the environment or the files.
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--config <PATH>` | `DBMCP_CONFIG` | YAML config file |
+| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file |
+| `-h`, `--help` | — | Print help |
+| `-V`, `--version` | — | Print version |
+
+Each flag takes a single path and wins over its env var. The config file is chosen from `--config`, then the process `DBMCP_CONFIG`, then a `DBMCP_CONFIG` key inside the env file. The env file is chosen from `--env`, then the process `DBMCP_ENV_FILE`; a `DBMCP_ENV_FILE` key inside an env file is ignored.
+
+Paths are resolved as follows:
+
+- Relative paths resolve against the current working directory, including a `DBMCP_CONFIG` read from the env file.
+- `--env` / `DBMCP_ENV_FILE` expand a leading `~` to your home directory. `--config` / `DBMCP_CONFIG` do not (your shell may still expand an unquoted `~` before `dbmcp` sees it).
+- A named file that is missing, is a directory, or cannot be read is a hard error. An empty file is valid and sets nothing.
+
+<Callout title="No auto-discovery">
+`dbmcp` never looks for files on its own: there is no `dbmcp.yaml` lookup and no automatic `.env` pickup, neither in the working directory nor beside the config file. A file is read only when `--config`, `--env`, `DBMCP_CONFIG`, or `DBMCP_ENV_FILE` names it.
+</Callout>
+
+## Precedence
+
+Each setting is resolved independently, highest priority first:
+
+1. Process environment (`DBMCP_*`)
+2. Env file (`--env` / `DBMCP_ENV_FILE`)
+3. Config file (`--config` / `DBMCP_CONFIG`)
+4. Built-in defaults
+
+An empty `DBMCP_*` value counts as unset at every layer and falls through to the next one. To set a setting to an empty string, write `key: ""` in the config file. `DBMCP_*` variables that do not name a setting are ignored.
+
+**Worked example.** `database.port` set in three layers:
+
+```yaml
+# /srv/dbmcp/dbmcp.yaml
+database:
+  backend: postgres
+  port: 5432
+```
+
+```bash
+# /srv/dbmcp/dbmcp.env
+DBMCP_DB_PORT=6432
+```
+
+```bash
+DBMCP_DB_PORT=7432 dbmcp --config /srv/dbmcp/dbmcp.yaml --env /srv/dbmcp/dbmcp.env
+```
+
+| Change | Resulting port | Source |
+|--------|---------------|--------|
+| All three layers set | `7432` | process environment |
+| Process variable unset, or `DBMCP_DB_PORT=` (empty) | `6432` | env file |
+| Env file line removed as well | `5432` | config file |
+| `port` removed from the YAML too | `5432` | PostgreSQL backend default |
+
+## File Schema
+
+The config file is a YAML mapping. Top-level keys are `transport` and `log_level`, plus the sections `database`, `http`, `pii`, and `ssh`. Every key is the YAML key listed in [Configuration](/docs/configuration).
+
+- **Keys** are snake_case and strict: an unknown key is an error that names the file, line, and column, plus the keys accepted at that level.
+- **Enum values** are kebab-case and case-sensitive (`backend: postgres`, `strict_host_key_checking: accept-new`).
+- **Durations** are whole seconds as integers (`query_timeout: 30`).
+- **Booleans** are unquoted `true` / `false`. YAML 1.1 words stay strings, so an unquoted `no` is the string `no` (which is why `strict_host_key_checking: no` works). A quoted boolean string accepts the same set as env vars: `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False`.
+- **Strings** that YAML would read as a number or boolean need quotes (`password: "12345"`); a value of the wrong type is an error.
+- **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`).
+- **Lists** are YAML sequences and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
+- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true.
+
+A full annotated example:
+
+```yaml
+# Top-level settings
+transport: http          # stdio | http (default: stdio)
+log_level: info          # error | warn | info | debug | trace
+
+database:
+  backend: postgres      # mysql | mariadb | postgres | sqlite
+  host: db.internal      # resolved by the SSH server when tunnelling
+  port: 5432             # default depends on backend
+  user: app
+  password: ${DB_PASSWORD:?DB_PASSWORD must be set}
+  name: myapp            # for sqlite: a file path, relative to this file
+  # charset: utf8mb4     # MySQL/MariaDB only
+  ssl: true
+  ssl_ca: certs/ca.pem   # relative to this file's directory
+  ssl_verify_cert: true
+  read_only: true        # default; write tools stay hidden
+  max_pool_size: 5
+  connection_timeout: 10 # seconds
+  query_timeout: 30      # seconds; 0 disables
+  page_size: 100         # 1–500
+
+http:                    # used only with transport: http
+  host: 127.0.0.1
+  port: 9001
+  allowed_origins:
+    - http://localhost:5173
+  allowed_hosts: [localhost, 127.0.0.1, "::1"]
+  auth_token: ${HTTP_TOKEN:?set HTTP_TOKEN}
+  allow_unauthenticated: false
+
+pii:
+  enabled: true          # the other pii keys apply only when true
+  operator: mask         # replace | mask | redact | hash
+  categories: [financial, government]
+  ner_enabled: false
+  # ner_model: ~/models/bert-ner
+
+ssh:
+  host: bastion.example.com   # setting ssh.host enables the tunnel
+  port: 22
+  user: deploy
+  key: ~/.ssh/id_ed25519
+  # key_passphrase: ${SSH_KEY_PASSPHRASE}
+  known_hosts: ~/.ssh/known_hosts
+  strict_host_key_checking: yes  # yes | accept-new | no
+  keepalive_interval: 30         # seconds; 0 disables
+  # local_port: 15432
+```
+
+## Interpolation
+
+Every string **value** in the config file is `${}`-interpolated before it is cast to its type, using the syntax below. Keys are never interpolated. Because casting happens afterwards, `port: ${DB_PORT}` and `read_only: ${READ_ONLY}` work.
+
+| Syntax | Result |
+|--------|--------|
+| `$VAR`, `${VAR}` | Value of `VAR`; an unset variable becomes `""` and logs a warning |
+| `${VAR:-default}` | `default` if `VAR` is unset or empty |
+| `${VAR-default}` | `default` if `VAR` is unset |
+| `${VAR:+alt}` | `alt` if `VAR` is set and non-empty, otherwise `""` |
+| `${VAR+alt}` | `alt` if `VAR` is set, otherwise `""` |
+| `${VAR:?message}` | Error if `VAR` is unset or empty |
+| `${VAR?message}` | Error if `VAR` is unset |
+| `$$` | A literal `$` |
+
+Defaults, alternates, and error messages can nest further references (`${A:-${B:-fallback}}`). A `$` followed by anything other than a name, `{`, or `$` stays literal; a malformed `${` is an error (`invalid interpolation format; escape a literal $ as $$`).
+
+Variables are looked up in the process environment first, then in the env file. Any name works, not only `DBMCP_*`, so an MCP client's `env` block or the env file can feed values such as `DB_PASSWORD` into the YAML.
+
+An unset plain reference produces a warning on stderr, for example:
+
+```text
+WARN dbmcp_cli::cli: /srv/dbmcp/dbmcp.yaml:5:13: database.password: the "DB_PASSWORD" variable is not set; defaulting to a blank string
+```
+
+The resulting empty string is a real value, not "unset". For required values, prefer `${VAR:?}` (or `${VAR:?message}`) so a missing variable stops startup instead.
+
+## Env File
+
+The env file named by `--env` / `DBMCP_ENV_FILE` uses this format:
+
+```bash
+# Comments start with #
+DBMCP_DB_BACKEND=postgres
+DBMCP_DB_HOST: db.internal            # KEY: VAL also works
+export DBMCP_DB_USER=app              # optional export prefix
+DB_PASSWORD='p@ss #not a comment'     # single quotes are literal
+GREETING="line one\nline two"         # double quotes support escapes
+CERT="-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----"            # quoted values may span lines
+DBMCP_DB_NAME=${APP_DB:-myapp}        # ${} expands from process env, then earlier keys
+DBMCP_CONFIG=/srv/dbmcp/dbmcp.yaml    # may name the config file
+```
+
+- Unquoted values end at ` #` (space, hash) and are trimmed.
+- Single-quoted values are taken literally; double-quoted values support escapes such as `\n` and `\"`.
+- Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file.
+- A bare `KEY` with no value takes its value from the process environment.
+
+The env file plays two roles at once:
+
+1. Its `DBMCP_*` keys set settings directly, between the process environment and the config file in [precedence](#precedence). An empty value is unset, as everywhere.
+2. All of its keys, whatever their name, are available to `${}` in the config file, after the process environment.
+
+Errors are reported per line without echoing the file's contents (for example `line 2: key cannot contain a space`).
+
+## Path Resolution
+
+Path settings resolve differently depending on where they are set:
+
+| Set in | Relative path resolves against | Leading `~` |
+|--------|-------------------------------|-------------|
+| Config file | The config file's directory | Expanded |
+| `DBMCP_*` variable or env file | The working directory | Expanded only for `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` |
+
+This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. SQLite names of `:memory:` or starting with `sqlite:` are passed through unchanged. Keeping certificates, keys, and SQLite files next to the config file and using relative paths makes the whole directory relocatable.
+
+## Running in Docker
+
+The image has no built-in config file and sets no `DBMCP_CONFIG`. Choose one of:
+
+**Environment variables** — pass `DBMCP_*` with `-e`:
+
+```bash
+docker run -i --rm \
+  -e DBMCP_DB_BACKEND=postgres -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres -e DBMCP_DB_PASSWORD -e DBMCP_DB_NAME=myapp \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+**Docker's env file** — `docker run --env-file` loads the variables into the container's environment. Docker parses this file itself: it has no quoting or `${}` expansion, so keep values plain.
+
+```bash
+docker run -i --rm --env-file ./dbmcp.env ghcr.io/haymon-ai/dbmcp
+```
+
+**Mounted config file** — mount the directory read-only and name the file with `DBMCP_CONFIG` (or pass `--config` after the image name). Relative paths inside the file resolve against the mounted directory, so keep certificates and keys beside it. To use the dotenv dialect described above, mount the env file too and set `DBMCP_ENV_FILE`.
+
+```bash
+docker run -i --rm \
+  -v "$PWD/config:/config:ro" \
+  -e DBMCP_CONFIG=/config/dbmcp.yaml \
+  -e DB_PASSWORD \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+All paths in `DBMCP_CONFIG`, `DBMCP_ENV_FILE`, and the files themselves are container paths.
+
+## Secrets
+
+Plaintext secrets in the config file work, but keeping them out of it is safer, especially when the file is committed:
+
+- Reference them with `${}` and supply the value from the MCP client's `env` block, the shell, or an env file: `password: ${DB_PASSWORD:?}`. The `:?` form stops startup when the variable is missing instead of silently using an empty password.
+- Or set the `DBMCP_*` variable directly (`DBMCP_DB_PASSWORD`, `DBMCP_HTTP_AUTH_TOKEN`, `DBMCP_SSH_PASSWORD`, `DBMCP_SSH_KEY_PASSPHRASE`) and leave the key out of the YAML.
+- Restrict the env file's permissions (`chmod 600`).
+
+Type errors never include the offending value, so a mistyped secret is not printed in error output.
+
+## Errors
+
+Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env file, read and parse the config file, interpolate, check keys and types, validate — and stops at the first stage that fails, reporting every problem in that stage.
+
+| Header | Cause |
+|--------|-------|
+| `failed to read config file <path> (from --config): <reason>` | A named file is missing, a directory, or unreadable (the origin is `--config`, `--env`, `DBMCP_CONFIG`, `DBMCP_ENV_FILE`, or `DBMCP_CONFIG in <env file>:<line>`; the env file variant starts with `failed to read env file`) |
+| `failed to load env file <path>:` | Env file syntax errors, one `line N: …` bullet each |
+| `failed to parse config file <path>:` | YAML syntax errors and unknown keys, with `file:line:column` |
+| `failed to interpolate config file <path>:` | Malformed `${` or a failed `${VAR:?…}` |
+| `configuration validation failed:` | Wrong types, invalid values, and rule violations |
+
+Each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)` for the config file, `(from DBMCP_DB_PORT)` for the process environment, or `(from DBMCP_DB_PORT in /abs/.env:3)` for the env file.
+
+Sample output:
+
+```text
+$ dbmcp --config dbmcp.yaml
+failed to parse config file /srv/dbmcp/dbmcp.yaml:
+  - /srv/dbmcp/dbmcp.yaml:3:12: database.pasword: unknown field; expected one of backend, host, port, user, password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, connection_timeout, query_timeout, page_size
+```
+
+```text
+$ DBMCP_DB_READ_ONLY=yes dbmcp --config /srv/dbmcp/dbmcp.yaml
+configuration validation failed:
+  - database.port: expected integer between 0 and 65535, found string (from /srv/dbmcp/dbmcp.yaml:4:9)
+  - database.read_only: expected boolean (true/false/1/0/t/f), found string (from DBMCP_DB_READ_ONLY)
+```
+
+```text
+$ DBMCP_DB_CONNECTION_TIMEOUT=0 dbmcp --config /srv/dbmcp/dbmcp.yaml --env /srv/dbmcp/.env
+configuration validation failed:
+  - database.max_pool_size must be at least 1 (from DBMCP_DB_MAX_POOL_SIZE in /srv/dbmcp/.env:2)
+  - database.connection_timeout must be at least 1 (from DBMCP_DB_CONNECTION_TIMEOUT)
+  - database.page_size must be between 1 and 500 (from /srv/dbmcp/dbmcp.yaml:3:14)
+```
+
+```text
+$ dbmcp --config /srv/dbmcp/dbmcp.yaml
+failed to interpolate config file /srv/dbmcp/dbmcp.yaml:
+  - /srv/dbmcp/dbmcp.yaml:2:13: database.password: required variable DB_PASSWORD is missing a value: set DB_PASSWORD
+```
+
+A removed per-setting flag is rejected by the argument parser with exit code 2 (`error: unexpected argument '--db-backend' found`). See [Migrating from CLI flags](/docs/configuration#migrating-from-cli-flags).

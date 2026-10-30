@@ -1,9 +1,8 @@
 //! Configuration validation errors and their non-empty-collection wrapper.
 //!
-//! [`ConfigError`] enumerates rules reachable past clap parsing.
-//! [`ConfigErrors`] is a non-empty collection wrapper used as the
-//! `Error` type for every per-section `TryFrom<&FooArguments> for FooConfig`
-//! impl in the binary crate, and as the return type of every
+//! [`ConfigError`] enumerates rule violations found by the loader and by
+//! the per-section `validate()` methods. [`ConfigErrors`] is a non-empty
+//! collection wrapper returned by every
 //! [`DatabaseConfig::validate`] / [`HttpConfig::validate`] /
 //! [`PiiConfig::validate`] / [`SshConfig::validate`] call.
 //!
@@ -12,86 +11,142 @@
 //! [`PiiConfig::validate`]: crate::PiiConfig::validate
 //! [`SshConfig::validate`]: crate::SshConfig::validate
 
-/// Errors produced by the `Arguments`-to-`Config` conversions.
+/// Rule violations found while building and validating a [`Config`](crate::Config).
 ///
-/// Carries only rules reachable past clap parsing. Rules clap already
-/// rejects (integer ranges, enum membership) are not represented here.
+/// Each message names the setting by its dotted YAML key path. Missing
+/// required settings also name every route that sets them.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// `DBMCP_DB_NAME` is required for `SQLite`.
-    #[error("DBMCP_DB_NAME (file path) is required for SQLite")]
+    /// `database.name` is required for `SQLite`.
+    #[error("database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file")]
     MissingSqliteDbName,
 
     /// A configured file (SSL certificate, SSH key) was not found.
-    #[error("{0} file not found: {1}")]
-    FileNotFound(String, String),
+    #[error("{0}: file not found: {1}")]
+    FileNotFound(&'static str, String),
+
+    /// A numeric setting is outside its accepted range.
+    #[error("{path} must be {expected}")]
+    OutOfRange {
+        /// Dotted YAML key path of the setting.
+        path: &'static str,
+        /// Human-readable accepted range, e.g. `at least 1`.
+        expected: &'static str,
+    },
+
+    /// A list setting was set to an empty list.
+    #[error("{0} must not be empty when set")]
+    EmptyList(&'static str),
+
+    /// A list setting repeats an entry.
+    #[error("{0}: duplicate entry '{1}'")]
+    DuplicateListEntry(&'static str, String),
 
     /// HTTP bind host is empty or whitespace.
-    #[error("DBMCP_HTTP_HOST must not be empty")]
+    #[error("http.host must not be empty")]
     EmptyHttpHost,
 
     /// HTTP bearer token was supplied but is empty or whitespace.
-    #[error("DBMCP_HTTP_AUTH_TOKEN must not be empty when set")]
+    #[error("http.auth_token must not be empty when set")]
     EmptyHttpAuthToken,
 
     /// HTTP bind host is not loopback and no bearer token is configured.
     #[error(
-        "refusing to bind HTTP transport to non-loopback host '{0}' without authentication; \
-         set DBMCP_HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
+        "http.host: refusing to bind non-loopback host '{0}' without authentication; \
+         set DBMCP_HTTP_AUTH_TOKEN (http.auth_token) or \
+         DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED (http.allow_unauthenticated)"
     )]
     UnauthenticatedNonLoopbackBind(String),
 
     /// An allowed-origins entry is not a valid origin.
     #[error(
-        "DBMCP_HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
+        "http.allowed_origins: entry '{0}' is not a valid origin; \
          expected `<scheme>://<host>[:<port>|:*]` or `null`"
     )]
     InvalidAllowedOrigin(String),
 
-    /// `DBMCP_PII_CATEGORIES` was supplied but the resolved list is empty.
-    #[error("DBMCP_PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
-    PiiCategoriesEmpty,
-
-    /// `--pii-ner` was enabled without a `--pii-ner-model` path.
-    #[error("DBMCP_PII_NER_MODEL (model directory) is required when DBMCP_PII_NER_ENABLE is set")]
+    /// NER was enabled without a model path.
+    #[error(
+        "pii.ner_model (model directory) is required when pii.ner_enabled is set; \
+         set DBMCP_PII_NER_MODEL or pii.ner_model in the config file"
+    )]
     PiiNerModelMissing,
 
     /// SSH tunnelling was requested for the `SQLite` backend.
-    #[error("DBMCP_SSH_HOST is not supported with the sqlite backend")]
+    #[error("ssh.host: not supported with the sqlite backend")]
     SshSqliteUnsupported,
 
-    /// Other `DBMCP_SSH_*` options were set without `DBMCP_SSH_HOST`.
-    #[error("DBMCP_SSH_HOST is required when other DBMCP_SSH_* options are set")]
+    /// Other SSH settings were set without `ssh.host`.
+    #[error("ssh.host is required when other ssh settings are set; set DBMCP_SSH_HOST or ssh.host in the config file")]
     MissingSshHost,
 
-    /// `DBMCP_SSH_HOST` was set to an empty string.
-    #[error("DBMCP_SSH_HOST must not be empty")]
+    /// `ssh.host` was set to an empty string.
+    #[error("ssh.host must not be empty")]
     EmptySshHost,
 
-    /// `DBMCP_SSH_HOST` was set without `DBMCP_SSH_USER`.
-    #[error("DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set")]
+    /// `ssh.host` was set without `ssh.user`.
+    #[error("ssh.user is required when ssh.host is set; set DBMCP_SSH_USER or ssh.user in the config file")]
     MissingSshUser,
 
-    /// `DBMCP_SSH_HOST` was set without a password or key.
-    #[error("DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set")]
+    /// `ssh.host` was set without a password or key.
+    #[error(
+        "ssh.password or ssh.key is required when ssh.host is set; \
+         set DBMCP_SSH_PASSWORD, DBMCP_SSH_KEY, or either key in the config file"
+    )]
     MissingSshAuth,
 
-    /// `DBMCP_SSH_KEY_PASSPHRASE` was set without `DBMCP_SSH_KEY`.
-    #[error("DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY")]
+    /// `ssh.key_passphrase` was set without `ssh.key`.
+    #[error("ssh.key_passphrase requires ssh.key")]
     SshKeyPassphraseWithoutKey,
 
     /// `known_hosts` could not be resolved and host-key checking is on.
-    #[error("DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    #[error(
+        "ssh.known_hosts is required when the home directory cannot be determined; \
+         set DBMCP_SSH_KNOWN_HOSTS or ssh.known_hosts in the config file"
+    )]
     MissingSshKnownHosts,
+}
+
+impl ConfigError {
+    /// Returns the dotted key paths of every setting the error involves.
+    ///
+    /// The loader appends the source of each one that was set.
+    #[must_use]
+    pub fn paths(&self) -> &[&'static str] {
+        match self {
+            Self::MissingSqliteDbName => &["database.backend"],
+            Self::FileNotFound(path, _) | Self::EmptyList(path) | Self::DuplicateListEntry(path, _) => {
+                std::slice::from_ref(path)
+            }
+            Self::OutOfRange { path, .. } => std::slice::from_ref(path),
+            Self::EmptyHttpHost | Self::UnauthenticatedNonLoopbackBind(_) => &["http.host"],
+            Self::EmptyHttpAuthToken => &["http.auth_token"],
+            Self::InvalidAllowedOrigin(_) => &["http.allowed_origins"],
+            Self::PiiNerModelMissing => &["pii.ner_enabled"],
+            Self::SshSqliteUnsupported => &["ssh.host", "database.backend"],
+            Self::EmptySshHost | Self::MissingSshUser | Self::MissingSshAuth => &["ssh.host"],
+            Self::MissingSshHost | Self::MissingSshKnownHosts => &[],
+            Self::SshKeyPassphraseWithoutKey => &["ssh.key_passphrase"],
+        }
+    }
+}
+
+/// Reports each entry of `list` that repeats an earlier one.
+pub(crate) fn duplicates<'a, T: PartialEq + std::fmt::Display>(
+    path: &'static str,
+    list: &'a [T],
+) -> impl Iterator<Item = ConfigError> + 'a {
+    list.iter()
+        .enumerate()
+        .filter(|(i, entry)| list[..*i].contains(entry))
+        .map(move |(_, entry)| ConfigError::DuplicateListEntry(path, entry.to_string()))
 }
 
 /// Non-empty collection of [`ConfigError`]s preserving insertion order.
 ///
 /// Externally observed wrappers always carry ≥ 1 error — [`Self::from_vec`]
 /// returns `None` for an empty input, and [`From<ConfigError>`] yields a
-/// single-element wrapper. The CLI's `TryFrom<&Arguments> for Config` impl
-/// accumulates across sections (database → http → pii → ssh) and returns
-/// `Ok(value)` when nothing was collected, never an empty wrapper.
+/// single-element wrapper.
 ///
 /// Derefs to `&[ConfigError]` so callers can use slice methods directly
 /// (`iter`, `len`, indexing). `Display` renders each contained error on its
@@ -155,7 +210,7 @@ mod tests {
     }
 
     fn missing_ca() -> ConfigError {
-        ConfigError::FileNotFound("DBMCP_DB_SSL_CA".into(), "/nope/ca.pem".into())
+        ConfigError::FileNotFound("database.ssl_ca", "/nope/ca.pem".into())
     }
 
     #[test]
