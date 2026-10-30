@@ -42,7 +42,7 @@ impl std::fmt::Display for PiiOperator {
 
 /// PII categories selectable via the `pii.categories` setting.
 ///
-/// Mirror enum of [`dbmcp_pii::Category`]; the binary layer converts. The
+/// Mirror enum of `dbmcp_pii::Category`; the binary layer converts. The
 /// wire format (kebab-case) lives in `dbmcp-config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PiiCategory {
