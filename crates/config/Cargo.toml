@@ -11,6 +11,7 @@ repository.workspace = true
 clap = { workspace = true }
 http = { workspace = true }
 indexmap = { workspace = true }
+secrecy = { workspace = true }
 serde = { workspace = true }
 serde-saphyr = { workspace = true }
 thiserror = { workspace = true }

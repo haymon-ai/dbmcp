@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use secrecy::SecretString;
+
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
-use crate::secret::Secret;
 
 /// Host-key verification policy for the SSH tunnel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -44,13 +45,13 @@ pub struct SshConfig {
     pub user: String,
 
     /// SSH password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Path to the SSH private key.
     pub key: Option<PathBuf>,
 
     /// Passphrase for the SSH private key.
-    pub key_passphrase: Option<Secret>,
+    pub key_passphrase: Option<SecretString>,
 
     /// Path to the `known_hosts` file (`None` only when unverified and no home).
     pub known_hosts: Option<PathBuf>,

@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::{Secret, SshConfig, StrictHostKeyChecking};
+use dbmcp_config::{SshConfig, StrictHostKeyChecking};
 use russh::client::DisconnectReason;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Preferred, client};
+use secrecy::{ExposeSecret, SecretString};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
@@ -70,7 +71,7 @@ impl Tunnel {
                 #[allow(clippy::result_large_err)]
                 let key = tokio::task::spawn_blocking(move || {
                     key::warn_if_key_exposed(&path);
-                    key::load_private_key(&path, passphrase.as_ref().map(Secret::expose))
+                    key::load_private_key(&path, passphrase.as_ref().map(ExposeSecret::expose_secret))
                 })
                 .await
                 .expect("key loading task does not panic")?;
@@ -218,7 +219,7 @@ struct Inner {
     ssh_host: String,
     ssh_port: u16,
     user: String,
-    password: Option<Secret>,
+    password: Option<SecretString>,
     key: Option<Arc<PrivateKey>>,
     known_hosts: Option<PathBuf>,
     strict_host_key_checking: StrictHostKeyChecking,
@@ -402,7 +403,7 @@ impl Inner {
         });
         if let Some(password) = password {
             let auth = session
-                .authenticate_password(self.user.as_str(), password.expose())
+                .authenticate_password(self.user.as_str(), password.expose_secret())
                 .await
                 .map_err(auth_error)?;
             if auth.success() {

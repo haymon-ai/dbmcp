@@ -13,7 +13,6 @@
 //! - [`http`] — [`HttpConfig`]
 //! - [`origin`] — [`AllowedOrigins`] browser `Origin` allowlist matching
 //! - [`pii`] — [`PiiConfig`] and [`PiiOperator`]
-//! - [`secret`] — [`Secret`] redacting string wrapper
 //! - [`ssh`] — [`SshConfig`] and [`StrictHostKeyChecking`]
 //! - [`transport`] — [`Transport`] MCP transport selector
 //! - [`error`] — [`ConfigError`] and [`Diagnostic`], one shape for every cast and rule error
@@ -26,8 +25,8 @@
 //! # Security
 //!
 //! The database password, SSH password and key passphrase, and HTTP auth
-//! token are stored as [`Secret`], so their values never reach [`Debug`]
-//! output.
+//! token are stored as [`secrecy::SecretString`], so their values never
+//! reach [`Debug`] output.
 
 pub mod config;
 pub mod database;
@@ -42,7 +41,6 @@ mod node;
 pub mod options;
 pub mod origin;
 pub mod pii;
-pub mod secret;
 pub mod source;
 pub mod ssh;
 mod template;
@@ -57,7 +55,6 @@ pub use log::LogLevel;
 pub use options::LoadOptions;
 pub use origin::AllowedOrigins;
 pub use pii::{PiiCategory, PiiConfig, PiiOperator};
-pub use secret::Secret;
 pub use source::Source;
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use transport::Transport;

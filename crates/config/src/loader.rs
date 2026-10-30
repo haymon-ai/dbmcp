@@ -769,9 +769,8 @@ fn parse_bool(text: &str) -> Option<bool> {
 mod tests {
     use std::fs;
 
+    use secrecy::ExposeSecret;
     use tempfile::TempDir;
-
-    use crate::secret::Secret;
 
     use super::*;
 
@@ -951,7 +950,7 @@ mod tests {
             .env_file(".env", "DB_PASS=s3cret\nPORT=6000\n")
             .ok();
         let db = &loaded.config.database;
-        assert_eq!(db.password.as_ref().map(Secret::expose), Some("s3cret"));
+        assert_eq!(db.password.as_ref().map(ExposeSecret::expose_secret), Some("s3cret"));
         assert_eq!(db.port, 6000);
         assert_eq!(db.user, "${literal}");
     }

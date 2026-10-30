@@ -1,8 +1,9 @@
 //! Database connection settings and backend enum.
 
+use secrecy::SecretString;
+
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
-use crate::secret::Secret;
 
 /// Supported database backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -69,7 +70,7 @@ pub struct DatabaseConfig {
     pub user: String,
 
     /// Database password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Database name or `SQLite` file path.
     pub name: Option<String>,

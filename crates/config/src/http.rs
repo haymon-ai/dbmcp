@@ -2,10 +2,11 @@
 
 use std::net::IpAddr;
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 use crate::origin;
-use crate::secret::Secret;
 
 /// HTTP transport binding and security settings.
 #[derive(Clone, Debug)]
@@ -23,7 +24,7 @@ pub struct HttpConfig {
     pub allowed_hosts: Vec<String>,
 
     /// Bearer token required on every request; `None` disables authentication.
-    pub auth_token: Option<Secret>,
+    pub auth_token: Option<SecretString>,
 
     /// Permits a non-loopback bind without an `auth_token`.
     pub allow_unauthenticated: bool,
@@ -93,7 +94,11 @@ impl HttpConfig {
         if self.host.trim().is_empty() {
             errors.push(Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]));
         }
-        if self.auth_token.as_ref().is_some_and(|t| t.expose().trim().is_empty()) {
+        if self
+            .auth_token
+            .as_ref()
+            .is_some_and(|t| t.expose_secret().trim().is_empty())
+        {
             errors.push(Diagnostic::new(ConfigError::EmptyHttpAuthToken).involving(&[env::HTTP_AUTH_TOKEN]));
         }
         if !self.host.trim().is_empty()
