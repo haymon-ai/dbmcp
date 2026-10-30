@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::database::DatabaseBackend;
 use crate::error::{ConfigError, ConfigErrors};
 use crate::secret::Secret;
 
@@ -76,7 +75,6 @@ impl SshConfig {
     /// Validates this configuration, accumulating every rule violation.
     ///
     /// Rules enforced:
-    /// - the `sqlite` backend cannot be tunnelled.
     /// - `host` and `user` must not be empty.
     /// - a password or a key is required; a passphrase requires a key.
     /// - a set `key` path must be an existing file.
@@ -85,12 +83,9 @@ impl SshConfig {
     /// # Errors
     ///
     /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self, backend: DatabaseBackend) -> Result<(), ConfigErrors> {
+    pub fn validate(&self) -> Result<(), ConfigErrors> {
         let mut errors = Vec::new();
 
-        if backend == DatabaseBackend::Sqlite {
-            errors.push(ConfigError::SshSqliteUnsupported);
-        }
         if self.host.is_empty() {
             errors.push(ConfigError::EmptySshHost);
         }
@@ -163,9 +158,9 @@ mod tests {
         }
     }
 
-    fn errors_of(config: &SshConfig, backend: DatabaseBackend) -> Vec<String> {
+    fn errors_of(config: &SshConfig) -> Vec<String> {
         config
-            .validate(backend)
+            .validate()
             .expect_err("must fail")
             .iter()
             .map(ToString::to_string)
@@ -174,15 +169,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_password_auth() {
-        ssh_config().validate(DatabaseBackend::Mysql).expect("valid");
-    }
-
-    #[test]
-    fn validate_rejects_sqlite_backend() {
-        assert_eq!(
-            errors_of(&ssh_config(), DatabaseBackend::Sqlite),
-            ["DBMCP_SSH_HOST is not supported with the sqlite backend"]
-        );
+        ssh_config().validate().expect("valid");
     }
 
     #[test]
@@ -191,10 +178,7 @@ mod tests {
             host: String::new(),
             ..ssh_config()
         };
-        assert_eq!(
-            errors_of(&config, DatabaseBackend::Mysql),
-            ["DBMCP_SSH_HOST must not be empty"]
-        );
+        assert_eq!(errors_of(&config), ["DBMCP_SSH_HOST must not be empty"]);
     }
 
     #[test]
@@ -204,7 +188,7 @@ mod tests {
             ..ssh_config()
         };
         assert_eq!(
-            errors_of(&config, DatabaseBackend::Postgres),
+            errors_of(&config),
             ["DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set"]
         );
     }
@@ -216,7 +200,7 @@ mod tests {
             ..ssh_config()
         };
         assert_eq!(
-            errors_of(&config, DatabaseBackend::Mysql),
+            errors_of(&config),
             ["DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set"]
         );
     }
@@ -227,7 +211,7 @@ mod tests {
             key: Some(PathBuf::from("/nonexistent/id_ed25519")),
             ..ssh_config()
         };
-        let errors = config.validate(DatabaseBackend::Mysql).expect_err("must fail");
+        let errors = config.validate().expect_err("must fail");
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             &errors[0],
@@ -248,7 +232,7 @@ mod tests {
             key: Some(std::env::temp_dir()),
             ..ssh_config()
         };
-        let errors = config.validate(DatabaseBackend::Mysql).expect_err("must fail");
+        let errors = config.validate().expect_err("must fail");
         assert!(matches!(&errors[0], ConfigError::FileNotFound(_, _)));
     }
 
@@ -258,10 +242,7 @@ mod tests {
             key_passphrase: Some("secret".into()),
             ..ssh_config()
         };
-        assert_eq!(
-            errors_of(&config, DatabaseBackend::Mysql),
-            ["DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY"]
-        );
+        assert_eq!(errors_of(&config), ["DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY"]);
     }
 
     #[test]
@@ -273,7 +254,7 @@ mod tests {
                 ..ssh_config()
             };
             assert_eq!(
-                errors_of(&config, DatabaseBackend::Mysql),
+                errors_of(&config),
                 ["DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
                 "mode {mode}"
             );
@@ -284,9 +265,7 @@ mod tests {
             strict_host_key_checking: StrictHostKeyChecking::No,
             ..ssh_config()
         };
-        config
-            .validate(DatabaseBackend::Mysql)
-            .expect("mode no needs no known_hosts");
+        config.validate().expect("mode no needs no known_hosts");
     }
 
     #[test]
@@ -299,14 +278,13 @@ mod tests {
             known_hosts: None,
             ..ssh_config()
         };
-        let errors = config.validate(DatabaseBackend::Sqlite).expect_err("must fail");
-        assert!(matches!(errors[0], ConfigError::SshSqliteUnsupported));
-        assert!(matches!(errors[1], ConfigError::EmptySshHost));
-        assert!(matches!(errors[2], ConfigError::MissingSshUser));
-        assert!(matches!(errors[3], ConfigError::MissingSshAuth));
-        assert!(matches!(errors[4], ConfigError::SshKeyPassphraseWithoutKey));
-        assert!(matches!(errors[5], ConfigError::MissingSshKnownHosts));
-        assert_eq!(errors.len(), 6);
+        let errors = config.validate().expect_err("must fail");
+        assert!(matches!(errors[0], ConfigError::EmptySshHost));
+        assert!(matches!(errors[1], ConfigError::MissingSshUser));
+        assert!(matches!(errors[2], ConfigError::MissingSshAuth));
+        assert!(matches!(errors[3], ConfigError::SshKeyPassphraseWithoutKey));
+        assert!(matches!(errors[4], ConfigError::MissingSshKnownHosts));
+        assert_eq!(errors.len(), 5);
     }
 
     #[test]

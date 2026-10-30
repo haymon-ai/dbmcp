@@ -116,12 +116,16 @@ impl TryFrom<&Arguments> for Config {
             Transport::Http => HttpConfig::try_from(&args.http).map(Some),
         };
         let pii = args.pii.enabled.then(|| PiiConfig::try_from(&args.pii)).transpose();
-        match (
-            DatabaseConfig::try_from(&args.database),
-            http,
-            pii,
-            args.ssh.to_config(args.database.backend),
-        ) {
+        let mut ssh = args.ssh.is_set().then(|| SshConfig::try_from(&args.ssh)).transpose();
+        // Needs both sections, so it lives here rather than in `SshConfig::validate`.
+        if args.ssh.is_set() && args.database.backend == DatabaseBackend::Sqlite {
+            let mut errors = vec![ConfigError::SshSqliteUnsupported];
+            if let Err(e) = ssh {
+                errors.extend(e);
+            }
+            ssh = Err(ConfigErrors::from_vec(errors).expect("holds SshSqliteUnsupported"));
+        }
+        match (DatabaseConfig::try_from(&args.database), http, pii, ssh) {
             (Ok(database), Ok(http), Ok(pii), Ok(ssh)) => Ok(Self {
                 transport: args.transport,
                 database,
@@ -472,8 +476,8 @@ impl TryFrom<&PiiArguments> for PiiConfig {
 ///
 /// Every argument uses an explicit `id = "ssh-*"` so its clap id doesn't
 /// collide with the same-named fields in [`DatabaseArguments`]. `port`, `strict_host_key_checking`, and `keepalive_interval` stay
-/// `Option` so [`SshArguments::to_config`] can tell whether they were set;
-/// their defaults are applied there.
+/// `Option` so [`SshArguments::is_set`] can tell whether they were set;
+/// their defaults are applied by `TryFrom<&SshArguments> for SshConfig`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "SSH")]
 struct SshArguments {
@@ -558,28 +562,28 @@ struct SshArguments {
     local_port: Option<u16>,
 }
 
-impl SshArguments {
-    /// Resolves the tunnel settings; `Ok(None)` when `DBMCP_SSH_HOST` is unset.
+impl TryFrom<&SshArguments> for SshConfig {
+    type Error = ConfigErrors;
+
+    /// Resolves the tunnel settings against the process home directory.
     ///
-    /// Uses the process home directory for `~` expansion and the default
+    /// The home directory drives `~` expansion and the default
     /// `known_hosts` path.
+    fn try_from(args: &SshArguments) -> Result<Self, Self::Error> {
+        args.resolve(ssh::home_dir().as_deref())
+    }
+}
+
+impl SshArguments {
+    /// Resolves the tunnel settings against an explicit `home` directory.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when other `DBMCP_SSH_*` options are set
-    /// without a host, or when [`SshConfig::validate`] fails.
-    fn to_config(&self, backend: DatabaseBackend) -> Result<Option<SshConfig>, ConfigErrors> {
-        self.resolve(backend, ssh::home_dir().as_deref())
-    }
-
-    /// Resolves the tunnel settings against an explicit `home` directory.
-    fn resolve(&self, backend: DatabaseBackend, home: Option<&Path>) -> Result<Option<SshConfig>, ConfigErrors> {
+    /// Returns [`ConfigErrors`] when `DBMCP_SSH_HOST` is unset or
+    /// [`SshConfig::validate`] fails.
+    fn resolve(&self, home: Option<&Path>) -> Result<SshConfig, ConfigErrors> {
         let Some(host) = &self.host else {
-            return if self.any_set() {
-                Err(ConfigError::MissingSshHost.into())
-            } else {
-                Ok(None)
-            };
+            return Err(ConfigError::MissingSshHost.into());
         };
 
         let known_hosts = match &self.known_hosts {
@@ -603,13 +607,14 @@ impl SshArguments {
             ),
             local_port: self.local_port,
         };
-        candidate.validate(backend)?;
-        Ok(Some(candidate))
+        candidate.validate()?;
+        Ok(candidate)
     }
 
-    /// Returns `true` when any option other than `host` is set.
-    fn any_set(&self) -> bool {
-        self.port.is_some()
+    /// Returns `true` when any SSH option is set; the tunnel section is built only then.
+    fn is_set(&self) -> bool {
+        self.host.is_some()
+            || self.port.is_some()
             || self.user.is_some()
             || self.password.is_some()
             || self.key.is_some()
@@ -712,11 +717,12 @@ mod tests {
             "2222",
         ]);
         let errors = Config::try_from(&args).expect_err("multi-section misconfig must fail");
-        assert_eq!(errors.len(), 4, "{errors:?}");
+        assert_eq!(errors.len(), 5, "{errors:?}");
         assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
         assert!(matches!(errors[1], ConfigError::EmptyHttpHost));
         assert!(matches!(errors[2], ConfigError::PiiNerModelMissing));
-        assert!(matches!(errors[3], ConfigError::MissingSshHost));
+        assert!(matches!(errors[3], ConfigError::SshSqliteUnsupported));
+        assert!(matches!(errors[4], ConfigError::MissingSshHost));
     }
 
     #[test]
@@ -1056,13 +1062,15 @@ mod tests {
         }
     }
 
-    fn resolve(args: &[&str], home: Option<&Path>) -> Result<Option<SshConfig>, dbmcp_config::ConfigErrors> {
-        parse(args).ssh.resolve(DatabaseBackend::Postgres, home)
+    fn resolve(args: &[&str], home: Option<&Path>) -> Result<SshConfig, dbmcp_config::ConfigErrors> {
+        parse(args).ssh.resolve(home)
     }
 
     #[test]
     fn ssh_disabled_without_any_option() {
-        assert!(resolve(&[], Some(&home())).expect("valid").is_none());
+        let args = parse(&[]);
+        assert!(!args.ssh.is_set());
+        assert!(Config::try_from(&args).expect("valid").ssh.is_none());
     }
 
     #[test]
@@ -1094,8 +1102,7 @@ mod tests {
             &["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"],
             Some(&home()),
         )
-        .expect("valid")
-        .expect("tunnel enabled");
+        .expect("valid");
         assert_eq!(config.host, "bastion");
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "deploy");
@@ -1129,8 +1136,7 @@ mod tests {
             ],
             Some(&home()),
         )
-        .expect("valid")
-        .expect("tunnel enabled");
+        .expect("valid");
         assert_eq!(config.port, 2222);
         assert_eq!(config.known_hosts, Some(home().join(".ssh").join("custom_hosts")));
         assert_eq!(config.strict_host_key_checking, StrictHostKeyChecking::AcceptNew);
@@ -1184,8 +1190,7 @@ mod tests {
             ],
             None,
         )
-        .expect("mode no needs no known_hosts")
-        .expect("tunnel enabled");
+        .expect("mode no needs no known_hosts");
         assert_eq!(config.known_hosts, None);
     }
 
@@ -1198,10 +1203,19 @@ mod tests {
 
     #[test]
     fn ssh_rejected_for_sqlite_backend() {
-        let errors = parse(&["--ssh-host", "bastion", "--ssh-user", "deploy", "--ssh-password", "pw"])
-            .ssh
-            .resolve(DatabaseBackend::Sqlite, Some(&home()))
-            .expect_err("sqlite must fail");
+        let args = parse(&[
+            "--db-backend",
+            "sqlite",
+            "--db-name",
+            "app.db",
+            "--ssh-host",
+            "bastion",
+            "--ssh-user",
+            "deploy",
+            "--ssh-password",
+            "pw",
+        ]);
+        let errors = Config::try_from(&args).expect_err("sqlite must fail");
         assert!(errors.iter().any(|e| matches!(e, ConfigError::SshSqliteUnsupported)));
     }
 
