@@ -85,7 +85,7 @@ Default values for `database.port` and `database.user` depend on the selected ba
 | PostgreSQL | `5432` | `postgres` |
 | SQLite | N/A | N/A |
 
-SQLite does not use host, port, or user — only `database.name` (the file path) is required. In the YAML file, a relative SQLite path resolves against the file's directory; `:memory:` and `sqlite:` URIs are passed through unchanged.
+SQLite does not use host, port, or user — only `database.name` (the file path) is required. In the YAML file, a relative SQLite path resolves against the file's directory; `:memory:` is passed through unchanged.
 
 ## SSL / TLS
 

@@ -228,7 +228,7 @@ Path settings resolve differently depending on where they are set:
 | Config file | The config file's directory | Expanded |
 | `DBMCP_*` variable or env file | The working directory | Expanded only for `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` |
 
-This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. SQLite names of `:memory:` or starting with `sqlite:` are passed through unchanged. Keeping certificates, keys, and SQLite files next to the config file and using relative paths makes the whole directory relocatable.
+This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. A SQLite name of `:memory:` is passed through unchanged. Keeping certificates, keys, and SQLite files next to the config file and using relative paths makes the whole directory relocatable.
 
 ## Running in Docker
 
