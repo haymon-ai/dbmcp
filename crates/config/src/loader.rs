@@ -784,9 +784,10 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("tempdir");
+            // A home inside the tempdir is absolute on every platform.
             let options = LoadOptions {
                 working_dir: dir.path().to_path_buf(),
-                home: Some(PathBuf::from("/home/test")),
+                home: Some(dir.path().join("home")),
                 ..LoadOptions::default()
             };
             Self { dir, options }
@@ -1088,7 +1089,7 @@ mod tests {
         );
         assert_eq!(
             loaded.config.pii.expect("pii").ner_model,
-            Some(PathBuf::from("/home/test/models"))
+            Some(fixture.dir.path().join("home").join("models"))
         );
     }
 
@@ -1160,14 +1161,16 @@ mod tests {
 
     #[test]
     fn ssh_activates_on_host_and_requires_it_otherwise() {
-        let loaded = Fixture::new()
+        let fixture = Fixture::new()
             .env("DBMCP_SSH_HOST", "bastion")
             .env("DBMCP_SSH_USER", "deploy")
-            .env("DBMCP_SSH_PASSWORD", "pw")
-            .ok();
-        let ssh = loaded.config.ssh.expect("ssh");
+            .env("DBMCP_SSH_PASSWORD", "pw");
+        let ssh = fixture.ok().config.ssh.expect("ssh");
         assert_eq!(ssh.host, "bastion");
-        assert_eq!(ssh.known_hosts, Some(PathBuf::from("/home/test/.ssh/known_hosts")));
+        assert_eq!(
+            ssh.known_hosts,
+            Some(fixture.dir.path().join("home").join(".ssh").join("known_hosts"))
+        );
 
         let error = Fixture::new().config("dbmcp.yaml", "ssh:\n  user: deploy\n").err();
         assert!(
