@@ -374,7 +374,7 @@ Database MCP supports two transport modes for communicating with MCP clients.
 
 ### Stdio
 
-The server communicates over standard input/output. This mode works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess and passes the `stdio` subcommand.
+The server communicates over standard input/output. This mode works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess; stdio is the default transport.
 
 **Best for**: Local development, single-user setups, desktop MCP clients.
 
@@ -388,11 +388,11 @@ See [Configuration](/docs/configuration#http-transport) for HTTP-specific option
 
 ## PII Redaction
 
-Database MCP ships an optional PII redactor that rewrites detected sensitive spans inside query tool output before the result reaches the AI assistant. The feature is **off by default**; enable it per-server via `--pii` / `PII_ENABLE`, and select how spans are rewritten via `--pii-operator` / `PII_OPERATOR`. See [PII configuration](/docs/configuration#pii) for the full flag reference.
+Database MCP ships an optional PII redactor that rewrites detected sensitive spans inside query tool output before the result reaches the AI assistant. The feature is **off by default**; enable it per-server via `--pii` / `DBMCP_PII_ENABLE`, and select how spans are rewritten via `--pii-operator` / `DBMCP_PII_OPERATOR`. See [PII configuration](/docs/configuration#pii) for the full flag reference.
 
 ### What gets detected
 
-Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `--pii-categories` / `PII_CATEGORIES`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
+Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `--pii-categories` / `DBMCP_PII_CATEGORIES`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
 
 **personal**
 - `EMAIL_ADDRESS` — email addresses
@@ -434,7 +434,7 @@ Twenty-four built-in regex recognisers ship by default, grouped into seven categ
 
 ### Categories
 
-Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories on `--pii-categories` / `PII_CATEGORIES`; leaving the flag unset enables every built-in.
+Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories on `--pii-categories` / `DBMCP_PII_CATEGORIES`; leaving the flag unset enables every built-in.
 
 - `personal` — `EMAIL_ADDRESS`
 - `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`

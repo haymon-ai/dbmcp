@@ -22,4 +22,3 @@ COPY --from=download /tmp/dbmcp /dbmcp
 USER nonroot
 
 ENTRYPOINT ["/dbmcp"]
-CMD ["stdio"]

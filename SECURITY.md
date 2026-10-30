@@ -48,7 +48,7 @@ These are assumed to be under the user's control and are **not** considered atta
 Exploits via these vectors **are** valid security vulnerabilities:
 
 - **SQL input from the AI assistant** — the primary attack surface; the server must enforce read-only restrictions and prevent injection regardless of what the AI sends
-- **Network traffic in HTTP transport mode** — wire-level attacks between client and server, including bypass of bearer-token authentication (`HTTP_AUTH_TOKEN`)
+- **Network traffic in HTTP transport mode** — wire-level attacks between client and server, including bypass of bearer-token authentication (`DBMCP_HTTP_AUTH_TOKEN`)
 - **Database server responses** — defence-in-depth; malformed responses should not cause crashes or information leaks
 
 ### Not Vulnerabilities
@@ -56,7 +56,7 @@ Exploits via these vectors **are** valid security vulnerabilities:
 The following are expected behavior and **not** security issues:
 
 - Read-only mode blocking write operations (this is a security feature)
-- Unauthenticated access to an HTTP server bound to loopback without `HTTP_AUTH_TOKEN`, or started with `--dangerously-allow-unauthenticated` (explicit operator opt-outs)
+- Unauthenticated access to an HTTP server bound to loopback without `DBMCP_HTTP_AUTH_TOKEN`, or started with `--dangerously-allow-unauthenticated` (explicit operator opt-outs)
 - Identifier validation rejecting special characters in database or table names
 - Connection failures due to incorrect credentials or unreachable databases
 

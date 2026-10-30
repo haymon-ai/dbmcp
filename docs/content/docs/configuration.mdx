@@ -15,22 +15,47 @@ Configuration values are resolved in this order (highest priority first):
 
 When the same option is set in multiple places, the higher-priority source wins.
 
+## Transport
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--transport` | `DBMCP_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
+
+`--transport` defaults to `stdio`, which requires no additional configuration beyond the database options below.
+
+## HTTP Transport
+
+These options are only used with `--transport http`; ignored under stdio:
+
+| CLI Flag | Default | Description |
+|----------|---------|-------------|
+| `--host` | `127.0.0.1` | Bind host for the HTTP server |
+| `--port` | `9001` | Bind port for the HTTP server |
+| `--allowed-origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
+| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
+| `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `DBMCP_HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
+| `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
+
+> **Security note**: Binding a non-loopback host (e.g. `--host 0.0.0.0`) without `DBMCP_HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
+
+> **Security note**: The default `--allowed-origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `--allowed-origins` to the explicit origins you trust (e.g. `http://localhost:5173`).
+
 ## Database Connection
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `--db-backend` | `DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
-| `--db-host` | `DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
-| `--db-port` | `DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
-| `--db-user` | `DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
-| `--db-password` | `DB_PASSWORD` | — | Database password |
-| `--db-name` | `DB_NAME` | — | Database name, or file path for SQLite |
+| `--db-backend` | `DBMCP_DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
+| `--db-host` | `DBMCP_DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
+| `--db-port` | `DBMCP_DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
+| `--db-user` | `DBMCP_DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
+| `--db-password` | `DBMCP_DB_PASSWORD` | — | Database password |
+| `--db-name` | `DBMCP_DB_NAME` | — | Database name, or file path for SQLite |
 
 ### Character Set
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `--db-charset` | `DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
+| `--db-charset` | `DBMCP_DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
 
 ## Backend Defaults
 
@@ -49,157 +74,28 @@ SQLite does not use host, port, or user — only `--db-name` (the file path) is 
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `--db-ssl` | `DB_SSL` | `false` | Enable SSL for the database connection |
-| `--db-ssl-ca` | `DB_SSL_CA` | — | Path to CA certificate |
-| `--db-ssl-cert` | `DB_SSL_CERT` | — | Path to client certificate |
-| `--db-ssl-key` | `DB_SSL_KEY` | — | Path to client key |
-| `--db-ssl-verify-cert` | `DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
+| `--db-ssl` | `DBMCP_DB_SSL` | `false` | Enable SSL for the database connection |
+| `--db-ssl-ca` | `DBMCP_DB_SSL_CA` | — | Path to CA certificate |
+| `--db-ssl-cert` | `DBMCP_DB_SSL_CERT` | — | Path to client certificate |
+| `--db-ssl-key` | `DBMCP_DB_SSL_KEY` | — | Path to client key |
+| `--db-ssl-verify-cert` | `DBMCP_DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
 
 When `--db-ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
-
-## SSH Tunnel
-
-Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `--ssh-host` / `SSH_HOST` is set.
-
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--ssh-host` | `SSH_HOST` | — | SSH server host; enables the tunnel when set |
-| `--ssh-port` | `SSH_PORT` | `22` | SSH server port |
-| `--ssh-user` | `SSH_USER` | — | SSH user |
-| `--ssh-password` | `SSH_PASSWORD` | — | SSH password |
-| `--ssh-key` | `SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
-| `--ssh-key-passphrase` | `SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
-| `--ssh-known-hosts` | `SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
-| `--ssh-strict-host-key-checking` | `SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
-| `--ssh-keepalive-interval` | `SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
-| `--ssh-local-port` | `SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
-
-`SSH_USER` and one of `SSH_PASSWORD` / `SSH_KEY` are required with `SSH_HOST`. Setting any other `SSH_*` option without `SSH_HOST` is a startup error, as is `SSH_KEY_PASSPHRASE` without `SSH_KEY`. A leading `~` in `SSH_KEY` and `SSH_KNOWN_HOSTS` expands to your home directory; when no home directory can be determined, `SSH_KNOWN_HOSTS` must be set explicitly (unless the host-key policy is `no`).
-
-**Docker:** inside the container `~` is the image's home directory, not yours. Mount the private key and a `known_hosts` file into the container (readable by the container user) and point `SSH_KEY` / `SSH_KNOWN_HOSTS` at the mounted paths. Avoid `accept-new` with `--rm` containers: every new container starts with an empty `known_hosts` and trusts the first key it sees on each launch.
-
-```json
-{
-  "mcpServers": {
-    "dbmcp": {
-      "command": "dbmcp",
-      "args": ["stdio"],
-      "env": {
-        "DB_BACKEND": "postgres",
-        "DB_HOST": "db.internal",
-        "DB_USER": "postgres",
-        "DB_NAME": "mydb",
-        "SSH_HOST": "bastion.example.com",
-        "SSH_USER": "deploy",
-        "SSH_KEY": "~/.ssh/id_ed25519"
-      }
-    }
-  }
-}
-```
-
-### How It Works
-
-- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `--ssh-local-port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
-- **`DB_HOST` and `DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
-- The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
-- If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
-- Keepalives are sent every `--ssh-keepalive-interval` seconds; when keepalives go unanswered for about four intervals (~2 minutes at the default 30 s) the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
-
-### Authentication
-
-- **Password** (`SSH_PASSWORD`) and **private key** (`SSH_KEY`). When both are set, the key is tried first, then the password.
-- Key formats: OpenSSH (plain or passphrase-encrypted), PKCS#1 RSA (including legacy AES-128-CBC encryption), SEC1 EC (unencrypted), PKCS#8 (plain or PBES2-encrypted).
-- Key types: Ed25519, ECDSA (P-256, P-384, P-521), and RSA. RSA keys sign with `rsa-sha2-256`/`rsa-sha2-512`, as required by OpenSSH 8.8+.
-- The key is read and decrypted once at startup; a wrong passphrase or unsupported format aborts startup.
-- On Unix, a key accessible by group or others (any of the `0o077` mode bits set) logs a warning suggesting `chmod 600`; startup continues. No permission check is done on Windows.
-
-### Host-Key Policies
-
-The SSH server's host key is checked against `known_hosts` (re-read on every connect) before any credentials are sent.
-
-| Value | Behavior |
-|-------|----------|
-| `yes` *(default)* | Only hosts already in `known_hosts` are accepted. Unknown hosts are rejected with the key's fingerprint and an `ssh-keyscan` hint. |
-| `accept-new` | Unknown hosts are trusted on first use and appended to `known_hosts`. On Unix, a newly created file gets mode `0600` and newly created directories `0700` (subject to your umask); existing ones keep their permissions. A known host presenting a different key — including a key of a type not yet recorded — is rejected. |
-| `no` | Verification is disabled (a warning is logged at startup). A changed key is accepted with a warning, but the password is withheld for that session. **Insecure**: exposes the tunnel to man-in-the-middle attacks. |
-
-Keys marked `@revoked` are rejected under every policy, as long as `known_hosts` can be read. Under `no`, an unreadable `known_hosts` is ignored with a warning, so its `@revoked` entries no longer apply. `known_hosts` entries may be hashed (`|1|…`), use `[host]:port`, comma-separated host lists, and `*` / `?` / `!` patterns. See [SSH Host-Key Verification](/docs/security#ssh-host-key-verification) for the security implications.
-
-### Database TLS Through the Tunnel
-
-All `DB_SSL_*` settings work unchanged, and TLS stays end-to-end between Database MCP and the database. `DB_SSL_VERIFY_CERT=true` validates the certificate chain (against system roots and `DB_SSL_CA`) but not the hostname, so connecting via `127.0.0.1` does not cause a name mismatch.
-
-**Limitation:** because the driver connects to an IP address, no TLS SNI is sent. Services that route on SNI (for example Neon's proxy) cannot be reached through the tunnel.
-
-### Not Supported
-
-- SQLite (rejected at startup)
-- ssh-agent, keyboard-interactive / 2FA authentication
-- `~/.ssh/config` parsing and `Host` aliases
-- Multi-hop / `ProxyJump`, HTTP or SOCKS proxies in front of SSH
-- Host-key fingerprint pinning (use a dedicated `known_hosts` file instead)
-- DSA keys, FIDO/security-key (`sk-*`) keys, user certificates
-- Host certificates and `@cert-authority` entries
-- Hostname-verifying database TLS (`verify-full`)
-
-### Troubleshooting
-
-**Unknown host key** — under `yes`, the error names the fingerprint and suggests a command:
-
-```text
-SSH host key for bastion.example.com (SHA256:…) is not in /home/me/.ssh/known_hosts; verify the fingerprint, then run `ssh-keyscan -p 22 bastion.example.com >> /home/me/.ssh/known_hosts`
-```
-
-Compare the fingerprint with one obtained out-of-band (e.g. from the server's console via `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before running the suggested command.
-
-**Host key does not match** — `… does not match <file>:<line>; the server may be impersonated`. If the server was legitimately re-keyed, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`) and add the new one.
-
-**Unsupported or legacy key encryption** — `SSH key <path> uses an unsupported encryption format; re-encrypt it with ssh-keygen -p -f <path>`. This covers legacy PEM keys encrypted with AES-256 or 3DES, encrypted SEC1 EC keys, and PKCS#8 PBES1. `ssh-keygen -p` rewrites the key in the OpenSSH format. An encrypted key without `SSH_KEY_PASSPHRASE` fails with `SSH key <path> is encrypted; set SSH_KEY_PASSPHRASE`.
-
-**Unsupported key types** — DSA, FIDO (`sk-ecdsa-…`, `sk-ssh-ed25519-…`) keys, and certificates cannot be loaded. Use an Ed25519, ECDSA, or RSA key.
-
-**`SSH_HOST is not supported with the sqlite backend`** — SQLite is a local file; remove the `SSH_*` settings.
-
-**Tool errors ending in `(SSH tunnel: …)`** — when the database cannot be reached and the tunnel has an unresolved failure (connect timeout, authentication, host key, channel open, or a lost session), the cause is appended to the tool error, e.g. `… (SSH tunnel: SSH authentication failed for deploy@bastion.example.com:22)`. Other errors (SQL errors, read-only rejections) never get the suffix. It disappears once a connection through the tunnel succeeds. Failed connects are also logged with their full error chain at `error` level; a lost session is logged at `warn`.
-
-**Windows: `os error 10013` with `--ssh-local-port`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or omit `--ssh-local-port` to use an ephemeral port.
-
-**Windows: a different `known_hosts` than `ssh` uses** — Database MCP resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
 
 ## Server Behavior
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `--db-read-only` | `DB_READ_ONLY` | `true` | Enable read-only mode |
-| `--db-max-pool-size` | `DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
-| `--db-connection-timeout` | `DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
-| `--db-query-timeout` | `DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
-| `--db-page-size` | `DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
-| `--log-level` | `LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| `--db-read-only` | `DBMCP_DB_READ_ONLY` | `true` | Enable read-only mode |
+| `--db-max-pool-size` | `DBMCP_DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
+| `--db-connection-timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
+| `--db-query-timeout` | `DBMCP_DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
+| `--db-page-size` | `DBMCP_DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
+| `--log-level` | `DBMCP_LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
 
-> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `--db-read-only=false` or `DB_READ_ONLY=false` to enable write tools.
+> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `--db-read-only=false` or `DBMCP_DB_READ_ONLY=false` to enable write tools.
 
 The page size applies uniformly to every paginated tool; see the [Cursor Pagination](/docs/features#cursor-pagination) section on the Features page for the full protocol.
-
-## HTTP Transport
-
-These options are available only when running in HTTP mode (`dbmcp http`):
-
-| CLI Flag | Default | Description |
-|----------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind host for the HTTP server |
-| `--port` | `9001` | Bind port for the HTTP server |
-| `--allowed-origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
-| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
-| `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
-| `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
-
-> **Security note**: Binding a non-loopback host (e.g. `--host 0.0.0.0`) without `HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
-
-> **Security note**: The default `--allowed-origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `HTTP_AUTH_TOKEN` or narrow `--allowed-origins` to the explicit origins you trust (e.g. `http://localhost:5173`).
-
-A transport subcommand is required — running `dbmcp` with no subcommand prints usage help and exits with a non-zero status. The `stdio` transport requires no additional configuration beyond the database options above.
 
 ## PII
 
@@ -207,11 +103,11 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `--pii` | `PII_ENABLE` | `false` | Enable PII redaction of query tool output |
-| `--pii-operator` | `PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
-| `--pii-categories` | `PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
-| `--pii-ner` | `PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
-| `--pii-ner-model` | `PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
+| `--pii` | `DBMCP_PII_ENABLE` | `false` | Enable PII redaction of query tool output |
+| `--pii-operator` | `DBMCP_PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
+| `--pii-categories` | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
+| `--pii-ner` | `DBMCP_PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
+| `--pii-ner-model` | `DBMCP_PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
 
 ### Operator Values
 
@@ -285,7 +181,7 @@ ls ./models/bert-ner
 **3. Start `dbmcp` with the NER pass enabled, pointing at the directory:**
 
 ```bash
-dbmcp stdio --db-backend sqlite --db-name app.db \
+dbmcp --db-backend sqlite --db-name app.db \
   --pii true --pii-ner true --pii-ner-model ./models/bert-ner
 ```
 
@@ -296,7 +192,116 @@ Behaviour notes:
 - **Fail-closed.** If `--pii-ner` is set but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
 - **Category-aware.** The NER pass respects `--pii-categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
 
-> **Default**: redaction is off. Setting `PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `PII_OPERATOR`, `PII_CATEGORIES`, and the `PII_NER_*` flags alone have no effect.
+> **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` flags alone have no effect.
+
+## SSH Tunnel
+
+Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `--ssh-host` / `DBMCP_SSH_HOST` is set.
+
+| CLI Flag | Environment Variable | Default | Description |
+|----------|---------------------|---------|-------------|
+| `--ssh-host` | `DBMCP_SSH_HOST` | — | SSH server host; enables the tunnel when set |
+| `--ssh-port` | `DBMCP_SSH_PORT` | `22` | SSH server port |
+| `--ssh-user` | `DBMCP_SSH_USER` | — | SSH user |
+| `--ssh-password` | `DBMCP_SSH_PASSWORD` | — | SSH password |
+| `--ssh-key` | `DBMCP_SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `--ssh-key-passphrase` | `DBMCP_SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
+| `--ssh-known-hosts` | `DBMCP_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
+| `--ssh-strict-host-key-checking` | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
+| `--ssh-keepalive-interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
+| `--ssh-local-port` | `DBMCP_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+
+`DBMCP_SSH_USER` and one of `DBMCP_SSH_PASSWORD` / `DBMCP_SSH_KEY` are required with `DBMCP_SSH_HOST`. Setting any other `DBMCP_SSH_*` option without `DBMCP_SSH_HOST` is a startup error, as is `DBMCP_SSH_KEY_PASSPHRASE` without `DBMCP_SSH_KEY`. A leading `~` in `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` expands to your home directory; when no home directory can be determined, `DBMCP_SSH_KNOWN_HOSTS` must be set explicitly (unless the host-key policy is `no`).
+
+**Docker:** inside the container `~` is the image's home directory, not yours. Mount the private key and a `known_hosts` file into the container (readable by the container user) and point `DBMCP_SSH_KEY` / `DBMCP_SSH_KNOWN_HOSTS` at the mounted paths. Avoid `accept-new` with `--rm` containers: every new container starts with an empty `known_hosts` and trusts the first key it sees on each launch.
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "env": {
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "db.internal",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_NAME": "mydb",
+        "DBMCP_SSH_HOST": "bastion.example.com",
+        "DBMCP_SSH_USER": "deploy",
+        "DBMCP_SSH_KEY": "~/.ssh/id_ed25519"
+      }
+    }
+  }
+}
+```
+
+### How It Works
+
+- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `--ssh-local-port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
+- **`DBMCP_DB_HOST` and `DBMCP_DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
+- The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
+- If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
+- Keepalives are sent every `--ssh-keepalive-interval` seconds; when keepalives go unanswered for about four intervals (~2 minutes at the default 30 s) the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
+
+### Authentication
+
+- **Password** (`DBMCP_SSH_PASSWORD`) and **private key** (`DBMCP_SSH_KEY`). When both are set, the key is tried first, then the password.
+- Key formats: OpenSSH (plain or passphrase-encrypted), PKCS#1 RSA (including legacy AES-128-CBC encryption), SEC1 EC (unencrypted), PKCS#8 (plain or PBES2-encrypted).
+- Key types: Ed25519, ECDSA (P-256, P-384, P-521), and RSA. RSA keys sign with `rsa-sha2-256`/`rsa-sha2-512`, as required by OpenSSH 8.8+.
+- The key is read and decrypted once at startup; a wrong passphrase or unsupported format aborts startup.
+- On Unix, a key accessible by group or others (any of the `0o077` mode bits set) logs a warning suggesting `chmod 600`; startup continues. No permission check is done on Windows.
+
+### Host-Key Policies
+
+The SSH server's host key is checked against `known_hosts` (re-read on every connect) before any credentials are sent.
+
+| Value | Behavior |
+|-------|----------|
+| `yes` *(default)* | Only hosts already in `known_hosts` are accepted. Unknown hosts are rejected with the key's fingerprint and an `ssh-keyscan` hint. |
+| `accept-new` | Unknown hosts are trusted on first use and appended to `known_hosts`. On Unix, a newly created file gets mode `0600` and newly created directories `0700` (subject to your umask); existing ones keep their permissions. A known host presenting a different key — including a key of a type not yet recorded — is rejected. |
+| `no` | Verification is disabled (a warning is logged at startup). A changed key is accepted with a warning, but the password is withheld for that session. **Insecure**: exposes the tunnel to man-in-the-middle attacks. |
+
+Keys marked `@revoked` are rejected under every policy, as long as `known_hosts` can be read. Under `no`, an unreadable `known_hosts` is ignored with a warning, so its `@revoked` entries no longer apply. `known_hosts` entries may be hashed (`|1|…`), use `[host]:port`, comma-separated host lists, and `*` / `?` / `!` patterns. See [SSH Host-Key Verification](/docs/security#ssh-host-key-verification) for the security implications.
+
+### Database TLS Through the Tunnel
+
+All `DBMCP_DB_SSL_*` settings work unchanged, and TLS stays end-to-end between Database MCP and the database. `DBMCP_DB_SSL_VERIFY_CERT=true` validates the certificate chain (against system roots and `DBMCP_DB_SSL_CA`) but not the hostname, so connecting via `127.0.0.1` does not cause a name mismatch.
+
+**Limitation:** because the driver connects to an IP address, no TLS SNI is sent. Services that route on SNI (for example Neon's proxy) cannot be reached through the tunnel.
+
+### Not Supported
+
+- SQLite (rejected at startup)
+- ssh-agent, keyboard-interactive / 2FA authentication
+- `~/.ssh/config` parsing and `Host` aliases
+- Multi-hop / `ProxyJump`, HTTP or SOCKS proxies in front of SSH
+- Host-key fingerprint pinning (use a dedicated `known_hosts` file instead)
+- DSA keys, FIDO/security-key (`sk-*`) keys, user certificates
+- Host certificates and `@cert-authority` entries
+- Hostname-verifying database TLS (`verify-full`)
+
+### Troubleshooting
+
+**Unknown host key** — under `yes`, the error names the fingerprint and suggests a command:
+
+```text
+SSH host key for bastion.example.com (SHA256:…) is not in /home/me/.ssh/known_hosts; verify the fingerprint, then run `ssh-keyscan -p 22 bastion.example.com >> /home/me/.ssh/known_hosts`
+```
+
+Compare the fingerprint with one obtained out-of-band (e.g. from the server's console via `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before running the suggested command.
+
+**Host key does not match** — `… does not match <file>:<line>; the server may be impersonated`. If the server was legitimately re-keyed, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`) and add the new one.
+
+**Unsupported or legacy key encryption** — `SSH key <path> uses an unsupported encryption format; re-encrypt it with ssh-keygen -p -f <path>`. This covers legacy PEM keys encrypted with AES-256 or 3DES, encrypted SEC1 EC keys, and PKCS#8 PBES1. `ssh-keygen -p` rewrites the key in the OpenSSH format. An encrypted key without `DBMCP_SSH_KEY_PASSPHRASE` fails with `SSH key <path> is encrypted; set DBMCP_SSH_KEY_PASSPHRASE`.
+
+**Unsupported key types** — DSA, FIDO (`sk-ecdsa-…`, `sk-ssh-ed25519-…`) keys, and certificates cannot be loaded. Use an Ed25519, ECDSA, or RSA key.
+
+**`DBMCP_SSH_HOST is not supported with the sqlite backend`** — SQLite is a local file; remove the `DBMCP_SSH_*` settings.
+
+**Tool errors ending in `(SSH tunnel: …)`** — when the database cannot be reached and the tunnel has an unresolved failure (connect timeout, authentication, host key, channel open, or a lost session), the cause is appended to the tool error, e.g. `… (SSH tunnel: SSH authentication failed for deploy@bastion.example.com:22)`. Other errors (SQL errors, read-only rejections) never get the suffix. It disappears once a connection through the tunnel succeeds. Failed connects are also logged with their full error chain at `error` level; a lost session is logged at `warn`.
+
+**Windows: `os error 10013` with `--ssh-local-port`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or omit `--ssh-local-port` to use an ephemeral port.
+
+**Windows: a different `known_hosts` than `ssh` uses** — Database MCP resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `DBMCP_SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
 
 ## Client Configuration Examples
 
@@ -311,20 +316,19 @@ Create a `.mcp.json` file in your project root:
   "mcpServers": {
     "dbmcp": {
       "command": "dbmcp",
-      "args": ["stdio"],
       "env": {
-        "DB_BACKEND": "mysql",
-        "DB_HOST": "localhost",
-        "DB_USER": "root",
-        "DB_PASSWORD": "secret",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Claude Code also supports HTTP transport for remote servers:
 
@@ -350,23 +354,23 @@ Using Docker:
       "type": "stdio",
       "command": "docker",
       "args": ["run", "-i", "--rm",
-        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
-        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "-e", "DBMCP_DB_BACKEND", "-e", "DBMCP_DB_HOST", "-e", "DBMCP_DB_USER",
+        "-e", "DBMCP_DB_PASSWORD", "-e", "DBMCP_DB_NAME",
         "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
-        "DB_BACKEND": "postgres",
-        "DB_HOST": "host.docker.internal",
-        "DB_USER": "postgres",
-        "DB_PASSWORD": "secret",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "host.docker.internal",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 ### Claude Desktop
 
@@ -378,20 +382,19 @@ Edit the config file at:
   "mcpServers": {
     "dbmcp": {
       "command": "dbmcp",
-      "args": ["stdio"],
       "env": {
-        "DB_BACKEND": "postgres",
-        "DB_HOST": "localhost",
-        "DB_USER": "postgres",
-        "DB_PASSWORD": "secret",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -401,23 +404,23 @@ Using Docker:
     "dbmcp": {
       "command": "docker",
       "args": ["run", "-i", "--rm",
-        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
-        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "-e", "DBMCP_DB_BACKEND", "-e", "DBMCP_DB_HOST", "-e", "DBMCP_DB_USER",
+        "-e", "DBMCP_DB_PASSWORD", "-e", "DBMCP_DB_NAME",
         "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
-        "DB_BACKEND": "postgres",
-        "DB_HOST": "host.docker.internal",
-        "DB_USER": "postgres",
-        "DB_PASSWORD": "secret",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "host.docker.internal",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 > Claude Desktop only supports stdio transport. For HTTP mode, use the Connectors UI under **Settings > Connectors > Add custom connector**.
 
@@ -431,12 +434,11 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
     "dbmcp": {
       "type": "stdio",
       "command": "dbmcp",
-      "args": ["stdio"],
       "env": {
-        "DB_BACKEND": "mysql",
-        "DB_HOST": "localhost",
-        "DB_USER": "root",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_NAME": "myapp"
       },
       "envFile": ".env"
     }
@@ -444,7 +446,7 @@ Create `.cursor/mcp.json` in your project root, or use `~/.cursor/mcp.json` for 
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -455,15 +457,15 @@ Using Docker:
       "type": "stdio",
       "command": "docker",
       "args": ["run", "-i", "--rm",
-        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
-        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "-e", "DBMCP_DB_BACKEND", "-e", "DBMCP_DB_HOST", "-e", "DBMCP_DB_USER",
+        "-e", "DBMCP_DB_PASSWORD", "-e", "DBMCP_DB_NAME",
         "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
-        "DB_BACKEND": "mysql",
-        "DB_HOST": "host.docker.internal",
-        "DB_USER": "root",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "host.docker.internal",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_NAME": "myapp"
       },
       "envFile": ".env"
     }
@@ -471,9 +473,9 @@ Using Docker:
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
-Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DB_PASSWORD` can be kept there instead of in the JSON config.
+Cursor supports `envFile` to load variables from a `.env` file. Sensitive values like `DBMCP_DB_PASSWORD` can be kept there instead of in the JSON config.
 
 ### Windsurf
 
@@ -485,20 +487,19 @@ Edit the config file at:
   "mcpServers": {
     "dbmcp": {
       "command": "dbmcp",
-      "args": ["stdio"],
       "env": {
-        "DB_BACKEND": "mysql",
-        "DB_HOST": "localhost",
-        "DB_USER": "root",
-        "DB_PASSWORD": "${env:DB_PASSWORD}",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Using Docker:
 
@@ -508,23 +509,23 @@ Using Docker:
     "dbmcp": {
       "command": "docker",
       "args": ["run", "-i", "--rm",
-        "-e", "DB_BACKEND", "-e", "DB_HOST", "-e", "DB_USER",
-        "-e", "DB_PASSWORD", "-e", "DB_NAME",
+        "-e", "DBMCP_DB_BACKEND", "-e", "DBMCP_DB_HOST", "-e", "DBMCP_DB_USER",
+        "-e", "DBMCP_DB_PASSWORD", "-e", "DBMCP_DB_NAME",
         "ghcr.io/haymon-ai/dbmcp"
       ],
       "env": {
-        "DB_BACKEND": "mysql",
-        "DB_HOST": "host.docker.internal",
-        "DB_USER": "root",
-        "DB_PASSWORD": "${env:DB_PASSWORD}",
-        "DB_NAME": "myapp"
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "host.docker.internal",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "myapp"
       }
     }
   }
 }
 ```
 
-*To enable PII redaction, add `"PII_ENABLE": "true"` and optionally `"PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
+*To enable PII redaction, add `"DBMCP_PII_ENABLE": "true"` and optionally `"DBMCP_PII_OPERATOR": "<replace|mask|redact|hash>"` (and `"DBMCP_PII_CATEGORIES": "<personal,financial,...>"` to scope detection) to the `env` map.*
 
 Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from your shell environment instead of hardcoding them.
 

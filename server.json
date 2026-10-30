@@ -15,15 +15,7 @@
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
-      },
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "stdio",
-          "description": "Start in stdio transport mode",
-          "isRequired": true
-        }
-      ]
+      }
     },
     {
       "registryType": "oci",
@@ -35,9 +27,10 @@
       },
       "packageArguments": [
         {
-          "type": "positional",
+          "type": "named",
+          "name": "--transport",
           "value": "http",
-          "description": "Start in HTTP transport mode",
+          "description": "MCP transport",
           "isRequired": true
         },
         {
@@ -67,31 +60,31 @@
         {
           "type": "named",
           "name": "--dangerously-allow-unauthenticated",
-          "description": "Allow a non-loopback bind without HTTP_AUTH_TOKEN (only behind an authenticating reverse proxy)"
+          "description": "Allow a non-loopback bind without DBMCP_HTTP_AUTH_TOKEN (only behind an authenticating reverse proxy)"
         }
       ],
       "environmentVariables": [
         {
-          "name": "HTTP_HOST",
+          "name": "DBMCP_HTTP_HOST",
           "description": "HTTP bind host",
           "default": "127.0.0.1"
         },
         {
-          "name": "HTTP_PORT",
+          "name": "DBMCP_HTTP_PORT",
           "description": "HTTP bind port",
           "format": "number",
           "default": "9001"
         },
         {
-          "name": "HTTP_ALLOWED_ORIGINS",
+          "name": "DBMCP_HTTP_ALLOWED_ORIGINS",
           "description": "Allowed CORS origins (comma-separated)"
         },
         {
-          "name": "HTTP_ALLOWED_HOSTS",
+          "name": "DBMCP_HTTP_ALLOWED_HOSTS",
           "description": "Allowed host names (comma-separated)"
         },
         {
-          "name": "HTTP_AUTH_TOKEN",
+          "name": "DBMCP_HTTP_AUTH_TOKEN",
           "description": "Bearer token required on every request; mandatory for non-loopback binds",
           "isSecret": true
         }
@@ -283,172 +276,172 @@
   ],
   "environmentVariables": [
     {
-      "name": "DB_BACKEND",
+      "name": "DBMCP_DB_BACKEND",
       "description": "Database backend (mysql, mariadb, postgres, sqlite)",
       "isRequired": true
     },
     {
-      "name": "DB_HOST",
+      "name": "DBMCP_DB_HOST",
       "description": "Database host, as seen from the SSH server when tunnelling (default: 127.0.0.1)"
     },
     {
-      "name": "DB_PORT",
+      "name": "DBMCP_DB_PORT",
       "description": "Database port (default: backend-dependent)"
     },
     {
-      "name": "DB_USER",
+      "name": "DBMCP_DB_USER",
       "description": "Database user (default: backend-dependent)"
     },
     {
-      "name": "DB_PASSWORD",
+      "name": "DBMCP_DB_PASSWORD",
       "description": "Database password",
       "isSecret": true
     },
     {
-      "name": "DB_NAME",
+      "name": "DBMCP_DB_NAME",
       "description": "Database name or SQLite file path"
     },
     {
-      "name": "DB_CHARSET",
+      "name": "DBMCP_DB_CHARSET",
       "description": "Character set (MySQL/MariaDB only)"
     },
     {
-      "name": "DB_SSL",
+      "name": "DBMCP_DB_SSL",
       "description": "Enable SSL for database connection",
       "format": "boolean",
       "default": "false"
     },
     {
-      "name": "DB_SSL_CA",
+      "name": "DBMCP_DB_SSL_CA",
       "description": "Path to CA certificate",
       "format": "filepath"
     },
     {
-      "name": "DB_SSL_CERT",
+      "name": "DBMCP_DB_SSL_CERT",
       "description": "Path to client certificate",
       "format": "filepath"
     },
     {
-      "name": "DB_SSL_KEY",
+      "name": "DBMCP_DB_SSL_KEY",
       "description": "Path to client key",
       "format": "filepath",
       "isSecret": true
     },
     {
-      "name": "DB_SSL_VERIFY_CERT",
+      "name": "DBMCP_DB_SSL_VERIFY_CERT",
       "description": "Verify server certificate",
       "format": "boolean",
       "default": "true"
     },
     {
-      "name": "SSH_HOST",
+      "name": "DBMCP_SSH_HOST",
       "description": "SSH server host; enables the tunnel when set"
     },
     {
-      "name": "SSH_PORT",
+      "name": "DBMCP_SSH_PORT",
       "description": "SSH server port",
       "format": "number",
       "default": "22"
     },
     {
-      "name": "SSH_USER",
+      "name": "DBMCP_SSH_USER",
       "description": "SSH user"
     },
     {
-      "name": "SSH_PASSWORD",
+      "name": "DBMCP_SSH_PASSWORD",
       "description": "SSH password",
       "isSecret": true
     },
     {
-      "name": "SSH_KEY",
+      "name": "DBMCP_SSH_KEY",
       "description": "Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1)",
       "format": "filepath"
     },
     {
-      "name": "SSH_KEY_PASSPHRASE",
+      "name": "DBMCP_SSH_KEY_PASSPHRASE",
       "description": "Passphrase for the SSH private key",
       "isSecret": true
     },
     {
-      "name": "SSH_KNOWN_HOSTS",
+      "name": "DBMCP_SSH_KNOWN_HOSTS",
       "description": "Path to known_hosts file (default: ~/.ssh/known_hosts)",
       "format": "filepath"
     },
     {
-      "name": "SSH_STRICT_HOST_KEY_CHECKING",
+      "name": "DBMCP_SSH_STRICT_HOST_KEY_CHECKING",
       "description": "Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure)",
       "default": "yes",
       "choices": ["yes", "accept-new", "no"]
     },
     {
-      "name": "SSH_KEEPALIVE_INTERVAL",
+      "name": "DBMCP_SSH_KEEPALIVE_INTERVAL",
       "description": "SSH keepalive interval in seconds (0 disables)",
       "format": "number",
       "default": "30"
     },
     {
-      "name": "SSH_LOCAL_PORT",
+      "name": "DBMCP_SSH_LOCAL_PORT",
       "description": "Local tunnel port (default: ephemeral)",
       "format": "number"
     },
     {
-      "name": "DB_READ_ONLY",
+      "name": "DBMCP_DB_READ_ONLY",
       "description": "Enable read-only mode",
       "format": "boolean",
       "default": "true"
     },
     {
-      "name": "DB_MAX_POOL_SIZE",
+      "name": "DBMCP_DB_MAX_POOL_SIZE",
       "description": "Maximum connection pool size",
       "format": "number",
       "default": "5"
     },
     {
-      "name": "DB_CONNECTION_TIMEOUT",
+      "name": "DBMCP_DB_CONNECTION_TIMEOUT",
       "description": "Connection timeout in seconds",
       "format": "number"
     },
     {
-      "name": "DB_QUERY_TIMEOUT",
+      "name": "DBMCP_DB_QUERY_TIMEOUT",
       "description": "Query execution timeout in seconds",
       "format": "number",
       "default": "30"
     },
     {
-      "name": "DB_PAGE_SIZE",
+      "name": "DBMCP_DB_PAGE_SIZE",
       "description": "Maximum items returned in a single paginated tool response (1-500)",
       "format": "number",
       "default": "100"
     },
     {
-      "name": "PII_ENABLE",
+      "name": "DBMCP_PII_ENABLE",
       "description": "Enable PII redaction of query tool output",
       "format": "boolean",
       "default": "false"
     },
     {
-      "name": "PII_OPERATOR",
+      "name": "DBMCP_PII_OPERATOR",
       "description": "Operator applied to detected PII spans",
       "default": "replace",
       "choices": ["replace", "mask", "redact", "hash"]
     },
     {
-      "name": "PII_CATEGORIES",
+      "name": "DBMCP_PII_CATEGORIES",
       "description": "Comma-separated PII categories to detect (default: all). Values: personal, financial, government, contact, network, digital-identity, crypto"
     },
     {
-      "name": "PII_NER_ENABLE",
+      "name": "DBMCP_PII_NER_ENABLE",
       "description": "Enable the optional ML/NER pass (person & location detection)",
       "format": "boolean",
       "default": "false"
     },
     {
-      "name": "PII_NER_MODEL",
-      "description": "Path to the NER model directory (required with PII_NER_ENABLE=true)",
+      "name": "DBMCP_PII_NER_MODEL",
+      "description": "Path to the NER model directory (required with DBMCP_PII_NER_ENABLE=true)",
       "format": "filepath"
     },
     {
-      "name": "LOG_LEVEL",
+      "name": "DBMCP_LOG_LEVEL",
       "description": "Log level: error, warn, info, debug, trace",
       "default": "info",
       "choices": ["error", "warn", "info", "debug", "trace"]

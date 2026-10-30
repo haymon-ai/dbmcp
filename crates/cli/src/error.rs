@@ -78,14 +78,14 @@ mod tests {
     fn config_error_display_bullets_each_error() {
         let errors = ConfigErrors::from_vec(vec![
             ConfigError::MissingSqliteDbName,
-            ConfigError::FileNotFound("DB_SSL_CA".into(), "/nope".into()),
+            ConfigError::FileNotFound("DBMCP_DB_SSL_CA".into(), "/nope".into()),
         ])
         .expect("non-empty");
         let error = ErrorKind::Config(errors);
         let rendered = error.to_string();
         assert!(rendered.starts_with("configuration validation failed:"));
-        assert!(rendered.contains("\n  - DB_NAME (file path) is required for SQLite"));
-        assert!(rendered.contains("\n  - DB_SSL_CA file not found: /nope"));
+        assert!(rendered.contains("\n  - DBMCP_DB_NAME (file path) is required for SQLite"));
+        assert!(rendered.contains("\n  - DBMCP_DB_SSL_CA file not found: /nope"));
     }
 
     #[test]

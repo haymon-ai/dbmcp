@@ -68,10 +68,10 @@ impl std::fmt::Display for PiiCategory {
 }
 
 /// PII redaction settings for query tool responses.
+///
+/// Present in [`crate::Config`] only when redaction is enabled.
 #[derive(Clone, Debug, Default)]
 pub struct PiiConfig {
-    /// Whether the server redacts PII from query tool response payloads.
-    pub enabled: bool,
     /// Which built-in operator rewrites detected spans.
     pub operator: PiiOperator,
     /// Optional explicit category set; routes the analyzer through
@@ -87,8 +87,6 @@ pub struct PiiConfig {
 }
 
 impl PiiConfig {
-    /// Default PII redaction state (off — opt-in only).
-    pub const DEFAULT_ENABLED: bool = false;
     /// Default PII operator when no override is supplied.
     pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
     /// Default ML/NER pass state (off — opt-in only).
@@ -120,12 +118,6 @@ impl PiiConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pii_config_default_disabled() {
-        let pii = PiiConfig::default();
-        assert!(!pii.enabled, "PiiConfig::default().enabled must be false");
-    }
 
     #[test]
     fn pii_config_default_operator_is_replace() {

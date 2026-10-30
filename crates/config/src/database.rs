@@ -157,9 +157,9 @@ impl DatabaseConfig {
 
         if self.ssl {
             for (name, path) in [
-                ("DB_SSL_CA", &self.ssl_ca),
-                ("DB_SSL_CERT", &self.ssl_cert),
-                ("DB_SSL_KEY", &self.ssl_key),
+                ("DBMCP_DB_SSL_CA", &self.ssl_ca),
+                ("DBMCP_DB_SSL_CERT", &self.ssl_cert),
+                ("DBMCP_DB_SSL_KEY", &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
@@ -201,7 +201,7 @@ impl Default for DatabaseConfig {
 mod tests {
     use super::*;
     use crate::Config;
-    use crate::pii::PiiConfig;
+    use crate::transport::Transport;
 
     fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
         DatabaseConfig {
@@ -215,8 +215,9 @@ mod tests {
     fn base_config(backend: DatabaseBackend) -> Config {
         Config {
             database: db_config(backend),
+            transport: Transport::Stdio,
             http: None,
-            pii: PiiConfig::default(),
+            pii: None,
             ssh: None,
         }
     }
@@ -330,7 +331,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(
             e,
             ConfigError::FileNotFound(name, path)
-                if name == "DB_SSL_CA" && path == "/nonexistent/ca.pem"
+                if name == "DBMCP_DB_SSL_CA" && path == "/nonexistent/ca.pem"
         )));
     }
 
@@ -345,9 +346,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DB_SSL_KEY"));
+        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"));
+        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CERT"));
+        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_KEY"));
     }
 
     #[test]
@@ -373,7 +374,7 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
         assert!(errors.iter().any(|e| matches!(
             e,
-            ConfigError::FileNotFound(name, _) if name == "DB_SSL_CA"
+            ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"
         )));
     }
 

@@ -81,7 +81,7 @@ impl Tunnel {
 
         if config.strict_host_key_checking == StrictHostKeyChecking::No {
             warn!(
-                "SSH host-key verification is DISABLED (SSH_STRICT_HOST_KEY_CHECKING=no); \
+                "SSH host-key verification is DISABLED (DBMCP_SSH_STRICT_HOST_KEY_CHECKING=no); \
                  the tunnel is open to man-in-the-middle attacks"
             );
         }
@@ -591,7 +591,7 @@ impl Client {
             (Check::Changed { line }, No) => {
                 warn!(
                     "SSH host key for {host} ({}) does not match {}:{line}; accepting it because \
-                     SSH_STRICT_HOST_KEY_CHECKING=no",
+                     DBMCP_SSH_STRICT_HOST_KEY_CHECKING=no",
                     fingerprint(),
                     path.display()
                 );

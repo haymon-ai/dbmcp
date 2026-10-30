@@ -1,28 +1,33 @@
-//! Top-level [`Config`] composing the database, http, pii, and ssh sections.
+//! Top-level [`Config`] composing the transport and the database, http, pii, and ssh sections.
 
 use crate::database::DatabaseConfig;
 use crate::http::HttpConfig;
 use crate::pii::PiiConfig;
 use crate::ssh::SshConfig;
+use crate::transport::Transport;
 
 /// Runtime configuration for the MCP server.
 ///
-/// Composes [`DatabaseConfig`] with an optional [`HttpConfig`], a
-/// [`PiiConfig`], and an optional [`SshConfig`]. HTTP config is present
-/// only when the HTTP transport is selected (via subcommand or
-/// `MCP_TRANSPORT` env var); PII config is always present; SSH config is
-/// present only when `SSH_HOST` is set. Logging is configured directly from CLI arguments
-/// before `Config` is constructed, so it is not part of this struct.
+/// Composes the selected [`Transport`] with [`DatabaseConfig`] and the
+/// optional [`HttpConfig`], [`PiiConfig`], and [`SshConfig`] sections.
+/// HTTP config is present only when `--transport http` / `DBMCP_TRANSPORT=http`
+/// is selected; PII config only when `--pii` / `DBMCP_PII_ENABLE` is on; SSH
+/// config only when `--ssh-host` / `DBMCP_SSH_HOST` is set. Logging is configured directly
+/// from CLI arguments before `Config` is constructed, so it is not part of
+/// this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// MCP transport the server runs on.
+    pub transport: Transport,
+
     /// Database connection and behavior settings.
     pub database: DatabaseConfig,
 
-    /// HTTP transport settings (present only when HTTP transport is active).
+    /// HTTP transport settings (present only when the HTTP transport is selected).
     pub http: Option<HttpConfig>,
 
-    /// PII redaction settings.
-    pub pii: PiiConfig,
+    /// PII redaction settings (`None` = redaction off).
+    pub pii: Option<PiiConfig>,
 
     /// SSH tunnel settings (`None` = connect to the database directly).
     pub ssh: Option<SshConfig>,
@@ -44,8 +49,9 @@ mod tests {
                 password: Some("secret".into()),
                 ..DatabaseConfig::default()
             },
+            transport: Transport::Stdio,
             http: None,
-            pii: PiiConfig::default(),
+            pii: None,
             ssh: None,
         }
     }
@@ -53,25 +59,24 @@ mod tests {
     #[test]
     fn config_debug_includes_pii_section() {
         let config = Config {
-            pii: PiiConfig {
-                enabled: true,
+            pii: Some(PiiConfig {
                 operator: PiiOperator::Mask,
                 categories: None,
                 ..PiiConfig::default()
-            },
+            }),
             ..mysql_config()
         };
         let debug = format!("{config:?}");
         assert!(
-            debug.contains("pii: PiiConfig { enabled: true"),
+            debug.contains("pii: Some(PiiConfig { operator: Mask"),
             "expected pii section in debug output: {debug}"
         );
-        assert!(debug.contains("operator: Mask"), "expected operator in debug: {debug}");
     }
 
     #[test]
     fn config_debug_redacts_every_secret() {
         let config = Config {
+            transport: Transport::Http,
             database: DatabaseConfig {
                 password: Some("hunter2-db-password".into()),
                 ..DatabaseConfig::default()
@@ -96,7 +101,7 @@ mod tests {
                 keepalive_interval: Duration::ZERO,
                 local_port: None,
             }),
-            pii: PiiConfig::default(),
+            pii: None,
         };
         let debug = format!("{config:?}");
         assert!(!debug.contains("hunter2"), "secret leaked: {debug}");

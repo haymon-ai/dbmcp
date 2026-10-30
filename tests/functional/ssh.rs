@@ -1,11 +1,11 @@
 //! Functional tests for the SSH tunnel.
 //!
 //! Spawns the `dbmcp` binary over stdio and queries a database that is only
-//! reachable through the sshd container. The child inherits `DB_BACKEND`,
-//! `DB_HOST`, `DB_PORT`, and every `SSH_*` variable from the environment.
-//! Key tests drop `SSH_PASSWORD` and authenticate with the fixture keys
+//! reachable through the sshd container. The child inherits `DBMCP_DB_BACKEND`,
+//! `DBMCP_DB_HOST`, `DBMCP_DB_PORT`, and every `DBMCP_SSH_*` variable from the environment.
+//! Key tests drop `DBMCP_SSH_PASSWORD` and authenticate with the fixture keys
 //! in `crates/ssh/testdata`, authorised via `tests/ssh/authorized_keys`.
-//! Host-key tests point `SSH_KNOWN_HOSTS` at a temporary file; the H4
+//! Host-key tests point `DBMCP_SSH_KNOWN_HOSTS` at a temporary file; the H4
 //! tests seed it with `ssh-keyscan`, which must be on `PATH`.
 //!
 //! The reconnect test restarts sshd inside the container named by
@@ -38,42 +38,42 @@ fn key(name: &str) -> String {
     format!("{}/crates/ssh/testdata/{name}", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Builds `dbmcp stdio` with the inherited database and SSH environment.
+/// Builds `dbmcp` with the inherited database and SSH environment.
 fn command() -> tokio::process::Command {
     assert!(
-        std::env::var_os("SSH_HOST").is_some(),
-        "SSH_HOST must be set (run via ./tests/run.sh)"
+        std::env::var_os("DBMCP_SSH_HOST").is_some(),
+        "DBMCP_SSH_HOST must be set (run via ./tests/run.sh)"
     );
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
-    command.arg("stdio").env("DB_NAME", "app");
+    command.env("DBMCP_DB_NAME", "app");
     command
 }
 
-/// Builds `dbmcp stdio` authenticating only with the key `name`.
+/// Builds `dbmcp` authenticating only with the key `name`.
 fn key_command(name: &str, passphrase: Option<&str>) -> tokio::process::Command {
     let mut command = command();
-    command.env_remove("SSH_PASSWORD").env("SSH_KEY", key(name));
+    command.env_remove("DBMCP_SSH_PASSWORD").env("DBMCP_SSH_KEY", key(name));
     match passphrase {
-        Some(passphrase) => command.env("SSH_KEY_PASSPHRASE", passphrase),
-        None => command.env_remove("SSH_KEY_PASSPHRASE"),
+        Some(passphrase) => command.env("DBMCP_SSH_KEY_PASSPHRASE", passphrase),
+        None => command.env_remove("DBMCP_SSH_KEY_PASSPHRASE"),
     };
     command
 }
 
-/// Builds `dbmcp stdio` checking host keys in `known_hosts` under `mode`.
+/// Builds `dbmcp` checking host keys in `known_hosts` under `mode`.
 fn verifying_command(known_hosts: &Path, mode: &str) -> tokio::process::Command {
     let mut command = command();
     command
-        .env("SSH_KNOWN_HOSTS", known_hosts)
-        .env("SSH_STRICT_HOST_KEY_CHECKING", mode)
-        .env("DB_CONNECTION_TIMEOUT", "5");
+        .env("DBMCP_SSH_KNOWN_HOSTS", known_hosts)
+        .env("DBMCP_SSH_STRICT_HOST_KEY_CHECKING", mode)
+        .env("DBMCP_DB_CONNECTION_TIMEOUT", "5");
     command
 }
 
-/// Returns the SSH server's `SSH_HOST` and `SSH_PORT`.
+/// Returns the SSH server's `DBMCP_SSH_HOST` and `DBMCP_SSH_PORT`.
 fn ssh_endpoint() -> (String, String) {
-    let host = std::env::var("SSH_HOST").expect("SSH_HOST");
-    let port = std::env::var("SSH_PORT").expect("SSH_PORT");
+    let host = std::env::var("DBMCP_SSH_HOST").expect("DBMCP_SSH_HOST");
+    let port = std::env::var("DBMCP_SSH_PORT").expect("DBMCP_SSH_PORT");
     (host, port)
 }
 
@@ -91,7 +91,7 @@ async fn connect(command: tokio::process::Command) -> rmcp::service::RunningServ
     ().serve(transport).await.expect("mcp handshake")
 }
 
-/// Starts `dbmcp stdio` with the inherited database and SSH environment.
+/// Starts `dbmcp` with the inherited database and SSH environment.
 async fn client() -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     connect(command()).await
 }
@@ -312,9 +312,9 @@ async fn host_recorded_only_as_ecdsa_or_rsa_connects() {
 async fn tool_error_names_ssh_failure() {
     let mut command = command();
     command
-        .env("SSH_PASSWORD", "wrong")
-        .env_remove("SSH_KEY")
-        .env("DB_CONNECTION_TIMEOUT", "5");
+        .env("DBMCP_SSH_PASSWORD", "wrong")
+        .env_remove("DBMCP_SSH_KEY")
+        .env("DBMCP_DB_CONNECTION_TIMEOUT", "5");
     let client = connect(command).await;
 
     let text = tool_error_text(&call_read_query(&client, "SELECT 1").await);
@@ -338,7 +338,7 @@ async fn tool_error_names_ssh_failure() {
 async fn queries_recover_after_sshd_restart() {
     let container = std::env::var("SSHD_CONTAINER").expect("SSHD_CONTAINER must be set (run via ./tests/run.sh)");
     let mut command = command();
-    command.env("DB_CONNECTION_TIMEOUT", "5");
+    command.env("DBMCP_DB_CONNECTION_TIMEOUT", "5");
     let (client, logs) = connect_with_logs(command).await;
     read_query(&client, "SELECT name FROM users WHERE id = 1").await;
 
@@ -369,14 +369,14 @@ async fn queries_recover_after_sshd_restart() {
     assert!(logs.contains("Reconnecting SSH session"), "{logs}");
 }
 
-/// Builds `dbmcp stdio` requiring DB TLS verified against `ca`.
+/// Builds `dbmcp` requiring DB TLS verified against `ca`.
 fn tls_command(ca: &str) -> tokio::process::Command {
     let mut command = command();
     command
-        .env("DB_SSL", "true")
-        .env("DB_SSL_VERIFY_CERT", "true")
-        .env("DB_SSL_CA", ca)
-        .env("DB_CONNECTION_TIMEOUT", "5");
+        .env("DBMCP_DB_SSL", "true")
+        .env("DBMCP_DB_SSL_VERIFY_CERT", "true")
+        .env("DBMCP_DB_SSL_CA", ca)
+        .env("DBMCP_DB_CONNECTION_TIMEOUT", "5");
     command
 }
 
@@ -389,7 +389,7 @@ fn tls_test_ca() -> Option<String> {
     ca
 }
 
-/// `DB_SSL_VERIFY_CERT` ignores the hostname, so `127.0.0.1` verifies.
+/// `DBMCP_DB_SSL_VERIFY_CERT` ignores the hostname, so `127.0.0.1` verifies.
 #[tokio::test]
 async fn tls_database_verifies_through_ssh_tunnel() {
     let Some(ca) = tls_test_ca() else { return };
