@@ -4095,3 +4095,90 @@ async fn test_pii_redaction_applies_to_numeric_overflow_string() {
         "trailing digits either match SSN recogniser or pass through verbatim: {value}"
     );
 }
+
+#[tokio::test]
+async fn test_read_only_rejects_side_effecting_functions() {
+    let writer = handler(false);
+    for query in [
+        "DROP TABLE IF EXISTS ro_probe",
+        "CREATE TABLE ro_probe (id int)",
+        "CREATE OR REPLACE FUNCTION ro_probe_writer() RETURNS int LANGUAGE sql VOLATILE \
+         AS $$ INSERT INTO ro_probe VALUES (1) RETURNING 1 $$",
+        "DROP SEQUENCE IF EXISTS ro_probe_seq",
+        "CREATE SEQUENCE ro_probe_seq",
+        "CREATE OR REPLACE FUNCTION ro_probe_immutable() RETURNS bigint LANGUAGE plpgsql IMMUTABLE \
+         AS $$ BEGIN RETURN nextval('ro_probe_seq'); END $$",
+    ] {
+        writer
+            .write_query(query.into(), Some("app".into()))
+            .await
+            .unwrap_or_else(|e| panic!("{query}: {e:?}"));
+    }
+
+    let handler = handler(true);
+    for query in [
+        "SELECT ro_probe_writer()",
+        "SELECT set_config('transaction_read_only', 'off', true), ro_probe_writer()",
+        "SELECT nextval('ro_probe_seq')",
+        "SELECT lo_from_bytea(0, 'x'::bytea)",
+    ] {
+        let response = handler.read_query(query.into(), Some("app".into()), None).await;
+        assert!(response.is_err(), "readQuery must reject {query:?}");
+        let response = handler.explain_query(Some("app".into()), query.into(), true).await;
+        assert!(response.is_err(), "explainQuery(analyze) must reject {query:?}");
+    }
+    // The planner constant-folds IMMUTABLE calls, so plain EXPLAIN runs them too.
+    let response = handler
+        .explain_query(Some("app".into()), "SELECT ro_probe_immutable()".into(), false)
+        .await;
+    assert!(response.is_err(), "explainQuery must reject a folded writing function");
+
+    let rows = handler
+        .read_query("SELECT count(*) AS n FROM ro_probe".into(), Some("app".into()), None)
+        .await
+        .expect("count ro_probe");
+    assert_eq!(rows.rows[0]["n"], 0, "no row may be written");
+
+    let rows = handler
+        .read_query("SELECT is_called FROM ro_probe_seq".into(), Some("app".into()), None)
+        .await
+        .expect("read sequence");
+    assert_eq!(rows.rows[0]["is_called"], false, "sequence must not advance");
+
+    for query in [
+        "DROP FUNCTION ro_probe_writer()",
+        "DROP FUNCTION ro_probe_immutable()",
+        "DROP TABLE ro_probe",
+        "DROP SEQUENCE ro_probe_seq",
+    ] {
+        writer
+            .write_query(query.into(), Some("app".into()))
+            .await
+            .unwrap_or_else(|e| panic!("{query}: {e:?}"));
+    }
+}
+
+#[tokio::test]
+async fn test_read_only_discards_session_settings() {
+    let handler = handler(true);
+    handler
+        .read_query(
+            "SELECT set_config('search_path', 'ro_probe_evil', false)".into(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .expect("set_config is a read");
+
+    for _ in 0..10 {
+        let rows = handler
+            .read_query(
+                "SELECT current_setting('search_path') AS sp".into(),
+                Some("app".into()),
+                None,
+            )
+            .await
+            .expect("read search_path");
+        assert_ne!(rows.rows[0]["sp"], "ro_probe_evil", "session setting leaked onto pool");
+    }
+}

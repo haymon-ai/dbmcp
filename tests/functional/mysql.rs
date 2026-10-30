@@ -645,21 +645,20 @@ async fn test_explain_query_analyze() {
 }
 
 #[tokio::test]
-async fn test_explain_query_plain_write_allowed_in_read_only() {
+async fn test_explain_query_plain_write_blocked_in_read_only() {
     let handler = handler(true);
 
+    // Read-only mode runs every EXPLAIN in a read-only transaction, which rejects write statements.
     let response = handler
         .explain_query(
             Some("app".into()),
             "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
             false,
         )
-        .await
-        .unwrap();
-    let plan = &response.rows;
+        .await;
     assert!(
-        !plan.is_empty(),
-        "Plain EXPLAIN should work for write statements even in read-only mode"
+        response.is_err(),
+        "Plain EXPLAIN of a write statement must be rejected in read-only mode"
     );
 }
 
@@ -4383,4 +4382,49 @@ async fn test_read_float_column_full_range() {
     );
     assert!(matches!(by_label["negative"]["f"], Value::Number(_)));
     assert!(matches!(by_label["overflow"]["f"], Value::Number(_)));
+}
+
+#[tokio::test]
+async fn test_read_only_rejects_side_effecting_functions() {
+    let writer = handler(false);
+    for query in [
+        "DROP FUNCTION IF EXISTS ro_probe_writer",
+        "DROP TABLE IF EXISTS ro_probe",
+        "CREATE TABLE ro_probe (id INT)",
+        "CREATE FUNCTION ro_probe_writer() RETURNS INT DETERMINISTIC MODIFIES SQL DATA \
+         BEGIN INSERT INTO ro_probe VALUES (1); RETURN 1; END",
+    ] {
+        writer
+            .write_query(query.into(), Some("app".into()))
+            .await
+            .unwrap_or_else(|e| panic!("{query}: {e:?}"));
+    }
+
+    let handler = handler(true);
+    let response = handler
+        .read_query("SELECT ro_probe_writer()".into(), Some("app".into()), None)
+        .await;
+    assert!(response.is_err(), "readQuery must reject a writing function");
+
+    // MariaDB evaluates functions while planning, so plain EXPLAIN can run them too.
+    let _ = handler
+        .explain_query(
+            Some("app".into()),
+            "SELECT * FROM users WHERE id = ro_probe_writer()".into(),
+            false,
+        )
+        .await;
+
+    let rows = handler
+        .read_query("SELECT COUNT(*) AS n FROM ro_probe".into(), Some("app".into()), None)
+        .await
+        .expect("count ro_probe");
+    assert_eq!(rows.rows[0]["n"], 0, "no row may be written");
+
+    for query in ["DROP FUNCTION ro_probe_writer", "DROP TABLE ro_probe"] {
+        writer
+            .write_query(query.into(), Some("app".into()))
+            .await
+            .unwrap_or_else(|e| panic!("{query}: {e:?}"));
+    }
 }

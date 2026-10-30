@@ -25,7 +25,8 @@ pub enum StatementKind {
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, USE, EXPLAIN)
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
-/// 5. No dangerous functions (file access, large objects, sequences, extensions)
+/// 5. No dangerous functions (file access, large objects, sequences, extensions,
+///    session locks, backend signalling, server administration)
 /// 6. No INTO OUTFILE/DUMPFILE clauses
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
@@ -147,7 +148,16 @@ impl Visitor for DataModifyingQueryChecker {
 const DANGEROUS_FUNCTIONS: &[&str] = &[
     // MySQL / MariaDB
     "load_file",
+    "get_lock",
     // PostgreSQL
+    "pg_cancel_backend",
+    "pg_terminate_backend",
+    "pg_reload_conf",
+    "pg_rotate_logfile",
+    "pg_switch_wal",
+    "pg_promote",
+    "pg_log_backend_memory_contexts",
+    "pg_logical_emit_message",
     "pg_read_file",
     "pg_read_binary_file",
     "pg_ls_dir",
@@ -162,7 +172,20 @@ const DANGEROUS_FUNCTIONS: &[&str] = &[
 ];
 
 /// Function name prefixes blocked in addition to [`DANGEROUS_FUNCTIONS`].
-const DANGEROUS_FUNCTION_PREFIXES: &[&str] = &["dblink"];
+const DANGEROUS_FUNCTION_PREFIXES: &[&str] = &[
+    "dblink",
+    // PostgreSQL session locks
+    "pg_advisory",
+    "pg_try_advisory",
+    // PostgreSQL server administration (restore points, replication slots, statistics)
+    "pg_create_",
+    "pg_drop_",
+    "pg_copy_",
+    "pg_replication_",
+    "pg_stat_reset",
+    "pg_wal_replay_",
+    "pg_backup_",
+];
 
 /// Check for dangerous function calls like `LOAD_FILE()` in the AST.
 fn check_dangerous_functions(stmt: &Statement) -> Result<(), SqlError> {
@@ -686,6 +709,20 @@ mod tests {
             "SELECT pg_catalog.pg_read_file('/etc/passwd')",
             "SELECT \"pg_read_file\"('/etc/passwd')",
             "SELECT 1 FROM users WHERE id IN (SELECT setval('s', 1))",
+            "SELECT GET_LOCK('x', 10)",
+            "SELECT pg_cancel_backend(1)",
+            "SELECT pg_terminate_backend(1)",
+            "SELECT pg_catalog.pg_terminate_backend(1)",
+            "SELECT pg_advisory_lock(1)",
+            "SELECT pg_advisory_xact_lock_shared(1)",
+            "SELECT pg_try_advisory_lock(1)",
+            "SELECT pg_reload_conf()",
+            "SELECT pg_switch_wal()",
+            "SELECT pg_create_restore_point('x')",
+            "SELECT pg_create_physical_replication_slot('s')",
+            "SELECT pg_drop_replication_slot('s')",
+            "SELECT pg_stat_reset()",
+            "SELECT pg_log_backend_memory_contexts(1)",
         ] {
             for (name, result) in [
                 ("MySQL", validate_read_only(sql, &MYSQL)),
