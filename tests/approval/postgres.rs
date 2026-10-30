@@ -4,29 +4,30 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::Server;
 
-/// Creates a `PostgreSQL`-backed [`Server`] from `DB_HOST` and `DB_PORT` environment variables.
+/// Creates a `PostgreSQL`-backed [`Server`] from `DBMCP_DB_HOST` and `DBMCP_DB_PORT` environment variables.
 ///
 /// `pinned == true` sets the config `name` to `"app"`; `false` leaves it `None`.
 fn server(read_only: bool, pinned: bool) -> Server {
     let config = Config {
+        transport: Transport::Stdio,
         database: DatabaseConfig {
             backend: DatabaseBackend::Postgres,
-            host: std::env::var("DB_HOST").expect("DB_HOST must be set"),
-            port: std::env::var("DB_PORT")
-                .expect("DB_PORT must be set")
+            host: std::env::var("DBMCP_DB_HOST").expect("DBMCP_DB_HOST must be set"),
+            port: std::env::var("DBMCP_DB_PORT")
+                .expect("DBMCP_DB_PORT must be set")
                 .parse()
-                .expect("DB_PORT must be a valid port number"),
+                .expect("DBMCP_DB_PORT must be a valid port number"),
             user: "postgres".into(),
             name: pinned.then(|| "app".into()),
             read_only,
             ..DatabaseConfig::default()
         },
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     };
     PostgresHandler::new(&config).expect("handler builds").into()

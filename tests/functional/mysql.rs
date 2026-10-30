@@ -8,7 +8,7 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
@@ -17,13 +17,13 @@ use serde_json::Value;
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
         backend: DatabaseBackend::Mysql,
-        host: std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
-        port: std::env::var("DB_PORT")
+        host: std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        port: std::env::var("DBMCP_DB_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(3306),
-        user: std::env::var("DB_USER").unwrap_or_else(|_| "root".into()),
-        password: std::env::var("DB_PASSWORD").ok().map(Into::into),
+        user: std::env::var("DBMCP_DB_USER").unwrap_or_else(|_| "root".into()),
+        password: std::env::var("DBMCP_DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
         ..DatabaseConfig::default()
@@ -33,9 +33,10 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
 fn handler(read_only: bool) -> MysqlHandler {
     let config = base_db_config(read_only);
     MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -47,9 +48,10 @@ fn handler_with_page_size(page_size: u16) -> MysqlHandler {
         ..base_db_config(false)
     };
     MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -397,9 +399,10 @@ async fn test_query_timeout_cancels_slow_query() {
         ..base_db_config(false)
     };
     let handler = MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -430,9 +433,10 @@ async fn test_query_timeout_disabled_with_zero() {
         ..base_db_config(false)
     };
     let handler = MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -1178,9 +1182,10 @@ async fn test_timeout_on_list_tables() {
     let mut config = base_db_config(true);
     config.query_timeout = 1;
     let handler = MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: PiiConfig::default(),
+        pii: None,
         ssh: None,
     })
     .expect("handler builds");
@@ -4108,13 +4113,13 @@ async fn test_list_views_detailed_session_context_fields_populated() {
 
 fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
     MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: redact_pii,
+        pii: redact_pii.then(|| PiiConfig {
             operator: PiiOperator::Replace,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")
@@ -4122,13 +4127,13 @@ fn handler_with_redaction(redact_pii: bool) -> MysqlHandler {
 
 fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
     MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: PiiConfig {
-            enabled: true,
+        pii: Some(PiiConfig {
             operator,
             ..PiiConfig::default()
-        },
+        }),
         ssh: None,
     })
     .expect("handler builds")

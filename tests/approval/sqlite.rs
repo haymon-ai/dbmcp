@@ -5,7 +5,7 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig};
+use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, Transport};
 use dbmcp_server::Server;
 use dbmcp_sqlite::SqliteHandler;
 use rmcp::RoleClient;
@@ -15,12 +15,13 @@ use serde_json::json;
 
 /// Creates a `SQLite`-backed [`Server`] from the `DB_PATH` environment variable.
 fn server(read_only: bool) -> Server {
-    server_with_pii(read_only, PiiConfig::default())
+    server_with_pii(read_only, None)
 }
 
 /// Creates a `SQLite`-backed [`Server`] with the given PII configuration.
-fn server_with_pii(read_only: bool, pii: PiiConfig) -> Server {
+fn server_with_pii(read_only: bool, pii: Option<PiiConfig>) -> Server {
     let config = Config {
+        transport: Transport::Stdio,
         database: DatabaseConfig {
             backend: DatabaseBackend::Sqlite,
             name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
@@ -134,10 +135,7 @@ async fn test_call_tool_error_is_returned_in_band() {
 
 #[tokio::test]
 async fn test_call_tool_error_is_redacted_when_pii_enabled() {
-    let pii = PiiConfig {
-        enabled: true,
-        ..PiiConfig::default()
-    };
+    let pii = Some(PiiConfig::default());
     common::run_with_client(server_with_pii(true, pii), |peer| async move {
         let result = call_tool(
             &peer,

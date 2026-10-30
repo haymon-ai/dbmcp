@@ -102,7 +102,7 @@ impl MysqlHandler {
         Ok(Self {
             config: config.database.clone(),
             connection: MysqlConnection::new(&config.database),
-            redactor: Redactor::from_config(&config.pii)?,
+            redactor: Redactor::from_config(config.pii.as_ref())?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })
     }
@@ -164,12 +164,13 @@ mod tests {
 
     fn handler(read_only: bool) -> MysqlHandler {
         MysqlHandler::new(&Config {
+            transport: dbmcp_config::Transport::Stdio,
             database: DatabaseConfig {
                 read_only,
                 ..base_config()
             },
             http: None,
-            pii: dbmcp_config::PiiConfig::default(),
+            pii: None,
             ssh: None,
         })
         .expect("handler builds in test")
@@ -178,13 +179,14 @@ mod tests {
     /// Handler whose config pins a specific database name.
     fn pinned_handler(read_only: bool) -> MysqlHandler {
         MysqlHandler::new(&Config {
+            transport: dbmcp_config::Transport::Stdio,
             database: DatabaseConfig {
                 read_only,
                 name: Some("mydb".into()),
                 ..base_config()
             },
             http: None,
-            pii: dbmcp_config::PiiConfig::default(),
+            pii: None,
             ssh: None,
         })
         .expect("handler builds in test")

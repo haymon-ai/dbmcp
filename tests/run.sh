@@ -236,12 +236,12 @@ run_entry() {
                     cat /var/lib/mysql/ca.pem > "$tls_ca" 2>/dev/null && [ -s "$tls_ca" ]; then
                     tls_env=("TLS_TEST_CA=$tls_ca")
                 fi
-                # DB_HOST is the compose service name: only sshd can resolve it.
+                # DBMCP_DB_HOST is the compose service name: only sshd can resolve it.
                 test_output=$(
-                    env DB_BACKEND="$db_type" DB_HOST="$service" DB_PORT="$container_port" \
-                    SSH_HOST=127.0.0.1 SSH_PORT="$SSHD_PORT" \
-                    SSH_USER=dbmcp SSH_PASSWORD=dbmcp \
-                    SSH_STRICT_HOST_KEY_CHECKING=no \
+                    env DBMCP_DB_BACKEND="$db_type" DBMCP_DB_HOST="$service" DBMCP_DB_PORT="$container_port" \
+                    DBMCP_SSH_HOST=127.0.0.1 DBMCP_SSH_PORT="$SSHD_PORT" \
+                    DBMCP_SSH_USER=dbmcp DBMCP_SSH_PASSWORD=dbmcp \
+                    DBMCP_SSH_STRICT_HOST_KEY_CHECKING=no \
                     SSHD_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q sshd)" \
                     ${tls_env[@]+"${tls_env[@]}"} \
                     cargo test --test "$bin" -- --test-threads=1 2>&1
@@ -249,7 +249,7 @@ run_entry() {
                 rm -f "$tls_ca"
             else
                 test_output=$(
-                    DB_HOST=127.0.0.1 DB_PORT="$host_port" \
+                    DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
                     cargo test --test "$bin" -- --test-threads=1 2>&1
                 ) || test_exit=$?
             fi
