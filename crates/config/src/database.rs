@@ -1,10 +1,12 @@
 //! Database connection settings and backend enum.
 
-use crate::error::{ConfigError, ConfigErrors};
-use crate::secret::Secret;
+use secrecy::SecretString;
+
+use crate::env;
+use crate::error::{ConfigError, Diagnostic, into_result};
 
 /// Supported database backends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseBackend {
     /// `MySQL` database.
     Mysql,
@@ -28,6 +30,14 @@ impl std::fmt::Display for DatabaseBackend {
 }
 
 impl DatabaseBackend {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("mysql", Self::Mysql),
+        ("mariadb", Self::Mariadb),
+        ("postgres", Self::Postgres),
+        ("sqlite", Self::Sqlite),
+    ];
+
     /// Returns the default port for this backend.
     #[must_use]
     pub fn default_port(self) -> u16 {
@@ -52,7 +62,7 @@ impl DatabaseBackend {
 /// Database connection and behavior settings.
 ///
 /// All fields are fully resolved — no `Option` indirection for connection
-/// fields. Defaults are applied during construction in the binary's CLI conversion.
+/// fields. Defaults are applied by the loader.
 #[derive(Clone, Debug)]
 pub struct DatabaseConfig {
     /// Database backend type.
@@ -68,7 +78,7 @@ pub struct DatabaseConfig {
     pub user: String,
 
     /// Database password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Database name or `SQLite` file path.
     pub name: Option<String>,
@@ -109,7 +119,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by CLI parsing.
+    /// Range `1..=500`, enforced by the loader via [`crate::env::DB_PAGE_SIZE`].
     pub page_size: u16,
 }
 
@@ -147,29 +157,35 @@ impl DatabaseConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.backend == DatabaseBackend::Sqlite && self.name.as_deref().unwrap_or_default().is_empty() {
-            errors.push(ConfigError::MissingSqliteDbName);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSqliteDbName)
+                    .involving(&[env::DB_BACKEND])
+                    .missing(&[env::DB_NAME]),
+            );
         }
 
         if self.ssl {
-            for (name, path) in [
-                ("DBMCP_DB_SSL_CA", &self.ssl_ca),
-                ("DBMCP_DB_SSL_CERT", &self.ssl_cert),
-                ("DBMCP_DB_SSL_KEY", &self.ssl_key),
+            for (setting, path) in [
+                (env::DB_SSL_CA, &self.ssl_ca),
+                (env::DB_SSL_CERT, &self.ssl_cert),
+                (env::DB_SSL_KEY, &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(ConfigError::FileNotFound(name.into(), path.clone()));
+                    errors.push(
+                        Diagnostic::new(ConfigError::FileNotFound(setting.path, path.clone())).involving(&[setting]),
+                    );
                 }
             }
         }
 
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -306,7 +322,11 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("sqlite without name must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
     }
 
     #[test]
@@ -317,7 +337,11 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("empty sqlite name must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
     }
 
     #[test]
@@ -329,9 +353,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("missing ssl ca must fail");
         assert!(errors.iter().any(|e| matches!(
-            e,
+            &e.error,
             ConfigError::FileNotFound(name, path)
-                if name == "DBMCP_DB_SSL_CA" && path == "/nonexistent/ca.pem"
+                if *name == "database.ssl_ca" && path == "/nonexistent/ca.pem"
         )));
     }
 
@@ -346,9 +370,9 @@ mod tests {
         };
         let errors = config.validate().expect_err("three missing files must fail");
         assert_eq!(errors.len(), 3);
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"));
-        assert!(matches!(&errors[1], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CERT"));
-        assert!(matches!(&errors[2], ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_KEY"));
+        assert!(matches!(&errors[0].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"));
+        assert!(matches!(&errors[1].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_cert"));
+        assert!(matches!(&errors[2].error, ConfigError::FileNotFound(name, _) if *name == "database.ssl_key"));
     }
 
     #[test]
@@ -371,10 +395,14 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::MissingSqliteDbName))
+        );
         assert!(errors.iter().any(|e| matches!(
-            e,
-            ConfigError::FileNotFound(name, _) if name == "DBMCP_DB_SSL_CA"
+            &e.error,
+            ConfigError::FileNotFound(name, _) if *name == "database.ssl_ca"
         )));
     }
 

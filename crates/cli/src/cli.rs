@@ -1,11 +1,11 @@
 //! Application bootstrapping.
 //!
-//! Contains the [`run`] entry point: parses [`Arguments`], initialises
-//! tracing, builds the [`Config`], and serves the selected transport.
+//! Contains the [`run`] entry point: parses [`Arguments`], loads the
+//! configuration, initialises tracing, and serves the selected transport.
 
 use clap::{CommandFactory, FromArgMatches};
-use dbmcp_config::{Config, Transport};
-use tracing::info;
+use dbmcp_config::{LogLevel, Transport};
+use tracing::{info, warn};
 
 use crate::args::Arguments;
 use crate::error::{Error, ErrorKind};
@@ -16,18 +16,18 @@ fn command(bin: &'static str, version: &'static str) -> clap::Command {
     Arguments::command().name(bin).version(version)
 }
 
-/// Parses CLI arguments, initializes tracing, and serves the selected transport.
+/// Parses CLI arguments, loads the config, initializes tracing, and serves the transport.
 ///
 /// # Errors
 ///
-/// Returns an error if the command-line arguments are invalid,
-/// configuration validation fails, or the transport fails (transport
+/// Returns an error if the command-line arguments are invalid, the
+/// configuration cannot be loaded or fails validation, or the transport fails (transport
 /// initialization errors, TCP bind failures, fatal protocol errors).
 ///
 /// # Panics
 ///
-/// Never in practice: the HTTP config is always built alongside
-/// `--transport http`.
+/// Never in practice: the HTTP config is always built alongside the
+/// `http` transport.
 ///
 /// `bin` and `version` are the installed binary's name and version, used
 /// in `--help` and `--version`. Must run inside a Tokio runtime. A global
@@ -48,14 +48,25 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
         Err(error) => return Err(ErrorKind::from(error).into()),
     };
 
+    let options = arguments.load_options().map_err(ErrorKind::from)?;
+    let loaded = dbmcp_config::load(&options);
+    // The log level is a setting, so logging starts once loading is done;
+    // a failed load logs its warnings at the default level.
+    let (log_level, warnings) = match &loaded {
+        Ok(loaded) => (loaded.log_level, &loaded.warnings),
+        Err(error) => (LogLevel::default(), &error.warnings),
+    };
     // Fails only if a subscriber is already installed; keep that one.
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_max_level(tracing::Level::from(arguments.log_level))
+        .with_max_level(level(log_level))
         .with_ansi(false)
         .try_init();
+    for warning in warnings {
+        warn!("{warning}");
+    }
 
-    let config = Config::try_from(&arguments).map_err(ErrorKind::from)?;
+    let config = loaded.map_err(ErrorKind::from)?.config;
     let (tunnel, server) = server::create_server(&config).await?;
 
     match config.transport {
@@ -76,6 +87,17 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
     drop(server);
     drop(tunnel);
     Ok(())
+}
+
+/// Maps the configured log level to its tracing level.
+fn level(level: LogLevel) -> tracing::Level {
+    match level {
+        LogLevel::Error => tracing::Level::ERROR,
+        LogLevel::Warn => tracing::Level::WARN,
+        LogLevel::Info => tracing::Level::INFO,
+        LogLevel::Debug => tracing::Level::DEBUG,
+        LogLevel::Trace => tracing::Level::TRACE,
+    }
 }
 
 #[cfg(test)]

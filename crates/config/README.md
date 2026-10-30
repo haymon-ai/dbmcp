@@ -11,9 +11,9 @@ Typed configuration for [dbmcp](https://dbmcp.haymon.ai) — the single-binary M
 
 - One config tree, three sections — database, HTTP, PII redaction
 - Backend-aware defaults for port, user, host
-- Secret-safe `Debug` — password redacted by hand
+- Secret-safe `Debug` — credentials held in `secrecy::SecretString`
 - Multi-error validation that surfaces every misconfiguration at once
-- `clap::ValueEnum` for `DatabaseBackend` (`mysql`, `mariadb`, `postgres`, `sqlite`)
+- Kebab-case setting values for `DatabaseBackend` (`mysql`, `mariadb`, `postgres`, `sqlite`)
 - `thiserror`-based error types
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)

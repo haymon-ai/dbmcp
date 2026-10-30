@@ -3,11 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::error::{ConfigError, ConfigErrors};
-use crate::secret::Secret;
+use secrecy::SecretString;
+
+use crate::env;
+use crate::error::{ConfigError, Diagnostic, into_result};
 
 /// Host-key verification policy for the SSH tunnel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrictHostKeyChecking {
     /// Reject hosts missing from `known_hosts`.
     Yes,
@@ -15,6 +17,12 @@ pub enum StrictHostKeyChecking {
     AcceptNew,
     /// Disable host-key verification (insecure).
     No,
+}
+
+impl StrictHostKeyChecking {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] =
+        &[("yes", Self::Yes), ("accept-new", Self::AcceptNew), ("no", Self::No)];
 }
 
 impl std::fmt::Display for StrictHostKeyChecking {
@@ -29,7 +37,7 @@ impl std::fmt::Display for StrictHostKeyChecking {
 
 /// Resolved SSH tunnel settings.
 ///
-/// Present on [`Config`](crate::Config) only when `DBMCP_SSH_HOST` is set.
+/// Present on [`Config`](crate::Config) only when `ssh.host` / `DBMCP_SSH_HOST` is set.
 /// Paths are already `~`-expanded and the `known_hosts` default is resolved.
 #[derive(Clone, Debug)]
 pub struct SshConfig {
@@ -43,13 +51,13 @@ pub struct SshConfig {
     pub user: String,
 
     /// SSH password.
-    pub password: Option<Secret>,
+    pub password: Option<SecretString>,
 
     /// Path to the SSH private key.
     pub key: Option<PathBuf>,
 
     /// Passphrase for the SSH private key.
-    pub key_passphrase: Option<Secret>,
+    pub key_passphrase: Option<SecretString>,
 
     /// Path to the `known_hosts` file (`None` only when unverified and no home).
     pub known_hosts: Option<PathBuf>,
@@ -82,35 +90,47 @@ impl SshConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.host.is_empty() {
-            errors.push(ConfigError::EmptySshHost);
+            errors.push(Diagnostic::new(ConfigError::EmptySshHost).involving(&[env::SSH_HOST]));
         }
         if self.user.is_empty() {
-            errors.push(ConfigError::MissingSshUser);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSshUser)
+                    .involving(&[env::SSH_HOST])
+                    .missing(&[env::SSH_USER]),
+            );
         }
         if self.password.is_none() && self.key.is_none() {
-            errors.push(ConfigError::MissingSshAuth);
+            errors.push(
+                Diagnostic::new(ConfigError::MissingSshAuth)
+                    .involving(&[env::SSH_HOST])
+                    .missing(&[env::SSH_PASSWORD, env::SSH_KEY]),
+            );
         }
         if let Some(key) = &self.key
             && !key.is_file()
         {
-            errors.push(ConfigError::FileNotFound(
-                "DBMCP_SSH_KEY".into(),
-                key.display().to_string(),
-            ));
+            errors.push(
+                Diagnostic::new(ConfigError::FileNotFound("ssh.key", key.display().to_string()))
+                    .involving(&[env::SSH_KEY]),
+            );
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
-            errors.push(ConfigError::SshKeyPassphraseWithoutKey);
+            errors.push(
+                Diagnostic::new(ConfigError::SshKeyPassphraseWithoutKey)
+                    .involving(&[env::SSH_KEY_PASSPHRASE])
+                    .missing(&[env::SSH_KEY]),
+            );
         }
         if self.known_hosts.is_none() && self.strict_host_key_checking != StrictHostKeyChecking::No {
-            errors.push(ConfigError::MissingSshKnownHosts);
+            errors.push(Diagnostic::new(ConfigError::MissingSshKnownHosts).missing(&[env::SSH_KNOWN_HOSTS]));
         }
 
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -163,7 +183,7 @@ mod tests {
             .validate()
             .expect_err("must fail")
             .iter()
-            .map(ToString::to_string)
+            .map(|diagnostic| diagnostic.error.to_string())
             .collect()
     }
 
@@ -178,7 +198,7 @@ mod tests {
             host: String::new(),
             ..ssh_config()
         };
-        assert_eq!(errors_of(&config), ["DBMCP_SSH_HOST must not be empty"]);
+        assert_eq!(errors_of(&config), ["ssh.host must not be empty"]);
     }
 
     #[test]
@@ -187,10 +207,7 @@ mod tests {
             user: String::new(),
             ..ssh_config()
         };
-        assert_eq!(
-            errors_of(&config),
-            ["DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set"]
-        );
+        assert_eq!(errors_of(&config), [ConfigError::MissingSshUser.to_string()]);
     }
 
     #[test]
@@ -199,10 +216,7 @@ mod tests {
             password: None,
             ..ssh_config()
         };
-        assert_eq!(
-            errors_of(&config),
-            ["DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set"]
-        );
+        assert_eq!(errors_of(&config), [ConfigError::MissingSshAuth.to_string()]);
     }
 
     #[test]
@@ -214,13 +228,13 @@ mod tests {
         let errors = config.validate().expect_err("must fail");
         assert_eq!(errors.len(), 1);
         assert!(matches!(
-            &errors[0],
-            ConfigError::FileNotFound(name, _) if name == "DBMCP_SSH_KEY"
+            &errors[0].error,
+            ConfigError::FileNotFound(name, _) if *name == "ssh.key"
         ));
         assert_eq!(
             errors[0].to_string(),
             format!(
-                "DBMCP_SSH_KEY file not found: {}",
+                "ssh.key: file not found: {}",
                 Path::new("/nonexistent/id_ed25519").display()
             )
         );
@@ -233,7 +247,7 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(matches!(&errors[0], ConfigError::FileNotFound(_, _)));
+        assert!(matches!(&errors[0].error, ConfigError::FileNotFound(_, _)));
     }
 
     #[test]
@@ -242,7 +256,7 @@ mod tests {
             key_passphrase: Some("secret".into()),
             ..ssh_config()
         };
-        assert_eq!(errors_of(&config), ["DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY"]);
+        assert_eq!(errors_of(&config), ["ssh.key_passphrase requires ssh.key"]);
     }
 
     #[test]
@@ -255,7 +269,7 @@ mod tests {
             };
             assert_eq!(
                 errors_of(&config),
-                ["DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined"],
+                [ConfigError::MissingSshKnownHosts.to_string()],
                 "mode {mode}"
             );
         }
@@ -279,11 +293,11 @@ mod tests {
             ..ssh_config()
         };
         let errors = config.validate().expect_err("must fail");
-        assert!(matches!(errors[0], ConfigError::EmptySshHost));
-        assert!(matches!(errors[1], ConfigError::MissingSshUser));
-        assert!(matches!(errors[2], ConfigError::MissingSshAuth));
-        assert!(matches!(errors[3], ConfigError::SshKeyPassphraseWithoutKey));
-        assert!(matches!(errors[4], ConfigError::MissingSshKnownHosts));
+        assert!(matches!(errors[0].error, ConfigError::EmptySshHost));
+        assert!(matches!(errors[1].error, ConfigError::MissingSshUser));
+        assert!(matches!(errors[2].error, ConfigError::MissingSshAuth));
+        assert!(matches!(errors[3].error, ConfigError::SshKeyPassphraseWithoutKey));
+        assert!(matches!(errors[4].error, ConfigError::MissingSshKnownHosts));
         assert_eq!(errors.len(), 5);
     }
 

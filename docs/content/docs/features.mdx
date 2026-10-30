@@ -46,7 +46,7 @@ SQLite is file-based with a single database, so `listDatabases`, `createDatabase
 
 ### Cursor Pagination
 
-All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`) and `readQuery` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`--db-page-size`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
+All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`) and `readQuery` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100; see [`DBMCP_DB_PAGE_SIZE`](/docs/configuration#server-behavior) for how to change it) plus, when more items remain, a `nextCursor` string alongside the result data.
 
 To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
 
@@ -388,11 +388,11 @@ See [Configuration](/docs/configuration#http-transport) for HTTP-specific option
 
 ## PII Redaction
 
-Database MCP ships an optional PII redactor that rewrites detected sensitive spans inside query tool output before the result reaches the AI assistant. The feature is **off by default**; enable it per-server via `--pii` / `DBMCP_PII_ENABLE`, and select how spans are rewritten via `--pii-operator` / `DBMCP_PII_OPERATOR`. See [PII configuration](/docs/configuration#pii) for the full flag reference.
+Database MCP ships an optional PII redactor that rewrites detected sensitive spans inside query tool output before the result reaches the AI assistant. The feature is **off by default**; enable it per-server via `DBMCP_PII_ENABLE` / `pii.enabled`, and select how spans are rewritten via `DBMCP_PII_OPERATOR` / `pii.operator`. See [PII configuration](/docs/configuration#pii) for the full settings reference.
 
 ### What gets detected
 
-Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `--pii-categories` / `DBMCP_PII_CATEGORIES`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
+Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PII_CATEGORIES` / `pii.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
 
 **personal**
 - `EMAIL_ADDRESS` — email addresses
@@ -434,7 +434,7 @@ Twenty-four built-in regex recognisers ship by default, grouped into seven categ
 
 ### Categories
 
-Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories on `--pii-categories` / `DBMCP_PII_CATEGORIES`; leaving the flag unset enables every built-in.
+Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories in `DBMCP_PII_CATEGORIES` / `pii.categories`; leaving the setting unset enables every built-in.
 
 - `personal` — `EMAIL_ADDRESS`
 - `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
