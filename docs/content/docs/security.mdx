@@ -27,12 +27,17 @@ The `readQuery` tool enforces AST-based SQL validation as defence-in-depth. Only
 
 This validation is always enforced, even when read-only mode is disabled, preventing write statements from being smuggled through the read tool.
 
+### Read-Only Transactions
+
+On MySQL, MariaDB, and PostgreSQL, `readQuery` runs every statement inside a `START TRANSACTION READ ONLY` transaction, and so does `explainQuery` in read-only mode. The database itself rejects writes to data, including writes made by functions that pass validation, such as sequence functions (`nextval`), large-object functions, and user-defined functions. The transaction is always rolled back; on PostgreSQL this also keeps session settings changed by a query from carrying over to later queries.
+
 ### Blocked Operations
 
 The following are always blocked regardless of mode:
 
 - `LOAD_FILE()` — prevents reading files from the server filesystem
 - `SELECT INTO OUTFILE` / `SELECT INTO DUMPFILE` — prevents writing files to the server filesystem
+- Session locks (`GET_LOCK`, `pg_advisory_*`), backend signalling (`pg_cancel_backend`, `pg_terminate_backend`), and PostgreSQL server administration functions (`pg_reload_conf`, `pg_switch_wal`, replication slots, restore points, statistics resets) — read-only transactions do not stop these
 
 SQL comments and string contents are stripped before validation to prevent bypass attempts.
 

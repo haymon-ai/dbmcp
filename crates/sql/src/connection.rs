@@ -122,6 +122,36 @@ where
         .await
     }
 
+    /// Runs a statement in a read-only transaction and collects every row as JSON.
+    ///
+    /// The database itself rejects writes, so side-effecting functions that
+    /// pass read-only validation (sequences, large objects, user-defined
+    /// functions) cannot modify data. The transaction is always rolled back,
+    /// which on `PostgreSQL` also discards session settings changed by the
+    /// statement; `MySQL` session state (`USE`, user variables) persists.
+    ///
+    /// Requires `START TRANSACTION READ ONLY` support (`MySQL`, `MariaDB`,
+    /// `PostgreSQL`); `SQLite` rejects it.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation. Writes attempted by the statement
+    /// surface as [`SqlError::Query`].
+    async fn fetch_json_read_only<Q>(&self, query: Q, database: Option<&str>) -> Result<Vec<Value>, SqlError>
+    where
+        Q: IntoSafeQuery<Self::DB>,
+    {
+        let (sql, arguments) = query.into_sql_and_args()?;
+        let pool = self.pool(database).await?;
+        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+            let mut tx = pool.begin_with("START TRANSACTION READ ONLY").await?;
+            let rows = (&mut *tx).fetch_all((sql, arguments)).await?;
+            tx.rollback().await?;
+            Ok(rows.iter().map(RowExt::to_json).collect())
+        })
+        .await
+    }
+
     /// Runs a query and extracts column 0 from the first row, if any.
     ///
     /// Returns `None` for both "no row returned" and "row where column 0

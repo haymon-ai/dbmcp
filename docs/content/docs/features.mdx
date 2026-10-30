@@ -366,7 +366,7 @@ Drop a table from a database. If the table has foreign key dependents, the datab
 
 ### `explainQuery`
 
-Return the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics on PostgreSQL and MySQL/MariaDB. In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements (SELECT, SHOW) since it actually executes the query. SQLite always uses EXPLAIN QUERY PLAN and does not support ANALYZE. Always available regardless of read-only mode.
+Return the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics on PostgreSQL and MySQL/MariaDB. In read-only mode, EXPLAIN ANALYZE is only allowed for read-only statements (SELECT, SHOW) since it actually executes the query. In read-only mode, every EXPLAIN runs inside a read-only transaction, so on MySQL/MariaDB plain EXPLAIN of write statements is rejected. SQLite always uses EXPLAIN QUERY PLAN and does not support ANALYZE. Always available regardless of read-only mode.
 
 ## Transport Modes
 

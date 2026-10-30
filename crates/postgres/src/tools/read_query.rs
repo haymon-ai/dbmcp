@@ -103,13 +103,14 @@ impl AsyncTool<PostgresHandler> for UnpinnedReadQueryTool {
 impl PostgresHandler {
     /// Executes a read-only SQL query, paginating `SELECT` result rows.
     ///
-    /// Validates that the query is read-only, then dispatches on the
-    /// classified [`StatementKind`]: `Select` is wrapped in a subquery with
-    /// a server-controlled `LIMIT`/`OFFSET`; `NonSelect` (`SHOW`, `EXPLAIN`
-    /// under the PG dialect) is executed as-is and returned in a single
-    /// page. A malformed `cursor` is rejected by the serde deserializer
-    /// before this method is called, which rmcp reports as a tool result
-    /// with `isError: true`.
+    /// Validates that the query is read-only and runs it in a read-only
+    /// transaction, so the database rejects writes the validator misses.
+    /// It then dispatches on the classified [`StatementKind`]: `Select` is
+    /// wrapped in a subquery with a server-controlled `LIMIT`/`OFFSET`;
+    /// `NonSelect` (`SHOW`, `EXPLAIN` under the PG dialect) is executed
+    /// as-is and returned in a single page. A malformed `cursor` is
+    /// rejected by the serde deserializer before this method is called,
+    /// which rmcp reports as a tool result with `isError: true`.
     ///
     /// # Errors
     ///
@@ -128,12 +129,12 @@ impl PostgresHandler {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.fetch_json(wrapped.as_str(), database).await
+                    self.connection.fetch_json_read_only(wrapped.as_str(), database).await
                 })
                 .await?
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.fetch_json(query.as_str(), database).await?;
+                let rows = self.connection.fetch_json_read_only(query.as_str(), database).await?;
                 (rows, None)
             }
         };

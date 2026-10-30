@@ -103,7 +103,8 @@ impl PostgresHandler {
     /// Returns the execution plan for a query.
     ///
     /// The inner query must be a single statement. When `analyze` is true
-    /// and read-only mode is enabled, it must also be read-only.
+    /// and read-only mode is enabled, it must also be read-only. In read-only
+    /// mode the plan is fetched inside a read-only transaction.
     ///
     /// # Errors
     ///
@@ -132,7 +133,14 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
+        // ANALYZE executes the statement, and planning alone can run user functions.
+        let rows = if self.config.read_only {
+            self.connection
+                .fetch_json_read_only(explain_sql.as_str(), database)
+                .await?
+        } else {
+            self.connection.fetch_json(explain_sql.as_str(), database).await?
+        };
         let rows = self.redactor.redact_rows(rows).await?;
 
         Ok(QueryResponse { rows })

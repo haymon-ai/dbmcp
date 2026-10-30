@@ -103,7 +103,8 @@ impl MysqlHandler {
     /// Returns the execution plan for a query.
     ///
     /// The inner query must be a single statement. When `analyze` is true
-    /// and read-only mode is enabled, it must also be read-only.
+    /// and read-only mode is enabled, it must also be read-only. In read-only
+    /// mode the plan is fetched inside a read-only transaction.
     ///
     /// # Errors
     ///
@@ -111,7 +112,8 @@ impl MysqlHandler {
     /// one statement.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true,
     /// read-only mode is enabled, and the query is a write statement.
-    /// Returns [`SqlError::Query`] if the backend reports an error.
+    /// Returns [`SqlError::Query`] if the backend reports an error, including
+    /// a write statement explained in read-only mode.
     pub async fn explain_query(
         &self,
         database: Option<String>,
@@ -132,7 +134,14 @@ impl MysqlHandler {
             format!("EXPLAIN FORMAT=JSON {query}")
         };
 
-        let rows = self.connection.fetch_json(explain_sql.as_str(), database).await?;
+        // ANALYZE executes the statement, and planning alone can run user functions.
+        let rows = if self.config.read_only {
+            self.connection
+                .fetch_json_read_only(explain_sql.as_str(), database)
+                .await?
+        } else {
+            self.connection.fetch_json(explain_sql.as_str(), database).await?
+        };
         let rows = self.redactor.redact_rows(rows).await?;
         Ok(QueryResponse { rows })
     }
