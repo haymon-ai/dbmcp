@@ -4,12 +4,12 @@
 //! configuration, initialises tracing, and serves the selected transport.
 
 use clap::{CommandFactory, FromArgMatches};
-use dbmcp_config::{LogLevel, Transport};
-use tracing::{info, warn};
+use dbmcp_config::LogLevel;
+use tracing::warn;
 
 use crate::args::Arguments;
 use crate::error::{Error, ErrorKind};
-use crate::{http, server, stdio};
+use crate::server;
 
 /// Builds the clap command for the binary named `bin` at `version`.
 fn command(bin: &'static str, version: &'static str) -> clap::Command {
@@ -67,26 +67,7 @@ pub async fn run(bin: &'static str, version: &'static str) -> Result<(), Error> 
     }
 
     let config = loaded.map_err(ErrorKind::from)?.config;
-    let (tunnel, server) = server::create_server(&config).await?;
-
-    match config.transport {
-        Transport::Stdio => stdio::serve(server.clone()).await?,
-        Transport::Http => {
-            let http_config = config
-                .http
-                .as_ref()
-                .expect("http config is built when transport is http");
-            http::serve(server.clone(), http_config).await?;
-        }
-    }
-
-    server.shutdown().await;
-    info!("All connection pools closed.");
-
-    // Pools close through the tunnel, so it must outlive the server.
-    drop(server);
-    drop(tunnel);
-    Ok(())
+    Ok(server::serve(&config).await?)
 }
 
 /// Maps the configured log level to its tracing level.
