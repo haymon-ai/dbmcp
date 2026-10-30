@@ -185,9 +185,9 @@ mod tests {
             allow_unauthenticated: false,
         };
         let config = Config {
-            transport: Transport::Http,
+            transport: Transport::Stdio,
             database: sqlite_memory_db_config(),
-            http: Some(http_config.clone()),
+            http: None,
             pii: None,
             ssh: None,
         };

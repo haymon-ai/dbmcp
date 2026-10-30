@@ -87,8 +87,6 @@ pub struct PiiConfig {
 }
 
 impl PiiConfig {
-    /// Default PII redaction state (off — opt-in only).
-    pub const DEFAULT_ENABLED: bool = false;
     /// Default PII operator when no override is supplied.
     pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
     /// Default ML/NER pass state (off — opt-in only).

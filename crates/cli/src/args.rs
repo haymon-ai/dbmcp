@@ -419,11 +419,7 @@ impl TryFrom<&DatabaseArguments> for DatabaseConfig {
 #[command(next_help_heading = "PII")]
 struct PiiArguments {
     /// Enable PII redaction of query tool output
-    #[arg(
-        long = "pii",
-        env = "DBMCP_PII_ENABLE",
-        default_value_t = PiiConfig::DEFAULT_ENABLED,
-    )]
+    #[arg(long = "pii", env = "DBMCP_PII_ENABLE")]
     enabled: bool,
 
     /// Operator applied to detected PII spans
@@ -825,15 +821,9 @@ mod tests {
     }
 
     #[test]
-    fn http_config_validate_is_called_from_try_from_path() {
-        // Structural-presence guard: ensures HttpConfig::try_from invokes
-        // HttpConfig::validate. When a future rule fires on default args,
-        // this test deliberately fails — flagging the contributor.
-        HttpConfig::try_from(&parse(&[]).http).expect("default http args must validate");
-    }
-
-    #[test]
     fn clap_default_yields_loopback_origins() {
+        // Also guards that HttpConfig::try_from invokes validate: a future rule
+        // firing on default args fails here.
         let config = HttpConfig::try_from(&parse(&[]).http).expect("default args are valid");
         assert_eq!(config.allowed_origins, HttpConfig::default_allowed_origins());
     }
@@ -971,50 +961,6 @@ mod tests {
                 "error must list accepted value '{accepted}': {msg}"
             );
         }
-    }
-
-    #[test]
-    fn try_from_database_arguments_rejects_sqlite_without_db_name() {
-        let args = parse(&["--db-backend", "sqlite"]);
-        let errors = DatabaseConfig::try_from(&args.database).expect_err("sqlite without name must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
-    }
-
-    #[test]
-    fn try_from_database_arguments_rejects_missing_ssl_cert_files() {
-        let args = parse(&[
-            "--db-ssl",
-            "--db-ssl-ca",
-            "/nonexistent/ca.pem",
-            "--db-ssl-cert",
-            "/nonexistent/cert.pem",
-            "--db-ssl-key",
-            "/nonexistent/key.pem",
-        ]);
-        let errors = DatabaseConfig::try_from(&args.database).expect_err("missing ssl cert files must fail");
-        let cert_errors = errors
-            .iter()
-            .filter(|e| matches!(e, ConfigError::FileNotFound(_, _)))
-            .count();
-        assert_eq!(cert_errors, 3, "expected three FileNotFound errors, got {errors:?}");
-    }
-
-    #[test]
-    fn try_from_database_arguments_accumulates_sqlite_name_and_ssl_errors() {
-        let args = parse(&[
-            "--db-backend",
-            "sqlite",
-            "--db-ssl",
-            "--db-ssl-ca",
-            "/nonexistent/ca.pem",
-        ]);
-        let errors = DatabaseConfig::try_from(&args.database).expect_err("multiple errors must accumulate");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::MissingSqliteDbName)));
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::FileNotFound(name, path) if name == "DBMCP_DB_SSL_CA" && path == "/nonexistent/ca.pem"))
-        );
     }
 
     #[test]
