@@ -119,7 +119,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by the loader via [`crate::env::DB_PAGE_SIZE`].
+    /// Range `1..=500`, enforced by the loader.
     pub page_size: u16,
 }
 
@@ -158,7 +158,7 @@ impl DatabaseConfig {
     /// # Errors
     ///
     /// Returns one [`Diagnostic`] per failing rule.
-    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
+    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.backend == DatabaseBackend::Sqlite && self.name.as_deref().unwrap_or_default().is_empty() {
@@ -214,12 +214,12 @@ impl Default for DatabaseConfig {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::Config;
     use crate::transport::Transport;
 
-    fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
+    pub(crate) fn db_config(backend: DatabaseBackend) -> DatabaseConfig {
         DatabaseConfig {
             backend,
             port: backend.default_port(),

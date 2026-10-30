@@ -1,6 +1,8 @@
 //! Top-level [`Config`] composing the transport and the database, http, pii, and ssh sections.
 
-use crate::database::DatabaseConfig;
+use crate::database::{DatabaseBackend, DatabaseConfig};
+use crate::env;
+use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::http::HttpConfig;
 use crate::pii::PiiConfig;
 use crate::ssh::SshConfig;
@@ -32,13 +34,46 @@ pub struct Config {
     pub ssh: Option<SshConfig>,
 }
 
+impl Config {
+    /// Validates every section and the rules spanning sections.
+    ///
+    /// Rules enforced, besides each present section's own `validate()`:
+    /// - an SSH tunnel is not supported with the `SQLite` backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
+        let mut errors = Vec::new();
+        errors.extend(self.database.validate().err().into_iter().flatten());
+        if let Some(http) = &self.http {
+            errors.extend(http.validate().err().into_iter().flatten());
+        }
+        if let Some(pii) = &self.pii {
+            errors.extend(pii.validate().err().into_iter().flatten());
+        }
+        if let Some(ssh) = &self.ssh {
+            if self.database.backend == DatabaseBackend::Sqlite {
+                errors.push(
+                    Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]),
+                );
+            }
+            errors.extend(ssh.validate().err().into_iter().flatten());
+        }
+        into_result(errors)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::database::tests::db_config;
+    use crate::http::tests::config_with_host;
     use crate::pii::PiiOperator;
     use crate::ssh::StrictHostKeyChecking;
+    use crate::ssh::tests::ssh_config;
 
     fn mysql_config() -> Config {
         Config {
@@ -53,6 +88,98 @@ mod tests {
             pii: None,
             ssh: None,
         }
+    }
+
+    fn sqlite() -> DatabaseConfig {
+        DatabaseConfig {
+            name: Some("x.db".into()),
+            ..db_config(DatabaseBackend::Sqlite)
+        }
+    }
+
+    #[test]
+    fn valid_config_passes() {
+        let config = Config {
+            ssh: Some(ssh_config()),
+            ..mysql_config()
+        };
+        config.validate().expect("valid config");
+    }
+
+    #[test]
+    fn ssh_on_sqlite_is_rejected() {
+        let config = Config {
+            database: sqlite(),
+            ssh: Some(ssh_config()),
+            ..mysql_config()
+        };
+        let errors = config.validate().expect_err("ssh on sqlite must fail");
+        let [diagnostic] = errors.as_slice() else {
+            panic!("expected one diagnostic: {errors:?}");
+        };
+        assert!(matches!(diagnostic.error, ConfigError::SshSqliteUnsupported));
+        let involved: Vec<&str> = diagnostic.involved.iter().map(|(setting, _)| setting.path).collect();
+        assert_eq!(involved, ["ssh.host", "database.backend"]);
+    }
+
+    #[test]
+    fn sqlite_without_ssh_passes() {
+        let config = Config {
+            database: sqlite(),
+            ..mysql_config()
+        };
+        config.validate().expect("sqlite without ssh");
+    }
+
+    #[test]
+    fn database_rules_run() {
+        let config = Config {
+            database: DatabaseConfig { name: None, ..sqlite() },
+            ..mysql_config()
+        };
+        let errors = config.validate().expect_err("sqlite without name must fail");
+        assert!(
+            matches!(errors[0].error, ConfigError::MissingSqliteDbName),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn http_rules_run_when_present() {
+        let config = Config {
+            transport: Transport::Http,
+            http: Some(config_with_host(" ")),
+            ..mysql_config()
+        };
+        let errors = config.validate().expect_err("empty http host must fail");
+        assert!(matches!(errors[0].error, ConfigError::EmptyHttpHost), "{errors:?}");
+    }
+
+    #[test]
+    fn pii_rules_run_when_present() {
+        let config = Config {
+            pii: Some(PiiConfig {
+                ner_enabled: true,
+                ner_model: None,
+                ..PiiConfig::default()
+            }),
+            ..mysql_config()
+        };
+        let errors = config.validate().expect_err("ner without model must fail");
+        assert!(matches!(errors[0].error, ConfigError::PiiNerModelMissing), "{errors:?}");
+    }
+
+    #[test]
+    fn ssh_rules_run_when_present() {
+        let config = Config {
+            ssh: Some(SshConfig {
+                user: String::new(),
+                ..ssh_config()
+            }),
+            ..mysql_config()
+        };
+        let errors = config.validate().expect_err("ssh without user must fail");
+        assert!(matches!(errors[0].error, ConfigError::MissingSshUser), "{errors:?}");
     }
 
     #[test]

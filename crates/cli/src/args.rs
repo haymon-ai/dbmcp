@@ -57,7 +57,7 @@ impl Arguments {
             env_file: self.env.clone(),
             environment,
             working_dir: std::env::current_dir()?,
-            home: dbmcp_config::ssh::home_dir(),
+            home: dbmcp_config::home_dir(),
         })
     }
 }
