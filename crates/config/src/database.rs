@@ -1,5 +1,6 @@
 //! Database connection settings and backend enum.
 
+use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::secret::Secret;
 
@@ -109,7 +110,7 @@ pub struct DatabaseConfig {
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
-    /// Range `1..=500`, enforced by [`Self::validate`].
+    /// Range `1..=500`, enforced by the loader via [`crate::env::DB_PAGE_SIZE`].
     pub page_size: u16,
 }
 
@@ -144,8 +145,6 @@ impl DatabaseConfig {
     /// Rules enforced:
     /// - `backend == Sqlite` requires `name` to be `Some(non-empty)`.
     /// - `ssl == true` requires every set `ssl_ca` / `ssl_cert` / `ssl_key` path to exist.
-    /// - `max_pool_size` and a set `connection_timeout` are at least 1.
-    /// - `page_size` is between 1 and [`Self::MAX_PAGE_SIZE`].
     ///
     /// # Errors
     ///
@@ -156,51 +155,25 @@ impl DatabaseConfig {
         if self.backend == DatabaseBackend::Sqlite && self.name.as_deref().unwrap_or_default().is_empty() {
             errors.push(
                 Diagnostic::new(ConfigError::MissingSqliteDbName)
-                    .involving(&["database.backend"])
-                    .missing(&["database.name"]),
+                    .involving(&[env::DB_BACKEND])
+                    .missing(&[env::DB_NAME]),
             );
         }
 
         if self.ssl {
-            for (name, path) in [
-                ("database.ssl_ca", &self.ssl_ca),
-                ("database.ssl_cert", &self.ssl_cert),
-                ("database.ssl_key", &self.ssl_key),
+            for (setting, path) in [
+                (env::DB_SSL_CA, &self.ssl_ca),
+                (env::DB_SSL_CERT, &self.ssl_cert),
+                (env::DB_SSL_KEY, &self.ssl_key),
             ] {
                 if let Some(path) = path
                     && !std::path::Path::new(path).exists()
                 {
-                    errors.push(Diagnostic::new(ConfigError::FileNotFound(name, path.clone())).involving(&[name]));
+                    errors.push(
+                        Diagnostic::new(ConfigError::FileNotFound(setting.path, path.clone())).involving(&[setting]),
+                    );
                 }
             }
-        }
-
-        if self.max_pool_size < 1 {
-            errors.push(
-                Diagnostic::new(ConfigError::OutOfRange {
-                    path: "database.max_pool_size",
-                    expected: "at least 1",
-                })
-                .involving(&["database.max_pool_size"]),
-            );
-        }
-        if self.connection_timeout == Some(0) {
-            errors.push(
-                Diagnostic::new(ConfigError::OutOfRange {
-                    path: "database.connection_timeout",
-                    expected: "at least 1",
-                })
-                .involving(&["database.connection_timeout"]),
-            );
-        }
-        if !(1..=Self::MAX_PAGE_SIZE).contains(&self.page_size) {
-            errors.push(
-                Diagnostic::new(ConfigError::OutOfRange {
-                    path: "database.page_size",
-                    expected: "between 1 and 500",
-                })
-                .involving(&["database.page_size"]),
-            );
         }
 
         into_result(errors)

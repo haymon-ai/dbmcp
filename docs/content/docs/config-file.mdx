@@ -296,7 +296,7 @@ failed to parse config file /srv/dbmcp/dbmcp.yaml:
 ```text
 $ DBMCP_DB_READ_ONLY=yes dbmcp --config /srv/dbmcp/dbmcp.yaml
 configuration validation failed:
-  - database.port: expected integer between 0 and 65535, found string (from /srv/dbmcp/dbmcp.yaml:4:9)
+  - database.port: expected non-negative integer, found string (from /srv/dbmcp/dbmcp.yaml:4:9)
   - database.read_only: expected boolean (true/false/1/0/t/f), found string (from DBMCP_DB_READ_ONLY)
 ```
 
@@ -305,7 +305,7 @@ $ DBMCP_DB_CONNECTION_TIMEOUT=0 dbmcp --config /srv/dbmcp/dbmcp.yaml --env /srv/
 configuration validation failed:
   - database.max_pool_size must be at least 1 (from DBMCP_DB_MAX_POOL_SIZE in /srv/dbmcp/.env:2)
   - database.connection_timeout must be at least 1 (from DBMCP_DB_CONNECTION_TIMEOUT)
-  - database.page_size must be between 1 and 500 (from /srv/dbmcp/dbmcp.yaml:3:14)
+  - database.page_size must be at least 1 (from /srv/dbmcp/dbmcp.yaml:3:14)
 ```
 
 ```text

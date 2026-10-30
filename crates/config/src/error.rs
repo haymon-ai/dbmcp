@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::env;
+use crate::env::Setting;
 use crate::source::Source;
 
 /// What is wrong with the configuration.
@@ -40,7 +40,7 @@ pub enum ConfigError {
         /// Dotted YAML key path of the setting.
         path: &'static str,
         /// Human-readable accepted range, e.g. `at least 1`.
-        expected: &'static str,
+        expected: String,
     },
 
     /// A list setting was set to an empty list.
@@ -114,9 +114,9 @@ pub struct Diagnostic {
     /// What is wrong.
     pub error: ConfigError,
     /// Settings whose values caused the problem, each with its source once known.
-    pub involved: Vec<(&'static str, Option<Source>)>,
+    pub involved: Vec<(Setting, Option<Source>)>,
     /// Required settings that are unset; any one of them fixes the problem.
-    pub missing: Vec<&'static str>,
+    pub missing: Vec<Setting>,
 }
 
 impl Diagnostic {
@@ -132,23 +132,23 @@ impl Diagnostic {
 
     /// Adds settings whose values caused the problem.
     #[must_use]
-    pub fn involving(mut self, paths: &[&'static str]) -> Self {
-        self.involved.extend(paths.iter().map(|path| (*path, None)));
+    pub fn involving(mut self, settings: &[Setting]) -> Self {
+        self.involved.extend(settings.iter().map(|setting| (*setting, None)));
         self
     }
 
     /// Adds required settings that are unset.
     #[must_use]
-    pub fn missing(mut self, paths: &[&'static str]) -> Self {
-        self.missing.extend_from_slice(paths);
+    pub fn missing(mut self, settings: &[Setting]) -> Self {
+        self.missing.extend_from_slice(settings);
         self
     }
 
     /// Fills each involved setting's source from `sources`, keeping known ones.
     pub fn attach_sources(&mut self, sources: &HashMap<&'static str, Source>) {
-        for (path, source) in &mut self.involved {
+        for (setting, source) in &mut self.involved {
             if source.is_none() {
-                *source = sources.get(path).cloned();
+                *source = sources.get(setting.path).cloned();
             }
         }
     }
@@ -165,11 +165,11 @@ impl fmt::Display for Diagnostic {
         write!(f, "{}", self.error)?;
         match self.missing.as_slice() {
             [] => {}
-            [path] => write!(f, "; set {} or {path} in the config file", env::by_path(path).env)?,
+            [setting] => write!(f, "; set {} or {} in the config file", setting.env, setting.path)?,
             many => {
                 let routes: Vec<String> = many
                     .iter()
-                    .map(|path| format!("{} ({path})", env::by_path(path).env))
+                    .map(|setting| format!("{} ({})", setting.env, setting.path))
                     .collect();
                 write!(f, "; set one of {}", routes.join(", "))?;
             }
@@ -177,7 +177,7 @@ impl fmt::Display for Diagnostic {
         let sourced: Vec<(&str, &Source)> = self
             .involved
             .iter()
-            .filter_map(|(path, source)| source.as_ref().map(|source| (*path, source)))
+            .filter_map(|(setting, source)| source.as_ref().map(|source| (setting.path, source)))
             .collect();
         match sourced.as_slice() {
             [] => Ok(()),
@@ -207,21 +207,22 @@ pub(crate) fn into_result(diagnostics: Vec<Diagnostic>) -> Result<(), Vec<Diagno
 }
 
 /// Reports each entry of `list` that repeats an earlier one.
-pub(crate) fn duplicates<'a, T: PartialEq + fmt::Display>(
-    path: &'static str,
-    list: &'a [T],
-) -> impl Iterator<Item = Diagnostic> + 'a {
+pub(crate) fn duplicates<T: PartialEq + fmt::Display>(
+    setting: Setting,
+    list: &[T],
+) -> impl Iterator<Item = Diagnostic> + '_ {
     list.iter()
         .enumerate()
         .filter(|(i, entry)| list[..*i].contains(entry))
         .map(move |(_, entry)| {
-            Diagnostic::new(ConfigError::DuplicateListEntry(path, entry.to_string())).involving(&[path])
+            Diagnostic::new(ConfigError::DuplicateListEntry(setting.path, entry.to_string())).involving(&[setting])
         })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env;
 
     fn env_source(name: &'static str) -> Source {
         Source::Env(name)
@@ -235,7 +236,7 @@ mod tests {
 
     #[test]
     fn single_missing_setting_names_env_and_key() {
-        let diagnostic = Diagnostic::new(ConfigError::MissingSqliteDbName).missing(&["database.name"]);
+        let diagnostic = Diagnostic::new(ConfigError::MissingSqliteDbName).missing(&[env::DB_NAME]);
         assert_eq!(
             diagnostic.to_string(),
             "database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file"
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn several_missing_settings_list_every_route() {
-        let diagnostic = Diagnostic::new(ConfigError::MissingSshAuth).missing(&["ssh.password", "ssh.key"]);
+        let diagnostic = Diagnostic::new(ConfigError::MissingSshAuth).missing(&[env::SSH_PASSWORD, env::SSH_KEY]);
         assert!(
             diagnostic
                 .to_string()
@@ -254,7 +255,7 @@ mod tests {
 
     #[test]
     fn one_involved_source_renders_as_from() {
-        let mut diagnostic = Diagnostic::new(ConfigError::EmptyHttpHost).involving(&["http.host"]);
+        let mut diagnostic = Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]);
         diagnostic.attach_sources(&HashMap::from([("http.host", env_source("DBMCP_HTTP_HOST"))]));
         assert_eq!(
             diagnostic.to_string(),
@@ -265,7 +266,7 @@ mod tests {
     #[test]
     fn several_involved_sources_are_listed_per_setting() {
         let mut diagnostic =
-            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&["ssh.host", "database.backend"]);
+            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]);
         diagnostic.attach_sources(&HashMap::from([
             ("ssh.host", env_source("DBMCP_SSH_HOST")),
             ("database.backend", env_source("DBMCP_DB_BACKEND")),
@@ -280,7 +281,7 @@ mod tests {
     #[test]
     fn involved_settings_without_a_source_are_skipped() {
         let mut diagnostic =
-            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&["ssh.host", "database.backend"]);
+            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]);
         diagnostic.attach_sources(&HashMap::from([("ssh.host", env_source("DBMCP_SSH_HOST"))]));
         assert!(diagnostic.to_string().ends_with("(ssh.host from DBMCP_SSH_HOST)"));
     }
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn attach_keeps_sources_already_known() {
         let mut diagnostic = Diagnostic::new(ConfigError::EmptyHttpHost);
-        diagnostic.involved.push(("http.host", Some(env_source("FIRST"))));
+        diagnostic.involved.push((env::HTTP_HOST, Some(env_source("FIRST"))));
         diagnostic.attach_sources(&HashMap::from([("http.host", env_source("SECOND"))]));
         assert!(diagnostic.to_string().ends_with("(from FIRST)"));
     }
@@ -296,7 +297,7 @@ mod tests {
     #[test]
     fn duplicates_report_each_repeat_once() {
         let list = ["a", "b", "a", "a"];
-        let found: Vec<String> = duplicates("http.allowed_hosts", &list)
+        let found: Vec<String> = duplicates(env::HTTP_ALLOWED_HOSTS, &list)
             .map(|d| d.error.to_string())
             .collect();
         assert_eq!(found, ["http.allowed_hosts: duplicate entry 'a'"; 2]);

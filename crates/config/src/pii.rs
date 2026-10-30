@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
 /// Supported PII redaction operators.
@@ -104,15 +105,16 @@ impl PiiConfig {
         let mut errors = Vec::new();
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
-                errors.push(Diagnostic::new(ConfigError::EmptyList("pii.categories")).involving(&["pii.categories"]));
+                errors
+                    .push(Diagnostic::new(ConfigError::EmptyList("pii.categories")).involving(&[env::PII_CATEGORIES]));
             }
-            errors.extend(duplicates("pii.categories", categories));
+            errors.extend(duplicates(env::PII_CATEGORIES, categories));
         }
         if self.ner_enabled && self.ner_model.is_none() {
             errors.push(
                 Diagnostic::new(ConfigError::PiiNerModelMissing)
-                    .involving(&["pii.ner_enabled"])
-                    .missing(&["pii.ner_model"]),
+                    .involving(&[env::PII_NER_ENABLE])
+                    .missing(&[env::PII_NER_MODEL]),
             );
         }
         into_result(errors)

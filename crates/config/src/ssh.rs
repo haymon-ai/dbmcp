@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::secret::Secret;
 
@@ -79,7 +80,6 @@ impl SshConfig {
     /// - a password or a key is required; a passphrase requires a key.
     /// - a set `key` path must be an existing file.
     /// - `known_hosts` must be resolved unless host-key checking is `no`.
-    /// - `port` and a set `local_port` must be at least 1.
     ///
     /// # Errors
     ///
@@ -88,20 +88,20 @@ impl SshConfig {
         let mut errors = Vec::new();
 
         if self.host.is_empty() {
-            errors.push(Diagnostic::new(ConfigError::EmptySshHost).involving(&["ssh.host"]));
+            errors.push(Diagnostic::new(ConfigError::EmptySshHost).involving(&[env::SSH_HOST]));
         }
         if self.user.is_empty() {
             errors.push(
                 Diagnostic::new(ConfigError::MissingSshUser)
-                    .involving(&["ssh.host"])
-                    .missing(&["ssh.user"]),
+                    .involving(&[env::SSH_HOST])
+                    .missing(&[env::SSH_USER]),
             );
         }
         if self.password.is_none() && self.key.is_none() {
             errors.push(
                 Diagnostic::new(ConfigError::MissingSshAuth)
-                    .involving(&["ssh.host"])
-                    .missing(&["ssh.password", "ssh.key"]),
+                    .involving(&[env::SSH_HOST])
+                    .missing(&[env::SSH_PASSWORD, env::SSH_KEY]),
             );
         }
         if let Some(key) = &self.key
@@ -109,36 +109,18 @@ impl SshConfig {
         {
             errors.push(
                 Diagnostic::new(ConfigError::FileNotFound("ssh.key", key.display().to_string()))
-                    .involving(&["ssh.key"]),
+                    .involving(&[env::SSH_KEY]),
             );
         }
         if self.key_passphrase.is_some() && self.key.is_none() {
             errors.push(
                 Diagnostic::new(ConfigError::SshKeyPassphraseWithoutKey)
-                    .involving(&["ssh.key_passphrase"])
-                    .missing(&["ssh.key"]),
+                    .involving(&[env::SSH_KEY_PASSPHRASE])
+                    .missing(&[env::SSH_KEY]),
             );
         }
         if self.known_hosts.is_none() && self.strict_host_key_checking != StrictHostKeyChecking::No {
-            errors.push(Diagnostic::new(ConfigError::MissingSshKnownHosts).missing(&["ssh.known_hosts"]));
-        }
-        if self.port < 1 {
-            errors.push(
-                Diagnostic::new(ConfigError::OutOfRange {
-                    path: "ssh.port",
-                    expected: "at least 1",
-                })
-                .involving(&["ssh.port"]),
-            );
-        }
-        if self.local_port == Some(0) {
-            errors.push(
-                Diagnostic::new(ConfigError::OutOfRange {
-                    path: "ssh.local_port",
-                    expected: "at least 1",
-                })
-                .involving(&["ssh.local_port"]),
-            );
+            errors.push(Diagnostic::new(ConfigError::MissingSshKnownHosts).missing(&[env::SSH_KNOWN_HOSTS]));
         }
 
         into_result(errors)

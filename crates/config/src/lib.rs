@@ -5,7 +5,7 @@
 //! module:
 //! - [`options`] — [`LoadOptions`], the loader inputs
 //! - [`loader`] — [`load`], [`Loaded`], and [`LoadError`]
-//! - [`env`](mod@env) — the table pairing each YAML key path with its `DBMCP_*` name
+//! - [`env`](mod@env) — one constant per setting: YAML key, `DBMCP_*` name, and value kind
 //! - [`source`] — [`Source`], where a setting's value came from
 //! - [`log`] — [`LogLevel`] selector
 //! - [`config`] — top-level [`Config`] composing the transport and four sections

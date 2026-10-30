@@ -2,6 +2,7 @@
 
 use std::net::IpAddr;
 
+use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 use crate::origin;
 use crate::secret::Secret;
@@ -90,10 +91,10 @@ impl HttpConfig {
     pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
         if self.host.trim().is_empty() {
-            errors.push(Diagnostic::new(ConfigError::EmptyHttpHost).involving(&["http.host"]));
+            errors.push(Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]));
         }
         if self.auth_token.as_ref().is_some_and(|t| t.expose().trim().is_empty()) {
-            errors.push(Diagnostic::new(ConfigError::EmptyHttpAuthToken).involving(&["http.auth_token"]));
+            errors.push(Diagnostic::new(ConfigError::EmptyHttpAuthToken).involving(&[env::HTTP_AUTH_TOKEN]));
         }
         if !self.host.trim().is_empty()
             && !self.is_loopback()
@@ -102,8 +103,8 @@ impl HttpConfig {
         {
             errors.push(
                 Diagnostic::new(ConfigError::UnauthenticatedNonLoopbackBind(self.host.clone()))
-                    .involving(&["http.host"])
-                    .missing(&["http.auth_token", "http.allow_unauthenticated"]),
+                    .involving(&[env::HTTP_HOST])
+                    .missing(&[env::HTTP_AUTH_TOKEN, env::HTTP_ALLOW_UNAUTHENTICATED]),
             );
         }
         errors.extend(
@@ -112,15 +113,16 @@ impl HttpConfig {
                 .filter(|entry| !origin::is_valid_entry(entry))
                 .map(|entry| {
                     Diagnostic::new(ConfigError::InvalidAllowedOrigin(entry.clone()))
-                        .involving(&["http.allowed_origins"])
+                        .involving(&[env::HTTP_ALLOWED_ORIGINS])
                 }),
         );
         if self.allowed_hosts.is_empty() {
-            errors
-                .push(Diagnostic::new(ConfigError::EmptyList("http.allowed_hosts")).involving(&["http.allowed_hosts"]));
+            errors.push(
+                Diagnostic::new(ConfigError::EmptyList("http.allowed_hosts")).involving(&[env::HTTP_ALLOWED_HOSTS]),
+            );
         }
-        errors.extend(duplicates("http.allowed_origins", &self.allowed_origins));
-        errors.extend(duplicates("http.allowed_hosts", &self.allowed_hosts));
+        errors.extend(duplicates(env::HTTP_ALLOWED_ORIGINS, &self.allowed_origins));
+        errors.extend(duplicates(env::HTTP_ALLOWED_HOSTS, &self.allowed_hosts));
         into_result(errors)
     }
 }

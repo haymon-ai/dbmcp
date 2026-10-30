@@ -21,7 +21,7 @@ use clap::ValueEnum;
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::{self, EnvFile};
-use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, SETTINGS, Setting};
+use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, Kind, SETTINGS, Setting};
 use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::interpolate;
@@ -409,9 +409,9 @@ struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    /// Returns the winning raw value for `path` and records its source.
-    fn raw(&mut self, path: &'static str) -> Option<Raw<'a>> {
-        let Setting { path, env } = env::by_path(path);
+    /// Returns the winning raw value for `setting` and records its source.
+    fn raw(&mut self, setting: Setting) -> Option<Raw<'a>> {
+        let Setting { path, env, .. } = setting;
         let options = self.options;
         let (raw, source) = if let Some(value) = non_empty(&options.environment, env) {
             (Raw::Text(value), Source::Env(env))
@@ -435,33 +435,33 @@ impl<'a> Resolver<'a> {
         Some(raw)
     }
 
-    /// Returns `true` when any source sets `path`, recording that source.
-    fn is_set(&mut self, path: &'static str) -> bool {
-        self.raw(path).is_some()
+    /// Returns `true` when any source sets `setting`, recording that source.
+    fn is_set(&mut self, setting: Setting) -> bool {
+        self.raw(setting).is_some()
     }
 
-    /// Resolves `path` and casts it; records a value-free error on failure.
-    fn get<T>(&mut self, path: &'static str, cast: impl FnOnce(&Raw<'a>) -> Result<T, String>) -> Option<T> {
-        let raw = self.raw(path)?;
+    /// Resolves `setting` and casts it; records a value-free error on failure.
+    fn get<T>(&mut self, setting: Setting, cast: impl FnOnce(&Raw<'a>) -> Result<T, String>) -> Option<T> {
+        let raw = self.raw(setting)?;
         match cast(&raw) {
             Ok(value) => Some(value),
             Err(reason) => {
-                self.invalid(path, reason);
+                self.invalid(setting, reason);
                 None
             }
         }
     }
 
-    fn string(&mut self, path: &'static str) -> Option<String> {
-        self.get(path, |raw| {
+    fn string(&mut self, setting: Setting) -> Option<String> {
+        self.get(setting, |raw| {
             raw.as_str()
                 .map(str::to_owned)
                 .ok_or_else(|| format!("expected string, found {}", raw.kind()))
         })
     }
 
-    fn bool(&mut self, path: &'static str) -> Option<bool> {
-        self.get(path, |raw| match raw {
+    fn bool(&mut self, setting: Setting) -> Option<bool> {
+        self.get(setting, |raw| match raw {
             Raw::Node(Node::Bool(value)) => Ok(*value),
             raw => raw
                 .as_str()
@@ -470,23 +470,40 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    fn int<T: TryFrom<i64> + TryFrom<u64> + std::str::FromStr>(
-        &mut self,
-        path: &'static str,
-        range: &str,
-    ) -> Option<T> {
-        self.get(path, |raw| {
+    /// Resolves an integer and checks it against the setting's range.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `setting` is not a [`Kind::Int`] or its `max` does not fit
+    /// `T`: both are mistakes in the setting table, hit by every load.
+    fn int<T: TryFrom<u64>>(&mut self, setting: Setting) -> Option<T> {
+        let Kind::Int { min, max } = setting.kind else {
+            unreachable!("{} is not an integer setting", setting.path);
+        };
+        assert!(T::try_from(max).is_ok(), "{} max does not fit its field", setting.path);
+        let value = self.get(setting, |raw| {
             let parsed = match raw {
-                Raw::Node(Node::Int(value)) => T::try_from(*value).ok(),
-                Raw::Node(Node::UInt(value)) => T::try_from(*value).ok(),
+                Raw::Node(Node::Int(value)) => u64::try_from(*value).ok(),
+                Raw::Node(Node::UInt(value)) => Some(*value),
                 raw => raw.as_str().and_then(|text| text.parse().ok()),
             };
-            parsed.ok_or_else(|| format!("expected integer between {range}, found {}", raw.kind()))
-        })
+            parsed.ok_or_else(|| format!("expected non-negative integer, found {}", raw.kind()))
+        })?;
+        let expected = if value < min {
+            format!("at least {min}")
+        } else if value > max {
+            format!("at most {max}")
+        } else {
+            return T::try_from(value).ok();
+        };
+        let path = setting.path;
+        self.diagnostics
+            .push(Diagnostic::new(ConfigError::OutOfRange { path, expected }).involving(&[setting]));
+        None
     }
 
-    fn enumeration<T: ValueEnum>(&mut self, path: &'static str) -> Option<T> {
-        self.get(path, |raw| {
+    fn enumeration<T: ValueEnum>(&mut self, setting: Setting) -> Option<T> {
+        self.get(setting, |raw| {
             raw.as_str()
                 .and_then(|text| T::from_str(text, false).ok())
                 .ok_or_else(|| {
@@ -501,8 +518,8 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves a list: comma-separated text, or a YAML sequence of strings.
-    fn list(&mut self, path: &'static str) -> Option<Vec<String>> {
-        self.get(path, |raw| match raw {
+    fn list(&mut self, setting: Setting) -> Option<Vec<String>> {
+        self.get(setting, |raw| match raw {
             Raw::Text(text) => {
                 let items: Vec<String> = text.split(',').map(|item| item.trim().to_owned()).collect();
                 if items.iter().any(String::is_empty) {
@@ -522,8 +539,8 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    fn enum_list<T: ValueEnum>(&mut self, path: &'static str) -> Option<Vec<T>> {
-        let items = self.list(path)?;
+    fn enum_list<T: ValueEnum>(&mut self, setting: Setting) -> Option<Vec<T>> {
+        let items = self.list(setting)?;
         let parsed: Option<Vec<T>> = items.iter().map(|item| T::from_str(item, false).ok()).collect();
         if parsed.is_none() {
             let names: Vec<String> = T::value_variants()
@@ -531,21 +548,28 @@ impl<'a> Resolver<'a> {
                 .filter_map(ValueEnum::to_possible_value)
                 .map(|value| value.get_name().to_owned())
                 .collect();
-            self.invalid(path, format!("expected items from {}", names.join(", ")));
+            self.invalid(setting, format!("expected items from {}", names.join(", ")));
         }
         parsed
     }
 
-    /// Resolves a path setting; file values expand `~` and resolve against the file's directory.
-    fn path(&mut self, path: &'static str, expand_env_tilde: bool) -> Option<PathBuf> {
-        let value = PathBuf::from(self.string(path)?);
+    /// Resolves a path setting by its [`Kind::Path`] rule.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `setting` is not a [`Kind::Path`], a mistake in the setting table.
+    fn path(&mut self, setting: Setting) -> Option<PathBuf> {
+        let Kind::Path { home_from_env } = setting.kind else {
+            unreachable!("{} is not a path setting", setting.path);
+        };
+        let value = PathBuf::from(self.string(setting)?);
         let home = self.options.home.as_deref();
-        Some(match self.sources.get(path) {
+        Some(match self.sources.get(setting.path) {
             // An empty value stays empty so the section's checks still see it.
             Some(Source::File { .. }) if !value.as_os_str().is_empty() => {
                 self.relative_to_file(&ssh::expand_tilde(&value, home))
             }
-            _ if expand_env_tilde => ssh::expand_tilde(&value, home),
+            _ if home_from_env => ssh::expand_tilde(&value, home),
             _ => value,
         })
     }
@@ -557,10 +581,11 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Records a cast error for `path`; its source is attached on failure.
-    fn invalid(&mut self, path: &'static str, reason: String) {
+    /// Records a cast error for `setting`; its source is attached on failure.
+    fn invalid(&mut self, setting: Setting, reason: String) {
+        let path = setting.path;
         self.diagnostics
-            .push(Diagnostic::new(ConfigError::InvalidValue { path, reason }).involving(&[path]));
+            .push(Diagnostic::new(ConfigError::InvalidValue { path, reason }).involving(&[setting]));
     }
 
     /// Resolves every setting into a [`Config`] and runs `validate()`.
@@ -568,24 +593,24 @@ impl<'a> Resolver<'a> {
     /// Cast errors stop before validation, since rules on half-cast values
     /// would only add noise.
     fn build(&mut self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
-        let transport = self.enumeration("transport").unwrap_or(Transport::Stdio);
-        let log_level = self.enumeration("log_level").unwrap_or_default();
+        let transport = self.enumeration(env::TRANSPORT).unwrap_or(Transport::Stdio);
+        let log_level = self.enumeration(env::LOG_LEVEL).unwrap_or_default();
         let database = self.database();
         let http = (transport == Transport::Http).then(|| self.http());
-        let pii = self.bool("pii.enabled").unwrap_or(false).then(|| self.pii());
-        let ssh_set: Vec<&'static str> = SETTINGS
+        let pii = self.bool(env::PII_ENABLE).unwrap_or(false).then(|| self.pii());
+        let ssh_set: Vec<Setting> = SETTINGS
             .iter()
-            .map(|s| s.path)
-            .filter(|path| path.starts_with("ssh.") && self.is_set(path))
+            .copied()
+            .filter(|setting| setting.path.starts_with("ssh.") && self.is_set(*setting))
             .collect();
-        let ssh = if ssh_set.contains(&"ssh.host") {
+        let ssh = if ssh_set.contains(&env::SSH_HOST) {
             Some(Ok(self.ssh()))
         } else if ssh_set.is_empty() {
             None
         } else {
             Some(Err(Diagnostic::new(ConfigError::MissingSshHost)
                 .involving(&ssh_set)
-                .missing(&["ssh.host"])))
+                .missing(&[env::SSH_HOST])))
         };
         if !self.diagnostics.is_empty() {
             return Err(std::mem::take(&mut self.diagnostics));
@@ -601,7 +626,7 @@ impl<'a> Resolver<'a> {
         }
         if !ssh_set.is_empty() && database.backend == DatabaseBackend::Sqlite {
             diagnostics
-                .push(Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&["ssh.host", "database.backend"]));
+                .push(Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]));
         }
         let ssh = match ssh {
             Some(Ok(ssh)) => {
@@ -631,11 +656,11 @@ impl<'a> Resolver<'a> {
 
     fn database(&mut self) -> DatabaseConfig {
         let backend = self
-            .enumeration("database.backend")
+            .enumeration(env::DB_BACKEND)
             .unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
         let name = self
-            .string("database.name")
-            .map(|name| match self.sources.get("database.name") {
+            .string(env::DB_NAME)
+            .map(|name| match self.sources.get(env::DB_NAME.path) {
                 Some(Source::File { .. })
                     if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
@@ -645,92 +670,88 @@ impl<'a> Resolver<'a> {
                 }
                 _ => name,
             });
-        let path_string = |r: &mut Self, path| r.path(path, false).map(|p| p.display().to_string());
+        let path_string = |r: &mut Self, setting| r.path(setting).map(|p| p.display().to_string());
         DatabaseConfig {
             backend,
             host: self
-                .string("database.host")
+                .string(env::DB_HOST)
                 .unwrap_or_else(|| DatabaseConfig::DEFAULT_HOST.into()),
-            port: self
-                .int("database.port", "0 and 65535")
-                .unwrap_or_else(|| backend.default_port()),
+            port: self.int(env::DB_PORT).unwrap_or_else(|| backend.default_port()),
             user: self
-                .string("database.user")
+                .string(env::DB_USER)
                 .unwrap_or_else(|| backend.default_user().into()),
-            password: self.string("database.password").map(Into::into),
+            password: self.string(env::DB_PASSWORD).map(Into::into),
             name,
-            charset: self.string("database.charset"),
-            ssl: self.bool("database.ssl").unwrap_or(DatabaseConfig::DEFAULT_SSL),
-            ssl_ca: path_string(self, "database.ssl_ca"),
-            ssl_cert: path_string(self, "database.ssl_cert"),
-            ssl_key: path_string(self, "database.ssl_key"),
+            charset: self.string(env::DB_CHARSET),
+            ssl: self.bool(env::DB_SSL).unwrap_or(DatabaseConfig::DEFAULT_SSL),
+            ssl_ca: path_string(self, env::DB_SSL_CA),
+            ssl_cert: path_string(self, env::DB_SSL_CERT),
+            ssl_key: path_string(self, env::DB_SSL_KEY),
             ssl_verify_cert: self
-                .bool("database.ssl_verify_cert")
+                .bool(env::DB_SSL_VERIFY_CERT)
                 .unwrap_or(DatabaseConfig::DEFAULT_SSL_VERIFY_CERT),
             read_only: self
-                .bool("database.read_only")
+                .bool(env::DB_READ_ONLY)
                 .unwrap_or(DatabaseConfig::DEFAULT_READ_ONLY),
             max_pool_size: self
-                .int("database.max_pool_size", "1 and 4294967295")
+                .int(env::DB_MAX_POOL_SIZE)
                 .unwrap_or(DatabaseConfig::DEFAULT_MAX_POOL_SIZE),
-            connection_timeout: self.int("database.connection_timeout", "1 and 18446744073709551615"),
+            connection_timeout: self.int(env::DB_CONNECTION_TIMEOUT),
             query_timeout: self
-                .int("database.query_timeout", "0 and 18446744073709551615")
+                .int(env::DB_QUERY_TIMEOUT)
                 .unwrap_or(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS),
-            page_size: self
-                .int("database.page_size", "1 and 500")
-                .unwrap_or(DatabaseConfig::DEFAULT_PAGE_SIZE),
+            page_size: self.int(env::DB_PAGE_SIZE).unwrap_or(DatabaseConfig::DEFAULT_PAGE_SIZE),
         }
     }
 
     fn http(&mut self) -> HttpConfig {
         HttpConfig {
             host: self
-                .string("http.host")
+                .string(env::HTTP_HOST)
                 .unwrap_or_else(|| HttpConfig::DEFAULT_HOST.into()),
-            port: self.int("http.port", "0 and 65535").unwrap_or(HttpConfig::DEFAULT_PORT),
+            port: self.int(env::HTTP_PORT).unwrap_or(HttpConfig::DEFAULT_PORT),
             allowed_origins: self
-                .list("http.allowed_origins")
+                .list(env::HTTP_ALLOWED_ORIGINS)
                 .unwrap_or_else(HttpConfig::default_allowed_origins),
             allowed_hosts: self
-                .list("http.allowed_hosts")
+                .list(env::HTTP_ALLOWED_HOSTS)
                 .unwrap_or_else(HttpConfig::default_allowed_hosts),
-            auth_token: self.string("http.auth_token").map(Into::into),
-            allow_unauthenticated: self.bool("http.allow_unauthenticated").unwrap_or(false),
+            auth_token: self.string(env::HTTP_AUTH_TOKEN).map(Into::into),
+            allow_unauthenticated: self.bool(env::HTTP_ALLOW_UNAUTHENTICATED).unwrap_or(false),
         }
     }
 
     fn pii(&mut self) -> PiiConfig {
         PiiConfig {
             operator: self
-                .enumeration::<PiiOperator>("pii.operator")
+                .enumeration::<PiiOperator>(env::PII_OPERATOR)
                 .unwrap_or(PiiConfig::DEFAULT_OPERATOR),
-            categories: self.enum_list::<PiiCategory>("pii.categories"),
-            ner_enabled: self.bool("pii.ner_enabled").unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
-            ner_model: self.path("pii.ner_model", false),
+            categories: self.enum_list::<PiiCategory>(env::PII_CATEGORIES),
+            ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
+            ner_model: self.path(env::PII_NER_MODEL),
         }
     }
 
     fn ssh(&mut self) -> SshConfig {
         let home = self.options.home.clone();
         SshConfig {
-            host: self.string("ssh.host").unwrap_or_default(),
-            port: self.int("ssh.port", "1 and 65535").unwrap_or(SshConfig::DEFAULT_PORT),
-            user: self.string("ssh.user").unwrap_or_default(),
-            password: self.string("ssh.password").map(Into::into),
-            key: self.path("ssh.key", true),
-            key_passphrase: self.string("ssh.key_passphrase").map(Into::into),
+            host: self.string(env::SSH_HOST).unwrap_or_default(),
+            port: self.int(env::SSH_PORT).unwrap_or(SshConfig::DEFAULT_PORT),
+            user: self.string(env::SSH_USER).unwrap_or_default(),
+            password: self.string(env::SSH_PASSWORD).map(Into::into),
+            key: self.path(env::SSH_KEY),
+            key_passphrase: self.string(env::SSH_KEY_PASSPHRASE).map(Into::into),
             known_hosts: self
-                .path("ssh.known_hosts", true)
+                .path(env::SSH_KNOWN_HOSTS)
                 .or_else(|| home.map(|home| home.join(".ssh").join("known_hosts"))),
             strict_host_key_checking: self
-                .enumeration::<StrictHostKeyChecking>("ssh.strict_host_key_checking")
+                .enumeration::<StrictHostKeyChecking>(env::SSH_STRICT_HOST_KEY_CHECKING)
                 .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
             keepalive_interval: Duration::from_secs(
-                self.int("ssh.keepalive_interval", "0 and 18446744073709551615")
+                self.int(env::SSH_KEEPALIVE_INTERVAL)
                     .unwrap_or(SshConfig::DEFAULT_KEEPALIVE_INTERVAL_SECS),
             ),
-            local_port: self.int("ssh.local_port", "1 and 65535"),
+            local_port: self.int(env::SSH_LOCAL_PORT),
         }
     }
 }
@@ -964,7 +985,7 @@ mod tests {
         let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
         assert!(error.starts_with("configuration validation failed:"), "{error}");
         assert!(error.contains(&format!(
-            "database.port: expected integer between 0 and 65535, found string (from {file}:2:9)"
+            "database.port: expected non-negative integer, found string (from {file}:2:9)"
         )));
         assert!(error.contains(&format!(
             "database.ssl: expected boolean (true/false/1/0/t/f), found string (from {file}:3:8)"
@@ -1009,11 +1030,32 @@ mod tests {
         let error = fixture.err();
         let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
         assert!(
-            error.contains(&format!(
-                "database.page_size must be between 1 and 500 (from {file}:2:14)"
-            )),
+            error.contains(&format!("database.page_size must be at least 1 (from {file}:2:14)")),
             "{error}"
         );
+    }
+
+    #[test]
+    fn integer_ranges_come_from_the_setting_table() {
+        let error = Fixture::new()
+            .env("DBMCP_DB_PAGE_SIZE", "501")
+            .env("DBMCP_DB_PORT", "70000")
+            .env("DBMCP_DB_QUERY_TIMEOUT", "-1")
+            .err();
+        assert!(
+            error.contains("database.page_size must be at most 500 (from DBMCP_DB_PAGE_SIZE)"),
+            "{error}"
+        );
+        assert!(
+            error.contains("database.port must be at most 65535 (from DBMCP_DB_PORT)"),
+            "{error}"
+        );
+        assert!(
+            error.contains("database.query_timeout: expected non-negative integer, found string"),
+            "{error}"
+        );
+        let loaded = Fixture::new().env("DBMCP_DB_PAGE_SIZE", "500").ok();
+        assert_eq!(loaded.config.database.page_size, 500);
     }
 
     #[test]
@@ -1186,14 +1228,14 @@ mod tests {
             panic!("one diagnostic: {error}");
         };
         assert!(matches!(diagnostic.error, ConfigError::MissingSshHost));
-        assert_eq!(diagnostic.missing, ["ssh.host"]);
+        assert_eq!(diagnostic.missing, [env::SSH_HOST]);
         let file = fixture.dir.path().join("dbmcp.yaml");
         assert_eq!(
             diagnostic.involved,
             [
-                ("ssh.port", Some(Source::Env("DBMCP_SSH_PORT"))),
+                (env::SSH_PORT, Some(Source::Env("DBMCP_SSH_PORT"))),
                 (
-                    "ssh.user",
+                    env::SSH_USER,
                     Some(Source::File {
                         path: file.clone(),
                         line: 2,
@@ -1213,7 +1255,7 @@ mod tests {
     fn cast_errors_stop_before_validation() {
         let error = Fixture::new()
             .env("DBMCP_DB_PORT", "x")
-            .env("DBMCP_DB_PAGE_SIZE", "0")
+            .env("DBMCP_DB_BACKEND", "sqlite")
             .load()
             .expect_err("bad port");
         let [diagnostic] = error.diagnostics() else {
