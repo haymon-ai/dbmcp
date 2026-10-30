@@ -89,7 +89,7 @@ impl HttpConfig {
     /// # Errors
     ///
     /// Returns one [`Diagnostic`] per failing rule.
-    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
+    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
         if self.host.trim().is_empty() {
             errors.push(Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]));
@@ -123,7 +123,8 @@ impl HttpConfig {
         );
         if self.allowed_hosts.is_empty() {
             errors.push(
-                Diagnostic::new(ConfigError::EmptyList("http.allowed_hosts")).involving(&[env::HTTP_ALLOWED_HOSTS]),
+                Diagnostic::new(ConfigError::EmptyList(env::HTTP_ALLOWED_HOSTS.path))
+                    .involving(&[env::HTTP_ALLOWED_HOSTS]),
             );
         }
         errors.extend(duplicates(env::HTTP_ALLOWED_ORIGINS, &self.allowed_origins));
@@ -133,10 +134,10 @@ impl HttpConfig {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn config_with_host(host: &str) -> HttpConfig {
+    pub(crate) fn config_with_host(host: &str) -> HttpConfig {
         HttpConfig {
             host: host.into(),
             port: HttpConfig::DEFAULT_PORT,

@@ -123,12 +123,13 @@ impl PiiConfig {
     ///
     /// Returns one [`Diagnostic`] per problem: `categories` is empty or repeats an
     /// entry, or when `ner_enabled` is set without a `ner_model` path.
-    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
+    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
-                errors
-                    .push(Diagnostic::new(ConfigError::EmptyList("pii.categories")).involving(&[env::PII_CATEGORIES]));
+                errors.push(
+                    Diagnostic::new(ConfigError::EmptyList(env::PII_CATEGORIES.path)).involving(&[env::PII_CATEGORIES]),
+                );
             }
             errors.extend(duplicates(env::PII_CATEGORIES, categories));
         }

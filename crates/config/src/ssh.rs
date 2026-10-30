@@ -91,7 +91,7 @@ impl SshConfig {
     /// # Errors
     ///
     /// Returns one [`Diagnostic`] per failing rule.
-    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
+    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
 
         if self.host.is_empty() {
@@ -115,7 +115,7 @@ impl SshConfig {
             && !key.is_file()
         {
             errors.push(
-                Diagnostic::new(ConfigError::FileNotFound("ssh.key", key.display().to_string()))
+                Diagnostic::new(ConfigError::FileNotFound(env::SSH_KEY.path, key.display().to_string()))
                     .involving(&[env::SSH_KEY]),
             );
         }
@@ -139,7 +139,7 @@ impl SshConfig {
 /// Requires at least one component after `~`, so `~`, `~/` and `~user`
 /// stay literal. Returns `path` unchanged when `home` is `None`.
 #[must_use]
-pub fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
+pub(crate) fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
     let Some(home) = home else {
         return path.to_path_buf();
     };
@@ -153,17 +153,11 @@ pub fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
     }
 }
 
-/// Returns the user's home directory, treating an empty path as absent.
-#[must_use]
-pub fn home_dir() -> Option<PathBuf> {
-    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn ssh_config() -> SshConfig {
+    pub(crate) fn ssh_config() -> SshConfig {
         SshConfig {
             host: "bastion.example.com".into(),
             port: SshConfig::DEFAULT_PORT,
