@@ -1024,7 +1024,6 @@ dependencies = [
 name = "dbmcp-config"
 version = "0.15.2"
 dependencies = [
- "clap",
  "http",
  "indexmap",
  "secrecy",

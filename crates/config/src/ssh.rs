@@ -9,7 +9,7 @@ use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 
 /// Host-key verification policy for the SSH tunnel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrictHostKeyChecking {
     /// Reject hosts missing from `known_hosts`.
     Yes,
@@ -17,6 +17,12 @@ pub enum StrictHostKeyChecking {
     AcceptNew,
     /// Disable host-key verification (insecure).
     No,
+}
+
+impl StrictHostKeyChecking {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] =
+        &[("yes", Self::Yes), ("accept-new", Self::AcceptNew), ("no", Self::No)];
 }
 
 impl std::fmt::Display for StrictHostKeyChecking {

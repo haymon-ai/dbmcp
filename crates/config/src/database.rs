@@ -6,7 +6,7 @@ use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 
 /// Supported database backends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseBackend {
     /// `MySQL` database.
     Mysql,
@@ -30,6 +30,14 @@ impl std::fmt::Display for DatabaseBackend {
 }
 
 impl DatabaseBackend {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("mysql", Self::Mysql),
+        ("mariadb", Self::Mariadb),
+        ("postgres", Self::Postgres),
+        ("sqlite", Self::Sqlite),
+    ];
+
     /// Returns the default port for this backend.
     #[must_use]
     pub fn default_port(self) -> u16 {

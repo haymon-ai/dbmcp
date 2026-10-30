@@ -6,7 +6,7 @@ use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
 /// Supported PII redaction operators.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PiiOperator {
     /// Replace each detected span with an entity-aware placeholder (default).
     #[default]
@@ -17,6 +17,16 @@ pub enum PiiOperator {
     Redact,
     /// Replace each detected span with a stable hex digest (SHA-256).
     Hash,
+}
+
+impl PiiOperator {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("replace", Self::Replace),
+        ("mask", Self::Mask),
+        ("redact", Self::Redact),
+        ("hash", Self::Hash),
+    ];
 }
 
 impl std::fmt::Display for PiiOperator {
@@ -33,9 +43,8 @@ impl std::fmt::Display for PiiOperator {
 /// PII categories selectable via the `pii.categories` setting.
 ///
 /// Mirror enum of [`dbmcp_pii::Category`]; the binary layer converts. The
-/// wire format (kebab-case) lives in `dbmcp-config` so `dbmcp-pii` stays
-/// `clap`-free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+/// wire format (kebab-case) lives in `dbmcp-config`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PiiCategory {
     /// Personal identifiers: names, emails, DOB.
     Personal,
@@ -51,6 +60,19 @@ pub enum PiiCategory {
     DigitalIdentity,
     /// Cryptocurrency wallet addresses.
     Crypto,
+}
+
+impl PiiCategory {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("personal", Self::Personal),
+        ("financial", Self::Financial),
+        ("government", Self::Government),
+        ("contact", Self::Contact),
+        ("network", Self::Network),
+        ("digital-identity", Self::DigitalIdentity),
+        ("crypto", Self::Crypto),
+    ];
 }
 
 impl std::fmt::Display for PiiCategory {

@@ -3,7 +3,7 @@
 /// Log severity levels for the MCP server.
 ///
 /// Parsed from the `log_level` setting; the CLI maps it to a tracing level.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     /// Only errors.
     Error,
@@ -16,6 +16,17 @@ pub enum LogLevel {
     Debug,
     /// All trace output.
     Trace,
+}
+
+impl LogLevel {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("error", Self::Error),
+        ("warn", Self::Warn),
+        ("info", Self::Info),
+        ("debug", Self::Debug),
+        ("trace", Self::Trace),
+    ];
 }
 
 impl std::fmt::Display for LogLevel {

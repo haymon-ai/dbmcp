@@ -16,8 +16,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::ValueEnum;
-
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::{self, EnvFile};
@@ -502,16 +500,14 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    fn enumeration<T: ValueEnum>(&mut self, setting: Setting) -> Option<T> {
+    /// Resolves an enum setting by matching its text against `choices`.
+    fn enumeration<T: Copy>(&mut self, setting: Setting, choices: &[(&str, T)]) -> Option<T> {
         self.get(setting, |raw| {
             raw.as_str()
-                .and_then(|text| T::from_str(text, false).ok())
+                .and_then(|text| choices.iter().find(|(name, _)| *name == text))
+                .map(|&(_, value)| value)
                 .ok_or_else(|| {
-                    let names: Vec<String> = T::value_variants()
-                        .iter()
-                        .filter_map(ValueEnum::to_possible_value)
-                        .map(|value| value.get_name().to_owned())
-                        .collect();
+                    let names: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
                     format!("expected one of {}", names.join(", "))
                 })
         })
@@ -539,15 +535,15 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    fn enum_list<T: ValueEnum>(&mut self, setting: Setting) -> Option<Vec<T>> {
+    /// Resolves a list setting whose items each match one of `choices`.
+    fn enum_list<T: Copy>(&mut self, setting: Setting, choices: &[(&str, T)]) -> Option<Vec<T>> {
         let items = self.list(setting)?;
-        let parsed: Option<Vec<T>> = items.iter().map(|item| T::from_str(item, false).ok()).collect();
+        let parsed: Option<Vec<T>> = items
+            .iter()
+            .map(|item| choices.iter().find(|(name, _)| name == item).map(|&(_, value)| value))
+            .collect();
         if parsed.is_none() {
-            let names: Vec<String> = T::value_variants()
-                .iter()
-                .filter_map(ValueEnum::to_possible_value)
-                .map(|value| value.get_name().to_owned())
-                .collect();
+            let names: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
             self.invalid(setting, format!("expected items from {}", names.join(", ")));
         }
         parsed
@@ -593,8 +589,10 @@ impl<'a> Resolver<'a> {
     /// Cast errors stop before validation, since rules on half-cast values
     /// would only add noise.
     fn build(&mut self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
-        let transport = self.enumeration(env::TRANSPORT).unwrap_or(Transport::Stdio);
-        let log_level = self.enumeration(env::LOG_LEVEL).unwrap_or_default();
+        let transport = self
+            .enumeration(env::TRANSPORT, Transport::CHOICES)
+            .unwrap_or(Transport::Stdio);
+        let log_level = self.enumeration(env::LOG_LEVEL, LogLevel::CHOICES).unwrap_or_default();
         let database = self.database();
         let http = (transport == Transport::Http).then(|| self.http());
         let pii = self.bool(env::PII_ENABLE).unwrap_or(false).then(|| self.pii());
@@ -656,7 +654,7 @@ impl<'a> Resolver<'a> {
 
     fn database(&mut self) -> DatabaseConfig {
         let backend = self
-            .enumeration(env::DB_BACKEND)
+            .enumeration(env::DB_BACKEND, DatabaseBackend::CHOICES)
             .unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
         let name = self
             .string(env::DB_NAME)
@@ -724,9 +722,9 @@ impl<'a> Resolver<'a> {
     fn pii(&mut self) -> PiiConfig {
         PiiConfig {
             operator: self
-                .enumeration::<PiiOperator>(env::PII_OPERATOR)
+                .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
                 .unwrap_or(PiiConfig::DEFAULT_OPERATOR),
-            categories: self.enum_list::<PiiCategory>(env::PII_CATEGORIES),
+            categories: self.enum_list(env::PII_CATEGORIES, PiiCategory::CHOICES),
             ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
             ner_model: self.path(env::PII_NER_MODEL),
         }
@@ -745,7 +743,7 @@ impl<'a> Resolver<'a> {
                 .path(env::SSH_KNOWN_HOSTS)
                 .or_else(|| home.map(|home| home.join(".ssh").join("known_hosts"))),
             strict_host_key_checking: self
-                .enumeration::<StrictHostKeyChecking>(env::SSH_STRICT_HOST_KEY_CHECKING)
+                .enumeration(env::SSH_STRICT_HOST_KEY_CHECKING, StrictHostKeyChecking::CHOICES)
                 .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
             keepalive_interval: Duration::from_secs(
                 self.int(env::SSH_KEEPALIVE_INTERVAL)
