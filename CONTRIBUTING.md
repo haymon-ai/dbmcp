@@ -61,6 +61,14 @@ This project follows the [Microsoft Pragmatic Rust Guidelines](https://microsoft
 - **First sentence**: Keep the summary sentence under 15 words.
 - **Error/Panic sections**: Include `# Errors` and `# Panics` sections in doc comments when applicable.
 
+### Adding a Setting
+
+Settings have no CLI flag. Each one has a YAML key path and an env var, both declared in the `SETTINGS` table in `crates/config/src/env.rs`; the loader in `crates/config/src/loader.rs` reads and casts it.
+
+- **YAML key**: the Rust field name in its section (`database.read_only`, `pii.ner_enabled`).
+- **Env var**: hand-picked, not derived from the key path: `DBMCP_` + section prefix (`DB_`, `HTTP_`, `PII_`, `SSH_`; none for top-level settings) + a SCREAMING_SNAKE concept name. Deliberate exceptions are fine (`DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Never rename or alias an existing name.
+- Document the new row in `docs/content/docs/configuration.mdx`.
+
 ### Dependencies
 
 Adding or updating dependencies requires discussion. If your change needs a new crate, mention it in your PR description with a justification for why the dependency is necessary.

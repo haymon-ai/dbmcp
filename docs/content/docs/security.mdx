@@ -54,10 +54,10 @@ Database and table names are validated to contain only alphanumeric characters a
 
 ## HTTP Transport Authentication
 
-The `http` transport serves the database to any caller that can reach the port, using the server's own database credentials. Set `DBMCP_HTTP_AUTH_TOKEN` (or `--auth-token`) to require `Authorization: Bearer <token>` on every request. Missing or wrong tokens get `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dbmcp"`; tokens are compared in constant time and never logged.
+The `http` transport serves the database to any caller that can reach the port, using the server's own database credentials. Set `DBMCP_HTTP_AUTH_TOKEN` (or `http.auth_token` in the config file) to require `Authorization: Bearer <token>` on every request. Missing or wrong tokens get `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dbmcp"`; tokens are compared in constant time and never logged.
 
 - **Loopback binds** (the default `127.0.0.1`, `::1`, `localhost`) work without a token.
-- **Non-loopback binds** (e.g. `--host 0.0.0.0`) refuse to start without a token. `--dangerously-allow-unauthenticated` overrides this — use it only behind a reverse proxy that authenticates callers.
+- **Non-loopback binds** (e.g. `DBMCP_HTTP_HOST=0.0.0.0`) refuse to start without a token. `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED=true` (`http.allow_unauthenticated`) overrides this — use it only behind a reverse proxy that authenticates callers.
 
 The `Origin` and `Host` allowlists remain enforced alongside the token. They stop browser-driven DNS-rebinding attacks, but a direct HTTP client can send any header value, so they are **not** authentication.
 
@@ -76,7 +76,7 @@ On Unix, a private key accessible by group or others triggers a startup warning 
 
 ## PII Redaction
 
-Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `--pii` / `DBMCP_PII_ENABLE`. Detection can be scoped to a subset of categories via `--pii-categories` / `DBMCP_PII_CATEGORIES`.
+Database MCP ships an optional PII redactor as defence-in-depth: even when the AI assistant has SELECT access to a table containing sensitive values, those values can be rewritten in tool output before they reach the model. The feature is **opt-in and off by default** — operators must enable it explicitly via `DBMCP_PII_ENABLE` / `pii.enabled`. Detection can be scoped to a subset of categories via `DBMCP_PII_CATEGORIES` / `pii.categories`.
 
 ### Scope
 
@@ -95,4 +95,4 @@ See [Features](/docs/features#pii-redaction) for the supported entity list and o
 
 ## Disabling Read-Only Mode
 
-Read-only mode can be explicitly disabled if you need write access. Set the `DBMCP_DB_READ_ONLY` environment variable to `false` or pass the `--db-read-only false` flag. This makes `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.
+Read-only mode can be explicitly disabled if you need write access. Set the `DBMCP_DB_READ_ONLY` environment variable to `false`, or `database.read_only: false` in the config file. This makes `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.

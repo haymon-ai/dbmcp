@@ -147,9 +147,11 @@ docker run --rm \
   # -e DBMCP_PII_ENABLE=true \
   # -e DBMCP_PII_OPERATOR=replace \
   # -e DBMCP_PII_CATEGORIES=financial,government \
+  -e DBMCP_TRANSPORT=http \
+  -e DBMCP_HTTP_HOST=0.0.0.0 \
   -e DBMCP_HTTP_AUTH_TOKEN=change-me \
   -p 9001:9001 \
-  ghcr.io/haymon-ai/dbmcp --transport http --host 0.0.0.0
+  ghcr.io/haymon-ai/dbmcp
 ```
 
 Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`).

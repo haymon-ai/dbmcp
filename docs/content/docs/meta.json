@@ -1,3 +1,3 @@
 {
-  "pages": ["index", "installation", "configuration", "features", "security", "license"]
+  "pages": ["index", "installation", "configuration", "config-file", "features", "security", "license"]
 }

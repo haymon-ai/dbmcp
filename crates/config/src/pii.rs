@@ -2,10 +2,11 @@
 
 use std::path::PathBuf;
 
-use crate::error::{ConfigError, ConfigErrors};
+use crate::env;
+use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
-/// Supported PII redaction operators exposed on the CLI.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+/// Supported PII redaction operators.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PiiOperator {
     /// Replace each detected span with an entity-aware placeholder (default).
     #[default]
@@ -16,6 +17,16 @@ pub enum PiiOperator {
     Redact,
     /// Replace each detected span with a stable hex digest (SHA-256).
     Hash,
+}
+
+impl PiiOperator {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("replace", Self::Replace),
+        ("mask", Self::Mask),
+        ("redact", Self::Redact),
+        ("hash", Self::Hash),
+    ];
 }
 
 impl std::fmt::Display for PiiOperator {
@@ -29,12 +40,11 @@ impl std::fmt::Display for PiiOperator {
     }
 }
 
-/// PII categories exposed on the CLI as `--pii-categories <comma-separated>`.
+/// PII categories selectable via the `pii.categories` setting.
 ///
 /// Mirror enum of [`dbmcp_pii::Category`]; the binary layer converts. The
-/// wire format (kebab-case) lives in `dbmcp-config` so `dbmcp-pii` stays
-/// `clap`-free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+/// wire format (kebab-case) lives in `dbmcp-config`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PiiCategory {
     /// Personal identifiers: names, emails, DOB.
     Personal,
@@ -50,6 +60,19 @@ pub enum PiiCategory {
     DigitalIdentity,
     /// Cryptocurrency wallet addresses.
     Crypto,
+}
+
+impl PiiCategory {
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[
+        ("personal", Self::Personal),
+        ("financial", Self::Financial),
+        ("government", Self::Government),
+        ("contact", Self::Contact),
+        ("network", Self::Network),
+        ("digital-identity", Self::DigitalIdentity),
+        ("crypto", Self::Crypto),
+    ];
 }
 
 impl std::fmt::Display for PiiCategory {
@@ -98,20 +121,25 @@ impl PiiConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] when `categories` is `Some(empty Vec)` or when
-    /// `ner_enabled` is set without a `ner_model` path. clap already rejects
-    /// unknown values for `--pii-categories`, so that check lives there.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per problem: `categories` is empty or repeats an
+    /// entry, or when `ner_enabled` is set without a `ner_model` path.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
-        if let Some(cats) = &self.categories
-            && cats.is_empty()
-        {
-            errors.push(ConfigError::PiiCategoriesEmpty);
+        if let Some(categories) = &self.categories {
+            if categories.is_empty() {
+                errors
+                    .push(Diagnostic::new(ConfigError::EmptyList("pii.categories")).involving(&[env::PII_CATEGORIES]));
+            }
+            errors.extend(duplicates(env::PII_CATEGORIES, categories));
         }
         if self.ner_enabled && self.ner_model.is_none() {
-            errors.push(ConfigError::PiiNerModelMissing);
+            errors.push(
+                Diagnostic::new(ConfigError::PiiNerModelMissing)
+                    .involving(&[env::PII_NER_ENABLE])
+                    .missing(&[env::PII_NER_MODEL]),
+            );
         }
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        into_result(errors)
     }
 }
 
@@ -145,7 +173,9 @@ mod tests {
         };
         let errors = cfg.validate().expect_err("ner without model must error");
         assert!(
-            errors.iter().any(|e| matches!(e, ConfigError::PiiNerModelMissing)),
+            errors
+                .iter()
+                .any(|e| matches!(&e.error, ConfigError::PiiNerModelMissing)),
             "expected PiiNerModelMissing in {errors:?}"
         );
     }

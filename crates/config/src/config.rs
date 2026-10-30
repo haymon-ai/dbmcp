@@ -10,11 +10,10 @@ use crate::transport::Transport;
 ///
 /// Composes the selected [`Transport`] with [`DatabaseConfig`] and the
 /// optional [`HttpConfig`], [`PiiConfig`], and [`SshConfig`] sections.
-/// HTTP config is present only when `--transport http` / `DBMCP_TRANSPORT=http`
-/// is selected; PII config only when `--pii` / `DBMCP_PII_ENABLE` is on; SSH
-/// config only when `--ssh-host` / `DBMCP_SSH_HOST` is set. Logging is configured directly
-/// from CLI arguments before `Config` is constructed, so it is not part of
-/// this struct.
+/// HTTP config is present only when `transport` / `DBMCP_TRANSPORT` is `http`;
+/// PII config only when `pii.enabled` / `DBMCP_PII_ENABLE` is on; SSH
+/// config only when `ssh.host` / `DBMCP_SSH_HOST` is set. The log level is
+/// returned next to it in [`Loaded`](crate::Loaded), not part of this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// MCP transport the server runs on.

@@ -2,9 +2,11 @@
 
 use std::net::IpAddr;
 
-use crate::error::{ConfigError, ConfigErrors};
+use secrecy::{ExposeSecret, SecretString};
+
+use crate::env;
+use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 use crate::origin;
-use crate::secret::Secret;
 
 /// HTTP transport binding and security settings.
 #[derive(Clone, Debug)]
@@ -22,7 +24,7 @@ pub struct HttpConfig {
     pub allowed_hosts: Vec<String>,
 
     /// Bearer token required on every request; `None` disables authentication.
-    pub auth_token: Option<Secret>,
+    pub auth_token: Option<SecretString>,
 
     /// Permits a non-loopback bind without an `auth_token`.
     pub allow_unauthenticated: bool,
@@ -79,33 +81,54 @@ impl HttpConfig {
     /// - A non-loopback `host` MUST have an `auth_token` unless
     ///   `allow_unauthenticated` is set.
     /// - Every `allowed_origins` entry MUST parse as an origin
-    ///   (`<scheme>://<host>[:<port>|:*]` or `null`).
+    ///   (`<scheme>://<host>[:<port>|:*]` or `null`). An empty list is
+    ///   allowed: it disables server-side Origin validation.
+    /// - `allowed_hosts` MUST NOT be empty.
+    /// - Neither list may repeat an entry.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigErrors`] containing one [`ConfigError`] per failing rule.
-    pub fn validate(&self) -> Result<(), ConfigErrors> {
+    /// Returns one [`Diagnostic`] per failing rule.
+    pub fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
         if self.host.trim().is_empty() {
-            errors.push(ConfigError::EmptyHttpHost);
+            errors.push(Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]));
         }
-        if self.auth_token.as_ref().is_some_and(|t| t.expose().trim().is_empty()) {
-            errors.push(ConfigError::EmptyHttpAuthToken);
+        if self
+            .auth_token
+            .as_ref()
+            .is_some_and(|t| t.expose_secret().trim().is_empty())
+        {
+            errors.push(Diagnostic::new(ConfigError::EmptyHttpAuthToken).involving(&[env::HTTP_AUTH_TOKEN]));
         }
         if !self.host.trim().is_empty()
             && !self.is_loopback()
             && self.auth_token.is_none()
             && !self.allow_unauthenticated
         {
-            errors.push(ConfigError::UnauthenticatedNonLoopbackBind(self.host.clone()));
+            errors.push(
+                Diagnostic::new(ConfigError::UnauthenticatedNonLoopbackBind(self.host.clone()))
+                    .involving(&[env::HTTP_HOST])
+                    .missing(&[env::HTTP_AUTH_TOKEN, env::HTTP_ALLOW_UNAUTHENTICATED]),
+            );
         }
         errors.extend(
             self.allowed_origins
                 .iter()
                 .filter(|entry| !origin::is_valid_entry(entry))
-                .map(|entry| ConfigError::InvalidAllowedOrigin(entry.clone())),
+                .map(|entry| {
+                    Diagnostic::new(ConfigError::InvalidAllowedOrigin(entry.clone()))
+                        .involving(&[env::HTTP_ALLOWED_ORIGINS])
+                }),
         );
-        ConfigErrors::from_vec(errors).map_or(Ok(()), Err)
+        if self.allowed_hosts.is_empty() {
+            errors.push(
+                Diagnostic::new(ConfigError::EmptyList("http.allowed_hosts")).involving(&[env::HTTP_ALLOWED_HOSTS]),
+            );
+        }
+        errors.extend(duplicates(env::HTTP_ALLOWED_ORIGINS, &self.allowed_origins));
+        errors.extend(duplicates(env::HTTP_ALLOWED_HOSTS, &self.allowed_hosts));
+        into_result(errors)
     }
 }
 
@@ -124,8 +147,8 @@ mod tests {
         }
     }
 
-    fn is_unauthenticated_bind(e: &ConfigError) -> bool {
-        matches!(e, ConfigError::UnauthenticatedNonLoopbackBind(_))
+    fn is_unauthenticated_bind(e: &Diagnostic) -> bool {
+        matches!(e.error, ConfigError::UnauthenticatedNonLoopbackBind(_))
     }
 
     #[test]
@@ -138,7 +161,7 @@ mod tests {
     #[test]
     fn validate_rejects_empty_host() {
         let errors = config_with_host("").validate().expect_err("empty host must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+        assert!(errors.iter().any(|e| matches!(&e.error, ConfigError::EmptyHttpHost)));
     }
 
     #[test]
@@ -146,7 +169,7 @@ mod tests {
         let errors = config_with_host("   ")
             .validate()
             .expect_err("whitespace host must fail");
-        assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpHost)));
+        assert!(errors.iter().any(|e| matches!(&e.error, ConfigError::EmptyHttpHost)));
     }
 
     #[test]
@@ -196,7 +219,11 @@ mod tests {
                 ..config_with_host(HttpConfig::DEFAULT_HOST)
             };
             let errors = config.validate().expect_err("blank token must fail");
-            assert!(errors.iter().any(|e| matches!(e, ConfigError::EmptyHttpAuthToken)));
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| matches!(&e.error, ConfigError::EmptyHttpAuthToken))
+            );
         }
     }
 
@@ -214,7 +241,7 @@ mod tests {
         let errors = config.validate().expect_err("malformed origins must fail");
         let rejected: Vec<&str> = errors
             .iter()
-            .filter_map(|e| match e {
+            .filter_map(|e| match &e.error {
                 ConfigError::InvalidAllowedOrigin(entry) => Some(entry.as_str()),
                 _ => None,
             })

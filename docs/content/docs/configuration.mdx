@@ -1,65 +1,82 @@
 ---
 title: Configuration
-description: Configure dbmcp with CLI flags, environment variables, and backend-specific defaults
+description: Every dbmcp setting with its YAML key, environment variable, type, default, and backend-specific behaviour
 ---
 
-Database MCP is configured through CLI flags and environment variables. This page documents every available option.
+Database MCP reads its settings from `DBMCP_*` environment variables, an optional env file, and an optional YAML config file. The command line only names those files (`--config`, `--env`); there is no per-setting flag. This page is the reference for every setting. For the file formats, `${}` interpolation, and path rules, see [Config File](/docs/config-file).
 
 ## Precedence
 
-Configuration values are resolved in this order (highest priority first):
+Each setting is resolved on its own, highest priority first:
 
-1. **CLI flags** — explicitly passed on the command line
-2. **Environment variables** — set by the MCP client (via `env` or `envFile` in server config)
-3. **Built-in defaults** — backend-aware defaults described below
+1. **Process environment** — `DBMCP_*` variables, typically set by the MCP client (via `env` or `envFile` in the server config)
+2. **Env file** — `DBMCP_*` keys in the file named by `--env` / `DBMCP_ENV_FILE`
+3. **Config file** — keys in the YAML file named by `--config` / `DBMCP_CONFIG`
+4. **Built-in defaults** — backend-aware defaults described below
 
-When the same option is set in multiple places, the higher-priority source wins.
+When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored. See [Config File § Precedence](/docs/config-file#precedence) for a worked example.
+
+## Value Formats
+
+The **Type** column in the tables below determines how a value is written:
+
+| Type | Environment variable / env file | YAML |
+|------|---------------------------------|------|
+| string | Text as-is | Any scalar; quote values YAML would read as another type (`password: "12345"`) |
+| integer | Decimal digits | Integer (quoted digits also work) |
+| seconds | Whole seconds as an integer | Integer |
+| boolean | `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False` | `true` / `false` (or a quoted string from the env set) |
+| enum | One of the listed values, lowercase kebab-case, case-sensitive | Same |
+| list | Comma-separated; items are trimmed, empty items are rejected | YAML sequence (`[a, b]` or one `- item` per line); replaces the default wholesale |
+| path | Relative paths resolve against the working directory | Relative paths resolve against the YAML file's directory; leading `~` expands |
+
+`yes`/`no`/`on`/`off` are **not** booleans and are rejected. A default of `—` or *unset* means the setting is absent until you set it.
 
 ## Transport
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--transport` | `DBMCP_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `transport` | `DBMCP_TRANSPORT` | enum | `stdio` | MCP transport: `stdio` or `http` |
 
-`--transport` defaults to `stdio`, which requires no additional configuration beyond the database options below.
+`transport` defaults to `stdio`, which requires no additional configuration beyond the database settings below.
 
 ## HTTP Transport
 
-These options are only used with `--transport http`; ignored under stdio:
+These settings are only used when `transport` is `http`; the whole `http` section is ignored under stdio:
 
-| CLI Flag | Default | Description |
-|----------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind host for the HTTP server |
-| `--port` | `9001` | Bind port for the HTTP server |
-| `--allowed-origins` | `http://localhost:*,http://127.0.0.1:*,http://[::1]:*,https://localhost:*,https://127.0.0.1:*,https://[::1]:*` | Allowed browser origins (comma-separated). Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup; pass `""` to disable `Origin` validation for non-browser deployments. |
-| `--allowed-hosts` | `localhost,127.0.0.1,::1` | Allowed host names (comma-separated). Enforced server-side; HTTP/2 `:authority` is honored. |
-| `--auth-token` | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Env: `DBMCP_HTTP_AUTH_TOKEN` (preferred — CLI args are visible in `ps`). Required for non-loopback binds. |
-| `--dangerously-allow-unauthenticated` | `false` | Allow a non-loopback bind without a token. Env: `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`. Only behind a reverse proxy that authenticates callers. |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `http.host` | `DBMCP_HTTP_HOST` | string | `127.0.0.1` | Bind host for the HTTP server |
+| `http.port` | `DBMCP_HTTP_PORT` | integer | `9001` | Bind port for the HTTP server |
+| `http.allowed_origins` | `DBMCP_HTTP_ALLOWED_ORIGINS` | list | `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`, `https://localhost:*`, `https://127.0.0.1:*`, `https://[::1]:*` | Allowed browser origins. Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup. An empty YAML list (`allowed_origins: []`) disables `Origin` validation for non-browser deployments; this is only expressible in YAML. |
+| `http.allowed_hosts` | `DBMCP_HTTP_ALLOWED_HOSTS` | list | `localhost`, `127.0.0.1`, `::1` | Allowed host names. Enforced server-side; HTTP/2 `:authority` is honored. An empty list is rejected. |
+| `http.auth_token` | `DBMCP_HTTP_AUTH_TOKEN` | string | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Required for non-loopback binds. |
+| `http.allow_unauthenticated` | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | boolean | `false` | Allow a non-loopback bind without a token. Only behind a reverse proxy that authenticates callers. |
 
-> **Security note**: Binding a non-loopback host (e.g. `--host 0.0.0.0`) without `DBMCP_HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
+> **Security note**: Binding a non-loopback host (e.g. `DBMCP_HTTP_HOST=0.0.0.0`) without `DBMCP_HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
 
-> **Security note**: The default `--allowed-origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `--allowed-origins` to the explicit origins you trust (e.g. `http://localhost:5173`).
+> **Security note**: The default `http.allowed_origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `DBMCP_HTTP_ALLOWED_ORIGINS` to the explicit origins you trust (e.g. `http://localhost:5173`).
 
 ## Database Connection
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-backend` | `DBMCP_DB_BACKEND` | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
-| `--db-host` | `DBMCP_DB_HOST` | `localhost` | Database host (as seen from the SSH server when tunnelling) |
-| `--db-port` | `DBMCP_DB_PORT` | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
-| `--db-user` | `DBMCP_DB_USER` | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
-| `--db-password` | `DBMCP_DB_PASSWORD` | — | Database password |
-| `--db-name` | `DBMCP_DB_NAME` | — | Database name, or file path for SQLite |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.backend` | `DBMCP_DB_BACKEND` | enum | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
+| `database.host` | `DBMCP_DB_HOST` | string | `localhost` | Database host (as seen from the SSH server when tunnelling) |
+| `database.port` | `DBMCP_DB_PORT` | integer | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
+| `database.user` | `DBMCP_DB_USER` | string | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
+| `database.password` | `DBMCP_DB_PASSWORD` | string | — | Database password |
+| `database.name` | `DBMCP_DB_NAME` | string / path | — | Database name, or file path for SQLite. Pinning a name hides `listDatabases`, `createDatabase`, and `dropDatabase` on MySQL/PostgreSQL. |
 
 ### Character Set
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-charset` | `DBMCP_DB_CHARSET` | — | Character set (**MySQL/MariaDB only**) |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.charset` | `DBMCP_DB_CHARSET` | string | — | Character set (**MySQL/MariaDB only**) |
 
 ## Backend Defaults
 
-Default values for `--db-port` and `--db-user` depend on the selected backend:
+Default values for `database.port` and `database.user` depend on the selected backend:
 
 | Backend | Default Port | Default User |
 |---------|-------------|-------------|
@@ -68,32 +85,32 @@ Default values for `--db-port` and `--db-user` depend on the selected backend:
 | PostgreSQL | `5432` | `postgres` |
 | SQLite | N/A | N/A |
 
-SQLite does not use host, port, or user — only `--db-name` (the file path) is required.
+SQLite does not use host, port, or user — only `database.name` (the file path) is required. In the YAML file, a relative SQLite path resolves against the file's directory; `:memory:` is passed through unchanged.
 
 ## SSL / TLS
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-ssl` | `DBMCP_DB_SSL` | `false` | Enable SSL for the database connection |
-| `--db-ssl-ca` | `DBMCP_DB_SSL_CA` | — | Path to CA certificate |
-| `--db-ssl-cert` | `DBMCP_DB_SSL_CERT` | — | Path to client certificate |
-| `--db-ssl-key` | `DBMCP_DB_SSL_KEY` | — | Path to client key |
-| `--db-ssl-verify-cert` | `DBMCP_DB_SSL_VERIFY_CERT` | `true` | Verify the server certificate |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.ssl` | `DBMCP_DB_SSL` | boolean | `false` | Enable SSL for the database connection |
+| `database.ssl_ca` | `DBMCP_DB_SSL_CA` | path | — | Path to CA certificate |
+| `database.ssl_cert` | `DBMCP_DB_SSL_CERT` | path | — | Path to client certificate |
+| `database.ssl_key` | `DBMCP_DB_SSL_KEY` | path | — | Path to client key |
+| `database.ssl_verify_cert` | `DBMCP_DB_SSL_VERIFY_CERT` | boolean | `true` | Verify the server certificate |
 
-When `--db-ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
+When `database.ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
 
 ## Server Behavior
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--db-read-only` | `DBMCP_DB_READ_ONLY` | `true` | Enable read-only mode |
-| `--db-max-pool-size` | `DBMCP_DB_MAX_POOL_SIZE` | `5` | Maximum database connection pool size |
-| `--db-connection-timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | — | Connection timeout in seconds |
-| `--db-query-timeout` | `DBMCP_DB_QUERY_TIMEOUT` | `30` | Query execution timeout in seconds |
-| `--db-page-size` | `DBMCP_DB_PAGE_SIZE` | `100` | Max items per paginated tool response (range 1–500) |
-| `--log-level` | `DBMCP_LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.read_only` | `DBMCP_DB_READ_ONLY` | boolean | `true` | Enable read-only mode |
+| `database.max_pool_size` | `DBMCP_DB_MAX_POOL_SIZE` | integer | `5` | Maximum database connection pool size (at least 1) |
+| `database.connection_timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | seconds | — | Connection timeout (at least 1; unset uses the driver default) |
+| `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query execution timeout (`0` disables it) |
+| `database.page_size` | `DBMCP_DB_PAGE_SIZE` | integer | `100` | Max items per paginated tool response (range 1–500) |
+| `log_level` | `DBMCP_LOG_LEVEL` | enum | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace`. Logs go to stderr. |
 
-> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `--db-read-only=false` or `DBMCP_DB_READ_ONLY=false` to enable write tools.
+> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `DBMCP_DB_READ_ONLY=false` (or `read_only: false` under `database` in the config file) to enable write tools.
 
 The page size applies uniformly to every paginated tool; see the [Cursor Pagination](/docs/features#cursor-pagination) section on the Features page for the full protocol.
 
@@ -101,17 +118,19 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 
 Database MCP can rewrite detected PII spans inside query tool output. The feature is **opt-in and off by default** — applies to query tool response payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex recognizers only, no NER pass). It is **not** applied to logs, successful schema-discovery responses, or tool arguments. See [Features](/docs/features#pii-redaction) for the supported entity list.
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--pii` | `DBMCP_PII_ENABLE` | `false` | Enable PII redaction of query tool output |
-| `--pii-operator` | `DBMCP_PII_OPERATOR` | `replace` | Operator applied to detected PII spans |
-| `--pii-categories` | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* | Comma-separated category subset for the analyzer registry |
-| `--pii-ner` | `DBMCP_PII_NER_ENABLE` | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
-| `--pii-ner-model` | `DBMCP_PII_NER_MODEL` | *unset* | Path to the NER model directory (required with `--pii-ner`) |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `pii.enabled` | `DBMCP_PII_ENABLE` | boolean | `false` | Enable PII redaction of query tool output |
+| `pii.operator` | `DBMCP_PII_OPERATOR` | enum | `replace` | Operator applied to detected PII spans |
+| `pii.categories` | `DBMCP_PII_CATEGORIES` | list | *unset (all built-ins)* | Category subset for the analyzer registry |
+| `pii.ner_enabled` | `DBMCP_PII_NER_ENABLE` | boolean | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
+| `pii.ner_model` | `DBMCP_PII_NER_MODEL` | path | *unset* | Path to the NER model directory (required with `pii.ner_enabled`) |
+
+The other `pii` settings are ignored unless `pii.enabled` is true.
 
 ### Operator Values
 
-`--pii-operator` accepts one of the following values:
+`pii.operator` / `DBMCP_PII_OPERATOR` accepts one of the following values:
 
 - `replace` — replace each detected span with an entity-aware placeholder (for example, an `EMAIL_ADDRESS` match becomes `<EMAIL_ADDRESS>`)
 - `mask` — mask each detected span with `*` (length-preserving)
@@ -120,7 +139,7 @@ Database MCP can rewrite detected PII spans inside query tool output. The featur
 
 ### Category Values
 
-`--pii-categories` accepts a comma-separated list of kebab-case category names. Leaving the flag unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
+`pii.categories` / `DBMCP_PII_CATEGORIES` accepts a list of kebab-case category names (a YAML sequence, or comma-separated in the env var). Leaving it unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
 
 - `personal` — `EMAIL_ADDRESS`
 - `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
@@ -136,7 +155,7 @@ An empty list is rejected at startup. If the selected categories produce an empt
 
 The regex/checksum recognisers cannot catch free-form **person names**, **place names**, **organizations**, **nationality/religious/political groups**, or **facilities** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection on top of the regex layer. Which entities a given model can produce depends on its label set: a CoNLL model (e.g. `dslim/bert-base-NER`) yields person/location/organization, while an OntoNotes-class model additionally yields NRP and facility.
 
-It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `--pii` and `--pii-ner` are enabled and a model directory is supplied.
+It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `pii.enabled` and `pii.ner_enabled` are true and a model directory is supplied.
 
 Inference uses **ONNX Runtime** — there is **no external runtime library** to install: you need only the `dbmcp` binary and a model directory. The directory must contain:
 
@@ -181,37 +200,50 @@ ls ./models/bert-ner
 **3. Start `dbmcp` with the NER pass enabled, pointing at the directory:**
 
 ```bash
-dbmcp --db-backend sqlite --db-name app.db \
-  --pii true --pii-ner true --pii-ner-model ./models/bert-ner
+DBMCP_DB_BACKEND=sqlite DBMCP_DB_NAME=app.db \
+DBMCP_PII_ENABLE=true DBMCP_PII_NER_ENABLE=true DBMCP_PII_NER_MODEL=./models/bert-ner \
+  dbmcp
+```
+
+or, in a config file (relative paths resolve against the file's directory):
+
+```yaml
+database:
+  backend: sqlite
+  name: app.db
+pii:
+  enabled: true
+  ner_enabled: true
+  ner_model: ./models/bert-ner
 ```
 
 **4. Verify it loaded.** Loading is **fail-closed**: a missing file or an unusable model makes the server refuse to start, so a clean startup means the model loaded. To confirm the pass is rewriting output, run a `readQuery` over a column holding a person or place name and check the value comes back as `<PERSON>` / `<LOCATION>` (with the default `replace` operator).
 
 Behaviour notes:
 
-- **Fail-closed.** If `--pii-ner` is set but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
-- **Category-aware.** The NER pass respects `--pii-categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
+- **Fail-closed.** If `pii.ner_enabled` is true but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
+- **Category-aware.** The NER pass respects `pii.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
 
-> **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `--pii true`) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` flags alone have no effect.
+> **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `pii.enabled: true` in the config file) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` settings alone have no effect.
 
 ## SSH Tunnel
 
-Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `--ssh-host` / `DBMCP_SSH_HOST` is set.
+Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `ssh.host` / `DBMCP_SSH_HOST` is set.
 
-| CLI Flag | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `--ssh-host` | `DBMCP_SSH_HOST` | — | SSH server host; enables the tunnel when set |
-| `--ssh-port` | `DBMCP_SSH_PORT` | `22` | SSH server port |
-| `--ssh-user` | `DBMCP_SSH_USER` | — | SSH user |
-| `--ssh-password` | `DBMCP_SSH_PASSWORD` | — | SSH password |
-| `--ssh-key` | `DBMCP_SSH_KEY` | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
-| `--ssh-key-passphrase` | `DBMCP_SSH_KEY_PASSPHRASE` | — | Passphrase for the SSH private key |
-| `--ssh-known-hosts` | `DBMCP_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Path to known_hosts file (default: ~/.ssh/known_hosts) |
-| `--ssh-strict-host-key-checking` | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `yes` | Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification (insecure) |
-| `--ssh-keepalive-interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `30` | SSH keepalive interval in seconds (0 disables) |
-| `--ssh-local-port` | `DBMCP_SSH_LOCAL_PORT` | ephemeral | Local tunnel port (default: ephemeral) |
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `ssh.host` | `DBMCP_SSH_HOST` | string | — | SSH server host; enables the tunnel when set |
+| `ssh.port` | `DBMCP_SSH_PORT` | integer | `22` | SSH server port |
+| `ssh.user` | `DBMCP_SSH_USER` | string | — | SSH user |
+| `ssh.password` | `DBMCP_SSH_PASSWORD` | string | — | SSH password |
+| `ssh.key` | `DBMCP_SSH_KEY` | path | — | Path to SSH private key (OpenSSH, PKCS#1, PKCS#8, SEC1) |
+| `ssh.key_passphrase` | `DBMCP_SSH_KEY_PASSPHRASE` | string | — | Passphrase for the SSH private key |
+| `ssh.known_hosts` | `DBMCP_SSH_KNOWN_HOSTS` | path | `~/.ssh/known_hosts` | Path to known_hosts file |
+| `ssh.strict_host_key_checking` | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | enum | `yes` | Host key policy: `yes` rejects unknown hosts, `accept-new` trusts on first use, `no` disables verification (insecure) |
+| `ssh.keepalive_interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | seconds | `30` | SSH keepalive interval (`0` disables) |
+| `ssh.local_port` | `DBMCP_SSH_LOCAL_PORT` | integer | ephemeral | Local tunnel port |
 
-`DBMCP_SSH_USER` and one of `DBMCP_SSH_PASSWORD` / `DBMCP_SSH_KEY` are required with `DBMCP_SSH_HOST`. Setting any other `DBMCP_SSH_*` option without `DBMCP_SSH_HOST` is a startup error, as is `DBMCP_SSH_KEY_PASSPHRASE` without `DBMCP_SSH_KEY`. A leading `~` in `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` expands to your home directory; when no home directory can be determined, `DBMCP_SSH_KNOWN_HOSTS` must be set explicitly (unless the host-key policy is `no`).
+`ssh.user` and one of `ssh.password` / `ssh.key` are required with `ssh.host`. Setting any other `ssh` setting without `ssh.host` is a startup error, as is `ssh.key_passphrase` without `ssh.key`. A leading `~` in `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` expands to your home directory (in the YAML file, every path setting expands `~`); when no home directory can be determined, `ssh.known_hosts` must be set explicitly (unless the host-key policy is `no`). In YAML, an unquoted `strict_host_key_checking: no` is read as the string `no`, not a boolean, so it works as written.
 
 **Docker:** inside the container `~` is the image's home directory, not yours. Mount the private key and a `known_hosts` file into the container (readable by the container user) and point `DBMCP_SSH_KEY` / `DBMCP_SSH_KNOWN_HOSTS` at the mounted paths. Avoid `accept-new` with `--rm` containers: every new container starts with an empty `known_hosts` and trusts the first key it sees on each launch.
 
@@ -236,11 +268,11 @@ Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bas
 
 ### How It Works
 
-- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `--ssh-local-port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
+- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `ssh.local_port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
 - **`DBMCP_DB_HOST` and `DBMCP_DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
 - The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
 - If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
-- Keepalives are sent every `--ssh-keepalive-interval` seconds; when keepalives go unanswered for about four intervals (~2 minutes at the default 30 s) the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
+- Keepalives are sent every `ssh.keepalive_interval` seconds; when keepalives go unanswered for about four intervals (~2 minutes at the default 30 s) the session is treated as dead. `0` disables keepalives (a silently dropped connection is then only noticed when the operating system gives up on it).
 
 ### Authentication
 
@@ -299,7 +331,7 @@ Compare the fingerprint with one obtained out-of-band (e.g. from the server's co
 
 **Tool errors ending in `(SSH tunnel: …)`** — when the database cannot be reached and the tunnel has an unresolved failure (connect timeout, authentication, host key, channel open, or a lost session), the cause is appended to the tool error, e.g. `… (SSH tunnel: SSH authentication failed for deploy@bastion.example.com:22)`. Other errors (SQL errors, read-only rejections) never get the suffix. It disappears once a connection through the tunnel succeeds. Failed connects are also logged with their full error chain at `error` level; a lost session is logged at `warn`.
 
-**Windows: `os error 10013` with `--ssh-local-port`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or omit `--ssh-local-port` to use an ephemeral port.
+**Windows: `os error 10013` with `DBMCP_SSH_LOCAL_PORT`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or leave `ssh.local_port` unset to use an ephemeral port.
 
 **Windows: a different `known_hosts` than `ssh` uses** — Database MCP resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `DBMCP_SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
 
@@ -538,3 +570,102 @@ Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from 
 | Variable interpolation | `${VAR}` | No | `${env:VAR}` | `${env:VAR}` |
 | HTTP transport in config | Yes | No | Yes | Yes |
 | Project-scoped config | Yes | No | Yes | No |
+
+Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config", "/abs/path/dbmcp.yaml"]` or `"args": ["--env", "/abs/path/dbmcp.env"]`. See [Config File](/docs/config-file).
+
+## Migrating from CLI flags
+
+Earlier releases accepted one CLI flag per setting. Those flags are gone: passing one now fails with clap's `error: unexpected argument '--db-backend' found` (exit code 2). The only flags left are `--config`, `--env`, `-h`/`--help`, and `-V`/`--version`. `--transport` and `--log-level` moved too: use `DBMCP_TRANSPORT` / `transport` and `DBMCP_LOG_LEVEL` / `log_level`.
+
+Every `DBMCP_*` environment variable name is unchanged, so each removed flag maps to the variable that already backed it:
+
+| Removed flag | Env var | YAML key |
+|--------------|---------|----------|
+| `--transport` | `DBMCP_TRANSPORT` | `transport` |
+| `--log-level` | `DBMCP_LOG_LEVEL` | `log_level` |
+| `--host` | `DBMCP_HTTP_HOST` | `http.host` |
+| `--port` | `DBMCP_HTTP_PORT` | `http.port` |
+| `--allowed-origins` | `DBMCP_HTTP_ALLOWED_ORIGINS` | `http.allowed_origins` |
+| `--allowed-hosts` | `DBMCP_HTTP_ALLOWED_HOSTS` | `http.allowed_hosts` |
+| `--auth-token` | `DBMCP_HTTP_AUTH_TOKEN` | `http.auth_token` |
+| `--dangerously-allow-unauthenticated` | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | `http.allow_unauthenticated` |
+| `--db-backend` | `DBMCP_DB_BACKEND` | `database.backend` |
+| `--db-host` | `DBMCP_DB_HOST` | `database.host` |
+| `--db-port` | `DBMCP_DB_PORT` | `database.port` |
+| `--db-user` | `DBMCP_DB_USER` | `database.user` |
+| `--db-password` | `DBMCP_DB_PASSWORD` | `database.password` |
+| `--db-name` | `DBMCP_DB_NAME` | `database.name` |
+| `--db-charset` | `DBMCP_DB_CHARSET` | `database.charset` |
+| `--db-ssl` | `DBMCP_DB_SSL` | `database.ssl` |
+| `--db-ssl-ca` | `DBMCP_DB_SSL_CA` | `database.ssl_ca` |
+| `--db-ssl-cert` | `DBMCP_DB_SSL_CERT` | `database.ssl_cert` |
+| `--db-ssl-key` | `DBMCP_DB_SSL_KEY` | `database.ssl_key` |
+| `--db-ssl-verify-cert` | `DBMCP_DB_SSL_VERIFY_CERT` | `database.ssl_verify_cert` |
+| `--db-read-only` | `DBMCP_DB_READ_ONLY` | `database.read_only` |
+| `--db-max-pool-size` | `DBMCP_DB_MAX_POOL_SIZE` | `database.max_pool_size` |
+| `--db-connection-timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | `database.connection_timeout` |
+| `--db-query-timeout` | `DBMCP_DB_QUERY_TIMEOUT` | `database.query_timeout` |
+| `--db-page-size` | `DBMCP_DB_PAGE_SIZE` | `database.page_size` |
+| `--pii` | `DBMCP_PII_ENABLE` | `pii.enabled` |
+| `--pii-operator` | `DBMCP_PII_OPERATOR` | `pii.operator` |
+| `--pii-categories` | `DBMCP_PII_CATEGORIES` | `pii.categories` |
+| `--pii-ner` | `DBMCP_PII_NER_ENABLE` | `pii.ner_enabled` |
+| `--pii-ner-model` | `DBMCP_PII_NER_MODEL` | `pii.ner_model` |
+| `--ssh-host` | `DBMCP_SSH_HOST` | `ssh.host` |
+| `--ssh-port` | `DBMCP_SSH_PORT` | `ssh.port` |
+| `--ssh-user` | `DBMCP_SSH_USER` | `ssh.user` |
+| `--ssh-password` | `DBMCP_SSH_PASSWORD` | `ssh.password` |
+| `--ssh-key` | `DBMCP_SSH_KEY` | `ssh.key` |
+| `--ssh-key-passphrase` | `DBMCP_SSH_KEY_PASSPHRASE` | `ssh.key_passphrase` |
+| `--ssh-known-hosts` | `DBMCP_SSH_KNOWN_HOSTS` | `ssh.known_hosts` |
+| `--ssh-strict-host-key-checking` | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `ssh.strict_host_key_checking` |
+| `--ssh-keepalive-interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `ssh.keepalive_interval` |
+| `--ssh-local-port` | `DBMCP_SSH_LOCAL_PORT` | `ssh.local_port` |
+
+Other behaviour changes to check while migrating:
+
+- **Booleans are stricter.** Boolean env vars used to accept `yes`/`no` and `on`/`off` in any case. They now accept only `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, and `True`/`False`; anything else fails startup. A bare boolean flag such as `--pii` becomes `DBMCP_PII_ENABLE=true`.
+- **Empty values mean unset.** An empty `DBMCP_*` value counts as unset and falls through to the next source. In particular, `--allowed-origins ""` used to disable `Origin` validation; that is now only possible with `allowed_origins: []` under `http` in the config file.
+- **Lists** keep the comma-separated env format; in the config file, write them as YAML sequences.
+
+Before — settings passed as arguments in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [
+        "--db-backend", "postgres",
+        "--db-host", "localhost",
+        "--db-user", "postgres",
+        "--db-name", "myapp",
+        "--pii",
+        "--log-level", "debug"
+      ]
+    }
+  }
+}
+```
+
+After — the same settings as environment variables:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "env": {
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_NAME": "myapp",
+        "DBMCP_PII_ENABLE": "true",
+        "DBMCP_LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config", "/abs/path/dbmcp.yaml"]`; see [Config File](/docs/config-file).

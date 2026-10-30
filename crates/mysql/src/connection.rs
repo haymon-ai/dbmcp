@@ -10,6 +10,7 @@ use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
+use secrecy::ExposeSecret;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
 use tracing::info;
 
@@ -128,7 +129,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
         .username(&config.user);
 
     if let Some(ref password) = config.password {
-        conn_ops = conn_ops.password(password.expose());
+        conn_ops = conn_ops.password(password.expose_secret());
     }
     if !database.is_empty() {
         conn_ops = conn_ops.database(database);

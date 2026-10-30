@@ -18,6 +18,7 @@ dbmcp-sql = { workspace = true }
 dbmcp-sqlite = { workspace = true }
 dbmcp-ssh = { workspace = true }
 rmcp = { workspace = true }
+secrecy = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }

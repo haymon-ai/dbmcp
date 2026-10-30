@@ -13,6 +13,7 @@ use dbmcp_server::Server;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
+use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
@@ -85,7 +86,7 @@ fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &Ca
     let mut router = axum::Router::new().nest_service("/mcp", service);
     if let Some(token) = &http_config.auth_token {
         router = router.layer(axum::middleware::from_fn_with_state(
-            BearerAuth::new(token.expose()),
+            BearerAuth::new(token.expose_secret()),
             require_bearer,
         ));
     }
@@ -154,7 +155,8 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
-    use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Secret, Transport};
+    use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Transport};
+    use secrecy::SecretString;
     use tower::ServiceExt;
 
     fn sqlite_memory_db_config() -> DatabaseConfig {
@@ -181,7 +183,7 @@ mod tests {
             port: HttpConfig::DEFAULT_PORT,
             allowed_origins: origins,
             allowed_hosts: HttpConfig::default_allowed_hosts(),
-            auth_token: auth_token.map(Secret::from),
+            auth_token: auth_token.map(SecretString::from),
             allow_unauthenticated: false,
         };
         let config = Config {

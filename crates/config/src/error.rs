@@ -1,206 +1,305 @@
-//! Configuration validation errors and their non-empty-collection wrapper.
+//! Configuration problems: what went wrong and which settings it involves.
 //!
-//! [`ConfigError`] enumerates rules reachable past clap parsing.
-//! [`ConfigErrors`] is a non-empty collection wrapper used as the
-//! `Error` type for every per-section `TryFrom<&FooArguments> for FooConfig`
-//! impl in the binary crate, and as the return type of every
-//! [`DatabaseConfig::validate`] / [`HttpConfig::validate`] /
-//! [`PiiConfig::validate`] / [`SshConfig::validate`] call.
-//!
-//! [`DatabaseConfig::validate`]: crate::DatabaseConfig::validate
-//! [`HttpConfig::validate`]: crate::HttpConfig::validate
-//! [`PiiConfig::validate`]: crate::PiiConfig::validate
-//! [`SshConfig::validate`]: crate::SshConfig::validate
+//! [`ConfigError`] says what is wrong. [`Diagnostic`] wraps one with the
+//! settings its producer knows are involved: the ones whose values caused
+//! it and the required ones that are unset. Cast errors from the loader and
+//! rule violations from every section's `validate()` share this one type;
+//! the loader attaches each involved value's [`Source`] before rendering.
 
-/// Errors produced by the `Arguments`-to-`Config` conversions.
+use std::collections::HashMap;
+use std::fmt;
+
+use crate::env::Setting;
+use crate::source::Source;
+
+/// What is wrong with the configuration.
 ///
-/// Carries only rules reachable past clap parsing. Rules clap already
-/// rejects (integer ranges, enum membership) are not represented here.
+/// Each message names the setting by its dotted YAML key path.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// `DBMCP_DB_NAME` is required for `SQLite`.
-    #[error("DBMCP_DB_NAME (file path) is required for SQLite")]
+    /// A value could not be cast to its setting's type.
+    #[error("{path}: {reason}")]
+    InvalidValue {
+        /// Dotted YAML key path of the setting.
+        path: &'static str,
+        /// Value-free reason, e.g. `expected integer, found string`.
+        reason: String,
+    },
+
+    /// `database.name` is required for `SQLite`.
+    #[error("database.name (file path) is required for sqlite")]
     MissingSqliteDbName,
 
     /// A configured file (SSL certificate, SSH key) was not found.
-    #[error("{0} file not found: {1}")]
-    FileNotFound(String, String),
+    #[error("{0}: file not found: {1}")]
+    FileNotFound(&'static str, String),
+
+    /// A numeric setting is outside its accepted range.
+    #[error("{path} must be {expected}")]
+    OutOfRange {
+        /// Dotted YAML key path of the setting.
+        path: &'static str,
+        /// Human-readable accepted range, e.g. `at least 1`.
+        expected: String,
+    },
+
+    /// A list setting was set to an empty list.
+    #[error("{0} must not be empty when set")]
+    EmptyList(&'static str),
+
+    /// A list setting repeats an entry.
+    #[error("{0}: duplicate entry '{1}'")]
+    DuplicateListEntry(&'static str, String),
 
     /// HTTP bind host is empty or whitespace.
-    #[error("DBMCP_HTTP_HOST must not be empty")]
+    #[error("http.host must not be empty")]
     EmptyHttpHost,
 
     /// HTTP bearer token was supplied but is empty or whitespace.
-    #[error("DBMCP_HTTP_AUTH_TOKEN must not be empty when set")]
+    #[error("http.auth_token must not be empty when set")]
     EmptyHttpAuthToken,
 
     /// HTTP bind host is not loopback and no bearer token is configured.
-    #[error(
-        "refusing to bind HTTP transport to non-loopback host '{0}' without authentication; \
-         set DBMCP_HTTP_AUTH_TOKEN (--auth-token) or pass --dangerously-allow-unauthenticated"
-    )]
+    #[error("http.host: refusing to bind non-loopback host '{0}' without authentication")]
     UnauthenticatedNonLoopbackBind(String),
 
     /// An allowed-origins entry is not a valid origin.
     #[error(
-        "DBMCP_HTTP_ALLOWED_ORIGINS entry '{0}' is not a valid origin; \
+        "http.allowed_origins: entry '{0}' is not a valid origin; \
          expected `<scheme>://<host>[:<port>|:*]` or `null`"
     )]
     InvalidAllowedOrigin(String),
 
-    /// `DBMCP_PII_CATEGORIES` was supplied but the resolved list is empty.
-    #[error("DBMCP_PII_CATEGORIES must not be empty when set; remove the flag to fall back to defaults")]
-    PiiCategoriesEmpty,
-
-    /// `--pii-ner` was enabled without a `--pii-ner-model` path.
-    #[error("DBMCP_PII_NER_MODEL (model directory) is required when DBMCP_PII_NER_ENABLE is set")]
+    /// NER was enabled without a model path.
+    #[error("pii.ner_model (model directory) is required when pii.ner_enabled is set")]
     PiiNerModelMissing,
 
     /// SSH tunnelling was requested for the `SQLite` backend.
-    #[error("DBMCP_SSH_HOST is not supported with the sqlite backend")]
+    #[error("ssh.host: not supported with the sqlite backend")]
     SshSqliteUnsupported,
 
-    /// Other `DBMCP_SSH_*` options were set without `DBMCP_SSH_HOST`.
-    #[error("DBMCP_SSH_HOST is required when other DBMCP_SSH_* options are set")]
+    /// Other SSH settings were set without `ssh.host`.
+    #[error("ssh.host is required when other ssh settings are set")]
     MissingSshHost,
 
-    /// `DBMCP_SSH_HOST` was set to an empty string.
-    #[error("DBMCP_SSH_HOST must not be empty")]
+    /// `ssh.host` was set to an empty string.
+    #[error("ssh.host must not be empty")]
     EmptySshHost,
 
-    /// `DBMCP_SSH_HOST` was set without `DBMCP_SSH_USER`.
-    #[error("DBMCP_SSH_USER is required when DBMCP_SSH_HOST is set")]
+    /// `ssh.host` was set without `ssh.user`.
+    #[error("ssh.user is required when ssh.host is set")]
     MissingSshUser,
 
-    /// `DBMCP_SSH_HOST` was set without a password or key.
-    #[error("DBMCP_SSH_PASSWORD or DBMCP_SSH_KEY is required when DBMCP_SSH_HOST is set")]
+    /// `ssh.host` was set without a password or key.
+    #[error("ssh.password or ssh.key is required when ssh.host is set")]
     MissingSshAuth,
 
-    /// `DBMCP_SSH_KEY_PASSPHRASE` was set without `DBMCP_SSH_KEY`.
-    #[error("DBMCP_SSH_KEY_PASSPHRASE requires DBMCP_SSH_KEY")]
+    /// `ssh.key_passphrase` was set without `ssh.key`.
+    #[error("ssh.key_passphrase requires ssh.key")]
     SshKeyPassphraseWithoutKey,
 
     /// `known_hosts` could not be resolved and host-key checking is on.
-    #[error("DBMCP_SSH_KNOWN_HOSTS is required when the home directory cannot be determined")]
+    #[error("ssh.known_hosts is required when the home directory cannot be determined")]
     MissingSshKnownHosts,
 }
 
-/// Non-empty collection of [`ConfigError`]s preserving insertion order.
+/// One configuration problem plus the settings its producer says are involved.
 ///
-/// Externally observed wrappers always carry ≥ 1 error — [`Self::from_vec`]
-/// returns `None` for an empty input, and [`From<ConfigError>`] yields a
-/// single-element wrapper. The CLI's `TryFrom<&Arguments> for Config` impl
-/// accumulates across sections (database → http → pii → ssh) and returns
-/// `Ok(value)` when nothing was collected, never an empty wrapper.
-///
-/// Derefs to `&[ConfigError]` so callers can use slice methods directly
-/// (`iter`, `len`, indexing). `Display` renders each contained error on its
-/// own line, joined with `\n`, in stored order — no header, no count, no
-/// trailing newline.
-#[derive(Debug, thiserror::Error)]
-#[error("{}", ErrorList(&self.0))]
-pub struct ConfigErrors(Vec<ConfigError>);
-
-struct ErrorList<'a>(&'a [ConfigError]);
-
-impl std::fmt::Display for ErrorList<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, err) in self.0.iter().enumerate() {
-            if i > 0 {
-                writeln!(f)?;
-            }
-            write!(f, "{err}")?;
-        }
-        Ok(())
-    }
+/// Renders as the error, then a hint naming every way to set the
+/// [`missing`](Self::missing) settings, then the source of each involved
+/// setting that has one, e.g. `… ; set DBMCP_DB_NAME or database.name in the
+/// config file (from DBMCP_DB_BACKEND)`.
+#[derive(Debug)]
+pub struct Diagnostic {
+    /// What is wrong.
+    pub error: ConfigError,
+    /// Settings whose values caused the problem, each with its source once known.
+    pub involved: Vec<(Setting, Option<Source>)>,
+    /// Required settings that are unset; any one of them fixes the problem.
+    pub missing: Vec<Setting>,
 }
 
-impl ConfigErrors {
-    /// Wraps a non-empty `Vec`. Returns `None` when `errors` is empty.
+impl Diagnostic {
+    /// Wraps `error` with no involved or missing settings.
     #[must_use]
-    pub fn from_vec(errors: Vec<ConfigError>) -> Option<Self> {
-        if errors.is_empty() { None } else { Some(Self(errors)) }
+    pub fn new(error: ConfigError) -> Self {
+        Self {
+            error,
+            involved: Vec::new(),
+            missing: Vec::new(),
+        }
+    }
+
+    /// Adds settings whose values caused the problem.
+    #[must_use]
+    pub fn involving(mut self, settings: &[Setting]) -> Self {
+        self.involved.extend(settings.iter().map(|setting| (*setting, None)));
+        self
+    }
+
+    /// Adds required settings that are unset.
+    #[must_use]
+    pub fn missing(mut self, settings: &[Setting]) -> Self {
+        self.missing.extend_from_slice(settings);
+        self
+    }
+
+    /// Fills each involved setting's source from `sources`, keeping known ones.
+    pub fn attach_sources(&mut self, sources: &HashMap<&'static str, Source>) {
+        for (setting, source) in &mut self.involved {
+            if source.is_none() {
+                *source = sources.get(setting.path).cloned();
+            }
+        }
     }
 }
 
-impl std::ops::Deref for ConfigErrors {
-    type Target = [ConfigError];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl From<ConfigError> for Diagnostic {
+    fn from(error: ConfigError) -> Self {
+        Self::new(error)
     }
 }
 
-impl From<ConfigError> for ConfigErrors {
-    fn from(err: ConfigError) -> Self {
-        Self(vec![err])
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.error)?;
+        match self.missing.as_slice() {
+            [] => {}
+            [setting] => write!(f, "; set {} or {} in the config file", setting.env, setting.path)?,
+            many => {
+                let routes: Vec<String> = many
+                    .iter()
+                    .map(|setting| format!("{} ({})", setting.env, setting.path))
+                    .collect();
+                write!(f, "; set one of {}", routes.join(", "))?;
+            }
+        }
+        let sourced: Vec<(&str, &Source)> = self
+            .involved
+            .iter()
+            .filter_map(|(setting, source)| source.as_ref().map(|source| (setting.path, source)))
+            .collect();
+        match sourced.as_slice() {
+            [] => Ok(()),
+            [(_, source)] if self.involved.len() == 1 => write!(f, " (from {source})"),
+            many => {
+                let list: Vec<String> = many
+                    .iter()
+                    .map(|(path, source)| format!("{path} from {source}"))
+                    .collect();
+                write!(f, " ({})", list.join("; "))
+            }
+        }
     }
 }
 
-impl IntoIterator for ConfigErrors {
-    type Item = ConfigError;
-    type IntoIter = std::vec::IntoIter<ConfigError>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+/// Converts collected diagnostics into a `validate()` result.
+///
+/// # Errors
+///
+/// Returns `diagnostics` when it is not empty.
+pub(crate) fn into_result(diagnostics: Vec<Diagnostic>) -> Result<(), Vec<Diagnostic>> {
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
     }
+}
+
+/// Reports each entry of `list` that repeats an earlier one.
+pub(crate) fn duplicates<T: PartialEq + fmt::Display>(
+    setting: Setting,
+    list: &[T],
+) -> impl Iterator<Item = Diagnostic> + '_ {
+    list.iter()
+        .enumerate()
+        .filter(|(i, entry)| list[..*i].contains(entry))
+        .map(move |(_, entry)| {
+            Diagnostic::new(ConfigError::DuplicateListEntry(setting.path, entry.to_string())).involving(&[setting])
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env;
 
-    fn missing_name() -> ConfigError {
-        ConfigError::MissingSqliteDbName
-    }
-
-    fn missing_ca() -> ConfigError {
-        ConfigError::FileNotFound("DBMCP_DB_SSL_CA".into(), "/nope/ca.pem".into())
+    fn env_source(name: &'static str) -> Source {
+        Source::Env(name)
     }
 
     #[test]
-    fn from_vec_empty_is_none() {
-        assert!(ConfigErrors::from_vec(Vec::new()).is_none());
+    fn bare_diagnostic_renders_the_error() {
+        let diagnostic = Diagnostic::new(ConfigError::EmptySshHost);
+        assert_eq!(diagnostic.to_string(), "ssh.host must not be empty");
     }
 
     #[test]
-    fn from_vec_non_empty_preserves_order() {
-        let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
-        assert_eq!(errors.len(), 2);
-        assert!(matches!(errors[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(errors[1], ConfigError::FileNotFound(_, _)));
-    }
-
-    #[test]
-    fn from_config_error_yields_single() {
-        let errors: ConfigErrors = missing_name().into();
-        assert_eq!(errors.len(), 1);
-    }
-
-    #[test]
-    fn display_n1_equals_inner_verbatim() {
-        let errors: ConfigErrors = missing_name().into();
-        assert_eq!(errors.to_string(), missing_name().to_string());
-        assert!(!errors.to_string().ends_with('\n'));
-    }
-
-    #[test]
-    fn display_n2_joined_by_newline_no_header_no_trailing_newline() {
-        let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
-        let rendered = errors.to_string();
+    fn single_missing_setting_names_env_and_key() {
+        let diagnostic = Diagnostic::new(ConfigError::MissingSqliteDbName).missing(&[env::DB_NAME]);
         assert_eq!(
-            rendered,
-            format!("{}\n{}", missing_name(), missing_ca()),
-            "n=2 must be joined with single \\n, no header, no trailing newline"
+            diagnostic.to_string(),
+            "database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file"
         );
-        assert!(!rendered.ends_with('\n'));
     }
 
     #[test]
-    fn into_iterator_owned_yields_in_stored_order() {
-        let errors = ConfigErrors::from_vec(vec![missing_name(), missing_ca()]).expect("non-empty");
-        let collected: Vec<ConfigError> = errors.into_iter().collect();
-        assert!(matches!(collected[0], ConfigError::MissingSqliteDbName));
-        assert!(matches!(collected[1], ConfigError::FileNotFound(_, _)));
+    fn several_missing_settings_list_every_route() {
+        let diagnostic = Diagnostic::new(ConfigError::MissingSshAuth).missing(&[env::SSH_PASSWORD, env::SSH_KEY]);
+        assert!(
+            diagnostic
+                .to_string()
+                .ends_with("; set one of DBMCP_SSH_PASSWORD (ssh.password), DBMCP_SSH_KEY (ssh.key)")
+        );
+    }
+
+    #[test]
+    fn one_involved_source_renders_as_from() {
+        let mut diagnostic = Diagnostic::new(ConfigError::EmptyHttpHost).involving(&[env::HTTP_HOST]);
+        diagnostic.attach_sources(&HashMap::from([("http.host", env_source("DBMCP_HTTP_HOST"))]));
+        assert_eq!(
+            diagnostic.to_string(),
+            "http.host must not be empty (from DBMCP_HTTP_HOST)"
+        );
+    }
+
+    #[test]
+    fn several_involved_sources_are_listed_per_setting() {
+        let mut diagnostic =
+            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]);
+        diagnostic.attach_sources(&HashMap::from([
+            ("ssh.host", env_source("DBMCP_SSH_HOST")),
+            ("database.backend", env_source("DBMCP_DB_BACKEND")),
+        ]));
+        assert_eq!(
+            diagnostic.to_string(),
+            "ssh.host: not supported with the sqlite backend \
+             (ssh.host from DBMCP_SSH_HOST; database.backend from DBMCP_DB_BACKEND)"
+        );
+    }
+
+    #[test]
+    fn involved_settings_without_a_source_are_skipped() {
+        let mut diagnostic =
+            Diagnostic::new(ConfigError::SshSqliteUnsupported).involving(&[env::SSH_HOST, env::DB_BACKEND]);
+        diagnostic.attach_sources(&HashMap::from([("ssh.host", env_source("DBMCP_SSH_HOST"))]));
+        assert!(diagnostic.to_string().ends_with("(ssh.host from DBMCP_SSH_HOST)"));
+    }
+
+    #[test]
+    fn attach_keeps_sources_already_known() {
+        let mut diagnostic = Diagnostic::new(ConfigError::EmptyHttpHost);
+        diagnostic.involved.push((env::HTTP_HOST, Some(env_source("FIRST"))));
+        diagnostic.attach_sources(&HashMap::from([("http.host", env_source("SECOND"))]));
+        assert!(diagnostic.to_string().ends_with("(from FIRST)"));
+    }
+
+    #[test]
+    fn duplicates_report_each_repeat_once() {
+        let list = ["a", "b", "a", "a"];
+        let found: Vec<String> = duplicates(env::HTTP_ALLOWED_HOSTS, &list)
+            .map(|d| d.error.to_string())
+            .collect();
+        assert_eq!(found, ["http.allowed_hosts: duplicate entry 'a'"; 2]);
     }
 }

@@ -2077,13 +2077,17 @@ async fn read_query_hash_operator_emits_stable_digest() {
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
 }
 
-/// Returns whether a server started with `DBMCP_DB_READ_ONLY=value` exposes `writeQuery`.
-async fn exposes_write_query(value: &str) -> bool {
+/// Returns a `dbmcp` command pointed at the `SQLite` fixture through env vars.
+fn sqlite_command() -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
     command
-        .args(["--db-backend", "sqlite", "--db-name"])
-        .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
-        .env("DBMCP_DB_READ_ONLY", value);
+        .env("DBMCP_DB_BACKEND", "sqlite")
+        .env("DBMCP_DB_NAME", std::env::var("DB_PATH").expect("DB_PATH must be set"));
+    command
+}
+
+/// Returns whether a server started from `command` exposes `writeQuery`.
+async fn exposes_write_query_with(command: tokio::process::Command) -> bool {
     let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
     let client = ().serve(transport).await.expect("mcp handshake");
     let tools = client.list_all_tools().await.expect("tools/list");
@@ -2091,9 +2095,25 @@ async fn exposes_write_query(value: &str) -> bool {
     tools.iter().any(|tool| tool.name == "writeQuery")
 }
 
+/// Returns whether a server started with `DBMCP_DB_READ_ONLY=value` exposes `writeQuery`.
+async fn exposes_write_query(value: &str) -> bool {
+    let mut command = sqlite_command();
+    command.env("DBMCP_DB_READ_ONLY", value);
+    exposes_write_query_with(command).await
+}
+
+/// Runs `command` to completion with stdin closed and returns its output.
+async fn run_to_exit(mut command: tokio::process::Command) -> std::process::Output {
+    command
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .expect("run dbmcp")
+}
+
 #[tokio::test]
 async fn test_db_read_only_env_accepts_explicit_values() {
-    // The full value table is covered by the CLI unit tests; this only
+    // The full value table is covered by the loader unit tests; this only
     // proves the env var reaches the same parser.
     assert!(
         exposes_write_query("0").await,
@@ -2103,30 +2123,91 @@ async fn test_db_read_only_env_accepts_explicit_values() {
         !exposes_write_query("1").await,
         "DBMCP_DB_READ_ONLY=1 must keep read-only"
     );
+    assert!(
+        !exposes_write_query("").await,
+        "an empty DBMCP_DB_READ_ONLY is unset and keeps the read-only default"
+    );
 }
 
 #[tokio::test]
-async fn test_db_read_only_env_rejects_blank_and_unknown_values() {
-    for value in ["", "disabled"] {
-        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
-            .args(["--db-backend", "sqlite", "--db-name"])
-            .arg(std::env::var("DB_PATH").expect("DB_PATH must be set"))
-            .env("DBMCP_DB_READ_ONLY", value)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .await
-            .expect("run dbmcp");
+async fn test_db_read_only_env_rejects_unknown_values() {
+    for value in ["disabled", "no"] {
+        let mut command = sqlite_command();
+        command.env("DBMCP_DB_READ_ONLY", value);
+        let output = run_to_exit(command).await;
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success(),
+        assert_eq!(
+            output.status.code(),
+            Some(1),
             "DBMCP_DB_READ_ONLY={value:?} must fail startup"
         );
-        assert!(stderr.contains("--db-read-only"), "{stderr}");
+        assert!(
+            stderr.contains("database.read_only: expected boolean") && stderr.contains("(from DBMCP_DB_READ_ONLY)"),
+            "{stderr}"
+        );
     }
 }
 
 #[tokio::test]
-async fn test_help_hides_secret_env_values() {
+async fn test_removed_settings_flags_are_usage_errors() {
+    let mut command = sqlite_command();
+    command.args(["--db-read-only", "false"]);
+    let output = run_to_exit(command).await;
+    assert_eq!(output.status.code(), Some(2), "clap usage errors exit 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unexpected argument '--db-read-only'"), "{stderr}");
+}
+
+#[tokio::test]
+async fn test_config_file_and_env_file_set_settings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = std::env::var("DB_PATH").expect("DB_PATH must be set");
+    let config = dir.path().join("dbmcp.yaml");
+    std::fs::write(
+        &config,
+        "database:\n  backend: sqlite\n  name: ${FIXTURE_DB}\n  read_only: ${READ_ONLY}\n",
+    )
+    .expect("write config");
+    let env_file = dir.path().join("dbmcp.env");
+    std::fs::write(
+        &env_file,
+        format!(
+            "FIXTURE_DB={db_path}\nREAD_ONLY=false\nDBMCP_CONFIG={}\n",
+            config.display()
+        ),
+    )
+    .expect("write env file");
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command.arg("--env").arg(&env_file);
+    assert!(
+        exposes_write_query_with(command).await,
+        "the env file must name the config file and feed its ${{}} values"
+    );
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command.arg("--env").arg(&env_file).env("DBMCP_DB_READ_ONLY", "true");
+    assert!(
+        !exposes_write_query_with(command).await,
+        "the process env must override the config file"
+    );
+}
+
+#[tokio::test]
+async fn test_missing_config_file_fails_startup() {
+    let mut command = sqlite_command();
+    command.args(["--config", "/nonexistent/dbmcp.yaml"]);
+    let output = run_to_exit(command).await;
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read config file /nonexistent/dbmcp.yaml (from --config)"),
+        "{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn test_help_lists_only_file_flags_and_hides_secrets() {
     const SECRET: &str = "hunter2-help-secret";
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
         .arg("--help")
@@ -2139,7 +2220,11 @@ async fn test_help_hides_secret_env_values() {
         .expect("run dbmcp --help");
     assert!(output.status.success(), "--help must succeed");
     let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("DBMCP_DB_PASSWORD"), "{help}");
+    assert!(
+        help.contains("--config <PATH>") && help.contains("--env <PATH>"),
+        "{help}"
+    );
+    assert!(!help.contains("--db-"), "settings flags are gone:\n{help}");
     assert!(!help.contains(SECRET), "--help leaked a secret:\n{help}");
 }
 
