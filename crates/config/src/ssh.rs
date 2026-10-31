@@ -1,4 +1,4 @@
-//! SSH tunnel settings, host-key policy enum, and `~` path expansion.
+//! SSH tunnel settings and host-key policy enum.
 
 use std::path::PathBuf;
 use std::time::Duration;

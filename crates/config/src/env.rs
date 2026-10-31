@@ -10,8 +10,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::database::DatabaseConfig;
+use crate::database::{DatabaseBackend, DatabaseConfig};
+use crate::log::LogLevel;
 use crate::node::Node;
+use crate::pii::{PiiCategory, PiiOperator};
+use crate::ssh::StrictHostKeyChecking;
+use crate::transport::Transport;
 
 /// Env var naming the YAML config file; a loader input, not a setting.
 pub const CONFIG_VAR: &str = "DBMCP_CONFIG";
@@ -253,9 +257,28 @@ const fn int(min: u64, max: u64) -> Kind {
     Kind::Int { min, max }
 }
 
+/// Returns the names in a typed `CHOICES` table, in order.
+const fn names<T, const N: usize>(choices: &[(&'static str, T)]) -> [&'static str; N] {
+    let mut names = [""; N];
+    let mut i = 0;
+    while i < N {
+        names[i] = choices[i].0;
+        i += 1;
+    }
+    names
+}
+
 const fn choice(choices: &'static [&'static str]) -> Kind {
     Kind::Enum { choices }
 }
+
+const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
+const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
+const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
+const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
+const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
+const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
+    names(StrictHostKeyChecking::CHOICES);
 
 /// A list of free-form strings.
 const LIST: Kind = Kind::List { choices: None };
@@ -271,19 +294,11 @@ const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
 }
 
 /// `transport` / `DBMCP_TRANSPORT`.
-pub const TRANSPORT: Setting = setting("transport", "DBMCP_TRANSPORT", choice(&["stdio", "http"]));
+pub const TRANSPORT: Setting = setting("transport", "DBMCP_TRANSPORT", choice(&TRANSPORT_NAMES));
 /// `log_level` / `DBMCP_LOG_LEVEL`.
-pub const LOG_LEVEL: Setting = setting(
-    "log_level",
-    "DBMCP_LOG_LEVEL",
-    choice(&["error", "warn", "info", "debug", "trace"]),
-);
+pub const LOG_LEVEL: Setting = setting("log_level", "DBMCP_LOG_LEVEL", choice(&LOG_LEVEL_NAMES));
 /// `database.backend` / `DBMCP_DB_BACKEND`.
-pub const DB_BACKEND: Setting = setting(
-    "database.backend",
-    "DBMCP_DB_BACKEND",
-    choice(&["mysql", "mariadb", "postgres", "sqlite"]),
-);
+pub const DB_BACKEND: Setting = setting("database.backend", "DBMCP_DB_BACKEND", choice(&DB_BACKEND_NAMES));
 /// `database.host` / `DBMCP_DB_HOST`.
 pub const DB_HOST: Setting = setting("database.host", "DBMCP_DB_HOST", Kind::Text);
 /// `database.port` / `DBMCP_DB_PORT`.
@@ -347,25 +362,13 @@ pub const HTTP_ALLOW_UNAUTHENTICATED: Setting = setting(
 /// `pii.enabled` / `DBMCP_PII_ENABLE`.
 pub const PII_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
 /// `pii.operator` / `DBMCP_PII_OPERATOR`.
-pub const PII_OPERATOR: Setting = setting(
-    "pii.operator",
-    "DBMCP_PII_OPERATOR",
-    choice(&["replace", "mask", "redact", "hash"]),
-);
+pub const PII_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", choice(&PII_OPERATOR_NAMES));
 /// `pii.categories` / `DBMCP_PII_CATEGORIES`.
 pub const PII_CATEGORIES: Setting = setting(
     "pii.categories",
     "DBMCP_PII_CATEGORIES",
     Kind::List {
-        choices: Some(&[
-            "personal",
-            "financial",
-            "government",
-            "contact",
-            "network",
-            "digital-identity",
-            "crypto",
-        ]),
+        choices: Some(&PII_CATEGORY_NAMES),
     },
 );
 /// `pii.ner_enabled` / `DBMCP_PII_NER_ENABLE`.
@@ -390,7 +393,7 @@ pub const SSH_KNOWN_HOSTS: Setting = setting("ssh.known_hosts", "DBMCP_SSH_KNOWN
 pub const SSH_STRICT_HOST_KEY_CHECKING: Setting = setting(
     "ssh.strict_host_key_checking",
     "DBMCP_SSH_STRICT_HOST_KEY_CHECKING",
-    choice(&["yes", "accept-new", "no"]),
+    choice(&STRICT_HOST_KEY_CHECKING_NAMES),
 );
 /// `ssh.keepalive_interval` / `DBMCP_SSH_KEEPALIVE_INTERVAL`.
 pub const SSH_KEEPALIVE_INTERVAL: Setting = setting(
@@ -618,41 +621,6 @@ mod tests {
         ];
         for (result, reason) in cases {
             assert_eq!(result, Err(reason.into()));
-        }
-    }
-
-    /// Names in a typed `CHOICES` table.
-    fn names<T>(choices: &[(&'static str, T)]) -> Vec<&'static str> {
-        choices.iter().map(|(name, _)| *name).collect()
-    }
-
-    #[test]
-    fn choices_match_each_types_names() {
-        use crate::database::DatabaseBackend;
-        use crate::log::LogLevel;
-        use crate::pii::{PiiCategory, PiiOperator};
-        use crate::ssh::StrictHostKeyChecking;
-        use crate::transport::Transport;
-
-        let tied = [
-            (TRANSPORT, names(Transport::CHOICES)),
-            (LOG_LEVEL, names(LogLevel::CHOICES)),
-            (DB_BACKEND, names(DatabaseBackend::CHOICES)),
-            (PII_OPERATOR, names(PiiOperator::CHOICES)),
-            (PII_CATEGORIES, names(PiiCategory::CHOICES)),
-            (SSH_STRICT_HOST_KEY_CHECKING, names(StrictHostKeyChecking::CHOICES)),
-        ];
-        let with_choices = SETTINGS
-            .iter()
-            .filter(|s| matches!(s.kind, Kind::Enum { .. } | Kind::List { choices: Some(_) }))
-            .count();
-        assert_eq!(with_choices, tied.len(), "tie every setting with choices to its type");
-        for (setting, expected) in tied {
-            let choices = match setting.kind {
-                Kind::Enum { choices } | Kind::List { choices: Some(choices) } => choices,
-                kind => panic!("{} has no choices: {kind:?}", setting.path),
-            };
-            assert_eq!(choices, expected, "{}", setting.path);
         }
     }
 

@@ -3,7 +3,7 @@
 //! Keys are never touched,
 //! sequence items are substituted one by one, and errors are collected for
 //! every value and sorted by key path. Casting to each setting's type
-//! happens afterwards, in schema validation.
+//! happens afterwards, in `settings::check`.
 
 use crate::node::{Node, SpannedNode};
 use crate::template::{self, Lookup};

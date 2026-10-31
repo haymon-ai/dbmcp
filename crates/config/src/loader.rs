@@ -478,14 +478,14 @@ impl Resolver<'_> {
 ///
 /// # Panics
 ///
-/// Panics when `name` is missing: the setting's choices and the type's
-/// `CHOICES` disagree, which the setting table's tests rule out.
+/// Panics when `name` is missing, which cannot happen: each setting's
+/// choices are the names in its type's `CHOICES`.
 fn choose<T: Copy>(choices: &[(&str, T)], name: &str) -> T {
     choices
         .iter()
         .find(|(choice, _)| *choice == name)
         .map(|&(_, value)| value)
-        .expect("setting choices match the type's CHOICES")
+        .expect("setting choices are the type's CHOICES names")
 }
 
 #[cfg(test)]
@@ -497,7 +497,7 @@ mod tests {
 
     use super::*;
 
-    /// Returns the cast and validation problems, if that stage failed.
+    /// Returns the validation problems, if that stage failed.
     fn diagnostics(error: &LoadError) -> &[Diagnostic] {
         match &error.kind {
             LoadErrorKind::Invalid(diagnostics) => diagnostics,
