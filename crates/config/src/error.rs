@@ -2,9 +2,10 @@
 //!
 //! [`ConfigError`] says what is wrong. [`Diagnostic`] wraps one with the
 //! settings its producer knows are involved: the ones whose values caused
-//! it and the required ones that are unset. Cast errors from the loader and
-//! rule violations from every section's `validate()` share this one type;
-//! the loader attaches each involved value's [`Source`] before rendering.
+//! it and the required ones that are unset. Activation rules in the loader
+//! and every section's `validate()` share this one type; the loader attaches
+//! each involved value's [`Source`] before rendering. Invalid values never
+//! get this far: they fail earlier, in the settings check.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -17,15 +18,6 @@ use crate::source::Source;
 /// Each message names the setting by its dotted YAML key path.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// A value could not be cast to its setting's type.
-    #[error("{path}: {reason}")]
-    InvalidValue {
-        /// Dotted YAML key path of the setting.
-        path: &'static str,
-        /// Value-free reason, e.g. `expected integer, found string`.
-        reason: String,
-    },
-
     /// `database.name` is required for `SQLite`.
     #[error("database.name (file path) is required for sqlite")]
     MissingSqliteDbName,
@@ -33,15 +25,6 @@ pub enum ConfigError {
     /// A configured file (SSL certificate, SSH key) was not found.
     #[error("{0}: file not found: {1}")]
     FileNotFound(&'static str, String),
-
-    /// A numeric setting is outside its accepted range.
-    #[error("{path} must be {expected}")]
-    OutOfRange {
-        /// Dotted YAML key path of the setting.
-        path: &'static str,
-        /// Human-readable accepted range, e.g. `at least 1`.
-        expected: String,
-    },
 
     /// A list setting was set to an empty list.
     #[error("{0} must not be empty when set")]

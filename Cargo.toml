@@ -39,6 +39,7 @@ axum = "0.8"
 base64 = "0.23"
 bech32 = "0.12"
 bigdecimal = "0.4"
+boon = "0.6"
 bs58 = { version = "0.5", features = ["check"] }
 clap = { version = "4", features = ["derive", "env"] }
 fancy-regex = "0.19"

@@ -5,6 +5,14 @@ description: Every dbmcp setting with its YAML key, environment variable, type, 
 
 Database MCP reads its settings from `DBMCP_*` environment variables, an optional env file, and an optional YAML config file. The command line only names those files (`--config`, `--env`); there is no per-setting flag. This page is the reference for every setting. For the file formats, `${}` interpolation, and path rules, see [Config File](/docs/config-file).
 
+The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json) for editor completion and validation. Editors backed by the YAML language server (VS Code's YAML extension, JetBrains IDEs, Neovim, Zed) pick it up from this modeline on the first line of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json
+```
+
+The `master` URL tracks the latest schema; replace `master` with a release tag such as `vX.Y.Z` to match an older binary. At startup `dbmcp` checks the file's keys and sections against the same schema and every value by its setting's type, so every value in the file must be valid even when a `DBMCP_*` variable overrides it.
+
 ## Precedence
 
 Each setting is resolved on its own, highest priority first:
@@ -27,7 +35,7 @@ The **Type** column in the tables below determines how a value is written:
 | seconds | Whole seconds as an integer | Integer |
 | boolean | `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False` | `true` / `false` (or a quoted string from the env set) |
 | enum | One of the listed values, lowercase kebab-case, case-sensitive | Same |
-| list | Comma-separated; items are trimmed, empty items are rejected | YAML sequence (`[a, b]` or one `- item` per line); replaces the default wholesale |
+| list | Comma-separated; items are trimmed, empty items are rejected | YAML sequence (`[a, b]` or one `- item` per line), or a comma-separated string as in the env var; replaces the default wholesale |
 | path | Relative paths resolve against the working directory | Relative paths resolve against the YAML file's directory; leading `~` expands |
 
 `yes`/`no`/`on`/`off` are **not** booleans and are rejected. A default of `—` or *unset* means the setting is absent until you set it.
