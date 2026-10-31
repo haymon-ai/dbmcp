@@ -4,8 +4,9 @@
 //! file's structure against the config schema, then checks every set value
 //! with its [`Kind`]: each YAML leaf, each non-empty env-file entry, and each
 //! non-empty process env var, even values that lose to a higher source or sit
-//! in a section that is not active. Every failure is an [`InputError`]; when
-//! there are none, [`Settings`] holds each setting's winning value
+//! in a section that is not active. Path values come out resolved: YAML paths
+//! against the config file's directory. Every failure is an [`InputError`];
+//! when there are none, [`Settings`] holds each setting's winning value
 //! (non-empty process env > non-empty env file > YAML) and its [`Source`].
 //!
 //! [`Kind`]: crate::env::Kind
@@ -70,7 +71,7 @@ impl Settings {
 
 /// Checks every source's values and returns each setting's winner.
 ///
-/// `file` is the interpolated config file and its path.
+/// `file` is the interpolated config file and its path; `home` expands `~` in paths.
 ///
 /// # Errors
 ///
@@ -80,6 +81,7 @@ pub(crate) fn check(
     file: Option<(&Path, &SpannedNode)>,
     env_file: Option<&EnvFile>,
     environment: &HashMap<String, String>,
+    home: Option<&Path>,
 ) -> Result<Settings, Vec<InputError>> {
     let mut errors = file
         .map(|(path, root)| schema::validate(root, path))
@@ -109,10 +111,11 @@ pub(crate) fn check(
                 line: node.referenced.line(),
                 column: node.referenced.column(),
             };
-            candidates.push((Raw::Node(&node.value), source));
+            let dir = file.parent().unwrap_or(Path::new(""));
+            candidates.push((Raw::Node { node: &node.value, dir }, source));
         }
         for (raw, source) in candidates {
-            match kind.check(raw) {
+            match kind.check(raw, home) {
                 Ok(Some(value)) if !settings.values.contains_key(path) => {
                     settings.values.insert(path, value);
                     settings.sources.insert(path, source);
@@ -187,6 +190,7 @@ mod tests {
                 root.as_ref().map(|root| (Path::new("/x/dbmcp.yaml"), root)),
                 env_file.as_ref(),
                 &self.environment,
+                None,
             )
         }
 
@@ -374,7 +378,7 @@ mod tests {
                     start + 1,
                     outcome.errors
                 );
-                if let Err(errors) = check(Some((&path, &root)), None, &HashMap::new()) {
+                if let Err(errors) = check(Some((&path, &root)), None, &HashMap::new(), None) {
                     panic!("{}:{}: {errors:?}", path.display(), start + 1);
                 }
                 checked += 1;

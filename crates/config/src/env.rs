@@ -8,6 +8,8 @@
 //! rules are stated here and nowhere else, and [`Kind::check`] applies them
 //! to values from every source.
 
+use std::path::{Path, PathBuf};
+
 use crate::database::DatabaseConfig;
 use crate::node::Node;
 
@@ -69,14 +71,21 @@ pub(crate) enum Raw<'a> {
     /// Text from the process env or env file.
     Text(&'a str),
     /// A YAML value; strings are cast like env text.
-    Node(&'a Node),
+    Node {
+        /// The value.
+        node: &'a Node,
+        /// The config file's directory, which relative paths resolve against.
+        dir: &'a Path,
+    },
 }
 
 /// A setting value that passed its [`Kind`]'s checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Value {
-    /// A [`Kind::Text`] or [`Kind::Path`] value.
+    /// A [`Kind::Text`] value.
     Text(String),
+    /// A [`Kind::Path`] value, resolved by where it was found.
+    Path(PathBuf),
     /// A [`Kind::Bool`] value.
     Bool(bool),
     /// A [`Kind::Int`] value, within its range.
@@ -92,44 +101,56 @@ impl Kind {
     ///
     /// Returns `Ok(None)` for an unset value: YAML `null`, or empty text at
     /// an integer, boolean, or list. YAML strings are cast like env text;
-    /// list text is split on commas.
+    /// list text is split on commas. Paths are resolved by their
+    /// [`Kind::Path`] rule, expanding `~` against `home`.
     ///
     /// # Errors
     ///
     /// Returns a value-free reason when `raw` has the wrong type, is out of
     /// range, or is not an accepted choice.
-    pub(crate) fn check(self, raw: Raw<'_>) -> Result<Option<Value>, String> {
-        let text = match raw {
-            Raw::Node(Node::Null) => return Ok(None),
-            Raw::Text(text) => Some(text),
-            Raw::Node(Node::Str(text)) => Some(text.as_str()),
-            Raw::Node(_) => None,
+    pub(crate) fn check(self, raw: Raw<'_>, home: Option<&Path>) -> Result<Option<Value>, String> {
+        let node = match raw {
+            Raw::Node { node, .. } => Some(node),
+            Raw::Text(_) => None,
+        };
+        let text = match (raw, node) {
+            (_, Some(Node::Null)) => return Ok(None),
+            (Raw::Text(text), _) => Some(text),
+            (_, Some(Node::Str(text))) => Some(text.as_str()),
+            _ => None,
         };
         if text == Some("") && matches!(self, Self::Int { .. } | Self::Bool | Self::List { .. }) {
             return Ok(None);
         }
-        let found = || match raw {
-            Raw::Text(_) => "string",
-            Raw::Node(node) => node.kind(),
-        };
+        let found = || node.map_or("string", Node::kind);
         let value = match self {
-            Self::Text | Self::Path { .. } => Value::Text(
+            Self::Text => Value::Text(
                 text.ok_or_else(|| format!("expected string, found {}", found()))?
                     .to_owned(),
             ),
-            Self::Bool => match (raw, text) {
-                (Raw::Node(Node::Bool(value)), _) => Value::Bool(*value),
+            Self::Path { home_from_env } => {
+                let path = Path::new(text.ok_or_else(|| format!("expected string, found {}", found()))?);
+                Value::Path(match raw {
+                    // An empty value stays empty so the section's checks still see it.
+                    _ if path.as_os_str().is_empty() => PathBuf::new(),
+                    Raw::Node { dir, .. } => resolve_in_file(path, dir, home),
+                    Raw::Text(_) if home_from_env => expand_tilde(path, home),
+                    Raw::Text(_) => path.to_path_buf(),
+                })
+            }
+            Self::Bool => match (node, text) {
+                (Some(Node::Bool(value)), _) => Value::Bool(*value),
                 (_, Some(text)) => {
                     Value::Bool(parse_bool(text).ok_or_else(|| format!("{EXPECTED_BOOL}, found {}", found()))?)
                 }
                 _ => return Err(format!("{EXPECTED_BOOL}, found {}", found())),
             },
             Self::Int { min, max } => {
-                let value = match (raw, text) {
-                    (Raw::Node(Node::Int(value)), _) => {
+                let value = match (node, text) {
+                    (Some(Node::Int(value)), _) => {
                         u64::try_from(*value).map_err(|_| format!("must be at least {min}"))?
                     }
-                    (Raw::Node(Node::UInt(value)), _) => *value,
+                    (Some(Node::UInt(value)), _) => *value,
                     (_, Some(text)) => text.parse().map_err(|_| format!("{EXPECTED_INT}, found {}", found()))?,
                     _ => return Err(format!("{EXPECTED_INT}, found {}", found())),
                 };
@@ -146,8 +167,8 @@ impl Kind {
                 Value::Choice(choose(choices, text)?)
             }
             Self::List { choices } => {
-                let items: Vec<&str> = match (raw, text) {
-                    (Raw::Node(Node::Seq(items)), _) => items
+                let items: Vec<&str> = match (node, text) {
+                    (Some(Node::Seq(items)), _) => items
                         .iter()
                         .enumerate()
                         .map(|(i, item)| match &item.value {
@@ -197,6 +218,34 @@ fn parse_bool(text: &str) -> Option<bool> {
         "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
         "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
         _ => None,
+    }
+}
+
+/// Resolves a path found in the config file in `dir`.
+///
+/// Expands a leading `~` against `home`, then joins a relative result to `dir`.
+#[must_use]
+pub(crate) fn resolve_in_file(path: &Path, dir: &Path, home: Option<&Path>) -> PathBuf {
+    let path = expand_tilde(path, home);
+    if path.is_relative() { dir.join(path) } else { path }
+}
+
+/// Expands a leading `~` path component against `home`.
+///
+/// Requires at least one component after `~`, so `~`, `~/` and `~user`
+/// stay literal. Returns `path` unchanged when `home` is `None`.
+#[must_use]
+pub(crate) fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else {
+        return path.to_path_buf();
+    };
+    match path.strip_prefix("~") {
+        Ok(rest) if rest.components().next().is_some() => {
+            let mut expanded = home.to_path_buf();
+            expanded.extend(rest.components());
+            expanded
+        }
+        _ => path.to_path_buf(),
     }
 }
 
@@ -427,16 +476,39 @@ mod tests {
         }
     }
 
-    fn text(kind: Kind, text: &str) -> Result<Option<Value>, String> {
-        kind.check(Raw::Text(text))
+    fn home() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\deploy")
+        } else {
+            PathBuf::from("/home/deploy")
+        }
     }
 
-    fn yaml(kind: Kind, yaml: &str) -> Result<Option<Value>, String> {
+    /// The config file's directory in tests.
+    fn dir() -> PathBuf {
+        home().join("conf")
+    }
+
+    fn text(kind: Kind, text: &str) -> Result<Option<Value>, String> {
+        kind.check(Raw::Text(text), Some(&home()))
+    }
+
+    fn yaml_with(kind: Kind, yaml: &str, home: Option<&Path>) -> Result<Option<Value>, String> {
         let root = crate::node::parse(&format!("x: {yaml}\n")).expect("valid yaml");
         let Node::Map(entries) = root.value else {
             panic!("expected mapping");
         };
-        kind.check(Raw::Node(&entries["x"].1.value))
+        kind.check(
+            Raw::Node {
+                node: &entries["x"].1.value,
+                dir: &dir(),
+            },
+            home,
+        )
+    }
+
+    fn yaml(kind: Kind, yaml: &str) -> Result<Option<Value>, String> {
+        yaml_with(kind, yaml, Some(&home()))
     }
 
     const COLORS: Kind = choice(&["red", "green"]);
@@ -453,7 +525,7 @@ mod tests {
             Ok(Some(Value::List(vec!["a".into(), "b".into()])))
         );
         assert_eq!(text(COLORS, "red"), Ok(Some(Value::Choice("red"))));
-        assert_eq!(text(FILE_PATH, "~/x"), Ok(Some(Value::Text("~/x".into()))));
+        assert_eq!(text(FILE_PATH, "~/x"), Ok(Some(Value::Path("~/x".into()))));
     }
 
     #[test]
@@ -588,5 +660,79 @@ mod tests {
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
         assert_eq!(SETTINGS.len(), 40);
+    }
+    fn path(result: Result<Option<Value>, String>) -> PathBuf {
+        match result {
+            Ok(Some(Value::Path(path))) => path,
+            other => panic!("expected a path, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paths_resolve_by_where_they_are_found() {
+        let absolute = home().join("ca.pem");
+        let cases = [
+            (yaml(FILE_PATH, "certs/ca.pem"), dir().join("certs/ca.pem")),
+            (yaml(FILE_PATH, "~/ca.pem"), home().join("ca.pem")),
+            (yaml(FILE_PATH, &absolute.display().to_string()), absolute.clone()),
+            (yaml_with(FILE_PATH, "~/ca.pem", None), dir().join("~/ca.pem")),
+            (yaml(FILE_PATH, "\"\""), PathBuf::new()),
+            (text(FILE_PATH, "certs/ca.pem"), PathBuf::from("certs/ca.pem")),
+            (text(FILE_PATH, "~/ca.pem"), PathBuf::from("~/ca.pem")),
+            (text(HOME_PATH, "~/.ssh/id"), home().join(".ssh").join("id")),
+            (text(HOME_PATH, ""), PathBuf::new()),
+        ];
+        for (i, (result, expected)) in cases.into_iter().enumerate() {
+            assert_eq!(path(result), expected, "case {i}");
+        }
+    }
+
+    fn expand(path: &str) -> PathBuf {
+        expand_tilde(Path::new(path), Some(&home()))
+    }
+
+    #[test]
+    fn expand_tilde_slash_prefix() {
+        assert_eq!(expand("~/.ssh/id_ed25519"), home().join(".ssh").join("id_ed25519"));
+    }
+
+    #[test]
+    fn expand_tilde_double_slash_stays_under_home() {
+        assert_eq!(expand("~//.ssh/known_hosts"), home().join(".ssh").join("known_hosts"));
+    }
+
+    #[test]
+    fn expand_tilde_leaves_bare_and_trailing_slash_literal() {
+        assert_eq!(expand("~"), PathBuf::from("~"));
+        assert_eq!(expand("~/"), PathBuf::from("~/"));
+    }
+
+    #[test]
+    fn expand_tilde_leaves_tilde_user_literal() {
+        assert_eq!(expand("~deploy/.ssh/id"), PathBuf::from("~deploy/.ssh/id"));
+    }
+
+    #[test]
+    fn expand_tilde_leaves_non_tilde_paths_untouched() {
+        assert_eq!(expand("keys/id"), PathBuf::from("keys/id"));
+        assert_eq!(expand("a/~/b"), PathBuf::from("a/~/b"));
+    }
+
+    #[test]
+    fn expand_tilde_without_home_is_literal() {
+        assert_eq!(expand_tilde(Path::new("~/.ssh/id"), None), PathBuf::from("~/.ssh/id"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn expand_tilde_backslash_prefix_on_windows() {
+        assert_eq!(expand(r"~\.ssh\id_ed25519"), home().join(".ssh").join("id_ed25519"));
+        assert_eq!(expand(r"~\"), PathBuf::from(r"~\"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn expand_tilde_backslash_is_literal_off_windows() {
+        assert_eq!(expand(r"~\.ssh\id"), PathBuf::from(r"~\.ssh\id"));
     }
 }

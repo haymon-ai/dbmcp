@@ -1,6 +1,6 @@
 //! SSH tunnel settings, host-key policy enum, and `~` path expansion.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use secrecy::SecretString;
@@ -134,27 +134,10 @@ impl SshConfig {
     }
 }
 
-/// Expands a leading `~` path component against `home`.
-///
-/// Requires at least one component after `~`, so `~`, `~/` and `~user`
-/// stay literal. Returns `path` unchanged when `home` is `None`.
-#[must_use]
-pub(crate) fn expand_tilde(path: &Path, home: Option<&Path>) -> PathBuf {
-    let Some(home) = home else {
-        return path.to_path_buf();
-    };
-    match path.strip_prefix("~") {
-        Ok(rest) if rest.components().next().is_some() => {
-            let mut expanded = home.to_path_buf();
-            expanded.extend(rest.components());
-            expanded
-        }
-        _ => path.to_path_buf(),
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::path::Path;
+
     use super::*;
 
     pub(crate) fn ssh_config() -> SshConfig {
@@ -300,62 +283,5 @@ pub(crate) mod tests {
         assert_eq!(StrictHostKeyChecking::Yes.to_string(), "yes");
         assert_eq!(StrictHostKeyChecking::AcceptNew.to_string(), "accept-new");
         assert_eq!(StrictHostKeyChecking::No.to_string(), "no");
-    }
-
-    fn home() -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(r"C:\Users\deploy")
-        } else {
-            PathBuf::from("/home/deploy")
-        }
-    }
-
-    fn expand(path: &str) -> PathBuf {
-        expand_tilde(Path::new(path), Some(&home()))
-    }
-
-    #[test]
-    fn expand_tilde_slash_prefix() {
-        assert_eq!(expand("~/.ssh/id_ed25519"), home().join(".ssh").join("id_ed25519"));
-    }
-
-    #[test]
-    fn expand_tilde_double_slash_stays_under_home() {
-        assert_eq!(expand("~//.ssh/known_hosts"), home().join(".ssh").join("known_hosts"));
-    }
-
-    #[test]
-    fn expand_tilde_leaves_bare_and_trailing_slash_literal() {
-        assert_eq!(expand("~"), PathBuf::from("~"));
-        assert_eq!(expand("~/"), PathBuf::from("~/"));
-    }
-
-    #[test]
-    fn expand_tilde_leaves_tilde_user_literal() {
-        assert_eq!(expand("~deploy/.ssh/id"), PathBuf::from("~deploy/.ssh/id"));
-    }
-
-    #[test]
-    fn expand_tilde_leaves_non_tilde_paths_untouched() {
-        assert_eq!(expand("keys/id"), PathBuf::from("keys/id"));
-        assert_eq!(expand("a/~/b"), PathBuf::from("a/~/b"));
-    }
-
-    #[test]
-    fn expand_tilde_without_home_is_literal() {
-        assert_eq!(expand_tilde(Path::new("~/.ssh/id"), None), PathBuf::from("~/.ssh/id"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn expand_tilde_backslash_prefix_on_windows() {
-        assert_eq!(expand(r"~\.ssh\id_ed25519"), home().join(".ssh").join("id_ed25519"));
-        assert_eq!(expand(r"~\"), PathBuf::from(r"~\"));
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn expand_tilde_backslash_is_literal_off_windows() {
-        assert_eq!(expand(r"~\.ssh\id"), PathBuf::from(r"~\.ssh\id"));
     }
 }

@@ -9,10 +9,11 @@
 //! 3. `${}`-interpolate every string value against process env, then env file.
 //! 4. Check the file's structure against the config schema and every set
 //!    value from every source by its setting's kind, even values that lose
-//!    to a higher source, and pick each winner: non-empty process env >
-//!    non-empty env file > YAML (see [`settings`](crate::settings)).
+//!    to a higher source, resolving paths, and pick each winner: non-empty
+//!    process env > non-empty env file > YAML (see [`settings`](crate::settings)).
 //! 5. Build the [`Config`] from the winners and defaults, applying
-//!    activation rules, then run [`Config::validate`] on it.
+//!    activation rules and resolving a file-given sqlite database name,
+//!    then run [`Config::validate`] on it.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -32,7 +33,7 @@ use crate::options::LoadOptions;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
 use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
-use crate::ssh::{self, SshConfig, StrictHostKeyChecking};
+use crate::ssh::{SshConfig, StrictHostKeyChecking};
 use crate::transport::Transport;
 
 /// A successfully loaded configuration.
@@ -146,15 +147,19 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         file.as_ref().map(|(path, tree)| (path.as_path(), tree)),
         env_file.as_ref(),
         &options.environment,
+        options.home.as_deref(),
     ) {
         Ok(settings) => settings,
         Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
     };
 
     let resolver = Resolver {
-        options,
-        file: file.as_ref().map(|(path, _)| path.as_path()),
         settings: &settings,
+        home: options.home.as_deref(),
+        dir: file
+            .as_ref()
+            .and_then(|(path, _)| path.parent())
+            .unwrap_or(Path::new("")),
     };
     match resolver.build() {
         Ok((config, log_level)) => Ok(Loaded {
@@ -182,7 +187,7 @@ fn read_env_file(options: &LoadOptions) -> Result<Option<dotenv::Parsed>, LoadEr
     };
     let path = options
         .working_dir
-        .join(ssh::expand_tilde(&raw, options.home.as_deref()));
+        .join(env::expand_tilde(&raw, options.home.as_deref()));
     let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
         what: "env file",
         path: path.clone(),
@@ -255,9 +260,11 @@ fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option
 
 /// Builds the configuration from each setting's checked winner and defaults.
 struct Resolver<'a> {
-    options: &'a LoadOptions,
-    file: Option<&'a Path>,
     settings: &'a Settings,
+    /// The home directory, for `~` and the `known_hosts` default.
+    home: Option<&'a Path>,
+    /// The config file's directory; empty without a config file.
+    dir: &'a Path,
 }
 
 impl Resolver<'_> {
@@ -317,31 +324,11 @@ impl Resolver<'_> {
         Some(self.list(setting)?.iter().map(|item| choose(choices, item)).collect())
     }
 
-    /// Resolves a path setting by its [`Kind::Path`] rule.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `setting` is not a [`Kind::Path`], a mistake in the setting table.
+    /// Returns a path setting, already resolved by its [`Kind::Path`] rule.
     fn path(&self, setting: Setting) -> Option<PathBuf> {
-        let Kind::Path { home_from_env } = setting.kind else {
-            unreachable!("{} is not a path setting", setting.path);
-        };
-        let value = PathBuf::from(self.string(setting)?);
-        let home = self.options.home.as_deref();
-        Some(match self.settings.source(setting) {
-            // An empty value stays empty so the section's checks still see it.
-            Some(Source::File { .. }) if !value.as_os_str().is_empty() => {
-                self.relative_to_file(&ssh::expand_tilde(&value, home))
-            }
-            _ if home_from_env => ssh::expand_tilde(&value, home),
-            _ => value,
-        })
-    }
-
-    fn relative_to_file(&self, path: &Path) -> PathBuf {
-        match self.file.and_then(Path::parent) {
-            Some(dir) if path.is_relative() => dir.join(path),
-            _ => path.to_path_buf(),
+        match self.settings.get(setting)? {
+            Value::Path(path) => Some(path.clone()),
+            _ => unreachable!("{} is not a path setting", setting.path),
         }
     }
 
@@ -396,9 +383,9 @@ impl Resolver<'_> {
                 Some(Source::File { .. })
                     if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
-                    let home = self.options.home.as_deref();
-                    let expanded = ssh::expand_tilde(Path::new(&name), home);
-                    self.relative_to_file(&expanded).display().to_string()
+                    env::resolve_in_file(Path::new(&name), self.dir, self.home)
+                        .display()
+                        .to_string()
                 }
                 _ => name,
             });
@@ -465,7 +452,6 @@ impl Resolver<'_> {
     }
 
     fn ssh(&self) -> SshConfig {
-        let home = self.options.home.clone();
         SshConfig {
             host: self.string(env::SSH_HOST).unwrap_or_default(),
             port: self.int(env::SSH_PORT).unwrap_or(SshConfig::DEFAULT_PORT),
@@ -475,7 +461,7 @@ impl Resolver<'_> {
             key_passphrase: self.string(env::SSH_KEY_PASSPHRASE).map(Into::into),
             known_hosts: self
                 .path(env::SSH_KNOWN_HOSTS)
-                .or_else(|| home.map(|home| home.join(".ssh").join("known_hosts"))),
+                .or_else(|| self.home.map(|home| home.join(".ssh").join("known_hosts"))),
             strict_host_key_checking: self
                 .enumeration(env::SSH_STRICT_HOST_KEY_CHECKING, StrictHostKeyChecking::CHOICES)
                 .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
