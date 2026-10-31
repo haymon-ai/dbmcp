@@ -3,7 +3,7 @@
 //! Keys are never touched,
 //! sequence items are substituted one by one, and errors are collected for
 //! every value and sorted by key path. Casting to each setting's type
-//! happens later, when the loader resolves settings.
+//! happens afterwards, in `settings::check`.
 
 use crate::node::{Node, SpannedNode};
 use crate::template::{self, Lookup};
@@ -56,7 +56,7 @@ fn walk(
             }
         }
         Node::Map(entries) => {
-            for (key, value) in entries.iter_mut() {
+            for (key, (_, value)) in entries.iter_mut() {
                 let child = if path.is_empty() {
                     key.clone()
                 } else {
@@ -84,7 +84,7 @@ mod tests {
 
     fn get<'a>(root: &'a SpannedNode, path: &[&str]) -> &'a Node {
         path.iter().fold(&root.value, |node, key| match node {
-            Node::Map(map) => &map[*key].value,
+            Node::Map(map) => &map[*key].1.value,
             other => panic!("not a mapping: {other:?}"),
         })
     }

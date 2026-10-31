@@ -27,8 +27,8 @@ pub(crate) enum Node {
     Str(String),
     /// A sequence.
     Seq(Vec<Spanned<Node>>),
-    /// A mapping with string keys, in file order.
-    Map(IndexMap<String, Spanned<Node>>),
+    /// A mapping with string keys, in file order, each with its key's location.
+    Map(IndexMap<String, (Location, Spanned<Node>)>),
 }
 
 impl Node {
@@ -129,9 +129,9 @@ impl<'de> Visitor<'de> for NodeVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
         let mut entries = IndexMap::new();
-        while let Some(key) = map.next_key::<String>()? {
+        while let Some(key) = map.next_key::<Spanned<String>>()? {
             let value = map.next_value::<SpannedNode>()?;
-            entries.insert(key, value);
+            entries.insert(key.value, (key.referenced, value));
         }
         Ok(Node::Map(entries))
     }
@@ -141,9 +141,9 @@ impl<'de> Visitor<'de> for NodeVisitor {
 mod tests {
     use super::*;
 
-    fn map(node: &SpannedNode) -> &IndexMap<String, SpannedNode> {
+    fn map(node: &SpannedNode) -> IndexMap<&str, &SpannedNode> {
         match &node.value {
-            Node::Map(map) => map,
+            Node::Map(map) => map.iter().map(|(key, (_, value))| (key.as_str(), value)).collect(),
             other => panic!("expected mapping, got {other:?}"),
         }
     }
@@ -151,12 +151,25 @@ mod tests {
     #[test]
     fn parses_nested_mapping_with_locations() {
         let root = parse("database:\n  port: 5432\n  host: db\n").expect("valid yaml");
-        let database = &map(&root)["database"];
-        let port = &map(database)["port"];
+        let database = map(&root)["database"];
+        let port = map(database)["port"];
         assert_eq!(port.value, Node::Int(5432));
         assert_eq!(port.referenced.line(), 2);
         assert_eq!(port.referenced.column(), 9);
         assert_eq!(map(database)["host"].value, Node::Str("db".into()));
+    }
+
+    #[test]
+    fn mapping_keys_keep_their_location() {
+        let root = parse("database:\n  port: 5432\n").expect("valid yaml");
+        let Node::Map(top) = &root.value else {
+            panic!("expected mapping");
+        };
+        let Node::Map(database) = &top["database"].1.value else {
+            panic!("expected mapping");
+        };
+        let (key, _) = &database["port"];
+        assert_eq!((key.line(), key.column()), (2, 3));
     }
 
     #[test]

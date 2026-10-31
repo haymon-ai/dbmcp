@@ -8,11 +8,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+boon = { workspace = true }
 http = { workspace = true }
 indexmap = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde-saphyr = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
