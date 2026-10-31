@@ -318,7 +318,16 @@
             "null"
           ],
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "personal",
+              "financial",
+              "government",
+              "contact",
+              "network",
+              "digital-identity",
+              "crypto"
+            ]
           }
         },
         "ner_enabled": {

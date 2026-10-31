@@ -1,23 +1,25 @@
 //! The config schema: the JSON Schema every config file is validated against.
 //!
 //! The schema is hand-written in `assets/dbmcp.schema.json` and embedded in
-//! the binary. Validation runs on the interpolated YAML tree: strings at
-//! integer, boolean, and list settings are first cast with [`Kind::cast`],
-//! then the schema checks the file's keys, shapes, types, enum values, and
-//! integer ranges. Cast and schema errors form one list, rendered here,
-//! value-free, in the loader's wording; `boon`'s own messages echo values
-//! and are never shown.
+//! the binary. Editors use all of it; the loader uses only its structure.
+//! [`validate`] strips the value keywords (`type`, `enum`, `minimum`,
+//! `maximum`, `items`) from every setting, then checks the file's keys and
+//! the shape of the root and each section. Setting values are checked by
+//! their [`Kind`] instead. Errors are rendered here, value-free; `boon`'s own
+//! messages echo values and are never shown.
 //!
-//! [`Kind::cast`]: crate::env::Kind::cast
+//! [`Kind`]: crate::env::Kind
 
 use std::collections::HashSet;
+use std::path::Path;
 
 use boon::{Compiler, ErrorKind, InstanceToken, SchemaIndex, Schemas, Type, Types, ValidationError};
 use serde_json::{Map, Value};
-use serde_saphyr::Location;
 
 use crate::env::SETTINGS;
 use crate::node::{Node, SpannedNode};
+use crate::settings::InputError;
+use crate::source::Source;
 
 /// The schema's `$id`, also where editors fetch it from.
 pub(crate) const URL: &str =
@@ -26,78 +28,30 @@ pub(crate) const URL: &str =
 /// The schema text.
 pub(crate) const SCHEMA: &str = include_str!("../assets/dbmcp.schema.json");
 
-/// One schema violation, located in the YAML file.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Problem {
-    line: u64,
-    column: u64,
-    path: String,
-    reason: String,
-}
+/// Keywords that check a setting's value; [`Kind`](crate::env::Kind) owns these rules.
+const VALUE_KEYWORDS: [&str; 5] = ["type", "enum", "minimum", "maximum", "items"];
 
-/// Casts the setting strings in `root`, then validates it against the config schema.
+/// Validates the structure of the config file at `file` against the config schema.
 ///
-/// # Errors
-///
-/// Returns every cast failure and violation as `line:column: path: reason`,
-/// sorted by location.
+/// Returns one error per unknown key, at the key, and per root or section
+/// that is not a mapping or null, at its value. Empty when valid.
 ///
 /// # Panics
 ///
 /// Panics when the embedded schema does not compile, which its tests rule out.
-pub(crate) fn validate(root: &mut SpannedNode) -> Result<(), Vec<String>> {
-    let mut problems = Vec::new();
-    cast(root, &mut problems);
+pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
     let (schemas, index) = compile();
-    let instance = to_json(&root.value);
-    if let Err(error) = schemas.validate(&instance, index) {
-        collect(&error, root, &mut problems);
+    let mut errors = Vec::new();
+    if let Err(error) = schemas.validate(&to_json(&root.value), index) {
+        collect(&error, root, file, &mut errors);
     }
-    if problems.is_empty() {
-        return Ok(());
-    }
-    problems.sort();
-    problems.dedup_by(|a, b| a.path == b.path && a.reason == b.reason);
-    Err(problems
-        .into_iter()
-        .map(|p| format!("{}:{}: {}: {}", p.line, p.column, p.path, p.reason))
-        .collect())
+    errors
 }
 
-/// Casts each setting's string value to the YAML type its kind expects.
-///
-/// A value that fails to cast stays a string, which the schema admits at
-/// every typed setting, so it is reported once.
-fn cast(root: &mut SpannedNode, problems: &mut Vec<Problem>) {
-    'settings: for setting in SETTINGS {
-        let mut node = &mut *root;
-        for key in setting.path.split('.') {
-            node = match &mut node.value {
-                Node::Map(entries) => match entries.get_mut(key) {
-                    Some((_, value)) => value,
-                    None => continue 'settings,
-                },
-                _ => continue 'settings,
-            };
-        }
-        let Node::Str(text) = &node.value else {
-            continue;
-        };
-        match setting.kind.cast(text, node.referenced) {
-            Ok(value) => node.value = value,
-            Err(reason) => problems.push(Problem {
-                line: node.referenced.line(),
-                column: node.referenced.column(),
-                path: setting.path.to_owned(),
-                reason,
-            }),
-        }
-    }
-}
-
-/// Compiles the embedded schema.
+/// Compiles the embedded schema without its value keywords.
 fn compile() -> (Schemas, SchemaIndex) {
-    let document: Value = serde_json::from_str(SCHEMA).expect("embedded schema is valid JSON");
+    let mut document: Value = serde_json::from_str(SCHEMA).expect("embedded schema is valid JSON");
+    strip_values(&mut document);
     let mut compiler = Compiler::new();
     compiler.add_resource(URL, document).expect("schema URL is absolute");
     let mut schemas = Schemas::new();
@@ -105,18 +59,33 @@ fn compile() -> (Schemas, SchemaIndex) {
     (schemas, index)
 }
 
+/// Removes [`VALUE_KEYWORDS`] from every leaf property: one without `properties`.
+fn strip_values(schema: &mut Value) {
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for property in properties.values_mut() {
+        if property.get("properties").is_some() {
+            strip_values(property);
+        } else if let Some(property) = property.as_object_mut() {
+            for keyword in VALUE_KEYWORDS {
+                property.remove(keyword);
+            }
+        }
+    }
+}
+
 /// Converts the YAML tree to JSON for validation.
 ///
-/// No setting takes a float, so every float becomes the stand-in `0.5`: a
-/// fractional number fails every type, while `5.0` would pass as an
-/// integer. Errors name the YAML node's own type.
+/// Only the shape of the root and sections is checked, so any number
+/// stands in for a float; errors name the YAML node's own type.
 fn to_json(node: &Node) -> Value {
     match node {
         Node::Null => Value::Null,
         Node::Bool(value) => Value::Bool(*value),
         Node::Int(value) => Value::from(*value),
         Node::UInt(value) => Value::from(*value),
-        Node::Float(_) => Value::from(0.5),
+        Node::Float(_) => Value::from(0),
         Node::Str(value) => Value::String(value.clone()),
         Node::Seq(items) => Value::Array(items.iter().map(|item| to_json(&item.value)).collect()),
         Node::Map(entries) => Value::Object(
@@ -128,50 +97,36 @@ fn to_json(node: &Node) -> Value {
     }
 }
 
-/// Walks `error` down to its leaves and records one problem per leaf.
-///
-/// A failing `anyOf` / `oneOf` is one problem at its own location; its
-/// branch errors are dropped.
-fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, problems: &mut Vec<Problem>) {
-    if !error.causes.is_empty() && !matches!(error.kind, ErrorKind::AnyOf | ErrorKind::OneOf(_)) {
+/// Walks `error` down to its leaves and records one error per leaf.
+fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, file: &Path, errors: &mut Vec<InputError>) {
+    if !error.causes.is_empty() {
         for cause in &error.causes {
-            collect(cause, root, problems);
+            collect(cause, root, file, errors);
         }
         return;
     }
     let mut node = root;
     let mut keys = Vec::new();
-    let mut item = None;
     for token in &error.instance_location.tokens {
         let child = match (&node.value, token) {
             (Node::Map(entries), InstanceToken::Prop(key)) => {
                 keys.push(key.as_ref());
                 entries.get(key.as_ref()).map(|(_, value)| value)
             }
-            (Node::Seq(items), InstanceToken::Item(index)) => {
-                item = Some(*index);
-                items.get(*index)
-            }
             _ => None,
         };
-        node = child.expect("instance location points into the tree");
+        node = child.expect("instance location points into a mapping");
     }
-    let mut push = |location: Location, path: String, reason: String| {
-        let reason = match item {
-            Some(index) => format!("item {index}: {reason}"),
-            None => reason,
-        };
-        problems.push(Problem {
-            line: location.line(),
-            column: location.column(),
+    let mut push = |location: serde_saphyr::Location, path: String, reason: String| {
+        errors.push(InputError {
+            from: Source::File {
+                path: file.to_path_buf(),
+                line: location.line(),
+                column: location.column(),
+            },
             path,
             reason,
         });
-    };
-    let path = if keys.is_empty() {
-        "<root>".to_owned()
-    } else {
-        keys.join(".")
     };
     match &error.kind {
         ErrorKind::AdditionalProperties { got } => {
@@ -185,7 +140,14 @@ fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, problems: &mut V
                 push(location, child, reason.clone());
             }
         }
-        kind => push(node.referenced, path, reason(kind, &node.value)),
+        kind => {
+            let path = if keys.is_empty() {
+                "<root>".to_owned()
+            } else {
+                keys.join(".")
+            };
+            push(node.referenced, path, reason(kind, &node.value));
+        }
     }
 }
 
@@ -193,12 +155,6 @@ fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, problems: &mut V
 fn reason(kind: &ErrorKind<'_, '_>, value: &Node) -> String {
     match kind {
         ErrorKind::Type { want, .. } => format!("expected {}, found {}", expected_types(*want), value.kind()),
-        ErrorKind::Enum { want } => {
-            let names: Vec<&str> = want.iter().filter_map(Value::as_str).collect();
-            format!("expected one of {}", names.join(", "))
-        }
-        ErrorKind::Minimum { want, .. } => format!("must be at least {want}"),
-        ErrorKind::Maximum { want, .. } => format!("must be at most {want}"),
         kind => {
             let keyword = kind
                 .keyword_path()
@@ -208,23 +164,18 @@ fn reason(kind: &ErrorKind<'_, '_>, value: &Node) -> String {
     }
 }
 
-/// Names the expected YAML types for a type error.
-///
-/// `string` is dropped from integer and boolean unions, where it only
-/// admits `${}` before casting.
+/// Names the expected YAML types for a type error, leaving out `null`.
 fn expected_types(want: Types) -> String {
-    let scalar = want.contains(Type::Integer) || want.contains(Type::Boolean);
     let names: Vec<&str> = want
         .iter()
-        .filter(|t| *t != Type::Null && !(scalar && *t == Type::String))
-        .map(|t| match t {
-            Type::Null => "null",
-            Type::Boolean => "boolean",
-            Type::Number => "number",
-            Type::Integer => "integer",
-            Type::String => "string",
-            Type::Array => "sequence",
-            Type::Object => "mapping",
+        .filter_map(|t| match t {
+            Type::Null => None,
+            Type::Boolean => Some("boolean"),
+            Type::Number => Some("number"),
+            Type::Integer => Some("integer"),
+            Type::String => Some("string"),
+            Type::Array => Some("sequence"),
+            Type::Object => Some("mapping"),
         })
         .collect();
     names.join(" or ")
@@ -247,17 +198,9 @@ fn expected_keys(keys: &[&str]) -> Vec<&'static str> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::Path;
-
     use super::*;
-    use crate::database::DatabaseBackend;
     use crate::env::Kind;
-    use crate::interpolate;
-    use crate::log::LogLevel;
     use crate::node;
-    use crate::pii::PiiOperator;
-    use crate::ssh::StrictHostKeyChecking;
-    use crate::transport::Transport;
 
     pub(crate) fn document() -> Value {
         serde_json::from_str(SCHEMA).expect("valid JSON")
@@ -295,23 +238,12 @@ pub(crate) mod tests {
     }
 
     /// The schema `enum` for `choices`: every name, then `null` for unset.
-    fn choices<T>(choices: &[(&str, T)]) -> Vec<Value> {
+    fn nullable(choices: &[&str]) -> Value {
         choices
             .iter()
-            .map(|(name, _)| Value::from(*name))
+            .map(|name| Value::from(*name))
             .chain([Value::Null])
             .collect()
-    }
-
-    fn enum_choices(path: &str) -> Vec<Value> {
-        match path {
-            "transport" => choices(Transport::CHOICES),
-            "log_level" => choices(LogLevel::CHOICES),
-            "database.backend" => choices(DatabaseBackend::CHOICES),
-            "pii.operator" => choices(PiiOperator::CHOICES),
-            "ssh.strict_host_key_checking" => choices(StrictHostKeyChecking::CHOICES),
-            other => panic!("no CHOICES for enum setting {other}"),
-        }
     }
 
     #[test]
@@ -333,13 +265,15 @@ pub(crate) mod tests {
                     let maximum = (max != u64::MAX).then(|| Value::from(max));
                     assert_eq!(schema.get("maximum"), maximum.as_ref(), "{path}");
                 }
-                Kind::Enum => {
+                Kind::Enum { choices } => {
                     assert_eq!(types(schema), ["string", "null"], "{path}");
-                    assert_eq!(schema["enum"], Value::Array(enum_choices(path)), "{path}");
+                    assert_eq!(schema["enum"], nullable(choices), "{path}");
                 }
-                Kind::List => {
+                Kind::List { choices } => {
                     assert_eq!(types(schema), ["string", "array", "null"], "{path}");
                     assert_eq!(schema["items"]["type"], "string", "{path}");
+                    let names = choices.map(|choices| choices.iter().map(|name| Value::from(*name)).collect());
+                    assert_eq!(schema["items"].get("enum"), names.as_ref(), "{path}");
                 }
             }
         }
@@ -381,33 +315,34 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn every_schema_keyword_has_a_rendered_reason() {
-        // Validation keywords with their own reason in `reason` / `collect`,
-        // plus annotations and applicators that never fail on their own.
-        const MAPPED: &[&str] = &[
+    fn stripped_schema_keeps_only_keywords_with_a_rendered_reason() {
+        // `type` and `additionalProperties` have their own reason in
+        // `reason` / `collect`; the rest are annotations and applicators.
+        const STRUCTURAL: &[&str] = &[
             "type",
-            "enum",
-            "minimum",
-            "maximum",
             "additionalProperties",
             "properties",
-            "items",
             "$schema",
             "$id",
             "title",
             "description",
             "default",
         ];
+        let mut document = document();
+        strip_values(&mut document);
         let mut used = HashSet::new();
-        keywords(&document(), &mut used);
-        let unmapped: Vec<&String> = used.iter().filter(|k| !MAPPED.contains(&k.as_str())).collect();
+        keywords(&document, &mut used);
+        let unmapped: Vec<&String> = used.iter().filter(|k| !STRUCTURAL.contains(&k.as_str())).collect();
         assert!(unmapped.is_empty(), "add a reason for {unmapped:?}");
     }
 
     #[test]
-    fn defaults_validate_against_their_own_schema() {
+    fn defaults_validate_against_the_full_schema() {
         let document = document();
-        let (schemas, index) = compile();
+        let mut compiler = Compiler::new();
+        compiler.add_resource(URL, document.clone()).expect("absolute");
+        let mut schemas = Schemas::new();
+        let index = compiler.compile(URL, &mut schemas).expect("compiles");
         for setting in SETTINGS {
             let Some(default) = property(&document, setting.path).and_then(|s| s.get("default")) else {
                 continue;
@@ -421,173 +356,45 @@ pub(crate) mod tests {
         }
     }
 
-    fn check(yaml: &str) -> Result<(), Vec<String>> {
-        let mut root = node::parse(yaml).expect("valid yaml");
-        assert!(interpolate::interpolate(&mut root, &|_| None).errors.is_empty());
-        validate(&mut root)
+    fn check(yaml: &str) -> Vec<String> {
+        let root = node::parse(yaml).expect("valid yaml");
+        let mut errors: Vec<String> = validate(&root, Path::new("f.yaml"))
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        errors.sort();
+        errors
     }
 
     #[test]
-    fn errors_point_at_keys_and_values_without_echoing_them() {
-        let errors = check("database:\n  hots: s3cret\n  port: -5\nlog_level: s3cret\n").expect_err("invalid");
+    fn unknown_keys_point_at_the_key() {
         assert_eq!(
-            errors,
+            check("database:\n  hots: s3cret\nextra: 1\n"),
             [
-                "2:3: database.hots: unknown field; expected one of backend, host, port, user, password, name, \
-                 charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, \
+                "f.yaml:2:3: database.hots: unknown field; expected one of backend, host, port, user, password, \
+                 name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, \
                  connection_timeout, query_timeout, page_size",
-                "3:9: database.port: must be at least 0",
-                "4:12: log_level: expected one of error, warn, info, debug, trace",
+                "f.yaml:3:1: extra: unknown field; expected one of transport, log_level, database, http, pii, ssh",
             ]
         );
-        assert!(!errors.concat().contains("s3cret"));
     }
 
     #[test]
-    fn unions_name_the_yaml_types() {
-        let errors =
-            check("database:\n  ssl: 1\n  host: 2\nhttp:\n  allowed_hosts: {a: b}\npii: []\n").expect_err("invalid");
+    fn root_and_sections_must_be_mappings_or_null() {
+        assert_eq!(check("- a\n"), ["f.yaml:1:1: <root>: expected mapping, found sequence"]);
         assert_eq!(
-            errors,
+            check("pii: []\nssh: 1.5\n"),
             [
-                "2:8: database.ssl: expected boolean, found integer",
-                "3:9: database.host: expected string, found integer",
-                "5:18: http.allowed_hosts: expected string or sequence, found mapping",
-                "6:6: pii: expected mapping, found sequence",
+                "f.yaml:1:6: pii: expected mapping, found sequence",
+                "f.yaml:2:6: ssh: expected mapping, found float",
             ]
         );
+        assert!(check("").is_empty());
+        assert!(check("transport:\ndatabase:\nssh: ~\n").is_empty());
     }
 
     #[test]
-    fn floats_are_rejected_even_when_whole() {
-        let errors = check("transport: 1.5\ndatabase:\n  port: 5432.0\n  host: 2.0\n").expect_err("invalid");
-        assert_eq!(
-            errors,
-            [
-                "1:12: transport: expected string, found float",
-                "3:9: database.port: expected integer, found float",
-                "4:9: database.host: expected string, found float",
-            ]
-        );
-    }
-
-    #[test]
-    fn setting_strings_are_cast_and_failures_sorted_with_schema_errors() {
-        let mut root = node::parse(
-            "database:\n  port: \"5432\"\n  ssl: \"t\"\n  read_only: x-secret\n  host: \"1\"\n  page_size: \"\"\n\
-             http:\n  allowed_hosts: \"a, b\"\n  allowed_origins: \"a,,b\"\ntransport: 1\n",
-        )
-        .expect("valid yaml");
-        let errors = validate(&mut root).expect_err("invalid");
-        assert_eq!(
-            errors,
-            [
-                "4:14: database.read_only: expected boolean (true/false/1/0/t/f), found string",
-                "9:20: http.allowed_origins: empty item in comma-separated list",
-                "10:12: transport: expected string, found integer",
-            ]
-        );
-        assert!(!errors.concat().contains("secret"));
-        let at = |path: &str| {
-            path.split('.').fold(&root.value, |node, key| match node {
-                Node::Map(entries) => &entries[key].1.value,
-                other => panic!("not a mapping: {other:?}"),
-            })
-        };
-        assert_eq!(at("database.port"), &Node::Int(5432));
-        assert_eq!(at("database.ssl"), &Node::Bool(true));
-        assert_eq!(at("database.host"), &Node::Str("1".into()));
-        assert_eq!(at("database.page_size"), &Node::Null, "empty is unset");
-        let Node::Seq(hosts) = at("http.allowed_hosts") else {
-            panic!("allowed_hosts is split");
-        };
-        assert_eq!(hosts.len(), 2);
-    }
-
-    #[test]
-    fn nulls_and_empty_files_are_valid() {
-        assert_eq!(check(""), Ok(()));
-        assert_eq!(check("transport:\ndatabase:\nssh: ~\n"), Ok(()));
-    }
-
-    #[test]
-    fn failing_one_of_is_one_problem_at_its_location() {
-        let schema = serde_json::json!({
-            "properties": {"x": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}}
-        });
-        let mut compiler = Compiler::new();
-        compiler.add_resource("urn:test", schema).expect("absolute");
-        let mut schemas = Schemas::new();
-        let index = compiler.compile("urn:test", &mut schemas).expect("compiles");
-        let root = node::parse("x: [1, 2]\n").expect("valid yaml");
-        let instance = to_json(&root.value);
-        let error = schemas.validate(&instance, index).expect_err("invalid");
-        let mut problems = Vec::new();
-        collect(&error, &root, &mut problems);
-        assert_eq!(
-            problems,
-            [Problem {
-                line: 1,
-                column: 4,
-                path: "x".into(),
-                reason: "does not match the config schema (oneOf)".into(),
-            }]
-        );
-    }
-
-    /// Returns the names `${NAME:?…}` / `${NAME?…}` require in `yaml`.
-    fn required_vars(yaml: &str) -> Vec<String> {
-        yaml.split("${")
-            .skip(1)
-            .filter_map(|rest| {
-                let name: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
-                let after = &rest[name.len()..];
-                (after.starts_with(":?") || after.starts_with('?')).then_some(name)
-            })
-            .collect()
-    }
-
-    #[test]
-    fn docs_yaml_examples_match_the_schema() {
-        let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/content/docs");
-        let mut checked = 0;
-        for entry in std::fs::read_dir(&docs).expect("docs directory") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().is_none_or(|ext| ext != "mdx") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("readable doc");
-            let mut lines = text.lines().enumerate();
-            while let Some((start, line)) = lines.next() {
-                if line.trim() != "```yaml" {
-                    continue;
-                }
-                let block: Vec<&str> = lines
-                    .by_ref()
-                    .map(|(_, l)| l)
-                    .take_while(|l| l.trim() != "```")
-                    .collect();
-                let yaml = block.join("\n");
-                let required = required_vars(&yaml);
-                let lookup = |name: &str| required.iter().any(|r| r == name).then(|| "placeholder".to_owned());
-                let mut root = node::parse(&yaml).unwrap_or_else(|e| panic!("{}:{}: {e}", path.display(), start + 1));
-                let outcome = interpolate::interpolate(&mut root, &lookup);
-                assert!(
-                    outcome.errors.is_empty(),
-                    "{}:{}: {:?}",
-                    path.display(),
-                    start + 1,
-                    outcome.errors
-                );
-                if let Err(errors) = validate(&mut root) {
-                    panic!("{}:{}: {errors:?}", path.display(), start + 1);
-                }
-                checked += 1;
-            }
-        }
-        assert!(checked >= 4, "found only {checked} yaml examples");
+    fn setting_values_are_not_checked() {
+        assert!(check("transport: 1\ndatabase:\n  port: -5\n  host: [a]\n").is_empty());
     }
 }

@@ -11,7 +11,7 @@ The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/
 # yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json
 ```
 
-The `master` URL tracks the latest schema; replace `master` with a release tag such as `vX.Y.Z` to match an older binary. At startup `dbmcp` validates the whole file against the same schema, so every value in the file must be valid even when a `DBMCP_*` variable overrides it.
+The `master` URL tracks the latest schema; replace `master` with a release tag such as `vX.Y.Z` to match an older binary. At startup `dbmcp` checks the file's keys and sections against the same schema and every value by its setting's type, so every value in the file must be valid even when a `DBMCP_*` variable overrides it.
 
 ## Precedence
 

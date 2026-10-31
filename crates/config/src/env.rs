@@ -4,10 +4,9 @@
 //! constant, so a misspelt setting is a compile error. Env names are
 //! hand-picked, not derived from key paths. Every leaf setting has exactly
 //! one name and every name maps to exactly one setting. The [`Kind`] carries
-//! what the loader needs to cast a value: integer ranges and path rules are
-//! stated here and nowhere else.
-
-use serde_saphyr::{Location, Spanned};
+//! every rule a value must meet: integer ranges, enum choices, and path
+//! rules are stated here and nowhere else, and [`Kind::check`] applies them
+//! to values from every source.
 
 use crate::database::DatabaseConfig;
 use crate::node::Node;
@@ -25,7 +24,7 @@ pub struct Setting {
     pub path: &'static str,
     /// Env var name, e.g. `DBMCP_DB_HOST`.
     pub env: &'static str,
-    /// How the loader casts and checks the value.
+    /// How the value is cast and checked.
     pub kind: Kind,
 }
 
@@ -43,10 +42,16 @@ pub enum Kind {
         /// Largest accepted value.
         max: u64,
     },
-    /// A kebab-case enum value.
-    Enum,
+    /// A kebab-case enum value, one of `choices`.
+    Enum {
+        /// Accepted names, in the order error messages list them.
+        choices: &'static [&'static str],
+    },
     /// A YAML sequence, or comma-separated text.
-    List,
+    List {
+        /// Accepted item names, when items are enum values.
+        choices: Option<&'static [&'static str]>,
+    },
     /// A filesystem path.
     ///
     /// Values from the config file expand `~` and resolve against its
@@ -58,45 +63,133 @@ pub enum Kind {
     },
 }
 
+/// A raw setting value: env or env-file text, or a YAML node.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Raw<'a> {
+    /// Text from the process env or env file.
+    Text(&'a str),
+    /// A YAML value; strings are cast like env text.
+    Node(&'a Node),
+}
+
+/// A setting value that passed its [`Kind`]'s checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Value {
+    /// A [`Kind::Text`] or [`Kind::Path`] value.
+    Text(String),
+    /// A [`Kind::Bool`] value.
+    Bool(bool),
+    /// A [`Kind::Int`] value, within its range.
+    Int(u64),
+    /// A [`Kind::Enum`] value, one of its choices.
+    Choice(&'static str),
+    /// A [`Kind::List`] value, each item one of its choices if any.
+    List(Vec<String>),
+}
+
 impl Kind {
-    /// Casts a setting's text to the YAML node its kind expects.
+    /// Casts `raw` to this kind and checks it against the kind's rules.
     ///
-    /// Integers, booleans, and lists treat empty text as unset (`null`);
-    /// list text is split on commas, each item at `at`. Text, path, and enum
-    /// values stay strings. Errors are value-free.
-    pub(crate) fn cast(self, text: &str, at: Location) -> Result<Node, String> {
-        if text.is_empty() && matches!(self, Self::Int { .. } | Self::Bool | Self::List) {
-            return Ok(Node::Null);
+    /// Returns `Ok(None)` for an unset value: YAML `null`, or empty text at
+    /// an integer, boolean, or list. YAML strings are cast like env text;
+    /// list text is split on commas.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-free reason when `raw` has the wrong type, is out of
+    /// range, or is not an accepted choice.
+    pub(crate) fn check(self, raw: Raw<'_>) -> Result<Option<Value>, String> {
+        let text = match raw {
+            Raw::Node(Node::Null) => return Ok(None),
+            Raw::Text(text) => Some(text),
+            Raw::Node(Node::Str(text)) => Some(text.as_str()),
+            Raw::Node(_) => None,
+        };
+        if text == Some("") && matches!(self, Self::Int { .. } | Self::Bool | Self::List { .. }) {
+            return Ok(None);
         }
-        match self {
-            Self::Int { .. } => text
-                .parse::<u64>()
-                .map(|value| i64::try_from(value).map_or(Node::UInt(value), Node::Int))
-                .map_err(|_| format!("{EXPECTED_INT}, found string")),
-            Self::Bool => parse_bool(text)
-                .map(Node::Bool)
-                .ok_or_else(|| format!("{EXPECTED_BOOL}, found string")),
-            Self::List => {
-                let items: Vec<&str> = text.split(',').map(str::trim).collect();
-                if items.iter().any(|item| item.is_empty()) {
-                    return Err("empty item in comma-separated list".into());
+        let found = || match raw {
+            Raw::Text(_) => "string",
+            Raw::Node(node) => node.kind(),
+        };
+        let value = match self {
+            Self::Text | Self::Path { .. } => Value::Text(
+                text.ok_or_else(|| format!("expected string, found {}", found()))?
+                    .to_owned(),
+            ),
+            Self::Bool => match (raw, text) {
+                (Raw::Node(Node::Bool(value)), _) => Value::Bool(*value),
+                (_, Some(text)) => {
+                    Value::Bool(parse_bool(text).ok_or_else(|| format!("{EXPECTED_BOOL}, found {}", found()))?)
                 }
-                let items = items
-                    .into_iter()
-                    .map(|item| Spanned::new(Node::Str(item.to_owned()), at, at))
-                    .collect();
-                Ok(Node::Seq(items))
+                _ => return Err(format!("{EXPECTED_BOOL}, found {}", found())),
+            },
+            Self::Int { min, max } => {
+                let value = match (raw, text) {
+                    (Raw::Node(Node::Int(value)), _) => {
+                        u64::try_from(*value).map_err(|_| format!("must be at least {min}"))?
+                    }
+                    (Raw::Node(Node::UInt(value)), _) => *value,
+                    (_, Some(text)) => text.parse().map_err(|_| format!("{EXPECTED_INT}, found {}", found()))?,
+                    _ => return Err(format!("{EXPECTED_INT}, found {}", found())),
+                };
+                if value < min {
+                    return Err(format!("must be at least {min}"));
+                }
+                if value > max {
+                    return Err(format!("must be at most {max}"));
+                }
+                Value::Int(value)
             }
-            Self::Text | Self::Enum | Self::Path { .. } => Ok(Node::Str(text.to_owned())),
-        }
+            Self::Enum { choices } => {
+                let text = text.ok_or_else(|| format!("expected string, found {}", found()))?;
+                Value::Choice(choose(choices, text)?)
+            }
+            Self::List { choices } => {
+                let items: Vec<&str> = match (raw, text) {
+                    (Raw::Node(Node::Seq(items)), _) => items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, item)| match &item.value {
+                            Node::Str(text) => Ok(text.as_str()),
+                            other => Err(format!("item {i}: expected string, found {}", other.kind())),
+                        })
+                        .collect::<Result<_, _>>()?,
+                    (_, Some(text)) => {
+                        let items: Vec<&str> = text.split(',').map(str::trim).collect();
+                        if items.iter().any(|item| item.is_empty()) {
+                            return Err("empty item in comma-separated list".into());
+                        }
+                        items
+                    }
+                    _ => return Err(format!("expected string or sequence, found {}", found())),
+                };
+                if let Some(choices) = choices {
+                    for (i, item) in items.iter().enumerate() {
+                        choose(choices, item).map_err(|reason| format!("item {i}: {reason}"))?;
+                    }
+                }
+                Value::List(items.into_iter().map(str::to_owned).collect())
+            }
+        };
+        Ok(Some(value))
     }
 }
 
+/// Returns the entry of `choices` equal to `text`.
+fn choose(choices: &'static [&'static str], text: &str) -> Result<&'static str, String> {
+    choices
+        .iter()
+        .find(|name| **name == text)
+        .copied()
+        .ok_or_else(|| format!("expected one of {}", choices.join(", ")))
+}
+
 /// What an integer setting expects; errors append `, found <type>`.
-pub(crate) const EXPECTED_INT: &str = "expected non-negative integer";
+const EXPECTED_INT: &str = "expected non-negative integer";
 
 /// What a boolean setting expects; errors append `, found <type>`.
-pub(crate) const EXPECTED_BOOL: &str = "expected boolean (true/false/1/0/t/f)";
+const EXPECTED_BOOL: &str = "expected boolean (true/false/1/0/t/f)";
 
 /// Parses a boolean the way Go's `strconv.ParseBool` does.
 fn parse_bool(text: &str) -> Option<bool> {
@@ -111,6 +204,13 @@ const fn int(min: u64, max: u64) -> Kind {
     Kind::Int { min, max }
 }
 
+const fn choice(choices: &'static [&'static str]) -> Kind {
+    Kind::Enum { choices }
+}
+
+/// A list of free-form strings.
+const LIST: Kind = Kind::List { choices: None };
+
 /// A path whose env values stay as given.
 const FILE_PATH: Kind = Kind::Path { home_from_env: false };
 
@@ -122,11 +222,19 @@ const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
 }
 
 /// `transport` / `DBMCP_TRANSPORT`.
-pub const TRANSPORT: Setting = setting("transport", "DBMCP_TRANSPORT", Kind::Enum);
+pub const TRANSPORT: Setting = setting("transport", "DBMCP_TRANSPORT", choice(&["stdio", "http"]));
 /// `log_level` / `DBMCP_LOG_LEVEL`.
-pub const LOG_LEVEL: Setting = setting("log_level", "DBMCP_LOG_LEVEL", Kind::Enum);
+pub const LOG_LEVEL: Setting = setting(
+    "log_level",
+    "DBMCP_LOG_LEVEL",
+    choice(&["error", "warn", "info", "debug", "trace"]),
+);
 /// `database.backend` / `DBMCP_DB_BACKEND`.
-pub const DB_BACKEND: Setting = setting("database.backend", "DBMCP_DB_BACKEND", Kind::Enum);
+pub const DB_BACKEND: Setting = setting(
+    "database.backend",
+    "DBMCP_DB_BACKEND",
+    choice(&["mysql", "mariadb", "postgres", "sqlite"]),
+);
 /// `database.host` / `DBMCP_DB_HOST`.
 pub const DB_HOST: Setting = setting("database.host", "DBMCP_DB_HOST", Kind::Text);
 /// `database.port` / `DBMCP_DB_PORT`.
@@ -176,9 +284,9 @@ pub const HTTP_HOST: Setting = setting("http.host", "DBMCP_HTTP_HOST", Kind::Tex
 /// `http.port` / `DBMCP_HTTP_PORT`.
 pub const HTTP_PORT: Setting = setting("http.port", "DBMCP_HTTP_PORT", int(0, u16::MAX as u64));
 /// `http.allowed_origins` / `DBMCP_HTTP_ALLOWED_ORIGINS`.
-pub const HTTP_ALLOWED_ORIGINS: Setting = setting("http.allowed_origins", "DBMCP_HTTP_ALLOWED_ORIGINS", Kind::List);
+pub const HTTP_ALLOWED_ORIGINS: Setting = setting("http.allowed_origins", "DBMCP_HTTP_ALLOWED_ORIGINS", LIST);
 /// `http.allowed_hosts` / `DBMCP_HTTP_ALLOWED_HOSTS`.
-pub const HTTP_ALLOWED_HOSTS: Setting = setting("http.allowed_hosts", "DBMCP_HTTP_ALLOWED_HOSTS", Kind::List);
+pub const HTTP_ALLOWED_HOSTS: Setting = setting("http.allowed_hosts", "DBMCP_HTTP_ALLOWED_HOSTS", LIST);
 /// `http.auth_token` / `DBMCP_HTTP_AUTH_TOKEN`.
 pub const HTTP_AUTH_TOKEN: Setting = setting("http.auth_token", "DBMCP_HTTP_AUTH_TOKEN", Kind::Text);
 /// `http.allow_unauthenticated` / `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`.
@@ -190,9 +298,27 @@ pub const HTTP_ALLOW_UNAUTHENTICATED: Setting = setting(
 /// `pii.enabled` / `DBMCP_PII_ENABLE`.
 pub const PII_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
 /// `pii.operator` / `DBMCP_PII_OPERATOR`.
-pub const PII_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", Kind::Enum);
+pub const PII_OPERATOR: Setting = setting(
+    "pii.operator",
+    "DBMCP_PII_OPERATOR",
+    choice(&["replace", "mask", "redact", "hash"]),
+);
 /// `pii.categories` / `DBMCP_PII_CATEGORIES`.
-pub const PII_CATEGORIES: Setting = setting("pii.categories", "DBMCP_PII_CATEGORIES", Kind::List);
+pub const PII_CATEGORIES: Setting = setting(
+    "pii.categories",
+    "DBMCP_PII_CATEGORIES",
+    Kind::List {
+        choices: Some(&[
+            "personal",
+            "financial",
+            "government",
+            "contact",
+            "network",
+            "digital-identity",
+            "crypto",
+        ]),
+    },
+);
 /// `pii.ner_enabled` / `DBMCP_PII_NER_ENABLE`.
 pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
 /// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
@@ -215,7 +341,7 @@ pub const SSH_KNOWN_HOSTS: Setting = setting("ssh.known_hosts", "DBMCP_SSH_KNOWN
 pub const SSH_STRICT_HOST_KEY_CHECKING: Setting = setting(
     "ssh.strict_host_key_checking",
     "DBMCP_SSH_STRICT_HOST_KEY_CHECKING",
-    Kind::Enum,
+    choice(&["yes", "accept-new", "no"]),
 );
 /// `ssh.keepalive_interval` / `DBMCP_SSH_KEEPALIVE_INTERVAL`.
 pub const SSH_KEEPALIVE_INTERVAL: Setting = setting(
@@ -301,56 +427,161 @@ mod tests {
         }
     }
 
-    fn cast(kind: Kind, text: &str) -> Result<Node, String> {
-        kind.cast(text, Location::UNKNOWN)
+    fn text(kind: Kind, text: &str) -> Result<Option<Value>, String> {
+        kind.check(Raw::Text(text))
     }
 
-    fn texts(node: &Node) -> Vec<&str> {
-        let Node::Seq(items) = node else {
-            panic!("expected sequence, got {node:?}");
+    fn yaml(kind: Kind, yaml: &str) -> Result<Option<Value>, String> {
+        let root = crate::node::parse(&format!("x: {yaml}\n")).expect("valid yaml");
+        let Node::Map(entries) = root.value else {
+            panic!("expected mapping");
         };
-        items
-            .iter()
-            .map(|item| match &item.value {
-                Node::Str(text) => text.as_str(),
-                other => panic!("expected string item, got {other:?}"),
-            })
-            .collect()
+        kind.check(Raw::Node(&entries["x"].1.value))
+    }
+
+    const COLORS: Kind = choice(&["red", "green"]);
+
+    #[test]
+    fn text_is_cast_by_kind() {
+        assert_eq!(text(int(0, 10), "7"), Ok(Some(Value::Int(7))));
+        assert_eq!(
+            text(int(0, u64::MAX), "18446744073709551615"),
+            Ok(Some(Value::Int(u64::MAX)))
+        );
+        assert_eq!(
+            text(LIST, " a , b"),
+            Ok(Some(Value::List(vec!["a".into(), "b".into()])))
+        );
+        assert_eq!(text(COLORS, "red"), Ok(Some(Value::Choice("red"))));
+        assert_eq!(text(FILE_PATH, "~/x"), Ok(Some(Value::Text("~/x".into()))));
     }
 
     #[test]
-    fn cast_types_text_by_kind() {
-        assert_eq!(cast(int(0, 10), "7"), Ok(Node::Int(7)));
-        assert_eq!(cast(int(0, u64::MAX), "18446744073709551615"), Ok(Node::UInt(u64::MAX)));
-        assert_eq!(cast(Kind::Bool, "t"), Ok(Node::Bool(true)));
-        assert_eq!(cast(Kind::Bool, "False"), Ok(Node::Bool(false)));
-        assert_eq!(texts(&cast(Kind::List, " a , b").expect("list")), ["a", "b"]);
-        assert_eq!(cast(Kind::Enum, "http"), Ok(Node::Str("http".into())));
-        assert_eq!(cast(FILE_PATH, "~/x"), Ok(Node::Str("~/x".into())));
-    }
-
-    #[test]
-    fn empty_text_is_unset_except_for_strings() {
-        for kind in [int(0, 1), Kind::Bool, Kind::List] {
-            assert_eq!(cast(kind, ""), Ok(Node::Null), "{kind:?}");
+    fn bools_accept_the_parse_bool_set() {
+        for (value, expected) in [
+            ("1", true),
+            ("t", true),
+            ("T", true),
+            ("TRUE", true),
+            ("true", true),
+            ("True", true),
+            ("0", false),
+            ("f", false),
+            ("F", false),
+            ("FALSE", false),
+            ("false", false),
+            ("False", false),
+        ] {
+            assert_eq!(text(Kind::Bool, value), Ok(Some(Value::Bool(expected))), "{value}");
         }
-        assert_eq!(cast(Kind::Text, ""), Ok(Node::Str(String::new())));
+        assert_eq!(yaml(Kind::Bool, "\"0\""), Ok(Some(Value::Bool(false))));
+        assert_eq!(yaml(Kind::Bool, "true"), Ok(Some(Value::Bool(true))));
     }
 
     #[test]
-    fn cast_errors_are_value_free() {
+    fn yaml_strings_are_cast_like_text() {
+        assert_eq!(yaml(int(0, 10), "\"5\""), Ok(Some(Value::Int(5))));
         assert_eq!(
-            cast(int(0, 1), "-1"),
-            Err("expected non-negative integer, found string".into())
+            yaml(LIST, "\"a, b\""),
+            Ok(Some(Value::List(vec!["a".into(), "b".into()])))
         );
         assert_eq!(
-            cast(Kind::Bool, "yes"),
-            Err("expected boolean (true/false/1/0/t/f), found string".into())
+            yaml(LIST, "[a, b]"),
+            Ok(Some(Value::List(vec!["a".into(), "b".into()])))
         );
-        assert_eq!(
-            cast(Kind::List, "a,,b"),
-            Err("empty item in comma-separated list".into())
-        );
+        assert_eq!(yaml(Kind::Text, "\"1\""), Ok(Some(Value::Text("1".into()))));
+    }
+
+    #[test]
+    fn empty_and_null_are_unset_except_empty_strings() {
+        for kind in [int(0, 1), Kind::Bool, LIST] {
+            assert_eq!(text(kind, ""), Ok(None), "{kind:?}");
+            assert_eq!(yaml(kind, "\"\""), Ok(None), "{kind:?}");
+        }
+        for kind in [int(0, 1), Kind::Bool, LIST, Kind::Text, COLORS] {
+            assert_eq!(yaml(kind, "~"), Ok(None), "{kind:?}");
+        }
+        assert_eq!(text(Kind::Text, ""), Ok(Some(Value::Text(String::new()))));
+    }
+
+    #[test]
+    fn integers_are_checked_against_their_range() {
+        assert_eq!(text(int(1, 500), "500"), Ok(Some(Value::Int(500))));
+        assert_eq!(text(int(1, 500), "501"), Err("must be at most 500".into()));
+        assert_eq!(text(int(1, 500), "0"), Err("must be at least 1".into()));
+        assert_eq!(yaml(int(0, 9), "-5"), Err("must be at least 0".into()));
+    }
+
+    #[test]
+    fn choices_are_checked_for_enums_and_list_items() {
+        assert_eq!(text(COLORS, "blue"), Err("expected one of red, green".into()));
+        let tags = Kind::List {
+            choices: Some(&["a", "b"]),
+        };
+        assert_eq!(text(tags, "b,a"), Ok(Some(Value::List(vec!["b".into(), "a".into()]))));
+        assert_eq!(text(tags, "a,c"), Err("item 1: expected one of a, b".into()));
+    }
+
+    #[test]
+    fn errors_name_the_type_found_without_the_value() {
+        let cases = [
+            (
+                text(int(0, 1), "-1-secret"),
+                "expected non-negative integer, found string",
+            ),
+            (
+                text(Kind::Bool, "yes"),
+                "expected boolean (true/false/1/0/t/f), found string",
+            ),
+            (text(LIST, "a,,b"), "empty item in comma-separated list"),
+            (yaml(int(0, 9), "1.0"), "expected non-negative integer, found float"),
+            (
+                yaml(Kind::Bool, "1"),
+                "expected boolean (true/false/1/0/t/f), found integer",
+            ),
+            (yaml(Kind::Text, "[secret]"), "expected string, found sequence"),
+            (yaml(COLORS, "1"), "expected string, found integer"),
+            (yaml(LIST, "{a: b}"), "expected string or sequence, found mapping"),
+            (yaml(LIST, "[a, 1]"), "item 1: expected string, found integer"),
+        ];
+        for (result, reason) in cases {
+            assert_eq!(result, Err(reason.into()));
+        }
+    }
+
+    /// Names in a typed `CHOICES` table.
+    fn names<T>(choices: &[(&'static str, T)]) -> Vec<&'static str> {
+        choices.iter().map(|(name, _)| *name).collect()
+    }
+
+    #[test]
+    fn choices_match_each_types_names() {
+        use crate::database::DatabaseBackend;
+        use crate::log::LogLevel;
+        use crate::pii::{PiiCategory, PiiOperator};
+        use crate::ssh::StrictHostKeyChecking;
+        use crate::transport::Transport;
+
+        let tied = [
+            (TRANSPORT, names(Transport::CHOICES)),
+            (LOG_LEVEL, names(LogLevel::CHOICES)),
+            (DB_BACKEND, names(DatabaseBackend::CHOICES)),
+            (PII_OPERATOR, names(PiiOperator::CHOICES)),
+            (PII_CATEGORIES, names(PiiCategory::CHOICES)),
+            (SSH_STRICT_HOST_KEY_CHECKING, names(StrictHostKeyChecking::CHOICES)),
+        ];
+        let with_choices = SETTINGS
+            .iter()
+            .filter(|s| matches!(s.kind, Kind::Enum { .. } | Kind::List { choices: Some(_) }))
+            .count();
+        assert_eq!(with_choices, tied.len(), "tie every setting with choices to its type");
+        for (setting, expected) in tied {
+            let choices = match setting.kind {
+                Kind::Enum { choices } | Kind::List { choices: Some(choices) } => choices,
+                kind => panic!("{} has no choices: {kind:?}", setting.path),
+            };
+            assert_eq!(choices, expected, "{}", setting.path);
+        }
     }
 
     #[test]

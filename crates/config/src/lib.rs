@@ -31,6 +31,7 @@ mod options;
 mod origin;
 mod pii;
 mod schema;
+mod settings;
 mod source;
 mod ssh;
 mod template;

@@ -108,7 +108,7 @@ The config file is a YAML mapping. Top-level keys are `transport` and `log_level
 - **Strings** that YAML would read as a number or boolean need quotes (`password: "12345"`); a value of the wrong type is an error.
 - **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`). An empty string at an integer, boolean, or list key (`port: ""`, or an unset `${PORT}`) also means unset, just like an empty `DBMCP_*` variable.
 - **Lists** are YAML sequences, or a comma-separated string (useful with `${}`: `allowed_hosts: ${HOSTS}`), and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
-- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: the whole file is checked against the [schema](/docs/configuration).
+- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env file.
 
 A full annotated example:
 
@@ -273,7 +273,7 @@ Type errors never include the offending value, so a mistyped secret is not print
 
 ## Errors
 
-Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env file, read and parse the config file, interpolate, cast and validate the config file against its schema, resolve every setting, check the rules — and stops at the first stage that fails, reporting every problem in that stage.
+Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env file, read and parse the config file, interpolate, check every setting value from every source, check the rules — and stops at the first stage that fails, reporting every problem in that stage.
 
 | Header | Cause |
 |--------|-------|
@@ -281,31 +281,27 @@ Any configuration problem stops startup with exit code 1 and an error on stderr:
 | `failed to load env file <path>:` | Env file syntax errors, one `line N: …` bullet each |
 | `failed to parse config file <path>:` | YAML syntax errors, with `file:line:column` |
 | `failed to interpolate config file <path>:` | Malformed `${` or a failed `${VAR:?…}` |
-| `failed to validate config file <path>:` | Config file values that do not match the [schema](/docs/configuration): unknown keys, wrong types (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, and empty list items |
-| `configuration validation failed:` | Wrong types and invalid values from env vars or the env file, and rule violations |
+| `invalid settings:` | Unknown keys and non-mapping sections in the config file, and values from any source with the wrong type (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, or empty list items. Values that lose to a higher-priority source are checked too |
+| `configuration validation failed:` | Rule violations between valid values |
 
-Config file bullets start with `file:line:column` and the dotted YAML key. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)` for the config file, `(from DBMCP_DB_PORT)` for the process environment, or `(from DBMCP_DB_PORT in /abs/.env:3)` for the env file.
+Under `invalid settings`, each bullet starts with where the value is, then the dotted YAML key: `/abs/dbmcp.yaml:2:14:` for the config file, `DBMCP_DB_PORT in /abs/.env:3:` for the env file, or `DBMCP_DB_PORT:` for the process environment. Bullets list the config file first, then the env file, then the process environment. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)`, `(from DBMCP_DB_PORT in /abs/.env:3)`, or `(from DBMCP_DB_PORT)`.
 
 Sample output:
 
 ```text
-$ dbmcp --config dbmcp.yaml
-failed to validate config file /srv/dbmcp/dbmcp.yaml:
+$ DBMCP_DB_PORT=abc DBMCP_DB_CONNECTION_TIMEOUT=0 dbmcp --config /srv/dbmcp/dbmcp.yaml --env /srv/dbmcp/.env
+invalid settings:
   - /srv/dbmcp/dbmcp.yaml:3:3: database.pasword: unknown field; expected one of backend, host, port, user, password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, connection_timeout, query_timeout, page_size
+  - /srv/dbmcp/dbmcp.yaml:4:14: database.page_size: must be at least 1
+  - DBMCP_DB_MAX_POOL_SIZE in /srv/dbmcp/.env:2: database.max_pool_size: must be at least 1
+  - DBMCP_DB_CONNECTION_TIMEOUT: database.connection_timeout: must be at least 1
+  - DBMCP_DB_PORT: database.port: expected non-negative integer, found string
 ```
 
 ```text
-$ DBMCP_DB_PORT=abc DBMCP_DB_READ_ONLY=yes dbmcp --config /srv/dbmcp/dbmcp.yaml
+$ DBMCP_DB_BACKEND=sqlite dbmcp --config /srv/dbmcp/dbmcp.yaml
 configuration validation failed:
-  - database.port: expected non-negative integer, found string (from DBMCP_DB_PORT)
-  - database.read_only: expected boolean (true/false/1/0/t/f), found string (from DBMCP_DB_READ_ONLY)
-```
-
-```text
-$ DBMCP_DB_CONNECTION_TIMEOUT=0 dbmcp --config /srv/dbmcp/dbmcp.yaml --env /srv/dbmcp/.env
-configuration validation failed:
-  - database.max_pool_size must be at least 1 (from DBMCP_DB_MAX_POOL_SIZE in /srv/dbmcp/.env:2)
-  - database.connection_timeout must be at least 1 (from DBMCP_DB_CONNECTION_TIMEOUT)
+  - database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file (from DBMCP_DB_BACKEND)
 ```
 
 ```text

@@ -7,32 +7,30 @@
 //! 2. Pick the config file (`--config` > process `DBMCP_CONFIG` > env-file
 //!    `DBMCP_CONFIG`), read it, and parse it into an untyped tree.
 //! 3. `${}`-interpolate every string value against process env, then env file.
-//! 4. Cast strings at integer, boolean, and list settings, then validate the
-//!    whole file against the config schema, even the values an env var
-//!    overrides.
-//! 5. Resolve each setting: non-empty process env > non-empty env file >
-//!    YAML > default, casting env text by setting type.
-//! 6. Run [`Config::validate`] on the result.
+//! 4. Check the file's structure against the config schema and every set
+//!    value from every source by its setting's kind, even values that lose
+//!    to a higher source, and pick each winner: non-empty process env >
+//!    non-empty env file > YAML (see [`settings`](crate::settings)).
+//! 5. Build the [`Config`] from the winners and defaults, applying
+//!    activation rules, then run [`Config::validate`] on it.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_saphyr::Location;
-
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::{self, EnvFile};
-use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, EXPECTED_BOOL, EXPECTED_INT, Kind, SETTINGS, Setting};
+use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::interpolate;
 use crate::log::LogLevel;
-use crate::node::{self, Node, SpannedNode};
+use crate::node::{self, SpannedNode};
 use crate::options::LoadOptions;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
-use crate::schema;
+use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
 use crate::ssh::{self, SshConfig, StrictHostKeyChecking};
 use crate::transport::Transport;
@@ -76,8 +74,8 @@ enum LoadErrorKind {
     #[error("failed to interpolate config file {}:{}", path.display(), Bullets(errors))]
     Interpolate { path: PathBuf, errors: Vec<String> },
 
-    #[error("failed to validate config file {}:{}", path.display(), Bullets(errors))]
-    Validate { path: PathBuf, errors: Vec<String> },
+    #[error("invalid settings:{}", Bullets(.0))]
+    Settings(Vec<InputError>),
 
     #[error("configuration validation failed:{}", Bullets(.0))]
     Invalid(Vec<Diagnostic>),
@@ -100,7 +98,8 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
 ///
 /// Returns [`LoadError`] when a named file cannot be read, the env file or
 /// YAML cannot be parsed, `${}` interpolation fails, the YAML does not match
-/// the config schema, a value has the wrong type, or validation fails.
+/// the config schema, any source's value fails its setting's checks, or
+/// validation fails.
 pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
     let fail = |warnings: Vec<String>, kind| LoadError { warnings, kind };
@@ -142,26 +141,20 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
                 },
             ));
         }
-        if let Err(errors) = schema::validate(tree) {
-            let errors = in_file(&errors);
-            return Err(fail(
-                warnings,
-                LoadErrorKind::Validate {
-                    path: path.clone(),
-                    errors,
-                },
-            ));
-        }
     }
-    let leaves = file.as_ref().map(|(_, tree)| flatten(tree)).unwrap_or_default();
+    let settings = match settings::check(
+        file.as_ref().map(|(path, tree)| (path.as_path(), tree)),
+        env_file.as_ref(),
+        &options.environment,
+    ) {
+        Ok(settings) => settings,
+        Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
+    };
 
-    let mut resolver = Resolver {
+    let resolver = Resolver {
         options,
-        env_file: env_file.as_ref(),
         file: file.as_ref().map(|(path, _)| path.as_path()),
-        leaves,
-        sources: HashMap::new(),
-        diagnostics: Vec::new(),
+        settings: &settings,
     };
     match resolver.build() {
         Ok((config, log_level)) => Ok(Loaded {
@@ -171,7 +164,7 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         }),
         Err(mut diagnostics) => {
             for diagnostic in &mut diagnostics {
-                diagnostic.attach_sources(&resolver.sources);
+                diagnostic.attach_sources(settings.sources());
             }
             Err(fail(warnings, LoadErrorKind::Invalid(diagnostics)))
         }
@@ -260,164 +253,68 @@ fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option
     environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
-/// Returns every non-null setting of the schema-checked tree by path.
-fn flatten(root: &SpannedNode) -> HashMap<&'static str, &SpannedNode> {
-    SETTINGS
-        .iter()
-        .filter_map(|setting| {
-            let node = setting.path.split('.').try_fold(root, |node, key| match &node.value {
-                Node::Map(entries) => entries.get(key).map(|(_, value)| value),
-                _ => None,
-            })?;
-            (node.value != Node::Null).then_some((setting.path, node))
-        })
-        .collect()
-}
-
-/// Resolves each setting across the sources and casts it to its type.
+/// Builds the configuration from each setting's checked winner and defaults.
 struct Resolver<'a> {
     options: &'a LoadOptions,
-    env_file: Option<&'a EnvFile>,
     file: Option<&'a Path>,
-    leaves: HashMap<&'static str, &'a SpannedNode>,
-    sources: HashMap<&'static str, Source>,
-    /// Cast errors collected while resolving settings.
-    diagnostics: Vec<Diagnostic>,
+    settings: &'a Settings,
 }
 
 impl Resolver<'_> {
-    /// Returns the winning value for `setting` as a typed node and records its source.
-    ///
-    /// Env and env-file text is cast by the setting's [`Kind`] here; YAML
-    /// values were cast before schema validation.
-    fn raw(&mut self, setting: Setting) -> Option<Result<Node, String>> {
-        let Setting { path, env, kind } = setting;
-        let options = self.options;
-        let (value, source) = if let Some(text) = non_empty(&options.environment, env) {
-            (kind.cast(text, Location::UNKNOWN), Source::Env(env))
-        } else if let Some((text, line)) = self
-            .env_file
-            .and_then(|file| file.get_with_line(env))
-            .filter(|(text, _)| !text.is_empty())
-        {
-            let path = self.env_file.map(|f| f.path().to_path_buf()).unwrap_or_default();
-            (
-                kind.cast(text, Location::UNKNOWN),
-                Source::EnvFile { name: env, path, line },
-            )
-        } else {
-            let node = *self.leaves.get(path)?;
-            let source = Source::File {
-                path: self.file.map(Path::to_path_buf).unwrap_or_default(),
-                line: node.referenced.line(),
-                column: node.referenced.column(),
-            };
-            (Ok(node.value.clone()), source)
-        };
-        self.sources.insert(path, source);
-        Some(value)
+    /// Returns `true` when any source sets `setting`.
+    fn is_set(&self, setting: Setting) -> bool {
+        self.settings.get(setting).is_some()
     }
 
-    /// Returns `true` when any source sets `setting`, recording that source.
-    fn is_set(&mut self, setting: Setting) -> bool {
-        self.raw(setting).is_some()
-    }
-
-    /// Resolves `setting` and converts it; records a value-free error on failure.
-    fn get<T>(&mut self, setting: Setting, convert: impl FnOnce(Node) -> Result<T, String>) -> Option<T> {
-        match self.raw(setting)?.and_then(convert) {
-            Ok(value) => Some(value),
-            Err(reason) => {
-                self.invalid(setting, reason);
-                None
-            }
+    fn string(&self, setting: Setting) -> Option<String> {
+        match self.settings.get(setting)? {
+            Value::Text(text) => Some(text.clone()),
+            _ => unreachable!("{} is not a text setting", setting.path),
         }
     }
 
-    fn string(&mut self, setting: Setting) -> Option<String> {
-        self.get(setting, |node| match node {
-            Node::Str(text) => Ok(text),
-            other => Err(format!("expected string, found {}", other.kind())),
-        })
+    fn bool(&self, setting: Setting) -> Option<bool> {
+        match self.settings.get(setting)? {
+            Value::Bool(value) => Some(*value),
+            _ => unreachable!("{} is not a boolean setting", setting.path),
+        }
     }
 
-    fn bool(&mut self, setting: Setting) -> Option<bool> {
-        self.get(setting, |node| match node {
-            Node::Bool(value) => Ok(value),
-            other => Err(format!("{EXPECTED_BOOL}, found {}", other.kind())),
-        })
-    }
-
-    /// Resolves an integer and checks it against the setting's range.
+    /// Returns an integer setting, already checked against its range.
     ///
     /// # Panics
     ///
     /// Panics when `setting` is not a [`Kind::Int`] or its `max` does not fit
     /// `T`: both are mistakes in the setting table, hit by every load.
-    fn int<T: TryFrom<u64>>(&mut self, setting: Setting) -> Option<T> {
-        let Kind::Int { min, max } = setting.kind else {
+    fn int<T: TryFrom<u64>>(&self, setting: Setting) -> Option<T> {
+        let Kind::Int { max, .. } = setting.kind else {
             unreachable!("{} is not an integer setting", setting.path);
         };
         assert!(T::try_from(max).is_ok(), "{} max does not fit its field", setting.path);
-        let value = self.get(setting, |node| match node {
-            Node::Int(value) if value >= 0 => Ok(value.unsigned_abs()),
-            Node::UInt(value) => Ok(value),
-            other => Err(format!("{EXPECTED_INT}, found {}", other.kind())),
-        })?;
-        let expected = if value < min {
-            format!("at least {min}")
-        } else if value > max {
-            format!("at most {max}")
-        } else {
-            return T::try_from(value).ok();
-        };
-        let path = setting.path;
-        self.diagnostics
-            .push(Diagnostic::new(ConfigError::OutOfRange { path, expected }).involving(&[setting]));
-        None
-    }
-
-    /// Resolves an enum setting by matching its text against `choices`.
-    fn enumeration<T: Copy>(&mut self, setting: Setting, choices: &[(&str, T)]) -> Option<T> {
-        self.get(setting, |node| {
-            choices
-                .iter()
-                .find(|(name, _)| matches!(&node, Node::Str(text) if text == name))
-                .map(|&(_, value)| value)
-                .ok_or_else(|| {
-                    let names: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
-                    format!("expected one of {}", names.join(", "))
-                })
-        })
-    }
-
-    /// Resolves a list: a sequence of strings, cast from comma-separated text.
-    fn list(&mut self, setting: Setting) -> Option<Vec<String>> {
-        self.get(setting, |node| match node {
-            Node::Seq(items) => items
-                .into_iter()
-                .enumerate()
-                .map(|(i, item)| match item.value {
-                    Node::Str(text) => Ok(text),
-                    other => Err(format!("item {i}: expected string, found {}", other.kind())),
-                })
-                .collect(),
-            other => Err(format!("expected sequence, found {}", other.kind())),
-        })
-    }
-
-    /// Resolves a list setting whose items each match one of `choices`.
-    fn enum_list<T: Copy>(&mut self, setting: Setting, choices: &[(&str, T)]) -> Option<Vec<T>> {
-        let items = self.list(setting)?;
-        let parsed: Option<Vec<T>> = items
-            .iter()
-            .map(|item| choices.iter().find(|(name, _)| name == item).map(|&(_, value)| value))
-            .collect();
-        if parsed.is_none() {
-            let names: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
-            self.invalid(setting, format!("expected items from {}", names.join(", ")));
+        match self.settings.get(setting)? {
+            Value::Int(value) => T::try_from(*value).ok(),
+            _ => unreachable!("{} is not an integer setting", setting.path),
         }
-        parsed
+    }
+
+    /// Returns an enum setting, mapping its checked name through `choices`.
+    fn enumeration<T: Copy>(&self, setting: Setting, choices: &[(&str, T)]) -> Option<T> {
+        match self.settings.get(setting)? {
+            Value::Choice(name) => Some(choose(choices, name)),
+            _ => unreachable!("{} is not a choice setting", setting.path),
+        }
+    }
+
+    fn list(&self, setting: Setting) -> Option<Vec<String>> {
+        match self.settings.get(setting)? {
+            Value::List(items) => Some(items.clone()),
+            _ => unreachable!("{} is not a list setting", setting.path),
+        }
+    }
+
+    /// Returns a list setting whose items were checked against `choices`.
+    fn enum_list<T: Copy>(&self, setting: Setting, choices: &[(&str, T)]) -> Option<Vec<T>> {
+        Some(self.list(setting)?.iter().map(|item| choose(choices, item)).collect())
     }
 
     /// Resolves a path setting by its [`Kind::Path`] rule.
@@ -425,13 +322,13 @@ impl Resolver<'_> {
     /// # Panics
     ///
     /// Panics when `setting` is not a [`Kind::Path`], a mistake in the setting table.
-    fn path(&mut self, setting: Setting) -> Option<PathBuf> {
+    fn path(&self, setting: Setting) -> Option<PathBuf> {
         let Kind::Path { home_from_env } = setting.kind else {
             unreachable!("{} is not a path setting", setting.path);
         };
         let value = PathBuf::from(self.string(setting)?);
         let home = self.options.home.as_deref();
-        Some(match self.sources.get(setting.path) {
+        Some(match self.settings.source(setting) {
             // An empty value stays empty so the section's checks still see it.
             Some(Source::File { .. }) if !value.as_os_str().is_empty() => {
                 self.relative_to_file(&ssh::expand_tilde(&value, home))
@@ -448,19 +345,11 @@ impl Resolver<'_> {
         }
     }
 
-    /// Records a cast error for `setting`; its source is attached on failure.
-    fn invalid(&mut self, setting: Setting, reason: String) {
-        let path = setting.path;
-        self.diagnostics
-            .push(Diagnostic::new(ConfigError::InvalidValue { path, reason }).involving(&[setting]));
-    }
-
     /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
     ///
     /// Activation rules run here: a section exists only when its trigger is
-    /// set, and SSH settings without `ssh.host` are an error. Cast errors stop
-    /// before validation, since rules on half-cast values would only add noise.
-    fn build(&mut self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
+    /// set, and SSH settings without `ssh.host` are an error.
+    fn build(&self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
             .enumeration(env::TRANSPORT, Transport::CHOICES)
             .unwrap_or(Transport::Stdio);
@@ -475,9 +364,6 @@ impl Resolver<'_> {
             .collect();
         let ssh = ssh_set.contains(&env::SSH_HOST).then(|| self.ssh());
         let missing_ssh_host = ssh.is_none() && !ssh_set.is_empty();
-        if !self.diagnostics.is_empty() {
-            return Err(std::mem::take(&mut self.diagnostics));
-        }
 
         let config = Config {
             transport,
@@ -500,13 +386,13 @@ impl Resolver<'_> {
         Ok((config, log_level))
     }
 
-    fn database(&mut self) -> DatabaseConfig {
+    fn database(&self) -> DatabaseConfig {
         let backend = self
             .enumeration(env::DB_BACKEND, DatabaseBackend::CHOICES)
             .unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
         let name = self
             .string(env::DB_NAME)
-            .map(|name| match self.sources.get(env::DB_NAME.path) {
+            .map(|name| match self.settings.source(env::DB_NAME) {
                 Some(Source::File { .. })
                     if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
@@ -516,7 +402,7 @@ impl Resolver<'_> {
                 }
                 _ => name,
             });
-        let path_string = |r: &mut Self, setting| r.path(setting).map(|p| p.display().to_string());
+        let path_string = |setting| self.path(setting).map(|p| p.display().to_string());
         DatabaseConfig {
             backend,
             host: self
@@ -530,9 +416,9 @@ impl Resolver<'_> {
             name,
             charset: self.string(env::DB_CHARSET),
             ssl: self.bool(env::DB_SSL).unwrap_or(DatabaseConfig::DEFAULT_SSL),
-            ssl_ca: path_string(self, env::DB_SSL_CA),
-            ssl_cert: path_string(self, env::DB_SSL_CERT),
-            ssl_key: path_string(self, env::DB_SSL_KEY),
+            ssl_ca: path_string(env::DB_SSL_CA),
+            ssl_cert: path_string(env::DB_SSL_CERT),
+            ssl_key: path_string(env::DB_SSL_KEY),
             ssl_verify_cert: self
                 .bool(env::DB_SSL_VERIFY_CERT)
                 .unwrap_or(DatabaseConfig::DEFAULT_SSL_VERIFY_CERT),
@@ -550,7 +436,7 @@ impl Resolver<'_> {
         }
     }
 
-    fn http(&mut self) -> HttpConfig {
+    fn http(&self) -> HttpConfig {
         HttpConfig {
             host: self
                 .string(env::HTTP_HOST)
@@ -567,7 +453,7 @@ impl Resolver<'_> {
         }
     }
 
-    fn pii(&mut self) -> PiiConfig {
+    fn pii(&self) -> PiiConfig {
         PiiConfig {
             operator: self
                 .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
@@ -578,7 +464,7 @@ impl Resolver<'_> {
         }
     }
 
-    fn ssh(&mut self) -> SshConfig {
+    fn ssh(&self) -> SshConfig {
         let home = self.options.home.clone();
         SshConfig {
             host: self.string(env::SSH_HOST).unwrap_or_default(),
@@ -600,6 +486,20 @@ impl Resolver<'_> {
             local_port: self.int(env::SSH_LOCAL_PORT),
         }
     }
+}
+
+/// Maps a checked name to its value in `choices`.
+///
+/// # Panics
+///
+/// Panics when `name` is missing: the setting's choices and the type's
+/// `CHOICES` disagree, which the setting table's tests rule out.
+fn choose<T: Copy>(choices: &[(&str, T)], name: &str) -> T {
+    choices
+        .iter()
+        .find(|(choice, _)| *choice == name)
+        .map(|&(_, value)| value)
+        .expect("setting choices match the type's CHOICES")
 }
 
 #[cfg(test)]
@@ -710,10 +610,11 @@ mod tests {
         let http = active.config.http.as_ref().expect("http");
         let pii = active.config.pii.as_ref().expect("pii");
         let ssh = active.config.ssh.as_ref().expect("ssh");
-        let document = schema::tests::document();
+        let document = crate::schema::tests::document();
         let mut compared = 0;
         for setting in SETTINGS {
-            let Some(default) = schema::tests::property(&document, setting.path).and_then(|s| s.get("default")) else {
+            let Some(default) = crate::schema::tests::property(&document, setting.path).and_then(|s| s.get("default"))
+            else {
                 continue;
             };
             let resolved: Value = match setting.path {
@@ -830,7 +731,7 @@ mod tests {
         let error = fixture.err();
         let file = fixture.dir.path().join("dbmcp.yaml");
         assert!(
-            error.starts_with(&format!("failed to validate config file {}:", file.display())),
+            error.starts_with(&format!("invalid settings:\n  - {}:", file.display())),
             "{error}"
         );
         assert!(
@@ -884,10 +785,7 @@ mod tests {
         let fixture = Fixture::new().config("dbmcp.yaml", "database:\n  port: \"abc-secret\"\n  ssl: yes\n");
         let error = fixture.err();
         let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
-        assert!(
-            error.starts_with(&format!("failed to validate config file {file}:")),
-            "{error}"
-        );
+        assert!(error.starts_with("invalid settings:"), "{error}");
         assert!(error.contains(&format!(
             "{file}:2:9: database.port: expected non-negative integer, found string"
         )));
@@ -924,16 +822,17 @@ mod tests {
             .env("DBMCP_DB_PORT", "abc-secret")
             .env("DBMCP_DB_READ_ONLY", "on")
             .err();
-        assert!(error.starts_with("configuration validation failed:"), "{error}");
-        assert!(error.contains("database.port: expected non-negative integer, found string (from DBMCP_DB_PORT)"));
-        assert!(error.contains(
-            "database.read_only: expected boolean (true/false/1/0/t/f), found string (from DBMCP_DB_READ_ONLY)"
-        ));
+        assert_eq!(
+            error,
+            "invalid settings:\n  \
+             - DBMCP_DB_PORT: database.port: expected non-negative integer, found string\n  \
+             - DBMCP_DB_READ_ONLY: database.read_only: expected boolean (true/false/1/0/t/f), found string"
+        );
         assert!(!error.contains("abc-secret"));
     }
 
     #[test]
-    fn schema_errors_are_sorted_by_location() {
+    fn input_errors_are_sorted_by_location() {
         let fixture = Fixture::new().config(
             "dbmcp.yaml",
             "ssh:\n  port: 0\ndatabase:\n  backend: oracle\n  page_size: 1.5\n  host: [a]\nhttp:\n  allowed_hosts: [a, 1]\n",
@@ -943,12 +842,12 @@ mod tests {
         assert_eq!(
             error,
             format!(
-                "failed to validate config file {file}:\n  \
+                "invalid settings:\n  \
                  - {file}:2:9: ssh.port: must be at least 1\n  \
                  - {file}:4:12: database.backend: expected one of mysql, mariadb, postgres, sqlite\n  \
-                 - {file}:5:14: database.page_size: expected integer, found float\n  \
+                 - {file}:5:14: database.page_size: expected non-negative integer, found float\n  \
                  - {file}:6:9: database.host: expected string, found sequence\n  \
-                 - {file}:8:22: http.allowed_hosts: item 1: expected string, found integer"
+                 - {file}:8:18: http.allowed_hosts: item 1: expected string, found integer"
             )
         );
         assert!(!error.contains("oracle"));
@@ -960,13 +859,13 @@ mod tests {
             .config("dbmcp.yaml", "database:\n  port: abc\n")
             .env("DBMCP_DB_PORT", "5432")
             .err();
-        assert!(error.starts_with("failed to validate config file"), "{error}");
+        assert!(error.starts_with("invalid settings:"), "{error}");
 
         let error = Fixture::new()
             .config("dbmcp.yaml", "transport: sse\n")
             .env("DBMCP_TRANSPORT", "stdio")
             .err();
-        assert!(error.starts_with("failed to validate config file"), "{error}");
+        assert!(error.starts_with("invalid settings:"), "{error}");
         assert!(error.contains("transport: expected one of stdio, http"), "{error}");
     }
 
@@ -980,34 +879,6 @@ mod tests {
     }
 
     #[test]
-    fn bools_accept_the_parse_bool_set() {
-        for (value, expected) in [
-            ("1", true),
-            ("t", true),
-            ("TRUE", true),
-            ("0", false),
-            ("F", false),
-            ("False", false),
-        ] {
-            let loaded = Fixture::new().env("DBMCP_DB_READ_ONLY", value).ok();
-            assert_eq!(loaded.config.database.read_only, expected, "{value}");
-        }
-        let loaded = Fixture::new()
-            .config("dbmcp.yaml", "database:\n  read_only: \"0\"\n")
-            .ok();
-        assert!(!loaded.config.database.read_only);
-    }
-
-    #[test]
-    fn enums_reject_unknown_values() {
-        let error = Fixture::new().env("DBMCP_TRANSPORT", "sse").err();
-        assert!(
-            error.contains("transport: expected one of stdio, http (from DBMCP_TRANSPORT)"),
-            "{error}"
-        );
-    }
-
-    #[test]
     fn validation_errors_carry_the_source() {
         let fixture = Fixture::new().config("dbmcp.yaml", "transport: http\nhttp:\n  host: \"\"\n");
         let error = fixture.err();
@@ -1016,29 +887,6 @@ mod tests {
             error.contains(&format!("http.host must not be empty (from {file}:3:9)")),
             "{error}"
         );
-    }
-
-    #[test]
-    fn integer_ranges_come_from_the_setting_table() {
-        let error = Fixture::new()
-            .env("DBMCP_DB_PAGE_SIZE", "501")
-            .env("DBMCP_DB_PORT", "70000")
-            .env("DBMCP_DB_QUERY_TIMEOUT", "-1")
-            .err();
-        assert!(
-            error.contains("database.page_size must be at most 500 (from DBMCP_DB_PAGE_SIZE)"),
-            "{error}"
-        );
-        assert!(
-            error.contains("database.port must be at most 65535 (from DBMCP_DB_PORT)"),
-            "{error}"
-        );
-        assert!(
-            error.contains("database.query_timeout: expected non-negative integer, found string"),
-            "{error}"
-        );
-        let loaded = Fixture::new().env("DBMCP_DB_PAGE_SIZE", "500").ok();
-        assert_eq!(loaded.config.database.page_size, 500);
     }
 
     #[test]
@@ -1125,11 +973,11 @@ mod tests {
             .env("DBMCP_PII_CATEGORIES", "crypto,bogus")
             .err();
         assert!(
-            error.contains("http.allowed_hosts: empty item in comma-separated list"),
+            error.contains("DBMCP_HTTP_ALLOWED_HOSTS: http.allowed_hosts: empty item in comma-separated list"),
             "{error}"
         );
         assert!(
-            error.contains("pii.categories: expected items from personal,"),
+            error.contains("DBMCP_PII_CATEGORIES: pii.categories: item 1: expected one of personal,"),
             "{error}"
         );
 
@@ -1200,7 +1048,9 @@ mod tests {
         let error = fixture.err();
         let file = fixture.dir.path().join(".env").display().to_string();
         assert!(
-            error.contains(&format!("(from DBMCP_DB_PAGE_SIZE in {file}:2)")),
+            error.contains(&format!(
+                "DBMCP_DB_PAGE_SIZE in {file}:2: database.page_size: must be at most 500"
+            )),
             "{error}"
         );
     }
@@ -1246,22 +1096,17 @@ mod tests {
     }
 
     #[test]
-    fn cast_errors_stop_before_validation() {
+    fn input_errors_stop_before_validation() {
         let error = Fixture::new()
             .env("DBMCP_DB_PORT", "x")
             .env("DBMCP_DB_BACKEND", "sqlite")
             .load()
             .expect_err("bad port");
-        let [diagnostic] = diagnostics(&error) else {
-            panic!("only the cast error: {error}");
+        let LoadErrorKind::Settings(errors) = &error.kind else {
+            panic!("only the input error: {error}");
         };
-        assert!(matches!(
-            &diagnostic.error,
-            ConfigError::InvalidValue {
-                path: "database.port",
-                ..
-            }
-        ));
+        assert_eq!(errors.len(), 1, "{error}");
+        assert_eq!(errors[0].path, "database.port");
     }
 
     #[test]

@@ -2142,7 +2142,7 @@ async fn test_db_read_only_env_rejects_unknown_values() {
             "DBMCP_DB_READ_ONLY={value:?} must fail startup"
         );
         assert!(
-            stderr.contains("database.read_only: expected boolean") && stderr.contains("(from DBMCP_DB_READ_ONLY)"),
+            stderr.contains("DBMCP_DB_READ_ONLY: database.read_only: expected boolean"),
             "{stderr}"
         );
     }
