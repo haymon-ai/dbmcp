@@ -30,6 +30,7 @@ mod node;
 mod options;
 mod origin;
 mod pii;
+mod schema;
 mod source;
 mod ssh;
 mod template;

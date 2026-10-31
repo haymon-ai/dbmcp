@@ -7,7 +7,10 @@
 //! what the loader needs to cast a value: integer ranges and path rules are
 //! stated here and nowhere else.
 
+use serde_saphyr::{Location, Spanned};
+
 use crate::database::DatabaseConfig;
+use crate::node::Node;
 
 /// Env var naming the YAML config file; a loader input, not a setting.
 pub const CONFIG_VAR: &str = "DBMCP_CONFIG";
@@ -53,6 +56,55 @@ pub enum Kind {
         /// Expand `~` in env and env-file values as well.
         home_from_env: bool,
     },
+}
+
+impl Kind {
+    /// Casts a setting's text to the YAML node its kind expects.
+    ///
+    /// Integers, booleans, and lists treat empty text as unset (`null`);
+    /// list text is split on commas, each item at `at`. Text, path, and enum
+    /// values stay strings. Errors are value-free.
+    pub(crate) fn cast(self, text: &str, at: Location) -> Result<Node, String> {
+        if text.is_empty() && matches!(self, Self::Int { .. } | Self::Bool | Self::List) {
+            return Ok(Node::Null);
+        }
+        match self {
+            Self::Int { .. } => text
+                .parse::<u64>()
+                .map(|value| i64::try_from(value).map_or(Node::UInt(value), Node::Int))
+                .map_err(|_| format!("{EXPECTED_INT}, found string")),
+            Self::Bool => parse_bool(text)
+                .map(Node::Bool)
+                .ok_or_else(|| format!("{EXPECTED_BOOL}, found string")),
+            Self::List => {
+                let items: Vec<&str> = text.split(',').map(str::trim).collect();
+                if items.iter().any(|item| item.is_empty()) {
+                    return Err("empty item in comma-separated list".into());
+                }
+                let items = items
+                    .into_iter()
+                    .map(|item| Spanned::new(Node::Str(item.to_owned()), at, at))
+                    .collect();
+                Ok(Node::Seq(items))
+            }
+            Self::Text | Self::Enum | Self::Path { .. } => Ok(Node::Str(text.to_owned())),
+        }
+    }
+}
+
+/// What an integer setting expects; errors append `, found <type>`.
+pub(crate) const EXPECTED_INT: &str = "expected non-negative integer";
+
+/// What a boolean setting expects; errors append `, found <type>`.
+pub(crate) const EXPECTED_BOOL: &str = "expected boolean (true/false/1/0/t/f)";
+
+/// Parses a boolean the way Go's `strconv.ParseBool` does.
+fn parse_bool(text: &str) -> Option<bool> {
+    match text {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+        _ => None,
+    }
 }
 
 const fn int(min: u64, max: u64) -> Kind {
@@ -247,6 +299,58 @@ mod tests {
                 assert!(min <= max, "{}", setting.path);
             }
         }
+    }
+
+    fn cast(kind: Kind, text: &str) -> Result<Node, String> {
+        kind.cast(text, Location::UNKNOWN)
+    }
+
+    fn texts(node: &Node) -> Vec<&str> {
+        let Node::Seq(items) = node else {
+            panic!("expected sequence, got {node:?}");
+        };
+        items
+            .iter()
+            .map(|item| match &item.value {
+                Node::Str(text) => text.as_str(),
+                other => panic!("expected string item, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cast_types_text_by_kind() {
+        assert_eq!(cast(int(0, 10), "7"), Ok(Node::Int(7)));
+        assert_eq!(cast(int(0, u64::MAX), "18446744073709551615"), Ok(Node::UInt(u64::MAX)));
+        assert_eq!(cast(Kind::Bool, "t"), Ok(Node::Bool(true)));
+        assert_eq!(cast(Kind::Bool, "False"), Ok(Node::Bool(false)));
+        assert_eq!(texts(&cast(Kind::List, " a , b").expect("list")), ["a", "b"]);
+        assert_eq!(cast(Kind::Enum, "http"), Ok(Node::Str("http".into())));
+        assert_eq!(cast(FILE_PATH, "~/x"), Ok(Node::Str("~/x".into())));
+    }
+
+    #[test]
+    fn empty_text_is_unset_except_for_strings() {
+        for kind in [int(0, 1), Kind::Bool, Kind::List] {
+            assert_eq!(cast(kind, ""), Ok(Node::Null), "{kind:?}");
+        }
+        assert_eq!(cast(Kind::Text, ""), Ok(Node::Str(String::new())));
+    }
+
+    #[test]
+    fn cast_errors_are_value_free() {
+        assert_eq!(
+            cast(int(0, 1), "-1"),
+            Err("expected non-negative integer, found string".into())
+        );
+        assert_eq!(
+            cast(Kind::Bool, "yes"),
+            Err("expected boolean (true/false/1/0/t/f), found string".into())
+        );
+        assert_eq!(
+            cast(Kind::List, "a,,b"),
+            Err("empty item in comma-separated list".into())
+        );
     }
 
     #[test]

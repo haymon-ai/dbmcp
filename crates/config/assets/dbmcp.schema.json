@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json",
+  "title": "dbmcp config file",
+  "description": "Settings for the dbmcp MCP server; see https://github.com/haymon-ai/dbmcp.",
+  "type": [
+    "object",
+    "null"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "transport": {
+      "description": "MCP transport.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "stdio",
+        "http",
+        null
+      ],
+      "default": "stdio"
+    },
+    "log_level": {
+      "description": "Log level; logs go to stderr.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "error",
+        "warn",
+        "info",
+        "debug",
+        "trace",
+        null
+      ],
+      "default": "info"
+    },
+    "database": {
+      "description": "Database connection and server behaviour.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "description": "Database backend.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "mysql",
+            "mariadb",
+            "postgres",
+            "sqlite",
+            null
+          ],
+          "default": "mysql"
+        },
+        "host": {
+          "description": "Database host, as seen from the SSH server when tunnelling.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "localhost"
+        },
+        "port": {
+          "description": "Database port; backend default when unset.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "user": {
+          "description": "Database user; backend default when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "password": {
+          "description": "Database password.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Database name, or file path for SQLite; pinning it hides the cross-database tools.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "charset": {
+          "description": "Character set (MySQL/MariaDB only).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssl": {
+          "description": "Enable SSL for the database connection.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": false
+        },
+        "ssl_ca": {
+          "description": "Path to the CA certificate, relative to this file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssl_cert": {
+          "description": "Path to the client certificate, relative to this file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssl_key": {
+          "description": "Path to the client key, relative to this file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssl_verify_cert": {
+          "description": "Verify the server certificate.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": true
+        },
+        "read_only": {
+          "description": "Block write operations.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": true
+        },
+        "max_pool_size": {
+          "description": "Maximum database connection pool size.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 4294967295,
+          "default": 5
+        },
+        "connection_timeout": {
+          "description": "Connection timeout in seconds; driver default when unset.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "query_timeout": {
+          "description": "Query execution timeout in seconds; 0 disables it.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "default": 30
+        },
+        "page_size": {
+          "description": "Maximum items per paginated tool response.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      }
+    },
+    "http": {
+      "description": "HTTP transport settings; used only with transport: http.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "Bind host for the HTTP server.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "127.0.0.1"
+        },
+        "port": {
+          "description": "Bind port for the HTTP server.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 9001
+        },
+        "allowed_origins": {
+          "description": "Allowed browser origins; use :* for any port, [] disables Origin validation.",
+          "type": [
+            "string",
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+            "http://[::1]:*",
+            "https://localhost:*",
+            "https://127.0.0.1:*",
+            "https://[::1]:*"
+          ]
+        },
+        "allowed_hosts": {
+          "description": "Allowed host names, enforced server-side.",
+          "type": [
+            "string",
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "localhost",
+            "127.0.0.1",
+            "::1"
+          ]
+        },
+        "auth_token": {
+          "description": "Bearer token required on every request; required for non-loopback binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow_unauthenticated": {
+          "description": "Allow a non-loopback bind without a token.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": false
+        }
+      }
+    },
+    "pii": {
+      "description": "PII redaction of query tool output; the other keys apply only when enabled.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Enable PII redaction of query tool output.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": false
+        },
+        "operator": {
+          "description": "Operator applied to detected PII spans.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "replace",
+            "mask",
+            "redact",
+            "hash",
+            null
+          ],
+          "default": "replace"
+        },
+        "categories": {
+          "description": "Category subset for the analyzer registry; all built-ins when unset.",
+          "type": [
+            "string",
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ner_enabled": {
+          "description": "Enable the optional ML/NER pass.",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ],
+          "default": false
+        },
+        "ner_model": {
+          "description": "Path to the NER model directory, relative to this file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ssh": {
+      "description": "SSH tunnel settings; setting ssh.host enables the tunnel.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "SSH server host; enables the tunnel when set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "port": {
+          "description": "SSH server port.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 22
+        },
+        "user": {
+          "description": "SSH user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "password": {
+          "description": "SSH password.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Path to the SSH private key, relative to this file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_passphrase": {
+          "description": "Passphrase for the SSH private key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "known_hosts": {
+          "description": "Path to the known_hosts file; ~/.ssh/known_hosts when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strict_host_key_checking": {
+          "description": "Host key policy: yes rejects unknown hosts, accept-new trusts on first use, no disables verification.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "yes",
+            "accept-new",
+            "no",
+            null
+          ],
+          "default": "yes"
+        },
+        "keepalive_interval": {
+          "description": "SSH keepalive interval in seconds; 0 disables it.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "default": 30
+        },
+        "local_port": {
+          "description": "Local tunnel port; ephemeral when unset.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    }
+  }
+}
