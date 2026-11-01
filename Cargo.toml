@@ -50,6 +50,7 @@ moka = { version = "0.12", features = ["future"] }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = [
     "download-binaries",
     "std",
+    "tls-rustls",
 ] }
 ring = "0.17"
 rmcp = { version = "3.5", features = [
