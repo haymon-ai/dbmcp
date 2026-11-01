@@ -690,7 +690,7 @@ mod tests {
 
     use russh::keys::ssh_key::private::Ed25519Keypair;
     use russh::keys::{load_public_key, load_secret_key};
-    use russh::server::{self, Auth, ChannelOpenHandle, Msg, Server as _, Session};
+    use russh::server::{self, Auth, ChannelOpenHandle, Msg, Server as _, Session, VerifiedPublicKey};
     use russh::{Channel, MethodKind, MethodSet};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -745,9 +745,9 @@ mod tests {
             Ok(self.record("password", user == USER && password == PASSWORD))
         }
 
-        async fn auth_publickey(&mut self, user: &str, public_key: &PublicKey) -> Result<Auth, Self::Error> {
+        async fn auth_publickey(&mut self, user: &str, offer: VerifiedPublicKey<'_>) -> Result<Auth, Self::Error> {
             let authorized = AUTHORIZED_KEYS.iter().any(|name| {
-                load_public_key(fixture(name)).expect("authorized key").key_data() == public_key.key_data()
+                load_public_key(fixture(name)).expect("authorized key").key_data() == offer.public_key.key_data()
             });
             Ok(self.record("publickey", user == USER && authorized))
         }
