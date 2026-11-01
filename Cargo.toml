@@ -42,14 +42,15 @@ bigdecimal = "0.4"
 boon = "0.6"
 bs58 = { version = "0.5", features = ["check"] }
 clap = { version = "4", features = ["derive", "env"] }
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 http = "1"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
-ort = { version = "=2.0.0-rc.10", default-features = false, features = [
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
     "download-binaries",
     "std",
+    "tls-rustls",
 ] }
 ring = "0.17"
 rmcp = { version = "3.5", features = [
@@ -57,7 +58,7 @@ rmcp = { version = "3.5", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
-russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa"] }
+russh = { version = "0.65.0", default-features = false, features = ["ring", "rsa"] }
 schemars = { version = "1.2", features = ["indexmap2"] }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
