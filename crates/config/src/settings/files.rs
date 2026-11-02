@@ -1,12 +1,11 @@
 //! The config files: each YAML file read, interpolated, and structure-checked.
 //!
-//! [`ConfigFiles::read`] picks the files (`--config` list > `DBMCP_CONFIG`
-//! list in the setting view of the env layers) and handles them one at a
-//! time in order: read, parse into an untyped tree, `${}`-interpolate against
-//! the variable view of the env layers, and check against the config schema
-//! alone. A read, parse, or interpolation failure aborts the load. The first
+//! [`ConfigFiles::read`] handles the files [`read`](super::read) picked one
+//! at a time in order: read, parse into an untyped tree, `${}`-interpolate
+//! against the variable view of the env layers, and check against the
+//! config schema alone. A read, parse, or interpolation failure aborts the load. The first
 //! file with structure errors is the last file read: its errors are kept
-//! for [`settings::check`](crate::settings::check) to report beside every
+//! for [`check`](super::check) to report beside every
 //! value error, so one load reports every problem at once.
 //!
 //! [`ConfigFiles::candidates`] then yields a setting's value from each file,
@@ -14,48 +13,45 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::env::{CONFIG_VAR, Raw};
+use super::{InputError, read_file};
+use crate::env::Raw;
 use crate::interpolate;
-use crate::layers::EnvLayers;
-use crate::loader::{LoadErrorKind, file_list, read_file};
+use crate::loader::LoadErrorKind;
 use crate::node::{self, Node, SpannedNode};
-use crate::options::LoadOptions;
 use crate::schema;
-use crate::settings::InputError;
 use crate::source::Source;
+use crate::template::Lookup;
 
 /// The interpolated config files in list order, plus the stopping file's structure errors.
 #[derive(Debug, Default)]
-pub(crate) struct ConfigFiles {
+pub(super) struct ConfigFiles {
     files: Vec<(PathBuf, SpannedNode)>,
     structure: Vec<InputError>,
 }
 
 impl ConfigFiles {
-    /// Reads, parses, interpolates, and structure-checks the named config files.
+    /// Reads, parses, interpolates, and structure-checks the config files in `list`.
     ///
-    /// `${}` warnings go to `warnings`, prefixed with the file path.
+    /// `list` pairs the paths with the surface that named them; relative
+    /// paths resolve against `working_dir`. `${}` reads `lookup` and its
+    /// warnings go to `warnings`, prefixed with the file path.
     ///
     /// # Errors
     ///
-    /// Returns the first list, read, parse, or interpolation failure.
-    pub(crate) fn read(
-        options: &LoadOptions,
-        layers: &EnvLayers<'_>,
+    /// Returns the first read, parse, or interpolation failure.
+    pub(super) fn read(
+        list: Option<(Vec<PathBuf>, String)>,
+        working_dir: &Path,
+        lookup: Lookup<'_>,
         warnings: &mut Vec<String>,
     ) -> Result<Self, LoadErrorKind> {
-        let list = layers
-            .candidates(CONFIG_VAR)
-            .find(|(_, _, eligible)| *eligible)
-            .map(|(list, source, _)| (list, source.to_string()));
-        let Some((paths, origin)) = file_list(&options.config, "--config", list)? else {
+        let Some((paths, origin)) = list else {
             return Ok(Self::default());
         };
-        let lookup = |name: &str| layers.var(name);
         let mut files = Vec::new();
         let mut structure = Vec::new();
         for raw in paths {
-            let path = options.working_dir.join(raw);
+            let path = working_dir.join(raw);
             let text = read_file(&path, "config file", &origin)?;
             let mut tree = node::parse(&text).map_err(|error| {
                 let location = error
@@ -73,7 +69,7 @@ impl ConfigFiles {
             let in_file = |messages: &[String]| -> Vec<String> {
                 messages.iter().map(|m| format!("{}:{m}", path.display())).collect()
             };
-            let outcome = interpolate::interpolate(&mut tree, &lookup);
+            let outcome = interpolate::interpolate(&mut tree, lookup);
             warnings.extend(in_file(&outcome.warnings));
             if !outcome.errors.is_empty() {
                 return Err(LoadErrorKind::Interpolate {
@@ -91,7 +87,7 @@ impl ConfigFiles {
     }
 
     /// Returns the structure errors of the file that stopped the read, if any.
-    pub(crate) fn structure(&self) -> &[InputError] {
+    pub(super) fn structure(&self) -> &[InputError] {
         &self.structure
     }
 
@@ -100,7 +96,7 @@ impl ConfigFiles {
     /// Each value comes with its file's directory, which relative paths
     /// resolve against. A null or unset value is yielded too; its setting's
     /// check treats it as unset, so an earlier file shows through.
-    pub(crate) fn candidates(&self, path: &str) -> impl Iterator<Item = (Raw<'_>, Source)> {
+    pub(super) fn candidates(&self, path: &str) -> impl Iterator<Item = (Raw<'_>, Source)> {
         self.files.iter().rev().filter_map(move |(file, root)| {
             let node = leaf(root, path)?;
             let source = Source::File {
@@ -114,7 +110,7 @@ impl ConfigFiles {
     }
 
     /// Returns the list position of the first config file read from `path`.
-    pub(crate) fn position(&self, path: &Path) -> Option<usize> {
+    pub(super) fn position(&self, path: &Path) -> Option<usize> {
         self.files.iter().position(|(file, _)| file == path)
     }
 }
@@ -138,24 +134,23 @@ mod tests {
     /// A scratch working directory holding config files.
     struct Fixture {
         dir: TempDir,
-        options: LoadOptions,
+        config: Vec<PathBuf>,
     }
 
     impl Fixture {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("tempdir");
-            let options = LoadOptions {
-                working_dir: dir.path().to_path_buf(),
-                ..LoadOptions::default()
-            };
-            Self { dir, options }
+            Self {
+                dir,
+                config: Vec::new(),
+            }
         }
 
         fn config(mut self, name: &str, text: &str) -> Self {
             let path = self.path(name);
             fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
             fs::write(path, text).expect("write");
-            self.options.config.push(name.into());
+            self.config.push(name.into());
             self
         }
 
@@ -164,8 +159,8 @@ mod tests {
         }
 
         fn read(&self) -> ConfigFiles {
-            let layers = EnvLayers::read(&self.options, &mut Vec::new()).expect("no env files");
-            ConfigFiles::read(&self.options, &layers, &mut Vec::new()).expect("readable config files")
+            let list = Some((self.config.clone(), "--config".to_owned()));
+            ConfigFiles::read(list, self.dir.path(), &|_| None, &mut Vec::new()).expect("readable config files")
         }
     }
 

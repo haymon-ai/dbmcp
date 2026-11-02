@@ -1,26 +1,36 @@
-//! Checks every setting value from every source and picks each winner.
+//! Reads every source, checks every setting value, and picks each winner.
 //!
-//! [`check`] runs before any setting is resolved. It takes the config files'
-//! structure errors from the config schema, then checks every set value
-//! with its [`Kind`]: each leaf of every config file, each non-empty entry of
-//! every env file, and each non-empty process env var, even values that lose
-//! to a higher source, are overwritten by a later file, or sit in a section
-//! that is not active. Path values come out resolved: YAML paths against
-//! their own config file's directory. Every failure is an [`InputError`];
-//! when there are none, [`Settings`] holds each setting's winning value and
-//! its [`Source`]: the env layers' setting view (see
-//! [`EnvLayers::candidates`]) > the last config file setting it.
+//! [`read`] is the loader's one entry point. It picks the env files
+//! (`--env` list > process `DBMCP_ENV_FILE` list) and reads them into the
+//! env layers (see [`layers`]), then picks the config files (`--config`
+//! list > `DBMCP_CONFIG` list in the env layers' setting view) and reads
+//! them (see [`files`]). Each reader stops at the first broken file.
+//!
+//! [`check`] then takes the config files' structure errors from the config
+//! schema and checks every set value with its [`Kind`]: each leaf of every
+//! config file, each non-empty entry of every env file, and each non-empty
+//! process env var, even values that lose to a higher source, are
+//! overwritten by a later file, or sit in a section that is not active.
+//! Path values come out resolved: YAML paths against their own config
+//! file's directory. Every failure is an [`InputError`]; when there are
+//! none, [`Settings`] holds each setting's winning value and its
+//! [`Source`]: the env layers' setting view (see [`EnvLayers::candidates`])
+//! > the last config file setting it.
 //!
 //! [`Kind`]: crate::env::Kind
-//! [`EnvLayers::candidates`]: crate::layers::EnvLayers::candidates
+
+mod files;
+mod layers;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::env::{Raw, SETTINGS, Setting, Value};
-use crate::files::ConfigFiles;
-use crate::layers::EnvLayers;
+use crate::env::{CONFIG_VAR, ENV_FILE_VAR, Raw, SETTINGS, Setting, Value};
+use crate::loader::LoadErrorKind;
+use crate::options::LoadOptions;
 use crate::source::Source;
+use files::ConfigFiles;
+use layers::EnvLayers;
 
 /// One invalid input: a malformed config file or a value that fails its setting's checks.
 ///
@@ -73,6 +83,32 @@ impl Settings {
     }
 }
 
+/// Reads every source named by `options` and returns each setting's winner.
+///
+/// Warnings of the files read go to `warnings`, even on failure.
+///
+/// # Errors
+///
+/// Returns the first file list, read, parse, or interpolation failure,
+/// else [`LoadErrorKind::Settings`] with every [`InputError`].
+pub(crate) fn read(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<Settings, LoadErrorKind> {
+    let env_list = options
+        .environment
+        .get(ENV_FILE_VAR)
+        .map(String::as_str)
+        .filter(|list| !list.is_empty())
+        .map(|list| (list, ENV_FILE_VAR.to_owned()));
+    let env_files = file_list(&options.env_files, "--env", env_list)?;
+    let layers = EnvLayers::read(env_files, options, warnings)?;
+    let config_list = layers
+        .candidates(CONFIG_VAR)
+        .find(|(_, _, eligible)| *eligible)
+        .map(|(list, source, _)| (list, source.to_string()));
+    let config_files = file_list(&options.config, "--config", config_list)?;
+    let files = ConfigFiles::read(config_files, &options.working_dir, &|name| layers.var(name), warnings)?;
+    check(&files, &layers, options.home.as_deref()).map_err(LoadErrorKind::Settings)
+}
+
 /// Checks every source's values and returns each setting's winner.
 ///
 /// `home` expands `~` in paths.
@@ -81,11 +117,7 @@ impl Settings {
 ///
 /// Returns the config files' structure errors and every value that fails its setting's checks,
 /// from any source, sorted by [`InputError::order`] and without repeats.
-pub(crate) fn check(
-    files: &ConfigFiles,
-    layers: &EnvLayers<'_>,
-    home: Option<&Path>,
-) -> Result<Settings, Vec<InputError>> {
+fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Result<Settings, Vec<InputError>> {
     let mut errors = files.structure().to_vec();
     let mut settings = Settings::default();
     for &setting in SETTINGS {
@@ -119,16 +151,79 @@ pub(crate) fn check(
     Err(errors)
 }
 
+/// Returns the paths named by `flag` values, else by the comma `list`.
+///
+/// A flag given at least once replaces the list; `list` pairs the comma
+/// list with where it came from. Returns the paths and the surface they
+/// came from, or `None` when neither names any file.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::List`] for an empty flag value or list entry.
+fn file_list(
+    flags: &[PathBuf],
+    flag: &'static str,
+    list: Option<(&str, String)>,
+) -> Result<Option<(Vec<PathBuf>, String)>, LoadErrorKind> {
+    if !flags.is_empty() {
+        if flags.iter().any(|path| path.as_os_str().is_empty()) {
+            return Err(LoadErrorKind::List {
+                origin: flag.to_owned(),
+                problem: "empty path",
+            });
+        }
+        return Ok(Some((flags.to_vec(), flag.to_owned())));
+    }
+    let Some((list, origin)) = list else {
+        return Ok(None);
+    };
+    Ok(Some((split_list(list, origin.clone())?, origin)))
+}
+
+/// Splits a comma list of paths, trimming each entry.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::List`] naming `origin` when an entry is empty.
+fn split_list(list: &str, origin: String) -> Result<Vec<PathBuf>, LoadErrorKind> {
+    let items: Vec<&str> = list.split(',').map(str::trim).collect();
+    if items.iter().any(|item| item.is_empty()) {
+        return Err(LoadErrorKind::List {
+            origin,
+            problem: "empty entry in file list",
+        });
+    }
+    Ok(items.into_iter().map(PathBuf::from).collect())
+}
+
+/// Reads the `what` file at `path`, named by `origin`; rejects directories, allows pipes.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::Read`] when `path` is a directory or cannot be read.
+fn read_file(path: &Path, what: &'static str, origin: &str) -> Result<String, LoadErrorKind> {
+    let read = || {
+        if std::fs::metadata(path)?.is_dir() {
+            return Err(std::io::Error::other("is a directory"));
+        }
+        std::fs::read_to_string(path)
+    };
+    read().map_err(|source| LoadErrorKind::Read {
+        what,
+        path: path.to_path_buf(),
+        origin: origin.to_owned(),
+        source,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
 
     use tempfile::TempDir;
 
     use super::*;
     use crate::env;
-    use crate::options::LoadOptions;
 
     /// Inputs for [`check`]; the files are written to a scratch directory.
     struct Inputs {
@@ -198,9 +293,11 @@ mod tests {
                 fs::write(self.yaml_path(), yaml).expect("write config file");
                 options.config.push("dbmcp.yaml".into());
             }
-            let layers = EnvLayers::read(&options, &mut Vec::new()).expect("valid env file");
-            let files = ConfigFiles::read(&options, &layers, &mut Vec::new()).expect("readable config file");
-            check(&files, &layers, None)
+            match read(&options, &mut Vec::new()) {
+                Ok(settings) => Ok(settings),
+                Err(LoadErrorKind::Settings(errors)) => Err(errors),
+                Err(error) => panic!("readable inputs: {error}"),
+            }
         }
 
         #[track_caller]
@@ -388,11 +485,8 @@ mod tests {
                     working_dir: dir.path().to_path_buf(),
                     ..LoadOptions::default()
                 };
-                let layers = EnvLayers::read(&options, &mut Vec::new()).expect("no env files");
-                let files =
-                    ConfigFiles::read(&options, &layers, &mut Vec::new()).unwrap_or_else(|e| panic!("{at}: {e}"));
-                if let Err(errors) = check(&files, &layers, None) {
-                    panic!("{at}: {errors:?}");
+                if let Err(error) = read(&options, &mut Vec::new()) {
+                    panic!("{at}: {error}");
                 }
                 checked += 1;
             }

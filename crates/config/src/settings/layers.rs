@@ -1,8 +1,7 @@
 //! The env layers: the process env above the env files, read in two views.
 //!
-//! [`EnvLayers::read`] picks the env files (`--env` list > process
-//! `DBMCP_ENV_FILE` list) and reads them in order, stopping at the first
-//! file that cannot be read or parsed. Each file's `${}` and bare `KEY` lines
+//! [`EnvLayers::read`] reads the env files [`read`](super::read) picked,
+//! in order, stopping at the first file that cannot be read or parsed. Each file's `${}` and bare `KEY` lines
 //! see the process env, then the file's own earlier lines, then the files
 //! read before it.
 //!
@@ -17,36 +16,41 @@
 //!   env file setting the name decides it, and an empty value there clears it.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use super::read_file;
 use crate::dotenv::{self, EnvFile};
-use crate::env::{self, ENV_FILE_VAR};
-use crate::loader::{LoadErrorKind, file_list, read_file};
+use crate::env;
+use crate::loader::LoadErrorKind;
 use crate::options::LoadOptions;
 use crate::source::Source;
 
 /// The process env stacked above the env files, in list order.
 #[derive(Debug)]
-pub(crate) struct EnvLayers<'a> {
+pub(super) struct EnvLayers<'a> {
     process: &'a HashMap<String, String>,
     files: Vec<EnvFile>,
 }
 
 impl<'a> EnvLayers<'a> {
-    /// Reads the env files named by `--env` or process `DBMCP_ENV_FILE`, in order.
+    /// Reads the env files in `list`, in order, above the process env.
     ///
-    /// The warnings of the files read so far go to `warnings`, even on failure.
+    /// `list` pairs the paths with the surface that named them. The warnings
+    /// of the files read so far go to `warnings`, even on failure.
     ///
     /// # Errors
     ///
-    /// Returns the first list, read, or parse failure.
-    pub(crate) fn read(options: &'a LoadOptions, warnings: &mut Vec<String>) -> Result<Self, LoadErrorKind> {
-        let list = non_empty(&options.environment, ENV_FILE_VAR).map(|list| (list, ENV_FILE_VAR.to_owned()));
+    /// Returns the first read or parse failure.
+    pub(super) fn read(
+        list: Option<(Vec<PathBuf>, String)>,
+        options: &'a LoadOptions,
+        warnings: &mut Vec<String>,
+    ) -> Result<Self, LoadErrorKind> {
         let mut layers = Self {
             process: &options.environment,
             files: Vec::new(),
         };
-        let Some((paths, origin)) = file_list(&options.env_files, "--env", list)? else {
+        let Some((paths, origin)) = list else {
             return Ok(layers);
         };
         for raw in paths {
@@ -67,7 +71,7 @@ impl<'a> EnvLayers<'a> {
     /// Returns `name` in the variable view: process env, then the last env file.
     ///
     /// An empty value is returned as such, not skipped.
-    pub(crate) fn var(&self, name: &str) -> Option<String> {
+    pub(super) fn var(&self, name: &str) -> Option<String> {
         self.process
             .get(name)
             .cloned()
@@ -80,7 +84,7 @@ impl<'a> EnvLayers<'a> {
     /// file to the first. `eligible` marks the values that may win: the
     /// process value, and the last env file's value unless that file sets
     /// `name` empty. The others lose but must still be checked.
-    pub(crate) fn candidates(&self, name: &'static str) -> impl Iterator<Item = (&str, Source, bool)> {
+    pub(super) fn candidates(&self, name: &'static str) -> impl Iterator<Item = (&str, Source, bool)> {
         let process = non_empty(self.process, name).map(|text| (text, Source::Env(name), true));
         let last = self.files.iter().rposition(|file| file.get(name).is_some());
         let files = self.files.iter().enumerate().rev().filter_map(move |(i, file)| {
@@ -96,7 +100,7 @@ impl<'a> EnvLayers<'a> {
     }
 
     /// Returns the list position of the first env file read from `path`.
-    pub(crate) fn position(&self, path: &Path) -> Option<usize> {
+    pub(super) fn position(&self, path: &Path) -> Option<usize> {
         self.files.iter().position(|file| file.path() == path)
     }
 
@@ -114,7 +118,6 @@ fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
 
     use tempfile::TempDir;
 
@@ -151,8 +154,12 @@ mod tests {
             self.dir.path().join(name)
         }
 
+        fn list(&self) -> (Vec<PathBuf>, String) {
+            (self.options.env_files.clone(), "--env".to_owned())
+        }
+
         fn layers(&self) -> EnvLayers<'_> {
-            EnvLayers::read(&self.options, &mut Vec::new()).expect("valid env files")
+            EnvLayers::read(Some(self.list()), &self.options, &mut Vec::new()).expect("valid env files")
         }
     }
 
@@ -249,7 +256,7 @@ mod tests {
             .env_file("a.env", "A=${NOPE}\n")
             .env_file("b.env", "B C=1\n");
         let mut warnings = Vec::new();
-        let error = EnvLayers::read(&fixture.options, &mut warnings).expect_err("broken b.env");
+        let error = EnvLayers::read(Some(fixture.list()), &fixture.options, &mut warnings).expect_err("broken b.env");
         assert!(matches!(error, LoadErrorKind::EnvFile { .. }), "{error}");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }

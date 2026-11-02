@@ -3,16 +3,14 @@
 //! Stages run in order and the first failing
 //! stage aborts; each stage collects all of its own errors:
 //!
-//! 1. Read the env layers (see [`layers`](crate::layers)), stopping at the
-//!    first env file with errors.
-//! 2. Read the config files (see [`files`](crate::files)),
-//!    stopping at the first file with errors.
-//! 3. Check every set value from every source by its setting's kind, even
-//!    values that lose to a higher source, resolving paths against the
-//!    declaring file, and pick each winner: non-empty process env > the last
-//!    env file's value, if non-empty > the last config file setting it (see
-//!    [`settings`](crate::settings)). There is no merged YAML tree.
-//! 4. Build the [`Config`] from the winners and defaults, applying
+//! 1. Read every source and pick each setting's winner (see [`settings`]):
+//!    the env files, then the config files, each stopping at the first file
+//!    with errors, then every set value from every source checked by its
+//!    setting's kind, even values that lose to a higher source. Winners
+//!    follow non-empty process env > the last env file's value, if
+//!    non-empty > the last config file setting it. There is no merged YAML
+//!    tree.
+//! 2. Build the [`Config`] from the winners and defaults, applying
 //!    activation rules and resolving a file-given sqlite database name
 //!    against its file's directory, then run [`Config::validate`] on it.
 
@@ -26,9 +24,7 @@ use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic};
-use crate::files::ConfigFiles;
 use crate::http::HttpConfig;
-use crate::layers::EnvLayers;
 use crate::log::LogLevel;
 use crate::options::LoadOptions;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
@@ -113,17 +109,9 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         kind,
     };
 
-    let layers = match EnvLayers::read(options, &mut warnings) {
-        Ok(layers) => layers,
-        Err(kind) => return Err(fail(warnings, kind)),
-    };
-    let files = match ConfigFiles::read(options, &layers, &mut warnings) {
-        Ok(files) => files,
-        Err(kind) => return Err(fail(warnings, kind)),
-    };
-    let settings = match settings::check(&files, &layers, options.home.as_deref()) {
+    let settings = match settings::read(options, &mut warnings) {
         Ok(settings) => settings,
-        Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
+        Err(kind) => return Err(fail(warnings, kind)),
     };
     let warnings = dedup(warnings);
 
@@ -146,74 +134,9 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     }
 }
 
-/// Returns the paths named by `flag` values, else by the comma `list`.
-///
-/// A flag given at least once replaces the list; `list` pairs the comma
-/// list with where it came from. Returns the paths and the surface they
-/// came from, or `None` when neither names any file.
-///
-/// # Errors
-///
-/// Returns [`LoadErrorKind::List`] for an empty flag value or list entry.
-pub(crate) fn file_list(
-    flags: &[PathBuf],
-    flag: &'static str,
-    list: Option<(&str, String)>,
-) -> Result<Option<(Vec<PathBuf>, String)>, LoadErrorKind> {
-    if !flags.is_empty() {
-        if flags.iter().any(|path| path.as_os_str().is_empty()) {
-            return Err(LoadErrorKind::List {
-                origin: flag.to_owned(),
-                problem: "empty path",
-            });
-        }
-        return Ok(Some((flags.to_vec(), flag.to_owned())));
-    }
-    let Some((list, origin)) = list else {
-        return Ok(None);
-    };
-    Ok(Some((split_list(list, origin.clone())?, origin)))
-}
-
-/// Splits a comma list of paths, trimming each entry.
-///
-/// # Errors
-///
-/// Returns [`LoadErrorKind::List`] naming `origin` when an entry is empty.
-fn split_list(list: &str, origin: String) -> Result<Vec<PathBuf>, LoadErrorKind> {
-    let items: Vec<&str> = list.split(',').map(str::trim).collect();
-    if items.iter().any(|item| item.is_empty()) {
-        return Err(LoadErrorKind::List {
-            origin,
-            problem: "empty entry in file list",
-        });
-    }
-    Ok(items.into_iter().map(PathBuf::from).collect())
-}
-
 /// Drops repeated messages, keeping the first of each in order.
 fn dedup(messages: Vec<String>) -> Vec<String> {
     messages.into_iter().collect::<IndexSet<_>>().into_iter().collect()
-}
-
-/// Reads the `what` file at `path`, named by `origin`; rejects directories, allows pipes.
-///
-/// # Errors
-///
-/// Returns [`LoadErrorKind::Read`] when `path` is a directory or cannot be read.
-pub(crate) fn read_file(path: &Path, what: &'static str, origin: &str) -> Result<String, LoadErrorKind> {
-    let read = || {
-        if std::fs::metadata(path)?.is_dir() {
-            return Err(std::io::Error::other("is a directory"));
-        }
-        std::fs::read_to_string(path)
-    };
-    read().map_err(|source| LoadErrorKind::Read {
-        what,
-        path: path.to_path_buf(),
-        origin: origin.to_owned(),
-        source,
-    })
 }
 
 /// Builds the configuration from each setting's checked winner and defaults.
