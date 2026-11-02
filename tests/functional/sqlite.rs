@@ -2231,6 +2231,10 @@ async fn test_later_config_file_wins_and_resolves_paths_against_itself() {
     std::fs::write(&local, "database:\n  name: copy.db\n").expect("write local config");
 
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    // Inherited DBMCP_* values would beat the config files under test.
+    for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("DBMCP_")) {
+        command.env_remove(name);
+    }
     command.arg("--config").arg(&base).arg("--config").arg(&local);
     let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
     let client = ().serve(transport).await.expect("mcp handshake");

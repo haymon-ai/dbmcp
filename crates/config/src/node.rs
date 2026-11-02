@@ -29,7 +29,7 @@ pub(crate) enum Node {
     Seq(Vec<Spanned<Node>>),
     /// A mapping with string keys, in file order, each with its key's location.
     Map(IndexMap<String, (Location, Spanned<Node>)>),
-    /// A node carrying a YAML tag outside the core schema; holds the tag, drops the value.
+    /// A node with a YAML tag outside the core schema; holds only the tag.
     Unsupported(String),
 }
 

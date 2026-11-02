@@ -25,7 +25,7 @@ use crate::settings::InputError;
 use crate::source::Source;
 
 /// The interpolated config files in list order, plus the stopping file's structure errors.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct ConfigFiles {
     files: Vec<(PathBuf, SpannedNode)>,
     structure: Vec<InputError>,
@@ -48,17 +48,14 @@ impl ConfigFiles {
             .candidates(CONFIG_VAR)
             .find(|(_, _, eligible)| *eligible)
             .map(|(list, source, _)| (list, source.to_string()));
-        let (paths, origin) = file_list(&options.config, "--config", list)?;
+        let Some((paths, origin)) = file_list(&options.config, "--config", list)? else {
+            return Ok(Self::default());
+        };
         let lookup = |name: &str| layers.var(name);
         let mut files = Vec::new();
         for raw in paths {
             let path = options.working_dir.join(raw);
-            let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-                what: "config file",
-                path: path.clone(),
-                origin: origin.clone(),
-                source,
-            })?;
+            let text = read_file(&path, "config file", &origin)?;
             let mut tree = node::parse(&text).map_err(|error| {
                 let location = error
                     .location()
@@ -100,7 +97,7 @@ impl ConfigFiles {
         &self.structure
     }
 
-    /// Returns the node at the dotted `path` in each file that has one, last file first.
+    /// Returns the node at the dotted `path` in each file setting it, last first.
     ///
     /// Each value comes with its file's directory, which relative paths
     /// resolve against. A null or unset value is yielded too; its setting's

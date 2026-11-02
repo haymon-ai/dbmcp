@@ -42,21 +42,18 @@ impl<'a> EnvLayers<'a> {
     /// Returns the first list, read, or parse failure.
     pub(crate) fn read(options: &'a LoadOptions, warnings: &mut Vec<String>) -> Result<Self, LoadErrorKind> {
         let list = non_empty(&options.environment, ENV_FILE_VAR).map(|list| (list, ENV_FILE_VAR.to_owned()));
-        let (paths, origin) = file_list(&options.env_files, "--env", list)?;
         let mut layers = Self {
             process: &options.environment,
             files: Vec::new(),
+        };
+        let Some((paths, origin)) = file_list(&options.env_files, "--env", list)? else {
+            return Ok(layers);
         };
         for raw in paths {
             let path = options
                 .working_dir
                 .join(env::expand_tilde(&raw, options.home.as_deref()));
-            let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-                what: "env file",
-                path: path.clone(),
-                origin: origin.clone(),
-                source,
-            })?;
+            let text = read_file(&path, "env file", &origin)?;
             let process = |name: &str| layers.process.get(name).cloned();
             let earlier = |name: &str| layers.latest(name).map(|(_, value, _)| value.to_owned());
             let parsed = dotenv::parse(&path, &text, &process, &earlier)

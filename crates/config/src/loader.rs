@@ -109,19 +109,22 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
 /// any source's value fails its setting's checks, or validation fails.
 pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
-    let fail = |warnings: Vec<String>, kind| LoadError { warnings, kind };
+    let fail = |warnings: Vec<String>, kind| LoadError {
+        warnings: dedup(warnings),
+        kind,
+    };
 
     let layers = match EnvLayers::read(options, &mut warnings) {
         Ok(layers) => layers,
-        Err(kind) => return Err(fail(dedup(warnings), kind)),
+        Err(kind) => return Err(fail(warnings, kind)),
     };
     let files = match ConfigFiles::read(options, &layers, &mut warnings) {
         Ok(files) => files,
-        Err(kind) => return Err(fail(dedup(warnings), kind)),
+        Err(kind) => return Err(fail(warnings, kind)),
     };
     let settings = match settings::check(&files, &layers, options.home.as_deref()) {
         Ok(settings) => settings,
-        Err(errors) => return Err(fail(dedup(warnings), LoadErrorKind::Settings(errors))),
+        Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
     };
     let warnings = dedup(warnings);
 
@@ -147,7 +150,8 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
 /// Returns the paths named by `flag` values, else by the comma `list`.
 ///
 /// A flag given at least once replaces the list; `list` pairs the comma
-/// list with where it came from. Returns the surface the paths came from.
+/// list with where it came from. Returns the paths and the surface they
+/// came from, or `None` when neither names any file.
 ///
 /// # Errors
 ///
@@ -156,7 +160,7 @@ pub(crate) fn file_list(
     flags: &[PathBuf],
     flag: &'static str,
     list: Option<(&str, String)>,
-) -> Result<(Vec<PathBuf>, String), LoadErrorKind> {
+) -> Result<Option<(Vec<PathBuf>, String)>, LoadErrorKind> {
     if !flags.is_empty() {
         if flags.iter().any(|path| path.as_os_str().is_empty()) {
             return Err(LoadErrorKind::List {
@@ -164,12 +168,12 @@ pub(crate) fn file_list(
                 problem: "empty path",
             });
         }
-        return Ok((flags.to_vec(), flag.to_owned()));
+        return Ok(Some((flags.to_vec(), flag.to_owned())));
     }
     let Some((list, origin)) = list else {
-        return Ok((Vec::new(), String::new()));
+        return Ok(None);
     };
-    Ok((split_list(list, origin.clone())?, origin))
+    Ok(Some((split_list(list, origin.clone())?, origin)))
 }
 
 /// Splits a comma list of paths, trimming each entry.
@@ -193,12 +197,24 @@ fn dedup(messages: Vec<String>) -> Vec<String> {
     messages.into_iter().collect::<IndexSet<_>>().into_iter().collect()
 }
 
-/// Reads `path`, rejecting directories; pipes such as `<(…)` are allowed.
-pub(crate) fn read_file(path: &Path) -> std::io::Result<String> {
-    if std::fs::metadata(path)?.is_dir() {
-        return Err(std::io::Error::other("is a directory"));
-    }
-    std::fs::read_to_string(path)
+/// Reads the `what` file at `path`, named by `origin`; rejects directories, allows pipes.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::Read`] when `path` is a directory or cannot be read.
+pub(crate) fn read_file(path: &Path, what: &'static str, origin: &str) -> Result<String, LoadErrorKind> {
+    let read = || {
+        if std::fs::metadata(path)?.is_dir() {
+            return Err(std::io::Error::other("is a directory"));
+        }
+        std::fs::read_to_string(path)
+    };
+    read().map_err(|source| LoadErrorKind::Read {
+        what,
+        path: path.to_path_buf(),
+        origin: origin.to_owned(),
+        source,
+    })
 }
 
 /// Returns the value of `name` in `environment`, unless unset or empty.
