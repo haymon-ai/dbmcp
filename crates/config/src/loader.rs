@@ -5,11 +5,8 @@
 //!
 //! 1. Read the env layers (see [`layers`](crate::layers)), stopping at the
 //!    first env file with errors.
-//! 2. Pick the config files (`--config` list > `DBMCP_CONFIG` list in the
-//!    setting view of the env layers). Each one in order is read, parsed into
-//!    an untyped tree, `${}`-interpolated against the variable view of the env
-//!    layers, and checked against the config schema alone; loading stops at
-//!    the first file with errors.
+//! 2. Read the config files (see [`files`](crate::files)),
+//!    stopping at the first file with errors.
 //! 3. Check every set value from every source by its setting's kind, even
 //!    values that lose to a higher source, resolving paths against the
 //!    declaring file, and pick each winner: non-empty process env > the last
@@ -28,17 +25,15 @@ use indexmap::IndexSet;
 
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
-use crate::env::{self, CONFIG_VAR, Kind, SETTINGS, Setting, Value};
+use crate::env::{self, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic};
+use crate::files::ConfigFiles;
 use crate::http::HttpConfig;
-use crate::interpolate;
 use crate::layers::EnvLayers;
 use crate::log::LogLevel;
-use crate::node;
 use crate::options::LoadOptions;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
-use crate::schema;
-use crate::settings::{self, ConfigFile, InputError, Settings};
+use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
 use crate::ssh::{SshConfig, StrictHostKeyChecking};
 use crate::transport::Transport;
@@ -120,11 +115,11 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         Ok(layers) => layers,
         Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
-    let (files, structure) = match read_config_files(options, &layers, &mut warnings) {
-        Ok(read) => read,
+    let files = match ConfigFiles::read(options, &layers, &mut warnings) {
+        Ok(files) => files,
         Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
-    let settings = match settings::check(&files, structure, &layers, options.home.as_deref()) {
+    let settings = match settings::check(&files, &layers, options.home.as_deref()) {
         Ok(settings) => settings,
         Err(errors) => return Err(fail(dedup(warnings), LoadErrorKind::Settings(errors))),
     };
@@ -196,69 +191,6 @@ fn split_list(list: &str, origin: String) -> Result<Vec<PathBuf>, LoadErrorKind>
 /// Drops repeated messages, keeping the first of each in order.
 fn dedup(messages: Vec<String>) -> Vec<String> {
     messages.into_iter().collect::<IndexSet<_>>().into_iter().collect()
-}
-
-/// Reads, parses, interpolates, and structure-checks the named config files.
-///
-/// Files come from the `--config` list, else the `DBMCP_CONFIG` list in the
-/// setting view of `layers`, and are handled one at a time in order. `${}`
-/// reads the variable view of `layers`. The first file with structure errors is the last
-/// file read; its errors are returned beside the files read so far.
-///
-/// # Errors
-///
-/// Returns the first list, read, parse, or interpolation failure.
-fn read_config_files(
-    options: &LoadOptions,
-    layers: &EnvLayers<'_>,
-    warnings: &mut Vec<String>,
-) -> Result<(Vec<ConfigFile>, Vec<InputError>), LoadErrorKind> {
-    let list = layers
-        .candidates(CONFIG_VAR)
-        .find(|(_, _, eligible)| *eligible)
-        .map(|(list, source, _)| (list, source.to_string()));
-    let (paths, origin) = file_list(&options.config, "--config", list)?;
-    let lookup = |name: &str| layers.var(name);
-    let mut files = Vec::new();
-    for raw in paths {
-        let path = options.working_dir.join(raw);
-        let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-            what: "config file",
-            path: path.clone(),
-            origin: origin.clone(),
-            source,
-        })?;
-        let mut tree = node::parse(&text).map_err(|error| {
-            let location = error
-                .location()
-                .filter(|l| l.line() > 0)
-                .map(|l| format!("{}:{}: ", l.line(), l.column()))
-                .unwrap_or_default();
-            let message = error.to_string();
-            let message = message.lines().next().unwrap_or_default();
-            LoadErrorKind::Parse {
-                errors: vec![format!("{}:{location}{message}", path.display())],
-                path: path.clone(),
-            }
-        })?;
-        let in_file = |messages: &[String]| -> Vec<String> {
-            messages.iter().map(|m| format!("{}:{m}", path.display())).collect()
-        };
-        let outcome = interpolate::interpolate(&mut tree, &lookup);
-        warnings.extend(in_file(&outcome.warnings));
-        if !outcome.errors.is_empty() {
-            return Err(LoadErrorKind::Interpolate {
-                errors: in_file(&outcome.errors),
-                path,
-            });
-        }
-        let structure = schema::validate(&tree, &path);
-        files.push((path, tree));
-        if !structure.is_empty() {
-            return Ok((files, structure));
-        }
-    }
-    Ok((files, Vec::new()))
 }
 
 /// Reads `path`, rejecting directories; pipes such as `<(…)` are allowed.

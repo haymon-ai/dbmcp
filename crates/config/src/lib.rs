@@ -23,6 +23,7 @@ mod database;
 mod dotenv;
 mod env;
 mod error;
+mod files;
 mod http;
 mod interpolate;
 mod layers;

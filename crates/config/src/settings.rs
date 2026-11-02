@@ -15,17 +15,17 @@
 //! [`EnvLayers::candidates`]: crate::layers::EnvLayers::candidates
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::env::{Raw, SETTINGS, Setting, Value};
+use crate::files::ConfigFiles;
 use crate::layers::EnvLayers;
-use crate::node::{Node, SpannedNode};
 use crate::source::Source;
 
 /// One invalid input: a malformed config file or a value that fails its setting's checks.
 ///
 /// Renders value-free as `<source>: <path>: <reason>`.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{from}: {path}: {reason}")]
 pub(crate) struct InputError {
     /// Where the value or key is.
@@ -48,9 +48,6 @@ impl InputError {
         }
     }
 }
-
-/// An interpolated config file and its absolute path.
-pub(crate) type ConfigFile = (PathBuf, SpannedNode);
 
 /// Each set setting's winning value and its source.
 #[derive(Debug, Default)]
@@ -78,21 +75,18 @@ impl Settings {
 
 /// Checks every source's values and returns each setting's winner.
 ///
-/// `files` are the interpolated config files and their paths, in list
-/// order; `structure` holds the config files' schema errors; `home` expands
-/// `~` in paths.
+/// `home` expands `~` in paths.
 ///
 /// # Errors
 ///
-/// Returns `structure` and every value that fails its setting's checks,
+/// Returns the config files' structure errors and every value that fails its setting's checks,
 /// from any source, sorted by [`InputError::order`] and without repeats.
 pub(crate) fn check(
-    files: &[ConfigFile],
-    structure: Vec<InputError>,
+    files: &ConfigFiles,
     layers: &EnvLayers<'_>,
     home: Option<&Path>,
 ) -> Result<Settings, Vec<InputError>> {
-    let mut errors = structure;
+    let mut errors = files.structure().to_vec();
     let mut settings = Settings::default();
     for &setting in SETTINGS {
         let Setting { path, env, kind } = setting;
@@ -102,17 +96,7 @@ pub(crate) fn check(
             .map(|(text, source, eligible)| (Raw::Text(text), source, eligible))
             .collect();
         // A later config file wins where it sets a value; unset ones let earlier files through.
-        for (file, root) in files.iter().rev() {
-            if let Some(node) = leaf(root, path) {
-                let source = Source::File {
-                    path: file.clone(),
-                    line: node.referenced.line(),
-                    column: node.referenced.column(),
-                };
-                let dir = file.parent().unwrap_or(Path::new(""));
-                candidates.push((Raw::Node { node: &node.value, dir }, source, true));
-            }
-        }
+        candidates.extend(files.candidates(path).map(|(raw, source)| (raw, source, true)));
         for (raw, source, eligible) in candidates {
             match kind.check(raw, home) {
                 Ok(Some(value)) if eligible && !settings.values.contains_key(path) => {
@@ -131,40 +115,24 @@ pub(crate) fn check(
     if errors.is_empty() {
         return Ok(settings);
     }
-    let rank = |path: &Path| {
-        files
-            .iter()
-            .position(|(file, _)| file == path)
-            .or_else(|| layers.position(path))
-            .unwrap_or(0)
-    };
+    let rank = |path: &Path| files.position(path).or_else(|| layers.position(path)).unwrap_or(0);
     errors.sort_by(|a, b| a.order(rank).cmp(&b.order(rank)));
     errors.dedup();
     Err(errors)
 }
 
-/// Returns the node at the dotted `path`, if every key on the way is a mapping entry.
-fn leaf<'a>(root: &'a SpannedNode, path: &str) -> Option<&'a SpannedNode> {
-    path.split('.').try_fold(root, |node, key| match &node.value {
-        Node::Map(entries) => entries.get(key).map(|(_, value)| value),
-        _ => None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use tempfile::TempDir;
 
     use super::*;
     use crate::env;
-    use crate::interpolate;
-    use crate::node;
     use crate::options::LoadOptions;
-    use crate::schema;
 
-    /// Inputs for [`check`]; the env file is written to a scratch directory.
+    /// Inputs for [`check`]; the files are written to a scratch directory.
     struct Inputs {
         dir: TempDir,
         yaml: Option<&'static str>,
@@ -204,8 +172,21 @@ mod tests {
             self.dir.path().join(".env")
         }
 
+        /// Returns the config file's absolute path.
+        fn yaml_path(&self) -> String {
+            self.dir.path().join("dbmcp.yaml").display().to_string()
+        }
+
+        /// Returns a config file source at `line` and `column`.
+        fn file(&self, line: u64, column: u64) -> Source {
+            Source::File {
+                path: self.dir.path().join("dbmcp.yaml"),
+                line,
+                column,
+            }
+        }
+
         fn check(&self) -> Result<Settings, Vec<InputError>> {
-            let root = self.yaml.map(|yaml| node::parse(yaml).expect("valid yaml"));
             let mut options = LoadOptions {
                 environment: self.environment.clone(),
                 working_dir: self.dir.path().to_path_buf(),
@@ -215,16 +196,13 @@ mod tests {
                 fs::write(self.env_path(), text).expect("write env file");
                 options.env_files.push(".env".into());
             }
+            if let Some(yaml) = self.yaml {
+                fs::write(self.yaml_path(), yaml).expect("write config file");
+                options.config.push("dbmcp.yaml".into());
+            }
             let layers = EnvLayers::read(&options, &mut Vec::new()).expect("valid env file");
-            let files: Vec<_> = root
-                .map(|root| (PathBuf::from("/x/dbmcp.yaml"), root))
-                .into_iter()
-                .collect();
-            let structure = files
-                .iter()
-                .flat_map(|(path, root)| schema::validate(root, path))
-                .collect();
-            check(&files, structure, &layers, None)
+            let files = ConfigFiles::read(&options, &layers, &mut Vec::new()).expect("readable config file");
+            check(&files, &layers, None)
         }
 
         #[track_caller]
@@ -237,23 +215,14 @@ mod tests {
         }
     }
 
-    fn file(line: u64, column: u64) -> Source {
-        Source::File {
-            path: PathBuf::from("/x/dbmcp.yaml"),
-            line,
-            column,
-        }
-    }
-
     #[test]
     fn winner_is_process_env_then_env_file_then_yaml() {
-        let settings = Inputs::default()
+        let inputs = Inputs::default()
             .yaml("database:\n  host: yaml\n  user: yaml\n  port: 1111\n")
             .env_file("DBMCP_DB_HOST=file\nDBMCP_DB_USER=file\nDBMCP_DB_PORT=\n")
             .env("DBMCP_DB_HOST", "process")
-            .env("DBMCP_DB_USER", "")
-            .check()
-            .expect("valid");
+            .env("DBMCP_DB_USER", "");
+        let settings = inputs.check().expect("valid");
         assert_eq!(settings.get(env::DB_HOST), Some(&Value::Text("process".into())));
         assert_eq!(settings.source(env::DB_HOST), Some(&Source::Env("DBMCP_DB_HOST")));
         assert_eq!(settings.get(env::DB_USER), Some(&Value::Text("file".into())));
@@ -262,7 +231,7 @@ mod tests {
             Some(Source::EnvFile { line: 2, .. })
         ));
         assert_eq!(settings.get(env::DB_PORT), Some(&Value::Int(1111)));
-        assert_eq!(settings.source(env::DB_PORT), Some(&file(4, 9)));
+        assert_eq!(settings.source(env::DB_PORT), Some(&inputs.file(4, 9)));
         assert_eq!(settings.get(env::DB_NAME), None);
     }
 
@@ -284,10 +253,11 @@ mod tests {
             .env_file("DBMCP_DB_PORT=70000\n")
             .env("DBMCP_DB_PORT", "5432");
         let env_file = inputs.env_path().display().to_string();
+        let yaml = inputs.yaml_path();
         assert_eq!(
             inputs.errors(),
             [
-                "/x/dbmcp.yaml:2:9: database.port: expected non-negative integer, found string".to_owned(),
+                format!("{yaml}:2:9: database.port: expected non-negative integer, found string"),
                 format!("DBMCP_DB_PORT in {env_file}:1: database.port: must be at most 65535"),
             ]
         );
@@ -295,15 +265,15 @@ mod tests {
 
     #[test]
     fn values_in_inactive_sections_are_checked() {
-        let errors = Inputs::default()
+        let inputs = Inputs::default()
             .yaml("http:\n  port: nope\n")
-            .env("DBMCP_SSH_PORT", "0")
-            .errors();
+            .env("DBMCP_SSH_PORT", "0");
+        let yaml = inputs.yaml_path();
         assert_eq!(
-            errors,
+            inputs.errors(),
             [
-                "/x/dbmcp.yaml:2:9: http.port: expected non-negative integer, found string",
-                "DBMCP_SSH_PORT: ssh.port: must be at least 1",
+                format!("{yaml}:2:9: http.port: expected non-negative integer, found string"),
+                "DBMCP_SSH_PORT: ssh.port: must be at least 1".to_owned(),
             ]
         );
     }
@@ -316,15 +286,17 @@ mod tests {
             .env("DBMCP_TRANSPORT", "sse")
             .env("DBMCP_DB_READ_ONLY", "on");
         let env_file = inputs.env_path().display().to_string();
+        let yaml = inputs.yaml_path();
         assert_eq!(
             inputs.errors(),
             [
-                "/x/dbmcp.yaml:2:9: ssh.port: must be at least 1".to_owned(),
-                "/x/dbmcp.yaml:4:3: database.pasword: unknown field; expected one of backend, host, port, user, \
-                 password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, \
-                 max_pool_size, connection_timeout, query_timeout, page_size"
-                    .to_owned(),
-                "/x/dbmcp.yaml:5:12: database.backend: expected one of mysql, mariadb, postgres, sqlite".to_owned(),
+                format!("{yaml}:2:9: ssh.port: must be at least 1"),
+                format!(
+                    "{yaml}:4:3: database.pasword: unknown field; expected one of backend, host, port, user, \
+                     password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, \
+                     max_pool_size, connection_timeout, query_timeout, page_size"
+                ),
+                format!("{yaml}:5:12: database.backend: expected one of mysql, mariadb, postgres, sqlite"),
                 format!(
                     "DBMCP_DB_SSL in {env_file}:2: database.ssl: expected boolean (true/false/1/0/t/f), found string"
                 ),
@@ -348,20 +320,22 @@ mod tests {
 
     #[test]
     fn values_under_a_malformed_section_are_skipped() {
-        let errors = Inputs::default().yaml("pii: []\n").errors();
-        assert_eq!(errors, ["/x/dbmcp.yaml:1:6: pii: expected mapping, found sequence"]);
+        let inputs = Inputs::default().yaml("pii: []\n");
+        let yaml = inputs.yaml_path();
+        assert_eq!(
+            inputs.errors(),
+            [format!("{yaml}:1:6: pii: expected mapping, found sequence")]
+        );
     }
 
     #[test]
     fn error_source_is_where_the_value_is() {
-        let error = Inputs::default()
-            .yaml("database:\n  ssl: 1\n")
-            .check()
-            .expect_err("invalid");
+        let inputs = Inputs::default().yaml("database:\n  ssl: 1\n");
+        let error = inputs.check().expect_err("invalid");
         assert_eq!(
             error,
             [InputError {
-                from: file(2, 8),
+                from: inputs.file(2, 8),
                 path: "database.ssl".into(),
                 reason: "expected boolean (true/false/1/0/t/f), found integer".into(),
             }]
@@ -386,6 +360,7 @@ mod tests {
     #[test]
     fn docs_yaml_examples_are_valid() {
         let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/content/docs");
+        let dir = tempfile::tempdir().expect("tempdir");
         let mut checked = 0;
         for entry in std::fs::read_dir(&docs).expect("docs directory") {
             let path = entry.expect("dir entry").path();
@@ -404,22 +379,22 @@ mod tests {
                     .take_while(|l| l.trim() != "```")
                     .collect();
                 let yaml = block.join("\n");
-                let required = required_vars(&yaml);
-                let lookup = |name: &str| required.iter().any(|r| r == name).then(|| "placeholder".to_owned());
-                let mut root = node::parse(&yaml).unwrap_or_else(|e| panic!("{}:{}: {e}", path.display(), start + 1));
-                let outcome = interpolate::interpolate(&mut root, &lookup);
-                assert!(
-                    outcome.errors.is_empty(),
-                    "{}:{}: {:?}",
-                    path.display(),
-                    start + 1,
-                    outcome.errors
-                );
-                let structure = schema::validate(&root, &path);
-                let options = LoadOptions::default();
+                let at = format!("{}:{}", path.display(), start + 1);
+                fs::write(dir.path().join("example.yaml"), &yaml).expect("write example");
+                let options = LoadOptions {
+                    config: vec!["example.yaml".into()],
+                    environment: required_vars(&yaml)
+                        .into_iter()
+                        .map(|name| (name, "placeholder".to_owned()))
+                        .collect(),
+                    working_dir: dir.path().to_path_buf(),
+                    ..LoadOptions::default()
+                };
                 let layers = EnvLayers::read(&options, &mut Vec::new()).expect("no env files");
-                if let Err(errors) = check(&[(path.clone(), root)], structure, &layers, None) {
-                    panic!("{}:{}: {errors:?}", path.display(), start + 1);
+                let files =
+                    ConfigFiles::read(&options, &layers, &mut Vec::new()).unwrap_or_else(|e| panic!("{at}: {e}"));
+                if let Err(errors) = check(&files, &layers, None) {
+                    panic!("{at}: {errors:?}");
                 }
                 checked += 1;
             }
