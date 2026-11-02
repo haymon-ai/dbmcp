@@ -1105,6 +1105,35 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_yaml_tags_are_rejected_where_they_sit() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "transport: http\nhttp:\n  allowed_origins: !reset []\n  allowed_hosts: [a, !override b]\n  port: abc\nssh: !reset\n",
+        );
+        let error = fixture.err();
+        let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "invalid settings:\n  \
+                 - {file}:3:27: http.allowed_origins: YAML tag !reset is not supported\n  \
+                 - {file}:4:18: http.allowed_hosts: item 1: YAML tag !override is not supported\n  \
+                 - {file}:5:9: http.port: expected non-negative integer, found string\n  \
+                 - {file}:6:12: ssh: YAML tag !reset is not supported"
+            )
+        );
+    }
+
+    #[test]
+    fn core_yaml_tags_are_accepted() {
+        let loaded = Fixture::new()
+            .config("dbmcp.yaml", "database:\n  host: !!str 10\n  port: !!int 6000\n")
+            .ok();
+        assert_eq!(loaded.config.database.host, "10");
+        assert_eq!(loaded.config.database.port, 6000);
+    }
+
+    #[test]
     fn secrets_never_appear_in_errors() {
         let error = Fixture::new()
             .config("dbmcp.yaml", "database:\n  password: 12345\n")

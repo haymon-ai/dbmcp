@@ -16,7 +16,7 @@ use std::path::Path;
 use boon::{Compiler, ErrorKind, InstanceToken, SchemaIndex, Schemas, Type, Types, ValidationError};
 use serde_json::{Map, Value};
 
-use crate::env::SETTINGS;
+use crate::env::{SETTINGS, unsupported_tag};
 use crate::node::{Node, SpannedNode};
 use crate::settings::InputError;
 use crate::source::Source;
@@ -34,7 +34,9 @@ const VALUE_KEYWORDS: [&str; 5] = ["type", "enum", "minimum", "maximum", "items"
 /// Validates the structure of the config file at `file` against the config schema.
 ///
 /// Returns one error per unknown key, at the key, and per root or section
-/// that is not a mapping or null, at its value. Empty when valid.
+/// that is not a mapping or null, or carries an unsupported YAML tag, at its
+/// value. Tags on settings are rejected by their [`Kind`] instead. Empty when
+/// valid.
 ///
 /// # Panics
 ///
@@ -44,6 +46,27 @@ pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
     let mut errors = Vec::new();
     if let Err(error) = schemas.validate(&to_json(&root.value), index) {
         collect(&error, root, file, &mut errors);
+    }
+    let sections = match &root.value {
+        Node::Map(entries) => entries
+            .iter()
+            .filter(|(key, _)| SETTINGS.iter().any(|s| s.path.starts_with(&format!("{key}."))))
+            .map(|(key, (_, value))| (key.as_str(), value))
+            .collect(),
+        _ => vec![("<root>", root)],
+    };
+    for (path, node) in sections {
+        if let Node::Unsupported(tag) = &node.value {
+            errors.push(InputError {
+                from: Source::File {
+                    path: file.to_path_buf(),
+                    line: node.referenced.line(),
+                    column: node.referenced.column(),
+                },
+                path: path.to_owned(),
+                reason: unsupported_tag(tag),
+            });
+        }
     }
     errors
 }
@@ -78,10 +101,11 @@ fn strip_values(schema: &mut Value) {
 /// Converts the YAML tree to JSON for validation.
 ///
 /// Only the shape of the root and sections is checked, so any number
-/// stands in for a float; errors name the YAML node's own type.
+/// stands in for a float; errors name the YAML node's own type. An
+/// unsupported tagged node stands in as null: [`validate`] reports it.
 fn to_json(node: &Node) -> Value {
     match node {
-        Node::Null => Value::Null,
+        Node::Null | Node::Unsupported(_) => Value::Null,
         Node::Bool(value) => Value::Bool(*value),
         Node::Int(value) => Value::from(*value),
         Node::UInt(value) => Value::from(*value),
@@ -391,6 +415,18 @@ pub(crate) mod tests {
         );
         assert!(check("").is_empty());
         assert!(check("transport:\ndatabase:\nssh: ~\n").is_empty());
+    }
+
+    #[test]
+    fn tagged_root_and_sections_are_rejected() {
+        assert_eq!(
+            check("!x\na: 1\n"),
+            ["f.yaml:2:1: <root>: YAML tag !x is not supported"]
+        );
+        assert_eq!(
+            check("database: !reset\n  host: a\nhttp:\n  allowed_origins: !reset []\n"),
+            ["f.yaml:2:3: database: YAML tag !reset is not supported"]
+        );
     }
 
     #[test]

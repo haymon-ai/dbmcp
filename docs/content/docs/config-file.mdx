@@ -108,6 +108,7 @@ The config file is a YAML mapping. Top-level keys are `transport` and `log_level
 - **Strings** that YAML would read as a number or boolean need quotes (`password: "12345"`); a value of the wrong type is an error.
 - **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`). An empty string at an integer, boolean, or list key (`port: ""`, or an unset `${PORT}`) also means unset, just like an empty `DBMCP_*` variable.
 - **Lists** are YAML sequences, or a comma-separated string (useful with `${}`: `allowed_hosts: ${HOSTS}`), and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
+- **Tags** other than the YAML core tags (`!!str`, `!!int`, …) are an error wherever they appear. Docker Compose's `!reset` and `!override` are not supported.
 - The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env file.
 
 A full annotated example:
