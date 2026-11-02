@@ -237,7 +237,7 @@ DBMCP_CONFIG=base.yaml,local.yaml dbmcp
 - Relative paths, and a SQLite `database.name`, resolve against the directory of the file that sets them (Docker Compose uses the first file's directory).
 - `${}` in every file reads the process environment, then the env files. Files cannot reference each other, and YAML anchors and aliases work only within one file.
 - Every value in every file is checked, including values a later file overrides; an error names the file that declares the value.
-- Loading stops at the first file that cannot be read, parsed, or interpolated, or that has unknown keys or malformed sections, reporting all of that file's problems. Env file errors are reported before config file errors.
+- Loading stops at the first file that cannot be read, parsed, or interpolated, or that has unknown keys or malformed sections, reporting all of that file's problems. The env files are read and parsed before any config file, so an env file that cannot be read or parsed stops loading first.
 
 ### Multiple env files
 

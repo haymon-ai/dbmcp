@@ -102,7 +102,7 @@ impl<'a> EnvLayers<'a> {
 }
 
 /// Returns the value of `name` in `environment`, unless unset or empty.
-fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+pub(super) fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 

@@ -8,6 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use indexmap::IndexSet;
+
 use crate::env;
 use crate::loader::LoadErrorKind;
 
@@ -38,11 +40,13 @@ impl FileKind {
     }
 }
 
-/// Picks the `kind` files named by `flags`, else by the comma `list`, and reads them lazily.
+/// Picks the `kind` files named by `flags`, else by the comma `list`.
 ///
 /// A flag given at least once replaces the list; `list` pairs the comma
-/// list with where it came from. Yields each file's resolved path and
-/// text in order; no list yields nothing.
+/// list with where it came from, and a blank list names no files. Yields
+/// each file's resolved path and text in order, reading each file only
+/// when asked. A file listed twice is read once, at its last place, which
+/// keeps its precedence. No list yields nothing.
 ///
 /// # Errors
 ///
@@ -56,27 +60,28 @@ pub(super) fn files(
     working_dir: &Path,
     home: Option<&Path>,
 ) -> Result<impl Iterator<Item = Result<(PathBuf, String), LoadErrorKind>> + use<>, LoadErrorKind> {
-    let (paths, origin) = if !flags.is_empty() {
+    let (raw, origin): (Vec<&Path>, String) = if !flags.is_empty() {
         if flags.iter().any(|path| path.as_os_str().is_empty()) {
             return Err(LoadErrorKind::List {
                 origin: kind.flag().to_owned(),
                 problem: "empty path",
             });
         }
-        (flags.to_vec(), kind.flag().to_owned())
-    } else if let Some((list, origin)) = list {
+        (flags.iter().map(PathBuf::as_path).collect(), kind.flag().to_owned())
+    } else if let Some((list, origin)) = list.filter(|(list, _)| !list.trim().is_empty()) {
         (split_list(list, &origin)?, origin)
     } else {
         (Vec::new(), String::new())
     };
-    let paths: Vec<PathBuf> = paths
+    let paths: IndexSet<PathBuf> = raw
         .into_iter()
+        .rev()
         .map(|raw| match kind {
-            FileKind::Env => working_dir.join(env::expand_tilde(&raw, home)),
+            FileKind::Env => working_dir.join(env::expand_tilde(raw, home)),
             FileKind::Config => working_dir.join(raw),
         })
         .collect();
-    Ok(paths.into_iter().map(move |path| {
+    Ok(paths.into_iter().rev().map(move |path| {
         let text = read_file(&path, kind.noun(), &origin)?;
         Ok((path, text))
     }))
@@ -87,7 +92,7 @@ pub(super) fn files(
 /// # Errors
 ///
 /// Returns [`LoadErrorKind::List`] naming `origin` when an entry is empty.
-fn split_list(list: &str, origin: &str) -> Result<Vec<PathBuf>, LoadErrorKind> {
+fn split_list<'a>(list: &'a str, origin: &str) -> Result<Vec<&'a Path>, LoadErrorKind> {
     let items: Vec<&str> = list.split(',').map(str::trim).collect();
     if items.iter().any(|item| item.is_empty()) {
         return Err(LoadErrorKind::List {
@@ -95,7 +100,7 @@ fn split_list(list: &str, origin: &str) -> Result<Vec<PathBuf>, LoadErrorKind> {
             problem: "empty entry in file list",
         });
     }
-    Ok(items.into_iter().map(PathBuf::from).collect())
+    Ok(items.into_iter().map(Path::new).collect())
 }
 
 /// Reads the `what` file at `path`, named by `origin`; rejects directories, allows pipes.
@@ -150,6 +155,18 @@ mod tests {
             Ok(vec![Path::new("work").join("b.yaml"), Path::new("work").join("c.yaml")])
         );
         assert_eq!(paths(FileKind::Config, &[], None), Ok(Vec::new()));
+        assert_eq!(paths(FileKind::Config, &[], Some(" ")), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn a_file_listed_twice_is_picked_once_at_its_last_place() {
+        assert_eq!(
+            paths(FileKind::Config, &["a.yaml", "b.yaml", "./a.yaml"], None),
+            Ok(vec![
+                Path::new("work").join("b.yaml"),
+                Path::new("work").join("./a.yaml")
+            ])
+        );
     }
 
     #[test]

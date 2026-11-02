@@ -18,8 +18,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use indexmap::IndexSet;
-
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, Kind, SETTINGS, Setting, Value};
@@ -104,16 +102,10 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
 /// any source's value fails its setting's checks, or validation fails.
 pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
-    let fail = |warnings: Vec<String>, kind| LoadError {
-        warnings: dedup(warnings),
-        kind,
-    };
-
     let settings = match settings::read(options, &mut warnings) {
         Ok(settings) => settings,
-        Err(kind) => return Err(fail(warnings, kind)),
+        Err(kind) => return Err(LoadError { warnings, kind }),
     };
-    let warnings = dedup(warnings);
 
     let resolver = Resolver {
         settings: &settings,
@@ -129,14 +121,12 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
             for diagnostic in &mut diagnostics {
                 diagnostic.attach_sources(settings.sources());
             }
-            Err(fail(warnings, LoadErrorKind::Invalid(diagnostics)))
+            Err(LoadError {
+                warnings,
+                kind: LoadErrorKind::Invalid(diagnostics),
+            })
         }
     }
-}
-
-/// Drops repeated messages, keeping the first of each in order.
-fn dedup(messages: Vec<String>) -> Vec<String> {
-    messages.into_iter().collect::<IndexSet<_>>().into_iter().collect()
 }
 
 /// Builds the configuration from each setting's checked winner and defaults.

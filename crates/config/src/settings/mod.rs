@@ -94,12 +94,7 @@ impl Settings {
 /// Returns the first file list, read, parse, or interpolation failure,
 /// else [`LoadErrorKind::Settings`] with every [`InputError`].
 pub(crate) fn read(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<Settings, LoadErrorKind> {
-    let env_list = options
-        .environment
-        .get(ENV_FILE_VAR)
-        .map(String::as_str)
-        .filter(|list| !list.is_empty())
-        .map(|list| (list, ENV_FILE_VAR.to_owned()));
+    let env_list = layers::non_empty(&options.environment, ENV_FILE_VAR).map(|list| (list, ENV_FILE_VAR.to_owned()));
     let home = options.home.as_deref();
     let env_files = pick::files(FileKind::Env, &options.env_files, env_list, &options.working_dir, home)?;
     let layers = EnvLayers::read(&options.environment, env_files, warnings)?;
@@ -125,7 +120,7 @@ pub(crate) fn read(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<
 /// # Errors
 ///
 /// Returns the config files' structure errors and every value that fails its setting's checks,
-/// from any source, sorted by [`InputError::order`] and without repeats.
+/// from any source, sorted by [`InputError::order`].
 fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Result<Settings, Vec<InputError>> {
     let mut errors = files.structure().to_vec();
     let mut settings = Settings::default();
@@ -156,7 +151,6 @@ fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Re
         return Ok(settings);
     }
     errors.sort_by(|a, b| a.order(files, layers).cmp(&b.order(files, layers)));
-    errors.dedup();
     Err(errors)
 }
 
