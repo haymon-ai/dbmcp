@@ -1,24 +1,24 @@
 //! Checks every setting value from every source and picks each winner.
 //!
-//! [`check`] runs before any setting is resolved. It validates the config
-//! file's structure against the config schema, then checks every set value
-//! with its [`Kind`]: each YAML leaf, each non-empty entry of every env file,
-//! and each non-empty process env var, even values that lose to a higher
-//! source, are overwritten by a later env file, or sit in a section that is
-//! not active. Path values come out resolved: YAML paths against the config
-//! file's directory. Every failure is an [`InputError`]; when there are none,
-//! [`Settings`] holds each setting's winning value and its [`Source`]:
-//! non-empty process env > the last env file setting it, if non-empty > YAML.
+//! [`check`] runs before any setting is resolved. It takes the config files'
+//! structure errors from the config schema, then checks every set value
+//! with its [`Kind`]: each leaf of every config file, each non-empty entry of
+//! every env file, and each non-empty process env var, even values that lose
+//! to a higher source, are overwritten by a later file, or sit in a section
+//! that is not active. Path values come out resolved: YAML paths against
+//! their own config file's directory. Every failure is an [`InputError`];
+//! when there are none, [`Settings`] holds each setting's winning value and
+//! its [`Source`]: non-empty process env > the last env file setting it, if
+//! non-empty > the last config file setting it.
 //!
 //! [`Kind`]: crate::env::Kind
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::dotenv::EnvFile;
 use crate::env::{Raw, SETTINGS, Setting, Value};
 use crate::node::{Node, SpannedNode};
-use crate::schema;
 use crate::source::Source;
 
 /// One invalid input: a malformed config file or a value that fails its setting's checks.
@@ -36,17 +36,20 @@ pub(crate) struct InputError {
 }
 
 impl InputError {
-    /// Orders errors by config file location, then env file and line, then env name.
+    /// Orders errors by config file and location, then env file and line, then env name.
     ///
-    /// `rank` gives an env file's position in the list.
+    /// `rank` gives a file's position in its list.
     fn order(&self, rank: impl Fn(&Path) -> usize) -> (u8, usize, u64, u64, &str) {
         match &self.from {
-            Source::File { line, column, .. } => (0, 0, *line, *column, &self.path),
+            Source::File { path, line, column } => (0, rank(path), *line, *column, &self.path),
             Source::EnvFile { path, line, .. } => (1, rank(path), *line as u64, 0, &self.path),
             Source::Env(name) => (2, 0, 0, 0, name),
         }
     }
 }
+
+/// An interpolated config file and its absolute path.
+pub(crate) type ConfigFile = (PathBuf, SpannedNode);
 
 /// Each set setting's winning value and its source.
 #[derive(Debug, Default)]
@@ -74,23 +77,22 @@ impl Settings {
 
 /// Checks every source's values and returns each setting's winner.
 ///
-/// `file` is the interpolated config file and its path; `env_files` are in
-/// list order; `home` expands `~` in paths.
+/// `files` are the interpolated config files and their paths, and
+/// `env_files` the env files, each in list order; `structure` holds the
+/// config files' schema errors; `home` expands `~` in paths.
 ///
 /// # Errors
 ///
-/// Returns every structure error in the file and every value that fails its
-/// setting's checks, from any source, sorted by [`InputError::order`] and
-/// without repeats.
+/// Returns `structure` and every value that fails its setting's checks,
+/// from any source, sorted by [`InputError::order`] and without repeats.
 pub(crate) fn check(
-    file: Option<(&Path, &SpannedNode)>,
+    files: &[ConfigFile],
+    structure: Vec<InputError>,
     env_files: &[EnvFile],
     environment: &HashMap<String, String>,
     home: Option<&Path>,
 ) -> Result<Settings, Vec<InputError>> {
-    let mut errors = file
-        .map(|(path, root)| schema::validate(root, path))
-        .unwrap_or_default();
+    let mut errors = structure;
     let mut settings = Settings::default();
     for &setting in SETTINGS {
         let Setting { path, env, kind } = setting;
@@ -111,16 +113,17 @@ pub(crate) fn check(
                 candidates.push((Raw::Text(text), source, Some(i) == last));
             }
         }
-        if let Some((file, root)) = file
-            && let Some(node) = leaf(root, path)
-        {
-            let source = Source::File {
-                path: file.to_path_buf(),
-                line: node.referenced.line(),
-                column: node.referenced.column(),
-            };
-            let dir = file.parent().unwrap_or(Path::new(""));
-            candidates.push((Raw::Node { node: &node.value, dir }, source, true));
+        // A later config file wins where it sets a value; unset ones let earlier files through.
+        for (file, root) in files.iter().rev() {
+            if let Some(node) = leaf(root, path) {
+                let source = Source::File {
+                    path: file.clone(),
+                    line: node.referenced.line(),
+                    column: node.referenced.column(),
+                };
+                let dir = file.parent().unwrap_or(Path::new(""));
+                candidates.push((Raw::Node { node: &node.value, dir }, source, true));
+            }
         }
         for (raw, source, eligible) in candidates {
             match kind.check(raw, home) {
@@ -140,7 +143,13 @@ pub(crate) fn check(
     if errors.is_empty() {
         return Ok(settings);
     }
-    let rank = |path: &Path| env_files.iter().position(|file| file.path() == path).unwrap_or(0);
+    let rank = |path: &Path| {
+        files
+            .iter()
+            .position(|(file, _)| file == path)
+            .or_else(|| env_files.iter().position(|file| file.path() == path))
+            .unwrap_or(0)
+    };
     errors.sort_by(|a, b| a.order(rank).cmp(&b.order(rank)));
     errors.dedup();
     Err(errors)
@@ -156,13 +165,12 @@ fn leaf<'a>(root: &'a SpannedNode, path: &str) -> Option<&'a SpannedNode> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
     use crate::dotenv;
     use crate::env;
     use crate::interpolate;
     use crate::node;
+    use crate::schema;
 
     /// In-memory inputs for [`check`].
     #[derive(Default)]
@@ -199,12 +207,15 @@ mod tests {
                 })
                 .into_iter()
                 .collect();
-            check(
-                root.as_ref().map(|root| (Path::new("/x/dbmcp.yaml"), root)),
-                &env_files,
-                &self.environment,
-                None,
-            )
+            let files: Vec<_> = root
+                .map(|root| (PathBuf::from("/x/dbmcp.yaml"), root))
+                .into_iter()
+                .collect();
+            let structure = files
+                .iter()
+                .flat_map(|(path, root)| schema::validate(root, path))
+                .collect();
+            check(&files, structure, &env_files, &self.environment, None)
         }
 
         #[track_caller]
@@ -391,7 +402,8 @@ mod tests {
                     start + 1,
                     outcome.errors
                 );
-                if let Err(errors) = check(Some((&path, &root)), &[], &HashMap::new(), None) {
+                let structure = schema::validate(&root, &path);
+                if let Err(errors) = check(&[(path.clone(), root)], structure, &[], &HashMap::new(), None) {
                     panic!("{}:{}: {errors:?}", path.display(), start + 1);
                 }
                 checked += 1;

@@ -19,7 +19,7 @@ Each setting is resolved on its own, highest priority first:
 
 1. **Process environment** — `DBMCP_*` variables, typically set by the MCP client (via `env` or `envFile` in the server config)
 2. **Env files** — `DBMCP_*` keys in the files named by `--env` / `DBMCP_ENV_FILE`; a later file wins
-3. **Config file** — keys in the YAML file named by `--config` / `DBMCP_CONFIG`
+3. **Config files** — keys in the YAML files named by `--config` / `DBMCP_CONFIG`; a later file wins
 4. **Built-in defaults** — backend-aware defaults described below
 
 When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored. See [Config File § Precedence](/docs/config-file#precedence) for a worked example.

@@ -9,8 +9,8 @@ use std::path::PathBuf;
 /// Inputs to [`load`](crate::load).
 #[derive(Debug, Clone, Default)]
 pub struct LoadOptions {
-    /// `--config` value; beats `DBMCP_CONFIG`.
-    pub config: Option<PathBuf>,
+    /// `--config` values in order; non-empty beats `DBMCP_CONFIG`.
+    pub config: Vec<PathBuf>,
     /// `--env` values in order; non-empty beats `DBMCP_ENV_FILE`.
     pub env_files: Vec<PathBuf>,
     /// Process environment, the highest-ranked settings source.

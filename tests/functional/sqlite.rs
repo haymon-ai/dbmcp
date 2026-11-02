@@ -17,6 +17,7 @@ use dbmcp_sqlite::types::{
     ReadQueryRequest,
 };
 use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::path::Path;
@@ -2209,6 +2210,45 @@ async fn test_later_env_file_wins() {
         .arg("--env")
         .arg(&local);
     assert!(exposes_write_query_with(command).await, "the later --env file must win");
+}
+
+#[tokio::test]
+async fn test_later_config_file_wins_and_resolves_paths_against_itself() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = Path::new(&std::env::var("DB_PATH").expect("DB_PATH must be set"))
+        .canonicalize()
+        .expect("fixture database exists");
+    let local_dir = dir.path().join("local");
+    std::fs::create_dir(&local_dir).expect("create local dir");
+    std::fs::copy(&db_path, local_dir.join("copy.db")).expect("copy fixture database");
+    let base = dir.path().join("base.yaml");
+    std::fs::write(
+        &base,
+        "database:\n  backend: sqlite\n  name: missing.db\n  read_only: false\n",
+    )
+    .expect("write base config");
+    let local = local_dir.join("local.yaml");
+    std::fs::write(&local, "database:\n  name: copy.db\n").expect("write local config");
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command.arg("--config").arg(&base).arg("--config").arg(&local);
+    let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
+    let client = ().serve(transport).await.expect("mcp handshake");
+    let tools = client.list_all_tools().await.expect("tools/list");
+    let tables = client
+        .call_tool(CallToolRequestParams::new("listTables"))
+        .await
+        .expect("listTables");
+    client.cancel().await.expect("shutdown");
+    assert!(
+        tools.iter().any(|tool| tool.name == "writeQuery"),
+        "the earlier file's read_only must still apply"
+    );
+    let tables = serde_json::to_string(&tables).expect("serialize result");
+    assert!(
+        tables.contains("users"),
+        "the later file's database.name must resolve against its own directory: {tables}"
+    );
 }
 
 #[tokio::test]

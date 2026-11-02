@@ -1,13 +1,14 @@
 //! Configuration loading and types for the dbmcp project.
 //!
 //! [`load`] builds a validated [`Config`] from the process env, optional
-//! env files, and an optional YAML file. The crate's interface is [`load`],
+//! env files, and optional YAML config files. The crate's interface is [`load`],
 //! its inputs ([`LoadOptions`], [`home_dir`]), its outcome ([`Loaded`],
 //! [`LoadError`]), and the plain configuration types; the setting table,
 //! sources, and diagnostics stay internal.
 //!
 //! Settings resolve with this precedence: non-empty process env > the
-//! last env file's value, if non-empty > YAML value > default. All defaults
+//! last env file's value, if non-empty > the last config file's value >
+//! default. All defaults
 //! (backend-aware port, user, host) are resolved by the loader, so
 //! consumers access plain values directly.
 //!
