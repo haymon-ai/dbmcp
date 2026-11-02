@@ -8,9 +8,8 @@
 //!
 //! Settings resolve with this precedence: non-empty process env > the
 //! last env file's value, if non-empty > the last config file's value >
-//! default. All defaults
-//! (backend-aware port, user, host) are resolved by the loader, so
-//! consumers access plain values directly.
+//! default. All defaults (backend-aware port, user, host) are resolved by
+//! the loader, so consumers access plain values directly.
 //!
 //! # Security
 //!

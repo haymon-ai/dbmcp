@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use dbmcp_config::LoadOptions;
 
 /// Points users at the settings reference, since no setting has a flag.
@@ -22,12 +22,12 @@ Every setting is listed at https://dbmcp.haymon.ai/docs/configuration";
 pub(crate) struct Arguments {
     /// Path to a YAML config file; repeat to layer several, later wins [env: DBMCP_CONFIG]
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
-    #[arg(long = "config", value_name = "PATH", action = ArgAction::Append)]
+    #[arg(long = "config", value_name = "PATH")]
     config: Vec<PathBuf>,
 
     /// Path to an env file; repeat to layer several, later wins [env: DBMCP_ENV_FILE]
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
-    #[arg(long = "env", value_name = "PATH", action = ArgAction::Append)]
+    #[arg(long = "env", value_name = "PATH")]
     env: Vec<PathBuf>,
 }
 

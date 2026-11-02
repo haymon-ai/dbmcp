@@ -16,7 +16,6 @@
 //!    activation rules and resolving a file-given sqlite database name
 //!    against its file's directory, then run [`Config::validate`] on it.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -215,11 +214,6 @@ pub(crate) fn read_file(path: &Path, what: &'static str, origin: &str) -> Result
         origin: origin.to_owned(),
         source,
     })
-}
-
-/// Returns the value of `name` in `environment`, unless unset or empty.
-pub(crate) fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
-    environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
 /// Builds the configuration from each setting's checked winner and defaults.

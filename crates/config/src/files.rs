@@ -53,6 +53,7 @@ impl ConfigFiles {
         };
         let lookup = |name: &str| layers.var(name);
         let mut files = Vec::new();
+        let mut structure = Vec::new();
         for raw in paths {
             let path = options.working_dir.join(raw);
             let text = read_file(&path, "config file", &origin)?;
@@ -80,16 +81,13 @@ impl ConfigFiles {
                     path,
                 });
             }
-            let structure = schema::validate(&tree, &path);
+            structure = schema::validate(&tree, &path);
             files.push((path, tree));
             if !structure.is_empty() {
-                return Ok(Self { files, structure });
+                break;
             }
         }
-        Ok(Self {
-            files,
-            structure: Vec::new(),
-        })
+        Ok(Self { files, structure })
     }
 
     /// Returns the structure errors of the file that stopped the read, if any.

@@ -12,6 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use boon::{Compiler, ErrorKind, InstanceToken, SchemaIndex, Schemas, Type, Types, ValidationError};
 use serde_json::{Map, Value};
@@ -42,40 +43,16 @@ const VALUE_KEYWORDS: [&str; 5] = ["type", "enum", "minimum", "maximum", "items"
 ///
 /// Panics when the embedded schema does not compile, which its tests rule out.
 pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
-    let (schemas, index) = compile();
+    let (schemas, index) = &*COMPILED;
     let mut errors = Vec::new();
-    if let Err(error) = schemas.validate(&to_json(&root.value), index) {
+    if let Err(error) = schemas.validate(&to_json(&root.value), *index) {
         collect(&error, root, file, &mut errors);
-    }
-    let sections = match &root.value {
-        Node::Map(entries) => entries
-            .iter()
-            .filter(|(key, _)| {
-                SETTINGS.iter().any(|s| {
-                    s.path
-                        .split_once('.')
-                        .is_some_and(|(section, _)| section == key.as_str())
-                })
-            })
-            .map(|(key, (_, value))| (key.as_str(), value))
-            .collect(),
-        _ => vec![("<root>", root)],
-    };
-    for (path, node) in sections {
-        if let Node::Unsupported(tag) = &node.value {
-            errors.push(InputError {
-                from: Source::File {
-                    path: file.to_path_buf(),
-                    line: node.referenced.line(),
-                    column: node.referenced.column(),
-                },
-                path: path.to_owned(),
-                reason: unsupported_tag(tag),
-            });
-        }
     }
     errors
 }
+
+/// The embedded schema without its value keywords, compiled on first use.
+static COMPILED: LazyLock<(Schemas, SchemaIndex)> = LazyLock::new(compile);
 
 /// Compiles the embedded schema without its value keywords.
 fn compile() -> (Schemas, SchemaIndex) {
@@ -108,10 +85,12 @@ fn strip_values(schema: &mut Value) {
 ///
 /// Only the shape of the root and sections is checked, so any number
 /// stands in for a float; errors name the YAML node's own type. An
-/// unsupported tagged node stands in as null: [`validate`] reports it.
+/// unsupported tagged node stands in as its tag, which no root or section
+/// accepts; [`reason`] reports the tag.
 fn to_json(node: &Node) -> Value {
     match node {
-        Node::Null | Node::Unsupported(_) => Value::Null,
+        Node::Null => Value::Null,
+        Node::Unsupported(tag) => Value::String(tag.clone()),
         Node::Bool(value) => Value::Bool(*value),
         Node::Int(value) => Value::from(*value),
         Node::UInt(value) => Value::from(*value),
@@ -183,6 +162,9 @@ fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, file: &Path, err
 
 /// Renders a value-free reason for a violation of `kind` by `value`.
 fn reason(kind: &ErrorKind<'_, '_>, value: &Node) -> String {
+    if let Node::Unsupported(tag) = value {
+        return unsupported_tag(tag);
+    }
     match kind {
         ErrorKind::Type { want, .. } => format!("expected {}, found {}", expected_types(*want), value.kind()),
         kind => {

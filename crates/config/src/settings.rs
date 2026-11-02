@@ -39,11 +39,11 @@ pub(crate) struct InputError {
 impl InputError {
     /// Orders errors by config file, then env file, then process env.
     ///
-    /// `rank` gives a file's position in its list.
-    fn order(&self, rank: impl Fn(&Path) -> usize) -> (u8, usize, u64, u64, &str) {
+    /// Files rank by their position in `files` or `layers`.
+    fn order(&self, files: &ConfigFiles, layers: &EnvLayers<'_>) -> (u8, usize, u64, u64, &str) {
         match &self.from {
-            Source::File { path, line, column } => (0, rank(path), *line, *column, &self.path),
-            Source::EnvFile { path, line, .. } => (1, rank(path), *line as u64, 0, &self.path),
+            Source::File { path, line, column } => (0, files.position(path).unwrap_or(0), *line, *column, &self.path),
+            Source::EnvFile { path, line, .. } => (1, layers.position(path).unwrap_or(0), *line as u64, 0, &self.path),
             Source::Env(name) => (2, 0, 0, 0, name),
         }
     }
@@ -91,12 +91,11 @@ pub(crate) fn check(
     for &setting in SETTINGS {
         let Setting { path, env, kind } = setting;
         // Each candidate is checked; only an eligible one may win.
-        let mut candidates: Vec<_> = layers
+        let candidates = layers
             .candidates(env)
             .map(|(text, source, eligible)| (Raw::Text(text), source, eligible))
-            .collect();
-        // A later config file wins where it sets a value; unset ones let earlier files through.
-        candidates.extend(files.candidates(path).map(|(raw, source)| (raw, source, true)));
+            // A later config file wins where it sets a value; unset ones let earlier files through.
+            .chain(files.candidates(path).map(|(raw, source)| (raw, source, true)));
         for (raw, source, eligible) in candidates {
             match kind.check(raw, home) {
                 Ok(Some(value)) if eligible && !settings.values.contains_key(path) => {
@@ -115,8 +114,7 @@ pub(crate) fn check(
     if errors.is_empty() {
         return Ok(settings);
     }
-    let rank = |path: &Path| files.position(path).or_else(|| layers.position(path)).unwrap_or(0);
-    errors.sort_by(|a, b| a.order(rank).cmp(&b.order(rank)));
+    errors.sort_by(|a, b| a.order(files, layers).cmp(&b.order(files, layers)));
     errors.dedup();
     Err(errors)
 }

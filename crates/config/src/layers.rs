@@ -21,7 +21,7 @@ use std::path::Path;
 
 use crate::dotenv::{self, EnvFile};
 use crate::env::{self, ENV_FILE_VAR};
-use crate::loader::{LoadErrorKind, file_list, non_empty, read_file};
+use crate::loader::{LoadErrorKind, file_list, read_file};
 use crate::options::LoadOptions;
 use crate::source::Source;
 
@@ -55,7 +55,7 @@ impl<'a> EnvLayers<'a> {
                 .join(env::expand_tilde(&raw, options.home.as_deref()));
             let text = read_file(&path, "env file", &origin)?;
             let process = |name: &str| layers.process.get(name).cloned();
-            let earlier = |name: &str| layers.latest(name).map(|(_, value, _)| value.to_owned());
+            let earlier = |name: &str| layers.latest(name).map(str::to_owned);
             let parsed = dotenv::parse(&path, &text, &process, &earlier)
                 .map_err(|errors| LoadErrorKind::EnvFile { path, errors })?;
             warnings.extend(parsed.warnings);
@@ -71,7 +71,7 @@ impl<'a> EnvLayers<'a> {
         self.process
             .get(name)
             .cloned()
-            .or_else(|| self.latest(name).map(|(_, value, _)| value.to_owned()))
+            .or_else(|| self.latest(name).map(str::to_owned))
     }
 
     /// Returns every non-empty value of `name` in the setting view, highest first.
@@ -100,13 +100,15 @@ impl<'a> EnvLayers<'a> {
         self.files.iter().position(|file| file.path() == path)
     }
 
-    /// Returns the last env file that sets `name`, with its value and line.
-    fn latest(&self, name: &str) -> Option<(&EnvFile, &str, usize)> {
-        self.files
-            .iter()
-            .rev()
-            .find_map(|file| file.get_with_line(name).map(|(value, line)| (file, value, line)))
+    /// Returns the value of `name` in the last env file that sets it.
+    fn latest(&self, name: &str) -> Option<&str> {
+        self.files.iter().rev().find_map(|file| file.get(name))
     }
+}
+
+/// Returns the value of `name` in `environment`, unless unset or empty.
+fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]

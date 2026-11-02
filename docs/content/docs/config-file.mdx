@@ -109,7 +109,7 @@ The config file is a YAML mapping. Top-level keys are `transport` and `log_level
 - **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`). An empty string at an integer, boolean, or list key (`port: ""`, or an unset `${PORT}`) also means unset, just like an empty `DBMCP_*` variable.
 - **Lists** are YAML sequences, or a comma-separated string (useful with `${}`: `allowed_hosts: ${HOSTS}`), and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
 - **Tags** other than the YAML core tags (`!!str`, `!!int`, …) are an error wherever they appear. Docker Compose's `!reset` and `!override` are not supported.
-- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env file.
+- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env files.
 
 A full annotated example:
 
@@ -180,7 +180,7 @@ Every string **value** in the config file is `${}`-interpolated before it is cas
 
 Defaults, alternates, and error messages can nest further references (`${A:-${B:-fallback}}`). A `$` followed by anything other than a name, `{`, or `$` stays literal; a malformed `${` is an error (`invalid interpolation format; escape a literal $ as $$`).
 
-Variables are looked up in the process environment first, then in the env file. Any name works, not only `DBMCP_*`, so an MCP client's `env` block or the env file can feed values such as `DB_PASSWORD` into the YAML.
+Variables are looked up in the process environment first, then in the last env file that sets them. Any name works, not only `DBMCP_*`, so an MCP client's `env` block or the env file can feed values such as `DB_PASSWORD` into the YAML.
 
 An unset plain reference produces a warning on stderr, for example:
 
@@ -213,10 +213,10 @@ DBMCP_CONFIG=/srv/dbmcp/dbmcp.yaml    # may name the config file
 - Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file, then earlier env files.
 - A bare `KEY` with no value takes its value from the process environment, else from an earlier line or an earlier env file; if none sets it, the line is skipped.
 
-The env file plays two roles at once:
+Each env file plays two roles at once:
 
-1. Its `DBMCP_*` keys set settings directly, between the process environment and the config file in [precedence](#precedence). An empty value is unset, as everywhere.
-2. All of its keys, whatever their name, are available to `${}` in the config file, after the process environment.
+1. Its `DBMCP_*` keys set settings directly, between the process environment and the config files in [precedence](#precedence). An empty value is unset, as everywhere.
+2. All of its keys, whatever their name, are available to `${}` in the config files, after the process environment.
 
 Errors are reported per line without echoing the file's contents (for example `line 2: key cannot contain a space`).
 
@@ -319,7 +319,7 @@ Any configuration problem stops startup with exit code 1 and an error on stderr:
 | `failed to load env file <path>:` | Env file syntax errors, one `line N: …` bullet each |
 | `failed to parse config file <path>:` | YAML syntax errors, with `file:line:column` |
 | `failed to interpolate config file <path>:` | Malformed `${` or a failed `${VAR:?…}` |
-| `invalid settings:` | Unknown keys and non-mapping sections in the config file, and values from any source with the wrong type (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, or empty list items. Values that lose to a higher-priority source are checked too |
+| `invalid settings:` | Unknown keys and non-mapping sections in a config file, and values from any source with the wrong type (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, or empty list items. Values that lose to a higher-priority source are checked too |
 | `configuration validation failed:` | Rule violations between valid values |
 
 Under `invalid settings`, each bullet starts with where the value is, then the dotted YAML key: `/abs/dbmcp.yaml:2:14:` for a config file, `DBMCP_DB_PORT in /abs/.env:3:` for an env file, or `DBMCP_DB_PORT:` for the process environment. Bullets list the config files first, then the env files, each in list order, then the process environment. A problem repeated by a file listed twice is reported once. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)`, `(from DBMCP_DB_PORT in /abs/.env:3)`, or `(from DBMCP_DB_PORT)`.
