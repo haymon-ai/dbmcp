@@ -3,14 +3,13 @@
 //! Stages run in order and the first failing
 //! stage aborts; each stage collects all of its own errors:
 //!
-//! 1. Read and parse the env files (`--env` list > `DBMCP_ENV_FILE` list) in
-//!    order, stopping at the first file with errors. Each file's `${}` sees
-//!    process env, then its own earlier lines, then earlier files.
-//! 2. Pick the config files (`--config` list > process `DBMCP_CONFIG` list >
-//!    the last env file's `DBMCP_CONFIG` list). Each one in order is read,
-//!    parsed into an untyped tree, `${}`-interpolated against process env
-//!    then the env files, and checked against the config schema alone;
-//!    loading stops at the first file with errors.
+//! 1. Read the env layers (see [`layers`](crate::layers)), stopping at the
+//!    first env file with errors.
+//! 2. Pick the config files (`--config` list > `DBMCP_CONFIG` list in the
+//!    setting view of the env layers). Each one in order is read, parsed into
+//!    an untyped tree, `${}`-interpolated against the variable view of the env
+//!    layers, and checked against the config schema alone; loading stops at
+//!    the first file with errors.
 //! 3. Check every set value from every source by its setting's kind, even
 //!    values that lose to a higher source, resolving paths against the
 //!    declaring file, and pick each winner: non-empty process env > the last
@@ -29,11 +28,11 @@ use indexmap::IndexSet;
 
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
-use crate::dotenv::{self, EnvFile};
-use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, Kind, SETTINGS, Setting, Value};
+use crate::env::{self, CONFIG_VAR, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::interpolate;
+use crate::layers::EnvLayers;
 use crate::log::LogLevel;
 use crate::node;
 use crate::options::LoadOptions;
@@ -64,8 +63,9 @@ pub struct LoadError {
     kind: LoadErrorKind,
 }
 
+/// Why loading failed; each variant renders one user-facing message.
 #[derive(Debug, thiserror::Error)]
-enum LoadErrorKind {
+pub(crate) enum LoadErrorKind {
     #[error("{origin}: {problem}")]
     List { origin: String, problem: &'static str },
 
@@ -116,21 +116,15 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
     let fail = |warnings: Vec<String>, kind| LoadError { warnings, kind };
 
-    let env_files = match read_env_files(options, &mut warnings) {
-        Ok(files) => files,
+    let layers = match EnvLayers::read(options, &mut warnings) {
+        Ok(layers) => layers,
         Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
-    let (files, structure) = match read_config_files(options, &env_files, &mut warnings) {
+    let (files, structure) = match read_config_files(options, &layers, &mut warnings) {
         Ok(read) => read,
         Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
-    let settings = match settings::check(
-        &files,
-        structure,
-        &env_files,
-        &options.environment,
-        options.home.as_deref(),
-    ) {
+    let settings = match settings::check(&files, structure, &layers, options.home.as_deref()) {
         Ok(settings) => settings,
         Err(errors) => return Err(fail(dedup(warnings), LoadErrorKind::Settings(errors))),
     };
@@ -155,47 +149,19 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     }
 }
 
-/// Reads the env files named by `--env` or process `DBMCP_ENV_FILE`, in order.
+/// Returns the paths named by `flag` values, else by the comma `list`.
 ///
-/// Stops at the first file that cannot be read or parsed; the warnings of
-/// the files read so far go to `warnings`.
-fn read_env_files(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<Vec<EnvFile>, LoadErrorKind> {
-    let (paths, origin) = file_list(&options.env_files, "--env", &options.environment, ENV_FILE_VAR)?;
-    let process = |name: &str| options.environment.get(name).cloned();
-    let mut files: Vec<EnvFile> = Vec::new();
-    for raw in paths {
-        let path = options
-            .working_dir
-            .join(env::expand_tilde(&raw, options.home.as_deref()));
-        let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-            what: "env file",
-            path: path.clone(),
-            origin: origin.to_owned(),
-            source,
-        })?;
-        let earlier = |name: &str| dotenv::latest(&files, name).map(|(_, value, _)| value.to_owned());
-        let parsed = dotenv::parse(&path, &text, &process, &earlier)
-            .map_err(|errors| LoadErrorKind::EnvFile { path, errors })?;
-        warnings.extend(parsed.warnings);
-        files.push(parsed.file);
-    }
-    Ok(files)
-}
-
-/// Returns the paths named by `flag` values, else by the comma list in `var`.
-///
-/// A flag given at least once replaces the env var's list; an empty `var`
-/// names nothing. Returns the surface the paths came from.
+/// A flag given at least once replaces the list; `list` pairs the comma
+/// list with where it came from. Returns the surface the paths came from.
 ///
 /// # Errors
 ///
 /// Returns [`LoadErrorKind::List`] for an empty flag value or list entry.
-fn file_list(
+pub(crate) fn file_list(
     flags: &[PathBuf],
     flag: &'static str,
-    environment: &HashMap<String, String>,
-    var: &'static str,
-) -> Result<(Vec<PathBuf>, &'static str), LoadErrorKind> {
+    list: Option<(&str, String)>,
+) -> Result<(Vec<PathBuf>, String), LoadErrorKind> {
     if !flags.is_empty() {
         if flags.iter().any(|path| path.as_os_str().is_empty()) {
             return Err(LoadErrorKind::List {
@@ -203,12 +169,12 @@ fn file_list(
                 problem: "empty path",
             });
         }
-        return Ok((flags.to_vec(), flag));
+        return Ok((flags.to_vec(), flag.to_owned()));
     }
-    let Some(list) = non_empty(environment, var) else {
-        return Ok((Vec::new(), var));
+    let Some((list, origin)) = list else {
+        return Ok((Vec::new(), String::new()));
     };
-    Ok((split_list(list, var.to_owned())?, var))
+    Ok((split_list(list, origin.clone())?, origin))
 }
 
 /// Splits a comma list of paths, trimming each entry.
@@ -234,10 +200,9 @@ fn dedup(messages: Vec<String>) -> Vec<String> {
 
 /// Reads, parses, interpolates, and structure-checks the named config files.
 ///
-/// Files come from the `--config` list, else the process `DBMCP_CONFIG`
-/// list, else the last env file's `DBMCP_CONFIG` list, and are handled one
-/// at a time in order. `${}` reads process env, then the last env file
-/// setting the variable. The first file with structure errors is the last
+/// Files come from the `--config` list, else the `DBMCP_CONFIG` list in the
+/// setting view of `layers`, and are handled one at a time in order. `${}`
+/// reads the variable view of `layers`. The first file with structure errors is the last
 /// file read; its errors are returned beside the files read so far.
 ///
 /// # Errors
@@ -245,24 +210,15 @@ fn dedup(messages: Vec<String>) -> Vec<String> {
 /// Returns the first list, read, parse, or interpolation failure.
 fn read_config_files(
     options: &LoadOptions,
-    env_files: &[EnvFile],
+    layers: &EnvLayers<'_>,
     warnings: &mut Vec<String>,
 ) -> Result<(Vec<ConfigFile>, Vec<InputError>), LoadErrorKind> {
-    let (mut paths, origin) = file_list(&options.config, "--config", &options.environment, CONFIG_VAR)?;
-    let mut origin = origin.to_owned();
-    if paths.is_empty()
-        && let Some((file, list, line)) = dotenv::latest(env_files, CONFIG_VAR).filter(|(_, list, _)| !list.is_empty())
-    {
-        origin = format!("{CONFIG_VAR} in {}:{line}", file.path().display());
-        paths = split_list(list, origin.clone())?;
-    }
-    let lookup = |name: &str| -> Option<String> {
-        options
-            .environment
-            .get(name)
-            .cloned()
-            .or_else(|| dotenv::latest(env_files, name).map(|(_, value, _)| value.to_owned()))
-    };
+    let list = layers
+        .candidates(CONFIG_VAR)
+        .find(|(_, _, eligible)| *eligible)
+        .map(|(list, source, _)| (list, source.to_string()));
+    let (paths, origin) = file_list(&options.config, "--config", list)?;
+    let lookup = |name: &str| layers.var(name);
     let mut files = Vec::new();
     for raw in paths {
         let path = options.working_dir.join(raw);
@@ -306,14 +262,15 @@ fn read_config_files(
 }
 
 /// Reads `path`, rejecting directories; pipes such as `<(…)` are allowed.
-fn read_file(path: &Path) -> std::io::Result<String> {
+pub(crate) fn read_file(path: &Path) -> std::io::Result<String> {
     if std::fs::metadata(path)?.is_dir() {
         return Err(std::io::Error::other("is a directory"));
     }
     std::fs::read_to_string(path)
 }
 
-fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+/// Returns the value of `name` in `environment`, unless unset or empty.
+pub(crate) fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 

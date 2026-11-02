@@ -38,14 +38,6 @@ impl EnvFile {
     }
 }
 
-/// Returns the last of `files` that sets `name`, with its value and line.
-pub(crate) fn latest<'a>(files: &'a [EnvFile], name: &str) -> Option<(&'a EnvFile, &'a str, usize)> {
-    files
-        .iter()
-        .rev()
-        .find_map(|file| file.get_with_line(name).map(|(value, line)| (file, value, line)))
-}
-
 /// A parsed env file plus the `${}` warnings it produced.
 #[derive(Debug)]
 pub(crate) struct Parsed {
@@ -457,24 +449,6 @@ mod tests {
             "a bare key inherits from earlier files"
         );
         assert_eq!(parsed.file.get("MISSING"), None);
-    }
-
-    #[test]
-    fn latest_returns_the_last_file_setting_a_key() {
-        let a = parse(Path::new("/a.env"), "X=a\nY=a\n", &no_env, &no_env)
-            .expect("valid")
-            .file;
-        let b = parse(Path::new("/b.env"), "\nX=\n", &no_env, &no_env)
-            .expect("valid")
-            .file;
-        let files = [a, b];
-        let (file, value, line) = latest(&files, "X").expect("set");
-        assert_eq!((file.path(), value, line), (Path::new("/b.env"), "", 2));
-        assert_eq!(
-            latest(&files, "Y").map(|(f, v, _)| (f.path(), v)),
-            Some((Path::new("/a.env"), "a"))
-        );
-        assert!(latest(&files, "Z").is_none());
     }
 
     #[test]
