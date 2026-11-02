@@ -12,11 +12,12 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use boon::{Compiler, ErrorKind, InstanceToken, SchemaIndex, Schemas, Type, Types, ValidationError};
 use serde_json::{Map, Value};
 
-use crate::env::SETTINGS;
+use crate::env::{SETTINGS, unsupported_tag};
 use crate::node::{Node, SpannedNode};
 use crate::settings::InputError;
 use crate::source::Source;
@@ -34,19 +35,24 @@ const VALUE_KEYWORDS: [&str; 5] = ["type", "enum", "minimum", "maximum", "items"
 /// Validates the structure of the config file at `file` against the config schema.
 ///
 /// Returns one error per unknown key, at the key, and per root or section
-/// that is not a mapping or null, at its value. Empty when valid.
+/// that is not a mapping or null, or carries an unsupported YAML tag, at its
+/// value. Tags on settings are rejected by their [`Kind`] instead. Empty when
+/// valid.
 ///
 /// # Panics
 ///
 /// Panics when the embedded schema does not compile, which its tests rule out.
 pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
-    let (schemas, index) = compile();
+    let (schemas, index) = &*COMPILED;
     let mut errors = Vec::new();
-    if let Err(error) = schemas.validate(&to_json(&root.value), index) {
+    if let Err(error) = schemas.validate(&to_json(&root.value), *index) {
         collect(&error, root, file, &mut errors);
     }
     errors
 }
+
+/// The embedded schema without its value keywords, compiled on first use.
+static COMPILED: LazyLock<(Schemas, SchemaIndex)> = LazyLock::new(compile);
 
 /// Compiles the embedded schema without its value keywords.
 fn compile() -> (Schemas, SchemaIndex) {
@@ -78,10 +84,13 @@ fn strip_values(schema: &mut Value) {
 /// Converts the YAML tree to JSON for validation.
 ///
 /// Only the shape of the root and sections is checked, so any number
-/// stands in for a float; errors name the YAML node's own type.
+/// stands in for a float; errors name the YAML node's own type. An
+/// unsupported tagged node stands in as its tag, which no root or section
+/// accepts; [`reason`] reports the tag.
 fn to_json(node: &Node) -> Value {
     match node {
         Node::Null => Value::Null,
+        Node::Unsupported(tag) => Value::String(tag.clone()),
         Node::Bool(value) => Value::Bool(*value),
         Node::Int(value) => Value::from(*value),
         Node::UInt(value) => Value::from(*value),
@@ -153,6 +162,9 @@ fn collect(error: &ValidationError<'_, '_>, root: &SpannedNode, file: &Path, err
 
 /// Renders a value-free reason for a violation of `kind` by `value`.
 fn reason(kind: &ErrorKind<'_, '_>, value: &Node) -> String {
+    if let Node::Unsupported(tag) = value {
+        return unsupported_tag(tag);
+    }
     match kind {
         ErrorKind::Type { want, .. } => format!("expected {}, found {}", expected_types(*want), value.kind()),
         kind => {
@@ -391,6 +403,18 @@ pub(crate) mod tests {
         );
         assert!(check("").is_empty());
         assert!(check("transport:\ndatabase:\nssh: ~\n").is_empty());
+    }
+
+    #[test]
+    fn tagged_root_and_sections_are_rejected() {
+        assert_eq!(
+            check("!x\na: 1\n"),
+            ["f.yaml:2:1: <root>: YAML tag !x is not supported"]
+        );
+        assert_eq!(
+            check("database: !reset\n  host: a\nhttp:\n  allowed_origins: !reset []\n"),
+            ["f.yaml:2:3: database: YAML tag !reset is not supported"]
+        );
     }
 
     #[test]

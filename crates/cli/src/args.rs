@@ -1,8 +1,9 @@
 //! Command-line arguments: the config file and env file paths.
 //!
-//! Every setting comes from `DBMCP_*` env vars, the `--env` file, or the
-//! `--config` YAML file; the CLI only names those files. [`Arguments`]
-//! converts into the loader's [`LoadOptions`].
+//! Every setting comes from `DBMCP_*` env vars, the env files named by
+//! `--env-file`, or the YAML config files named by `--config-file`; the CLI
+//! only names those files. [`Arguments`] converts into the loader's
+//! [`LoadOptions`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,23 +13,24 @@ use dbmcp_config::LoadOptions;
 
 /// Points users at the settings reference, since no setting has a flag.
 const AFTER_HELP: &str = "\
-Settings come from DBMCP_* environment variables, the --env file, or the
---config YAML file (process env > env file > config file > defaults).
+Settings come from DBMCP_* environment variables, the env files (--env-file),
+or the YAML config files (--config-file), ranked process env > env files >
+config files > defaults.
 Every setting is listed at https://dbmcp.haymon.ai/docs/configuration";
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
 #[command(about = "Database MCP Server", after_help = AFTER_HELP)]
 pub(crate) struct Arguments {
-    /// Path to the YAML config file [env: DBMCP_CONFIG]
+    /// Path to a YAML config file; repeat to layer several, later wins [env: DBMCP_CONFIG_FILE]
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
-    #[arg(long = "config", value_name = "PATH")]
-    config: Option<PathBuf>,
+    #[arg(long, value_name = "PATH")]
+    config_file: Vec<PathBuf>,
 
-    /// Path to the env file [env: DBMCP_ENV_FILE]
+    /// Path to an env file; repeat to layer several, later wins [env: DBMCP_ENV_FILE]
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]
-    #[arg(long = "env", value_name = "PATH")]
-    env: Option<PathBuf>,
+    #[arg(long, value_name = "PATH")]
+    env_file: Vec<PathBuf>,
 }
 
 impl Arguments {
@@ -53,8 +55,8 @@ impl Arguments {
             }
         }
         Ok(LoadOptions {
-            config: self.config.clone(),
-            env_file: self.env.clone(),
+            config_files: self.config_file.clone(),
+            env_files: self.env_file.clone(),
             environment,
             working_dir: std::env::current_dir()?,
             home: dbmcp_config::home_dir(),
@@ -64,6 +66,8 @@ impl Arguments {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::{CommandFactory, Parser};
 
     use super::Arguments;
@@ -73,17 +77,35 @@ mod tests {
     }
 
     #[test]
-    fn accepts_config_and_env_paths() {
-        let args = try_parse(&["--config", "dbmcp.yaml", "--env", ".env"]).expect("valid");
+    fn accepts_config_file_and_env_file_paths() {
+        let args = try_parse(&["--config-file", "dbmcp.yaml", "--env-file", ".env"]).expect("valid");
         let options = args.load_options().expect("cwd");
-        assert_eq!(options.config.as_deref(), Some("dbmcp.yaml".as_ref()));
-        assert_eq!(options.env_file.as_deref(), Some(".env".as_ref()));
+        assert_eq!(options.config_files, [PathBuf::from("dbmcp.yaml")]);
+        assert_eq!(options.env_files, [PathBuf::from(".env")]);
+    }
+
+    #[test]
+    fn repeated_config_file_flags_keep_their_order() {
+        let options = try_parse(&["--config-file", "b.yaml", "--config-file", "a.yaml"])
+            .expect("valid")
+            .load_options()
+            .expect("cwd");
+        assert_eq!(options.config_files, ["b.yaml", "a.yaml"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn repeated_env_file_flags_keep_their_order() {
+        let options = try_parse(&["--env-file", "b.env", "--env-file", "a.env", "--env-file", "b.env"])
+            .expect("valid")
+            .load_options()
+            .expect("cwd");
+        assert_eq!(options.env_files, ["b.env", "a.env", "b.env"].map(PathBuf::from));
     }
 
     #[test]
     fn no_flags_is_valid() {
         let options = try_parse(&[]).expect("valid").load_options().expect("cwd");
-        assert!(options.config.is_none() && options.env_file.is_none());
+        assert!(options.config_files.is_empty() && options.env_files.is_empty());
     }
 
     #[test]
@@ -94,7 +116,6 @@ mod tests {
             &["--log-level", "debug"],
             &["--pii"],
             &["stdio"],
-            &["--config", "a.yaml", "--config", "b.yaml"],
         ] {
             assert!(try_parse(args).is_err(), "{args:?} must be rejected");
         }
@@ -104,11 +125,11 @@ mod tests {
     fn help_lists_env_names_and_points_to_the_docs() {
         let help = Arguments::command().render_help().to_string();
         assert!(
-            help.contains("--config <PATH>") && help.contains("[env: DBMCP_CONFIG]"),
+            help.contains("--config-file <PATH>") && help.contains("[env: DBMCP_CONFIG_FILE]"),
             "{help}"
         );
         assert!(
-            help.contains("--env <PATH>") && help.contains("[env: DBMCP_ENV_FILE]"),
+            help.contains("--env-file <PATH>") && help.contains("[env: DBMCP_ENV_FILE]"),
             "{help}"
         );
         assert!(help.contains("https://dbmcp.haymon.ai/docs/configuration"), "{help}");

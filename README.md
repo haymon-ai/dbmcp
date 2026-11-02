@@ -145,23 +145,25 @@ database:
 ```
 
 ```bash
-DB_PASSWORD=secret dbmcp --config /path/to/dbmcp.yaml
+DB_PASSWORD=secret dbmcp --config-file /path/to/dbmcp.yaml
 ```
 
-From an MCP client, pass `"args": ["--config", "/absolute/path/to/dbmcp.yaml"]`; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/docs/config-file).
+From an MCP client, pass `"args": ["--config-file", "/absolute/path/to/dbmcp.yaml"]`; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/docs/config-file).
 
 ## Configuration ⚙️
 
 Every setting has a `DBMCP_*` environment variable and a YAML key. Each setting is resolved with clear precedence:
 
-**process environment > env file (`--env`) > config file (`--config`) > defaults**
+**process environment > env files (`--env-file`) > config files (`--config-file`) > defaults**
 
 Environment variables are typically set by your MCP client (via `env` or `envFile` in the server config). An empty `DBMCP_*` value counts as unset. Nothing is discovered automatically: a file is read only when you name it.
 
 | Flag | Env Variable | Description |
 |------|-------------|-------------|
-| `--config <PATH>` | `DBMCP_CONFIG` | YAML config file (`${}` interpolation, strict keys) |
-| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file of `KEY=VALUE` lines |
+| `--config-file <PATH>` | `DBMCP_CONFIG_FILE` | YAML config file (`${}` interpolation, strict keys); repeatable (env var: comma list), later wins |
+| `--env-file <PATH>` | `DBMCP_ENV_FILE` | Env file of `KEY=VALUE` lines; repeatable (env var: comma list), later wins |
+
+Layer files by repeating a flag, e.g. a shared base plus local overrides: `dbmcp --config-file base.yaml --config-file local.yaml`. Each setting comes from the last file that sets it; lists replace.
 
 There are no per-setting flags. Booleans accept `true`/`false`, `1`/`0`, `t`/`f` (not `yes`/`no`); lists are comma-separated in env vars.
 

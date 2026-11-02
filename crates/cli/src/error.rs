@@ -64,7 +64,7 @@ mod tests {
 
     fn load_error() -> LoadError {
         let options = LoadOptions {
-            config: Some("/nonexistent/dbmcp.yaml".into()),
+            config_files: vec!["/nonexistent/dbmcp.yaml".into()],
             ..LoadOptions::default()
         };
         dbmcp_config::load(&options).expect_err("missing config file")

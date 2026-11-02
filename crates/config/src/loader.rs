@@ -1,34 +1,29 @@
-//! Builds a [`Config`] from the process env, an env file, and a YAML file.
+//! Builds a [`Config`] from the process env, env files, and YAML config files.
 //!
 //! Stages run in order and the first failing
 //! stage aborts; each stage collects all of its own errors:
 //!
-//! 1. Read and parse the env file (`--env` > `DBMCP_ENV_FILE`).
-//! 2. Pick the config file (`--config` > process `DBMCP_CONFIG` > env-file
-//!    `DBMCP_CONFIG`), read it, and parse it into an untyped tree.
-//! 3. `${}`-interpolate every string value against process env, then env file.
-//! 4. Check the file's structure against the config schema and every set
-//!    value from every source by its setting's kind, even values that lose
-//!    to a higher source, resolving paths, and pick each winner: non-empty
-//!    process env > non-empty env file > YAML (see [`settings`](crate::settings)).
-//! 5. Build the [`Config`] from the winners and defaults, applying
-//!    activation rules and resolving a file-given sqlite database name,
-//!    then run [`Config::validate`] on it.
+//! 1. Read every source and pick each setting's winner (see [`settings`]):
+//!    the env files, then the config files, each stopping at the first file
+//!    with errors, then every set value from every source checked by its
+//!    setting's kind, even values that lose to a higher source. Winners
+//!    follow non-empty process env > the last env file's value, if
+//!    non-empty > the last config file setting it. There is no merged YAML
+//!    tree.
+//! 2. Build the [`Config`] from the winners and defaults, applying
+//!    activation rules and resolving a file-given sqlite database name
+//!    against its file's directory, then run [`Config::validate`] on it.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
-use crate::dotenv::{self, EnvFile};
-use crate::env::{self, CONFIG_VAR, ENV_FILE_VAR, Kind, SETTINGS, Setting, Value};
+use crate::env::{self, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
-use crate::interpolate;
 use crate::log::LogLevel;
-use crate::node::{self, SpannedNode};
 use crate::options::LoadOptions;
 use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
 use crate::settings::{self, InputError, Settings};
@@ -56,8 +51,12 @@ pub struct LoadError {
     kind: LoadErrorKind,
 }
 
+/// Why loading failed; each variant renders one user-facing message.
 #[derive(Debug, thiserror::Error)]
-enum LoadErrorKind {
+pub(crate) enum LoadErrorKind {
+    #[error("{origin}: {problem}")]
+    List { origin: String, problem: &'static str },
+
     #[error("failed to read {what} {} (from {origin}): {source}", path.display())]
     Read {
         what: &'static str,
@@ -97,69 +96,20 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
 ///
 /// # Errors
 ///
-/// Returns [`LoadError`] when a named file cannot be read, the env file or
-/// YAML cannot be parsed, `${}` interpolation fails, the YAML does not match
-/// the config schema, any source's value fails its setting's checks, or
-/// validation fails.
+/// Returns [`LoadError`] when a file list has an empty entry, a named file
+/// cannot be read, an env file or a config file cannot be parsed, `${}`
+/// interpolation fails, a config file does not match the config schema,
+/// any source's value fails its setting's checks, or validation fails.
 pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
-    let fail = |warnings: Vec<String>, kind| LoadError { warnings, kind };
-
-    let env_file = match read_env_file(options) {
-        Ok(Some(parsed)) => {
-            warnings.extend(parsed.warnings);
-            Some(parsed.file)
-        }
-        Ok(None) => None,
-        Err(kind) => return Err(fail(warnings, kind)),
-    };
-    let lookup = |name: &str| -> Option<String> {
-        options
-            .environment
-            .get(name)
-            .cloned()
-            .or_else(|| env_file.as_ref().and_then(|file| file.get(name)).map(str::to_owned))
-    };
-
-    let mut file = match read_config_file(options, env_file.as_ref()) {
-        Ok(file) => file,
-        Err(kind) => return Err(fail(warnings, kind)),
-    };
-
-    if let Some((path, tree)) = &mut file {
-        let in_file = |messages: &[String]| -> Vec<String> {
-            messages.iter().map(|m| format!("{}:{m}", path.display())).collect()
-        };
-        let outcome = interpolate::interpolate(tree, &lookup);
-        warnings.extend(in_file(&outcome.warnings));
-        if !outcome.errors.is_empty() {
-            let errors = in_file(&outcome.errors);
-            return Err(fail(
-                warnings,
-                LoadErrorKind::Interpolate {
-                    path: path.clone(),
-                    errors,
-                },
-            ));
-        }
-    }
-    let settings = match settings::check(
-        file.as_ref().map(|(path, tree)| (path.as_path(), tree)),
-        env_file.as_ref(),
-        &options.environment,
-        options.home.as_deref(),
-    ) {
+    let settings = match settings::read(options, &mut warnings) {
         Ok(settings) => settings,
-        Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
+        Err(kind) => return Err(LoadError { warnings, kind }),
     };
 
     let resolver = Resolver {
         settings: &settings,
         home: options.home.as_deref(),
-        dir: file
-            .as_ref()
-            .and_then(|(path, _)| path.parent())
-            .unwrap_or(Path::new("")),
     };
     match resolver.build() {
         Ok((config, log_level)) => Ok(Loaded {
@@ -171,91 +121,12 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
             for diagnostic in &mut diagnostics {
                 diagnostic.attach_sources(settings.sources());
             }
-            Err(fail(warnings, LoadErrorKind::Invalid(diagnostics)))
-        }
-    }
-}
-
-/// Reads the env file named by `--env` or process `DBMCP_ENV_FILE`, if any.
-fn read_env_file(options: &LoadOptions) -> Result<Option<dotenv::Parsed>, LoadErrorKind> {
-    let (raw, origin) = if let Some(path) = &options.env_file {
-        (path.clone(), "--env".to_owned())
-    } else if let Some(path) = non_empty(&options.environment, ENV_FILE_VAR) {
-        (PathBuf::from(path), ENV_FILE_VAR.to_owned())
-    } else {
-        return Ok(None);
-    };
-    let path = options
-        .working_dir
-        .join(env::expand_tilde(&raw, options.home.as_deref()));
-    let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-        what: "env file",
-        path: path.clone(),
-        origin,
-        source,
-    })?;
-    let lookup = |name: &str| options.environment.get(name).cloned();
-    dotenv::parse(&path, &text, &lookup)
-        .map(Some)
-        .map_err(|errors| LoadErrorKind::EnvFile { path, errors })
-}
-
-/// Reads and parses the YAML file, if one is named.
-fn read_config_file(
-    options: &LoadOptions,
-    env_file: Option<&EnvFile>,
-) -> Result<Option<(PathBuf, SpannedNode)>, LoadErrorKind> {
-    let (raw, origin) = if let Some(path) = &options.config {
-        (path.clone(), "--config".to_owned())
-    } else if let Some(path) = non_empty(&options.environment, CONFIG_VAR) {
-        (PathBuf::from(path), CONFIG_VAR.to_owned())
-    } else if let Some((path, line)) = env_file
-        .and_then(|file| file.get_with_line(CONFIG_VAR))
-        .filter(|(path, _)| !path.is_empty())
-    {
-        let origin = format!(
-            "{CONFIG_VAR} in {}:{line}",
-            env_file.map(|f| f.path().display().to_string()).unwrap_or_default()
-        );
-        (PathBuf::from(path), origin)
-    } else {
-        return Ok(None);
-    };
-    let path = options.working_dir.join(raw);
-    let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-        what: "config file",
-        path: path.clone(),
-        origin,
-        source,
-    })?;
-    match node::parse(&text) {
-        Ok(tree) => Ok(Some((path, tree))),
-        Err(error) => {
-            let location = error
-                .location()
-                .filter(|l| l.line() > 0)
-                .map(|l| format!("{}:{}: ", l.line(), l.column()))
-                .unwrap_or_default();
-            let message = error.to_string();
-            let message = message.lines().next().unwrap_or_default();
-            Err(LoadErrorKind::Parse {
-                errors: vec![format!("{}:{location}{message}", path.display())],
-                path,
+            Err(LoadError {
+                warnings,
+                kind: LoadErrorKind::Invalid(diagnostics),
             })
         }
     }
-}
-
-/// Reads `path`, rejecting directories; pipes such as `<(…)` are allowed.
-fn read_file(path: &Path) -> std::io::Result<String> {
-    if std::fs::metadata(path)?.is_dir() {
-        return Err(std::io::Error::other("is a directory"));
-    }
-    std::fs::read_to_string(path)
-}
-
-fn non_empty<'a>(environment: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
-    environment.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
 /// Builds the configuration from each setting's checked winner and defaults.
@@ -263,8 +134,6 @@ struct Resolver<'a> {
     settings: &'a Settings,
     /// The home directory, for `~` and the `known_hosts` default.
     home: Option<&'a Path>,
-    /// The config file's directory; empty without a config file.
-    dir: &'a Path,
 }
 
 impl Resolver<'_> {
@@ -380,10 +249,11 @@ impl Resolver<'_> {
         let name = self
             .string(env::DB_NAME)
             .map(|name| match self.settings.source(env::DB_NAME) {
-                Some(Source::File { .. })
+                Some(Source::File { path, .. })
                     if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
-                    env::resolve_in_file(Path::new(&name), self.dir, self.home)
+                    let dir = path.parent().unwrap_or(Path::new(""));
+                    env::resolve_in_file(Path::new(&name), dir, self.home)
                         .display()
                         .to_string()
                 }
@@ -537,13 +407,13 @@ mod tests {
 
         fn config(mut self, name: &str, text: &str) -> Self {
             self.write(name, text);
-            self.options.config = Some(name.into());
+            self.options.config_files.push(name.into());
             self
         }
 
         fn env_file(mut self, name: &str, text: &str) -> Self {
             self.write(name, text);
-            self.options.env_file = Some(name.into());
+            self.options.env_files.push(name.into());
             self
         }
 
@@ -666,7 +536,7 @@ mod tests {
 
     #[test]
     fn env_file_may_name_the_config_file() {
-        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG=conf/dbmcp.yaml\n");
+        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG_FILE=conf/dbmcp.yaml\n");
         fixture.write("conf/dbmcp.yaml", "transport: http\n");
         assert_eq!(fixture.ok().config.transport, Transport::Http);
     }
@@ -675,7 +545,7 @@ mod tests {
     fn config_flag_beats_config_env_vars() {
         let fixture = Fixture::new()
             .config("flag.yaml", "log_level: warn\n")
-            .env("DBMCP_CONFIG", "env.yaml");
+            .env("DBMCP_CONFIG_FILE", "env.yaml");
         fixture.write("env.yaml", "log_level: trace\n");
         assert_eq!(fixture.ok().log_level, LogLevel::Warn);
     }
@@ -690,19 +560,278 @@ mod tests {
 
     #[test]
     fn missing_files_are_hard_errors_naming_path_and_origin() {
-        let fixture = Fixture::new().env("DBMCP_CONFIG", "nope.yaml");
+        let fixture = Fixture::new().env("DBMCP_CONFIG_FILE", "nope.yaml");
         let error = fixture.err();
         let expected = format!(
             "failed to read config file {}",
             fixture.dir.path().join("nope.yaml").display()
         );
         assert!(error.starts_with(&expected), "{error}");
-        assert!(error.contains("(from DBMCP_CONFIG)"), "{error}");
+        assert!(error.contains("(from DBMCP_CONFIG_FILE)"), "{error}");
 
         let mut fixture = Fixture::new();
-        fixture.options.env_file = Some(".".into());
+        fixture.options.env_files = vec![".".into()];
         let error = fixture.err();
-        assert!(error.contains("failed to read env file") && error.contains("(from --env): is a directory"));
+        assert!(error.contains("failed to read env file") && error.contains("(from --env-file): is a directory"));
+    }
+
+    #[test]
+    fn later_env_files_win_and_see_earlier_ones() {
+        let loaded = Fixture::new()
+            .env_file("a.env", "X=a\nDBMCP_DB_HOST=a\nDBMCP_DB_USER=a\n")
+            .env_file("b.env", "DBMCP_DB_HOST=${X}-b\nX=b\nDBMCP_DB_CHARSET=${X}\n")
+            .ok();
+        let db = &loaded.config.database;
+        assert_eq!(db.host, "a-b", "b's ${{X}} sees a's X");
+        assert_eq!(db.user, "a");
+        assert_eq!(db.charset.as_deref(), Some("b"), "b's own earlier line beats a");
+    }
+
+    #[test]
+    fn env_file_flag_replaces_the_env_var_list() {
+        let fixture = Fixture::new()
+            .env("DBMCP_ENV_FILE", "x.env")
+            .env_file("a.env", "DBMCP_DB_USER=a\n");
+        fixture.write("x.env", "DBMCP_DB_HOST=x\n");
+        let db = fixture.ok().config.database;
+        assert_eq!(
+            (db.host.as_str(), db.user.as_str()),
+            (DatabaseConfig::DEFAULT_HOST, "a")
+        );
+    }
+
+    #[test]
+    fn env_file_var_is_a_trimmed_comma_list_with_tilde() {
+        let mut fixture = Fixture::new().env("DBMCP_ENV_FILE", "a.env , ~/b.env");
+        fixture.options.home = Some(fixture.dir.path().join("home"));
+        fixture.write("a.env", "DBMCP_DB_HOST=a\nDBMCP_DB_USER=a\n");
+        fixture.write("home/b.env", "DBMCP_DB_HOST=b\n");
+        let db = fixture.ok().config.database;
+        assert_eq!((db.host.as_str(), db.user.as_str()), ("b", "a"));
+    }
+
+    #[test]
+    fn empty_env_file_entries_are_rejected_before_reading() {
+        let error = Fixture::new().env("DBMCP_ENV_FILE", "a.env,,b.env").err();
+        assert_eq!(error, "DBMCP_ENV_FILE: empty entry in file list");
+
+        let mut fixture = Fixture::new();
+        fixture.options.env_files = vec!["missing.env".into(), PathBuf::new()];
+        assert_eq!(fixture.err(), "--env-file: empty path");
+    }
+
+    #[test]
+    fn a_later_empty_env_file_value_clears_the_setting() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_HOST=a\n")
+            .env_file("b.env", "DBMCP_DB_HOST=\n");
+        assert_eq!(fixture.ok().config.database.host, DatabaseConfig::DEFAULT_HOST);
+        let loaded = fixture.config("dbmcp.yaml", "database:\n  host: yaml\n").ok();
+        assert_eq!(loaded.config.database.host, "yaml");
+    }
+
+    #[test]
+    fn overwritten_env_file_values_are_still_checked() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n")
+            .env_file("b.env", "DBMCP_DB_PORT=5432\n");
+        let a = fixture.dir.path().join("a.env").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!(
+                "invalid settings:\n  - DBMCP_DB_PORT in {a}:1: database.port: expected non-negative integer, found string"
+            )
+        );
+    }
+
+    #[test]
+    fn loading_stops_at_the_first_broken_env_file() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "BAD KEY=1\nok=1\nx$=2\n")
+            .env_file("b.env", "B C=1\n");
+        let a = fixture.dir.path().join("a.env").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!(
+                "failed to load env file {a}:\n  \
+                 - line 1: key cannot contain a space\n  \
+                 - line 3: unexpected character in variable name"
+            )
+        );
+    }
+
+    #[test]
+    fn an_env_file_listed_twice_reports_each_problem_once() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "A=${NOPE}\n")
+            .env_file("a.env", "A=${NOPE}\n");
+        assert_eq!(fixture.ok().warnings.len(), 1);
+
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n")
+            .env_file("b.env", "\n")
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n");
+        assert_eq!(fixture.err().matches("database.port").count(), 1);
+    }
+
+    #[test]
+    fn the_last_env_file_names_the_config_file() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_CONFIG_FILE=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG_FILE=b.yaml\n");
+        fixture.write("a.yaml", "log_level: warn\n");
+        fixture.write("b.yaml", "log_level: debug\n");
+        assert_eq!(fixture.ok().log_level, LogLevel::Debug);
+
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_CONFIG_FILE=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG_FILE=\n");
+        assert_eq!(fixture.ok().log_level, LogLevel::Info, "a later empty value clears it");
+    }
+
+    #[test]
+    fn later_config_files_win_per_setting_and_sections_merge() {
+        let loaded = Fixture::new()
+            .config("a.yaml", "log_level: warn\ndatabase:\n  host: a\n  user: a\n")
+            .config("b.yaml", "database:\n  host: b\n")
+            .ok();
+        assert_eq!(loaded.log_level, LogLevel::Warn);
+        let db = &loaded.config.database;
+        assert_eq!((db.host.as_str(), db.user.as_str()), ("b", "a"));
+    }
+
+    #[test]
+    fn later_config_lists_replace_and_unset_values_keep_earlier_ones() {
+        let http = Fixture::new()
+            .config(
+                "a.yaml",
+                "transport: http\ndatabase:\n  port: 1111\nhttp:\n  allowed_hosts: [a, b]\n  allowed_origins: [\"http://x\"]\n",
+            )
+            .config("b.yaml", "database:\n  port:\nhttp:\n  allowed_hosts: [c]\n  allowed_origins: []\n")
+            .ok();
+        assert_eq!(http.config.database.port, 1111, "a later null is a no-op");
+        let http = http.config.http.expect("http");
+        assert_eq!(http.allowed_hosts, ["c"], "lists replace, not append");
+        assert!(http.allowed_origins.is_empty(), "a later [] wins");
+    }
+
+    #[test]
+    fn overridden_config_values_are_checked_in_the_declaring_file() {
+        let fixture = Fixture::new()
+            .config("a.yaml", "database:\n  port: abc\n")
+            .config("b.yaml", "database:\n  port: 5432\n");
+        let a = fixture.dir.path().join("a.yaml").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!("invalid settings:\n  - {a}:2:9: database.port: expected non-negative integer, found string")
+        );
+    }
+
+    #[test]
+    fn config_paths_resolve_against_the_declaring_file() {
+        let fixture = Fixture::new()
+            .config(
+                "a.yaml",
+                "database:\n  backend: sqlite\n  name: a.db\n  ssl_cert: cert.pem\n",
+            )
+            .config("sub/b.yaml", "database:\n  name: b.db\n  ssl_ca: ca.pem\n");
+        let db = fixture.ok().config.database;
+        let root = fixture.dir.path();
+        assert_eq!(db.name, Some(root.join("sub").join("b.db").display().to_string()));
+        assert_eq!(db.ssl_ca, Some(root.join("sub").join("ca.pem").display().to_string()));
+        assert_eq!(db.ssl_cert, Some(root.join("cert.pem").display().to_string()));
+    }
+
+    #[test]
+    fn loading_stops_at_the_first_broken_config_file() {
+        let fixture = Fixture::new()
+            .config("a.yaml", "database: [1, 2\n")
+            .config("b.yaml", "database: [3\n");
+        let error = fixture.err();
+        assert!(error.starts_with(&format!(
+            "failed to parse config file {}",
+            fixture.dir.path().join("a.yaml").display()
+        )));
+        assert!(!error.contains("b.yaml"), "{error}");
+
+        let fixture = Fixture::new()
+            .config("a.yaml", "extra: 1\ndatabase:\n  port: abc\n")
+            .config("b.yaml", "other: 1\n");
+        let error = fixture.err();
+        assert!(
+            error.contains("a.yaml:1:1: extra: unknown field") && error.contains("database.port"),
+            "{error}"
+        );
+        assert!(!error.contains("b.yaml"), "{error}");
+
+        let error = Fixture::new()
+            .env_file(".env", "BAD KEY=1\n")
+            .config("a.yaml", "database: [1\n")
+            .err();
+        assert!(error.starts_with("failed to load env file"), "{error}");
+    }
+
+    #[test]
+    fn anchors_do_not_cross_config_files() {
+        let fixture = Fixture::new()
+            .config("a.yaml", "database:\n  host: &h a\n")
+            .config("b.yaml", "database:\n  user: *h\n");
+        let error = fixture.err();
+        let b = fixture.dir.path().join("b.yaml").display().to_string();
+        assert!(
+            error.starts_with(&format!("failed to parse config file {b}:\n  - {b}:2:")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_config_file_listed_twice_reports_each_problem_once() {
+        let fixture = Fixture::new()
+            .config("a.yaml", "database:\n  port: abc\n  charset: ${NOPE}\n")
+            .config("a.yaml", "database:\n  port: abc\n  charset: ${NOPE}\n");
+        let error = fixture.load().expect_err("bad port");
+        assert_eq!(error.to_string().matches("database.port").count(), 1, "{error}");
+        assert_eq!(error.warnings.len(), 1, "{:?}", error.warnings);
+    }
+
+    #[test]
+    fn config_var_is_a_list_from_process_env_or_env_files() {
+        let fixture = Fixture::new().env("DBMCP_CONFIG_FILE", "a.yaml , b.yaml");
+        fixture.write("a.yaml", "log_level: warn\ntransport: http\n");
+        fixture.write("b.yaml", "log_level: debug\n");
+        let loaded = fixture.ok();
+        assert_eq!(
+            (loaded.log_level, loaded.config.transport),
+            (LogLevel::Debug, Transport::Http)
+        );
+
+        let fixture = Fixture::new().env_file(".env", "DBMCP_CONFIG_FILE=a.yaml,b.yaml\n");
+        fixture.write("a.yaml", "log_level: warn\n");
+        fixture.write("b.yaml", "log_level: debug\n");
+        assert_eq!(fixture.ok().log_level, LogLevel::Debug);
+        let fixture = fixture.config("c.yaml", "log_level: error\n");
+        assert_eq!(
+            fixture.ok().log_level,
+            LogLevel::Error,
+            "--config-file replaces the list"
+        );
+    }
+
+    #[test]
+    fn empty_config_entries_are_rejected_before_reading() {
+        assert_eq!(
+            Fixture::new().env("DBMCP_CONFIG_FILE", "a.yaml,").err(),
+            "DBMCP_CONFIG_FILE: empty entry in file list"
+        );
+        let fixture = Fixture::new().env_file("x.env", "# c\nDBMCP_CONFIG_FILE=a.yaml,,b.yaml\n");
+        let env_file = fixture.dir.path().join("x.env").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!("DBMCP_CONFIG_FILE in {env_file}:2: empty entry in file list")
+        );
+        let mut fixture = Fixture::new();
+        fixture.options.config_files = vec![PathBuf::new()];
+        assert_eq!(fixture.err(), "--config-file: empty path");
     }
 
     #[test]
@@ -1098,10 +1227,39 @@ mod tests {
     #[test]
     fn earlier_stages_have_no_diagnostics() {
         let error = Fixture::new()
-            .env("DBMCP_CONFIG", "missing.yaml")
+            .env("DBMCP_CONFIG_FILE", "missing.yaml")
             .load()
             .expect_err("missing file");
         assert!(diagnostics(&error).is_empty());
+    }
+
+    #[test]
+    fn unsupported_yaml_tags_are_rejected_where_they_sit() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "transport: http\nhttp:\n  allowed_origins: !reset []\n  allowed_hosts: [a, !override b]\n  port: abc\nssh: !reset\n",
+        );
+        let error = fixture.err();
+        let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "invalid settings:\n  \
+                 - {file}:3:27: http.allowed_origins: YAML tag !reset is not supported\n  \
+                 - {file}:4:18: http.allowed_hosts: item 1: YAML tag !override is not supported\n  \
+                 - {file}:5:9: http.port: expected non-negative integer, found string\n  \
+                 - {file}:6:12: ssh: YAML tag !reset is not supported"
+            )
+        );
+    }
+
+    #[test]
+    fn core_yaml_tags_are_accepted() {
+        let loaded = Fixture::new()
+            .config("dbmcp.yaml", "database:\n  host: !!str 10\n  port: !!int 6000\n")
+            .ok();
+        assert_eq!(loaded.config.database.host, "10");
+        assert_eq!(loaded.config.database.port, 6000);
     }
 
     #[test]

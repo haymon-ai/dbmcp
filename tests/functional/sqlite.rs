@@ -17,6 +17,7 @@ use dbmcp_sqlite::types::{
     ReadQueryRequest,
 };
 use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::path::Path;
@@ -2172,21 +2173,24 @@ async fn test_config_file_and_env_file_set_settings() {
     std::fs::write(
         &env_file,
         format!(
-            "FIXTURE_DB={db_path}\nREAD_ONLY=false\nDBMCP_CONFIG={}\n",
+            "FIXTURE_DB={db_path}\nREAD_ONLY=false\nDBMCP_CONFIG_FILE={}\n",
             config.display()
         ),
     )
     .expect("write env file");
 
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
-    command.arg("--env").arg(&env_file);
+    command.arg("--env-file").arg(&env_file);
     assert!(
         exposes_write_query_with(command).await,
         "the env file must name the config file and feed its ${{}} values"
     );
 
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
-    command.arg("--env").arg(&env_file).env("DBMCP_DB_READ_ONLY", "true");
+    command
+        .arg("--env-file")
+        .arg(&env_file)
+        .env("DBMCP_DB_READ_ONLY", "true");
     assert!(
         !exposes_write_query_with(command).await,
         "the process env must override the config file"
@@ -2194,14 +2198,75 @@ async fn test_config_file_and_env_file_set_settings() {
 }
 
 #[tokio::test]
+async fn test_later_env_file_wins() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let base = dir.path().join("base.env");
+    std::fs::write(&base, "DBMCP_DB_READ_ONLY=true\n").expect("write base env file");
+    let local = dir.path().join("local.env");
+    std::fs::write(&local, "DBMCP_DB_READ_ONLY=false\n").expect("write local env file");
+
+    let mut command = sqlite_command();
+    command
+        .env_remove("DBMCP_DB_READ_ONLY")
+        .arg("--env-file")
+        .arg(&base)
+        .arg("--env-file")
+        .arg(&local);
+    assert!(exposes_write_query_with(command).await, "the later env file must win");
+}
+
+#[tokio::test]
+async fn test_later_config_file_wins_and_resolves_paths_against_itself() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = Path::new(&std::env::var("DB_PATH").expect("DB_PATH must be set"))
+        .canonicalize()
+        .expect("fixture database exists");
+    let local_dir = dir.path().join("local");
+    std::fs::create_dir(&local_dir).expect("create local dir");
+    std::fs::copy(&db_path, local_dir.join("copy.db")).expect("copy fixture database");
+    let base = dir.path().join("base.yaml");
+    std::fs::write(
+        &base,
+        "database:\n  backend: sqlite\n  name: missing.db\n  read_only: false\n",
+    )
+    .expect("write base config");
+    let local = local_dir.join("local.yaml");
+    std::fs::write(&local, "database:\n  name: copy.db\n").expect("write local config");
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    // Inherited DBMCP_* values would beat the config files under test.
+    for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("DBMCP_")) {
+        command.env_remove(name);
+    }
+    command.arg("--config-file").arg(&base).arg("--config-file").arg(&local);
+    let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
+    let client = ().serve(transport).await.expect("mcp handshake");
+    let tools = client.list_all_tools().await.expect("tools/list");
+    let tables = client
+        .call_tool(CallToolRequestParams::new("listTables"))
+        .await
+        .expect("listTables");
+    client.cancel().await.expect("shutdown");
+    assert!(
+        tools.iter().any(|tool| tool.name == "writeQuery"),
+        "the earlier file's read_only must still apply"
+    );
+    let tables = serde_json::to_string(&tables).expect("serialize result");
+    assert!(
+        tables.contains("users"),
+        "the later file's database.name must resolve against its own directory: {tables}"
+    );
+}
+
+#[tokio::test]
 async fn test_missing_config_file_fails_startup() {
     let mut command = sqlite_command();
-    command.args(["--config", "/nonexistent/dbmcp.yaml"]);
+    command.args(["--config-file", "/nonexistent/dbmcp.yaml"]);
     let output = run_to_exit(command).await;
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("failed to read config file /nonexistent/dbmcp.yaml (from --config)"),
+        stderr.contains("failed to read config file /nonexistent/dbmcp.yaml (from --config-file)"),
         "{stderr}"
     );
 }
@@ -2221,7 +2286,7 @@ async fn test_help_lists_only_file_flags_and_hides_secrets() {
     assert!(output.status.success(), "--help must succeed");
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(
-        help.contains("--config <PATH>") && help.contains("--env <PATH>"),
+        help.contains("--config-file <PATH>") && help.contains("--env-file <PATH>"),
         "{help}"
     );
     assert!(!help.contains("--db-"), "settings flags are gone:\n{help}");

@@ -3,7 +3,7 @@ title: Configuration
 description: Every dbmcp setting with its YAML key, environment variable, type, default, and backend-specific behaviour
 ---
 
-Database MCP reads its settings from `DBMCP_*` environment variables, an optional env file, and an optional YAML config file. The command line only names those files (`--config`, `--env`); there is no per-setting flag. This page is the reference for every setting. For the file formats, `${}` interpolation, and path rules, see [Config File](/docs/config-file).
+Database MCP reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. This page is the reference for every setting. For the file formats, `${}` interpolation, and path rules, see [Config File](/docs/config-file).
 
 The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json) for editor completion and validation. Editors backed by the YAML language server (VS Code's YAML extension, JetBrains IDEs, Neovim, Zed) pick it up from this modeline on the first line of the file:
 
@@ -18,8 +18,8 @@ The `master` URL tracks the latest schema; replace `master` with a release tag s
 Each setting is resolved on its own, highest priority first:
 
 1. **Process environment** — `DBMCP_*` variables, typically set by the MCP client (via `env` or `envFile` in the server config)
-2. **Env file** — `DBMCP_*` keys in the file named by `--env` / `DBMCP_ENV_FILE`
-3. **Config file** — keys in the YAML file named by `--config` / `DBMCP_CONFIG`
+2. **Env files** — `DBMCP_*` keys in the files named by `--env-file` / `DBMCP_ENV_FILE`; a later file wins
+3. **Config files** — keys in the YAML files named by `--config-file` / `DBMCP_CONFIG_FILE`; a later file wins
 4. **Built-in defaults** — backend-aware defaults described below
 
 When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored. See [Config File § Precedence](/docs/config-file#precedence) for a worked example.
@@ -579,11 +579,11 @@ Windsurf supports `${env:VARIABLE_NAME}` interpolation to reference values from 
 | HTTP transport in config | Yes | No | Yes | Yes |
 | Project-scoped config | Yes | No | Yes | No |
 
-Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config", "/abs/path/dbmcp.yaml"]` or `"args": ["--env", "/abs/path/dbmcp.env"]`. See [Config File](/docs/config-file).
+Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config-file", "/abs/path/dbmcp.yaml"]` or `"args": ["--env-file", "/abs/path/dbmcp.env"]`. See [Config File](/docs/config-file).
 
 ## Migrating from CLI flags
 
-Earlier releases accepted one CLI flag per setting. Those flags are gone: passing one now fails with clap's `error: unexpected argument '--db-backend' found` (exit code 2). The only flags left are `--config`, `--env`, `-h`/`--help`, and `-V`/`--version`. `--transport` and `--log-level` moved too: use `DBMCP_TRANSPORT` / `transport` and `DBMCP_LOG_LEVEL` / `log_level`.
+Earlier releases accepted one CLI flag per setting. Those flags are gone: passing one now fails with clap's `error: unexpected argument '--db-backend' found` (exit code 2). The only flags left are `--config-file`, `--env-file`, `-h`/`--help`, and `-V`/`--version`. `--transport` and `--log-level` moved too: use `DBMCP_TRANSPORT` / `transport` and `DBMCP_LOG_LEVEL` / `log_level`.
 
 Every `DBMCP_*` environment variable name is unchanged, so each removed flag maps to the variable that already backed it:
 
@@ -676,4 +676,4 @@ After — the same settings as environment variables:
 }
 ```
 
-To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config", "/abs/path/dbmcp.yaml"]`; see [Config File](/docs/config-file).
+To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config-file", "/abs/path/dbmcp.yaml"]`; see [Config File](/docs/config-file).

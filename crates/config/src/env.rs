@@ -17,10 +17,10 @@ use crate::pii::{PiiCategory, PiiOperator};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
 
-/// Env var naming the YAML config file; a loader input, not a setting.
-pub const CONFIG_VAR: &str = "DBMCP_CONFIG";
+/// Env var naming the YAML config files; a loader input, not a setting.
+pub const CONFIG_FILE_VAR: &str = "DBMCP_CONFIG_FILE";
 
-/// Env var naming the dotenv file; a loader input, not a setting.
+/// Env var naming the dotenv files; a loader input, not a setting.
 pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
 
 /// One setting: its dotted YAML key path, env var name, and value kind.
@@ -111,7 +111,7 @@ impl Kind {
     /// # Errors
     ///
     /// Returns a value-free reason when `raw` has the wrong type, is out of
-    /// range, or is not an accepted choice.
+    /// range, is not an accepted choice, or carries an unsupported YAML tag.
     pub(crate) fn check(self, raw: Raw<'_>, home: Option<&Path>) -> Result<Option<Value>, String> {
         let node = match raw {
             Raw::Node { node, .. } => Some(node),
@@ -119,6 +119,7 @@ impl Kind {
         };
         let text = match (raw, node) {
             (_, Some(Node::Null)) => return Ok(None),
+            (_, Some(Node::Unsupported(tag))) => return Err(unsupported_tag(tag)),
             (Raw::Text(text), _) => Some(text),
             (_, Some(Node::Str(text))) => Some(text.as_str()),
             _ => None,
@@ -177,6 +178,7 @@ impl Kind {
                         .enumerate()
                         .map(|(i, item)| match &item.value {
                             Node::Str(text) => Ok(text.as_str()),
+                            Node::Unsupported(tag) => Err(format!("item {i}: {}", unsupported_tag(tag))),
                             other => Err(format!("item {i}: expected string, found {}", other.kind())),
                         })
                         .collect::<Result<_, _>>()?,
@@ -208,6 +210,11 @@ fn choose(choices: &'static [&'static str], text: &str) -> Result<&'static str, 
         .find(|name| **name == text)
         .copied()
         .ok_or_else(|| format!("expected one of {}", choices.join(", ")))
+}
+
+/// Renders the value-free reason for a node tagged outside the YAML core schema.
+pub(crate) fn unsupported_tag(tag: &str) -> String {
+    format!("YAML tag {tag} is not supported")
 }
 
 /// What an integer setting expects; errors append `, found <type>`.
@@ -466,7 +473,11 @@ mod tests {
     fn env_names_use_the_dbmcp_prefix_and_skip_loader_inputs() {
         for setting in SETTINGS {
             assert!(setting.env.starts_with("DBMCP_"), "{}", setting.env);
-            assert!(![CONFIG_VAR, ENV_FILE_VAR].contains(&setting.env), "{}", setting.env);
+            assert!(
+                ![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&setting.env),
+                "{}",
+                setting.env
+            );
         }
     }
 
