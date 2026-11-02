@@ -824,8 +824,8 @@ mod tests {
             .config("sub/b.yaml", "database:\n  name: b.db\n  ssl_ca: ca.pem\n");
         let db = fixture.ok().config.database;
         let root = fixture.dir.path();
-        assert_eq!(db.name, Some(root.join("sub/b.db").display().to_string()));
-        assert_eq!(db.ssl_ca, Some(root.join("sub/ca.pem").display().to_string()));
+        assert_eq!(db.name, Some(root.join("sub").join("b.db").display().to_string()));
+        assert_eq!(db.ssl_ca, Some(root.join("sub").join("ca.pem").display().to_string()));
         assert_eq!(db.ssl_cert, Some(root.join("cert.pem").display().to_string()));
     }
 
