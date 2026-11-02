@@ -1,7 +1,7 @@
 //! The config files: each YAML file read, interpolated, and structure-checked.
 //!
 //! [`ConfigFiles::read`] handles the files [`read`](super::read) picked one
-//! at a time in order: read, parse into an untyped tree, `${}`-interpolate
+//! at a time in order: parse into an untyped tree, `${}`-interpolate
 //! against the variable view of the env layers, and check against the
 //! config schema alone. A read, parse, or interpolation failure aborts the load. The first
 //! file with structure errors is the last file read: its errors are kept
@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{InputError, read_file};
+use super::InputError;
 use crate::env::Raw;
 use crate::interpolate;
 use crate::loader::LoadErrorKind;
@@ -30,29 +30,24 @@ pub(super) struct ConfigFiles {
 }
 
 impl ConfigFiles {
-    /// Reads, parses, interpolates, and structure-checks the config files in `list`.
+    /// Parses, interpolates, and structure-checks the config `files`, in order.
     ///
-    /// `list` pairs the paths with the surface that named them; relative
-    /// paths resolve against `working_dir`. `${}` reads `lookup` and its
-    /// warnings go to `warnings`, prefixed with the file path.
+    /// Each item is a picked file's path and text, or the error reading it.
+    /// `${}` reads `lookup` and its warnings go to `warnings`, prefixed with
+    /// the file path.
     ///
     /// # Errors
     ///
     /// Returns the first read, parse, or interpolation failure.
     pub(super) fn read(
-        list: Option<(Vec<PathBuf>, String)>,
-        working_dir: &Path,
+        files: impl IntoIterator<Item = Result<(PathBuf, String), LoadErrorKind>>,
         lookup: Lookup<'_>,
         warnings: &mut Vec<String>,
     ) -> Result<Self, LoadErrorKind> {
-        let Some((paths, origin)) = list else {
-            return Ok(Self::default());
-        };
-        let mut files = Vec::new();
+        let mut parsed = Vec::new();
         let mut structure = Vec::new();
-        for raw in paths {
-            let path = working_dir.join(raw);
-            let text = read_file(&path, "config file", &origin)?;
+        for file in files {
+            let (path, text) = file?;
             let mut tree = node::parse(&text).map_err(|error| {
                 let location = error
                     .location()
@@ -78,12 +73,15 @@ impl ConfigFiles {
                 });
             }
             structure = schema::validate(&tree, &path);
-            files.push((path, tree));
+            parsed.push((path, tree));
             if !structure.is_empty() {
                 break;
             }
         }
-        Ok(Self { files, structure })
+        Ok(Self {
+            files: parsed,
+            structure,
+        })
     }
 
     /// Returns the structure errors of the file that stopped the read, if any.
@@ -125,42 +123,32 @@ fn leaf<'a>(root: &'a SpannedNode, path: &str) -> Option<&'a SpannedNode> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
-
     use super::*;
 
-    /// A scratch working directory holding config files.
+    /// Returns the path of the picked file `name`.
+    fn path(name: &str) -> PathBuf {
+        Path::new("dir").join(name)
+    }
+
+    /// The picked config files' paths and texts.
+    #[derive(Default)]
     struct Fixture {
-        dir: TempDir,
-        config: Vec<PathBuf>,
+        files: Vec<(PathBuf, String)>,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let dir = tempfile::tempdir().expect("tempdir");
-            Self {
-                dir,
-                config: Vec::new(),
-            }
+            Self::default()
         }
 
         fn config(mut self, name: &str, text: &str) -> Self {
-            let path = self.path(name);
-            fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-            fs::write(path, text).expect("write");
-            self.config.push(name.into());
+            self.files.push((path(name), text.into()));
             self
         }
 
-        fn path(&self, name: &str) -> PathBuf {
-            self.dir.path().join(name)
-        }
-
         fn read(&self) -> ConfigFiles {
-            let list = Some((self.config.clone(), "--config".to_owned()));
-            ConfigFiles::read(list, self.dir.path(), &|_| None, &mut Vec::new()).expect("readable config files")
+            let picked = self.files.clone().into_iter().map(Ok);
+            ConfigFiles::read(picked, &|_| None, &mut Vec::new()).expect("readable config files")
         }
     }
 
@@ -188,23 +176,23 @@ mod tests {
             [
                 (
                     Source::File {
-                        path: fixture.path("sub/b.yaml"),
+                        path: path("sub/b.yaml"),
                         line: 3,
                         column: 11,
                     },
-                    fixture.path("sub"),
+                    path("sub"),
                 ),
                 (
                     Source::File {
-                        path: fixture.path("a.yaml"),
+                        path: path("a.yaml"),
                         line: 2,
                         column: 9,
                     },
-                    fixture.path(""),
+                    path(""),
                 ),
             ]
         );
-        assert_eq!(files.position(&fixture.path("sub/b.yaml")), Some(1));
+        assert_eq!(files.position(&path("sub/b.yaml")), Some(1));
         assert!(files.structure().is_empty());
     }
 
