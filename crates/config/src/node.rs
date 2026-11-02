@@ -55,9 +55,9 @@ pub(crate) type SpannedNode = Spanned<Node>;
 /// Parses YAML `text` into a tree; an empty document yields [`Node::Null`].
 ///
 /// YAML 1.1 booleans (`yes`, `no`, `on`, `off`) stay strings, so an
-/// unquoted `strict_host_key_checking: no` keeps its enum meaning. A node
-/// tagged outside the core schema (`!!str`, `!!int`, …) becomes
-/// [`Node::Unsupported`], wherever it sits.
+/// unquoted `strict_host_key_checking: no` keeps its enum meaning. Core
+/// schema tags (`!!str`, `!!int`, …) are kept; a node with any other tag
+/// becomes [`Node::Unsupported`], wherever it sits.
 ///
 /// # Errors
 ///

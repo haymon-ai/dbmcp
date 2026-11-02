@@ -25,6 +25,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use indexmap::IndexSet;
+
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::dotenv::{self, EnvFile};
@@ -227,13 +229,7 @@ fn split_list(list: &str, origin: String) -> Result<Vec<PathBuf>, LoadErrorKind>
 
 /// Drops repeated messages, keeping the first of each in order.
 fn dedup(messages: Vec<String>) -> Vec<String> {
-    let mut seen = Vec::with_capacity(messages.len());
-    for message in messages {
-        if !seen.contains(&message) {
-            seen.push(message);
-        }
-    }
-    seen
+    messages.into_iter().collect::<IndexSet<_>>().into_iter().collect()
 }
 
 /// Reads, parses, interpolates, and structure-checks the named config files.

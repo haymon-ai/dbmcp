@@ -211,7 +211,7 @@ DBMCP_CONFIG=/srv/dbmcp/dbmcp.yaml    # may name the config file
 - Unquoted values end at ` #` (space, hash) and are trimmed.
 - Single-quoted values are taken literally; double-quoted values support escapes such as `\n` and `\"`.
 - Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file, then earlier env files.
-- A bare `KEY` with no value takes its value from the process environment, or else from an earlier env file; if neither sets it, the line is skipped.
+- A bare `KEY` with no value takes its value from the process environment, else from an earlier line or an earlier env file; if none sets it, the line is skipped.
 
 The env file plays two roles at once:
 

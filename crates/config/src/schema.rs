@@ -50,7 +50,13 @@ pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
     let sections = match &root.value {
         Node::Map(entries) => entries
             .iter()
-            .filter(|(key, _)| SETTINGS.iter().any(|s| s.path.starts_with(&format!("{key}."))))
+            .filter(|(key, _)| {
+                SETTINGS.iter().any(|s| {
+                    s.path
+                        .split_once('.')
+                        .is_some_and(|(section, _)| section == key.as_str())
+                })
+            })
             .map(|(key, (_, value))| (key.as_str(), value))
             .collect(),
         _ => vec![("<root>", root)],

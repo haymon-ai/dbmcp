@@ -36,7 +36,7 @@ pub(crate) struct InputError {
 }
 
 impl InputError {
-    /// Orders errors by config file and location, then env file and line, then env name.
+    /// Orders errors by config file, then env file, then process env.
     ///
     /// `rank` gives a file's position in its list.
     fn order(&self, rank: impl Fn(&Path) -> usize) -> (u8, usize, u64, u64, &str) {
