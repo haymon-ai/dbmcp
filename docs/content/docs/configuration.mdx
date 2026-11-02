@@ -18,7 +18,7 @@ The `master` URL tracks the latest schema; replace `master` with a release tag s
 Each setting is resolved on its own, highest priority first:
 
 1. **Process environment** — `DBMCP_*` variables, typically set by the MCP client (via `env` or `envFile` in the server config)
-2. **Env file** — `DBMCP_*` keys in the file named by `--env` / `DBMCP_ENV_FILE`
+2. **Env files** — `DBMCP_*` keys in the files named by `--env` / `DBMCP_ENV_FILE`; a later file wins
 3. **Config file** — keys in the YAML file named by `--config` / `DBMCP_CONFIG`
 4. **Built-in defaults** — backend-aware defaults described below
 

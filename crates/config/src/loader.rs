@@ -1,16 +1,20 @@
-//! Builds a [`Config`] from the process env, an env file, and a YAML file.
+//! Builds a [`Config`] from the process env, env files, and a YAML file.
 //!
 //! Stages run in order and the first failing
 //! stage aborts; each stage collects all of its own errors:
 //!
-//! 1. Read and parse the env file (`--env` > `DBMCP_ENV_FILE`).
-//! 2. Pick the config file (`--config` > process `DBMCP_CONFIG` > env-file
-//!    `DBMCP_CONFIG`), read it, and parse it into an untyped tree.
-//! 3. `${}`-interpolate every string value against process env, then env file.
+//! 1. Read and parse the env files (`--env` list > `DBMCP_ENV_FILE` list) in
+//!    order, stopping at the first file with errors. Each file's `${}` sees
+//!    process env, then its own earlier lines, then earlier files.
+//! 2. Pick the config file (`--config` > process `DBMCP_CONFIG` > the last
+//!    env file's `DBMCP_CONFIG`), read it, and parse it into an untyped tree.
+//! 3. `${}`-interpolate every string value against process env, then the
+//!    last env file setting the variable.
 //! 4. Check the file's structure against the config schema and every set
 //!    value from every source by its setting's kind, even values that lose
 //!    to a higher source, resolving paths, and pick each winner: non-empty
-//!    process env > non-empty env file > YAML (see [`settings`](crate::settings)).
+//!    process env > the last env file's value, if non-empty > YAML (see
+//!    [`settings`](crate::settings)).
 //! 5. Build the [`Config`] from the winners and defaults, applying
 //!    activation rules and resolving a file-given sqlite database name,
 //!    then run [`Config::validate`] on it.
@@ -58,6 +62,9 @@ pub struct LoadError {
 
 #[derive(Debug, thiserror::Error)]
 enum LoadErrorKind {
+    #[error("{origin}: {problem}")]
+    List { origin: String, problem: &'static str },
+
     #[error("failed to read {what} {} (from {origin}): {source}", path.display())]
     Read {
         what: &'static str,
@@ -97,33 +104,29 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
 ///
 /// # Errors
 ///
-/// Returns [`LoadError`] when a named file cannot be read, the env file or
-/// YAML cannot be parsed, `${}` interpolation fails, the YAML does not match
+/// Returns [`LoadError`] when a file list has an empty entry, a named file
+/// cannot be read, an env file or the YAML cannot be parsed, `${}` interpolation fails, the YAML does not match
 /// the config schema, any source's value fails its setting's checks, or
 /// validation fails.
 pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut warnings = Vec::new();
     let fail = |warnings: Vec<String>, kind| LoadError { warnings, kind };
 
-    let env_file = match read_env_file(options) {
-        Ok(Some(parsed)) => {
-            warnings.extend(parsed.warnings);
-            Some(parsed.file)
-        }
-        Ok(None) => None,
-        Err(kind) => return Err(fail(warnings, kind)),
+    let env_files = match read_env_files(options, &mut warnings) {
+        Ok(files) => files,
+        Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
     let lookup = |name: &str| -> Option<String> {
         options
             .environment
             .get(name)
             .cloned()
-            .or_else(|| env_file.as_ref().and_then(|file| file.get(name)).map(str::to_owned))
+            .or_else(|| dotenv::latest(&env_files, name).map(|(_, value, _)| value.to_owned()))
     };
 
-    let mut file = match read_config_file(options, env_file.as_ref()) {
+    let mut file = match read_config_file(options, &env_files) {
         Ok(file) => file,
-        Err(kind) => return Err(fail(warnings, kind)),
+        Err(kind) => return Err(fail(dedup(warnings), kind)),
     };
 
     if let Some((path, tree)) = &mut file {
@@ -135,7 +138,7 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         if !outcome.errors.is_empty() {
             let errors = in_file(&outcome.errors);
             return Err(fail(
-                warnings,
+                dedup(warnings),
                 LoadErrorKind::Interpolate {
                     path: path.clone(),
                     errors,
@@ -145,13 +148,14 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     }
     let settings = match settings::check(
         file.as_ref().map(|(path, tree)| (path.as_path(), tree)),
-        env_file.as_ref(),
+        &env_files,
         &options.environment,
         options.home.as_deref(),
     ) {
         Ok(settings) => settings,
-        Err(errors) => return Err(fail(warnings, LoadErrorKind::Settings(errors))),
+        Err(errors) => return Err(fail(dedup(warnings), LoadErrorKind::Settings(errors))),
     };
+    let warnings = dedup(warnings);
 
     let resolver = Resolver {
         settings: &settings,
@@ -176,47 +180,102 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     }
 }
 
-/// Reads the env file named by `--env` or process `DBMCP_ENV_FILE`, if any.
-fn read_env_file(options: &LoadOptions) -> Result<Option<dotenv::Parsed>, LoadErrorKind> {
-    let (raw, origin) = if let Some(path) = &options.env_file {
-        (path.clone(), "--env".to_owned())
-    } else if let Some(path) = non_empty(&options.environment, ENV_FILE_VAR) {
-        (PathBuf::from(path), ENV_FILE_VAR.to_owned())
-    } else {
-        return Ok(None);
+/// Reads the env files named by `--env` or process `DBMCP_ENV_FILE`, in order.
+///
+/// Stops at the first file that cannot be read or parsed; the warnings of
+/// the files read so far go to `warnings`.
+fn read_env_files(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<Vec<EnvFile>, LoadErrorKind> {
+    let (paths, origin) = file_list(&options.env_files, "--env", &options.environment, ENV_FILE_VAR)?;
+    let process = |name: &str| options.environment.get(name).cloned();
+    let mut files: Vec<EnvFile> = Vec::new();
+    for raw in paths {
+        let path = options
+            .working_dir
+            .join(env::expand_tilde(&raw, options.home.as_deref()));
+        let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
+            what: "env file",
+            path: path.clone(),
+            origin: origin.to_owned(),
+            source,
+        })?;
+        let earlier = |name: &str| dotenv::latest(&files, name).map(|(_, value, _)| value.to_owned());
+        let parsed = dotenv::parse(&path, &text, &process, &earlier)
+            .map_err(|errors| LoadErrorKind::EnvFile { path, errors })?;
+        warnings.extend(parsed.warnings);
+        files.push(parsed.file);
+    }
+    Ok(files)
+}
+
+/// Returns the paths named by `flag` values, else by the comma list in `var`.
+///
+/// A flag given at least once replaces the env var's list; an empty `var`
+/// names nothing. Returns the surface the paths came from.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::List`] for an empty flag value or list entry.
+fn file_list(
+    flags: &[PathBuf],
+    flag: &'static str,
+    environment: &HashMap<String, String>,
+    var: &'static str,
+) -> Result<(Vec<PathBuf>, &'static str), LoadErrorKind> {
+    if !flags.is_empty() {
+        if flags.iter().any(|path| path.as_os_str().is_empty()) {
+            return Err(LoadErrorKind::List {
+                origin: flag.to_owned(),
+                problem: "empty path",
+            });
+        }
+        return Ok((flags.to_vec(), flag));
+    }
+    let Some(list) = non_empty(environment, var) else {
+        return Ok((Vec::new(), var));
     };
-    let path = options
-        .working_dir
-        .join(env::expand_tilde(&raw, options.home.as_deref()));
-    let text = read_file(&path).map_err(|source| LoadErrorKind::Read {
-        what: "env file",
-        path: path.clone(),
-        origin,
-        source,
-    })?;
-    let lookup = |name: &str| options.environment.get(name).cloned();
-    dotenv::parse(&path, &text, &lookup)
-        .map(Some)
-        .map_err(|errors| LoadErrorKind::EnvFile { path, errors })
+    Ok((split_list(list, var.to_owned())?, var))
+}
+
+/// Splits a comma list of paths, trimming each entry.
+///
+/// # Errors
+///
+/// Returns [`LoadErrorKind::List`] naming `origin` when an entry is empty.
+fn split_list(list: &str, origin: String) -> Result<Vec<PathBuf>, LoadErrorKind> {
+    let items: Vec<&str> = list.split(',').map(str::trim).collect();
+    if items.iter().any(|item| item.is_empty()) {
+        return Err(LoadErrorKind::List {
+            origin,
+            problem: "empty entry in file list",
+        });
+    }
+    Ok(items.into_iter().map(PathBuf::from).collect())
+}
+
+/// Drops repeated messages, keeping the first of each in order.
+fn dedup(messages: Vec<String>) -> Vec<String> {
+    let mut seen = Vec::with_capacity(messages.len());
+    for message in messages {
+        if !seen.contains(&message) {
+            seen.push(message);
+        }
+    }
+    seen
 }
 
 /// Reads and parses the YAML file, if one is named.
 fn read_config_file(
     options: &LoadOptions,
-    env_file: Option<&EnvFile>,
+    env_files: &[EnvFile],
 ) -> Result<Option<(PathBuf, SpannedNode)>, LoadErrorKind> {
     let (raw, origin) = if let Some(path) = &options.config {
         (path.clone(), "--config".to_owned())
     } else if let Some(path) = non_empty(&options.environment, CONFIG_VAR) {
         (PathBuf::from(path), CONFIG_VAR.to_owned())
-    } else if let Some((path, line)) = env_file
-        .and_then(|file| file.get_with_line(CONFIG_VAR))
-        .filter(|(path, _)| !path.is_empty())
+    } else if let Some((file, path, line)) =
+        dotenv::latest(env_files, CONFIG_VAR).filter(|(_, path, _)| !path.is_empty())
     {
-        let origin = format!(
-            "{CONFIG_VAR} in {}:{line}",
-            env_file.map(|f| f.path().display().to_string()).unwrap_or_default()
-        );
+        let origin = format!("{CONFIG_VAR} in {}:{line}", file.path().display());
         (PathBuf::from(path), origin)
     } else {
         return Ok(None);
@@ -543,7 +602,7 @@ mod tests {
 
         fn env_file(mut self, name: &str, text: &str) -> Self {
             self.write(name, text);
-            self.options.env_file = Some(name.into());
+            self.options.env_files.push(name.into());
             self
         }
 
@@ -700,9 +759,123 @@ mod tests {
         assert!(error.contains("(from DBMCP_CONFIG)"), "{error}");
 
         let mut fixture = Fixture::new();
-        fixture.options.env_file = Some(".".into());
+        fixture.options.env_files = vec![".".into()];
         let error = fixture.err();
         assert!(error.contains("failed to read env file") && error.contains("(from --env): is a directory"));
+    }
+
+    #[test]
+    fn later_env_files_win_and_see_earlier_ones() {
+        let loaded = Fixture::new()
+            .env_file("a.env", "X=a\nDBMCP_DB_HOST=a\nDBMCP_DB_USER=a\n")
+            .env_file("b.env", "DBMCP_DB_HOST=${X}-b\nX=b\nDBMCP_DB_CHARSET=${X}\n")
+            .ok();
+        let db = &loaded.config.database;
+        assert_eq!(db.host, "a-b", "b's ${{X}} sees a's X");
+        assert_eq!(db.user, "a");
+        assert_eq!(db.charset.as_deref(), Some("b"), "b's own earlier line beats a");
+    }
+
+    #[test]
+    fn env_file_flag_replaces_the_env_var_list() {
+        let fixture = Fixture::new()
+            .env("DBMCP_ENV_FILE", "x.env")
+            .env_file("a.env", "DBMCP_DB_USER=a\n");
+        fixture.write("x.env", "DBMCP_DB_HOST=x\n");
+        let db = fixture.ok().config.database;
+        assert_eq!(
+            (db.host.as_str(), db.user.as_str()),
+            (DatabaseConfig::DEFAULT_HOST, "a")
+        );
+    }
+
+    #[test]
+    fn env_file_var_is_a_trimmed_comma_list_with_tilde() {
+        let mut fixture = Fixture::new().env("DBMCP_ENV_FILE", "a.env , ~/b.env");
+        fixture.options.home = Some(fixture.dir.path().join("home"));
+        fixture.write("a.env", "DBMCP_DB_HOST=a\nDBMCP_DB_USER=a\n");
+        fixture.write("home/b.env", "DBMCP_DB_HOST=b\n");
+        let db = fixture.ok().config.database;
+        assert_eq!((db.host.as_str(), db.user.as_str()), ("b", "a"));
+    }
+
+    #[test]
+    fn empty_env_file_entries_are_rejected_before_reading() {
+        let error = Fixture::new().env("DBMCP_ENV_FILE", "a.env,,b.env").err();
+        assert_eq!(error, "DBMCP_ENV_FILE: empty entry in file list");
+
+        let mut fixture = Fixture::new();
+        fixture.options.env_files = vec!["missing.env".into(), PathBuf::new()];
+        assert_eq!(fixture.err(), "--env: empty path");
+    }
+
+    #[test]
+    fn a_later_empty_env_file_value_clears_the_setting() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_HOST=a\n")
+            .env_file("b.env", "DBMCP_DB_HOST=\n");
+        assert_eq!(fixture.ok().config.database.host, DatabaseConfig::DEFAULT_HOST);
+        let loaded = fixture.config("dbmcp.yaml", "database:\n  host: yaml\n").ok();
+        assert_eq!(loaded.config.database.host, "yaml");
+    }
+
+    #[test]
+    fn overwritten_env_file_values_are_still_checked() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n")
+            .env_file("b.env", "DBMCP_DB_PORT=5432\n");
+        let a = fixture.dir.path().join("a.env").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!(
+                "invalid settings:\n  - DBMCP_DB_PORT in {a}:1: database.port: expected non-negative integer, found string"
+            )
+        );
+    }
+
+    #[test]
+    fn loading_stops_at_the_first_broken_env_file() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "BAD KEY=1\nok=1\nx$=2\n")
+            .env_file("b.env", "B C=1\n");
+        let a = fixture.dir.path().join("a.env").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!(
+                "failed to load env file {a}:\n  \
+                 - line 1: key cannot contain a space\n  \
+                 - line 3: unexpected character in variable name"
+            )
+        );
+    }
+
+    #[test]
+    fn an_env_file_listed_twice_reports_each_problem_once() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "A=${NOPE}\n")
+            .env_file("a.env", "A=${NOPE}\n");
+        assert_eq!(fixture.ok().warnings.len(), 1);
+
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n")
+            .env_file("b.env", "\n")
+            .env_file("a.env", "DBMCP_DB_PORT=abc\n");
+        assert_eq!(fixture.err().matches("database.port").count(), 1);
+    }
+
+    #[test]
+    fn the_last_env_file_names_the_config_file() {
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_CONFIG=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG=b.yaml\n");
+        fixture.write("a.yaml", "log_level: warn\n");
+        fixture.write("b.yaml", "log_level: debug\n");
+        assert_eq!(fixture.ok().log_level, LogLevel::Debug);
+
+        let fixture = Fixture::new()
+            .env_file("a.env", "DBMCP_CONFIG=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG=\n");
+        assert_eq!(fixture.ok().log_level, LogLevel::Info, "a later empty value clears it");
     }
 
     #[test]

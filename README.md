@@ -154,14 +154,14 @@ From an MCP client, pass `"args": ["--config", "/absolute/path/to/dbmcp.yaml"]`;
 
 Every setting has a `DBMCP_*` environment variable and a YAML key. Each setting is resolved with clear precedence:
 
-**process environment > env file (`--env`) > config file (`--config`) > defaults**
+**process environment > env files (`--env`) > config file (`--config`) > defaults**
 
 Environment variables are typically set by your MCP client (via `env` or `envFile` in the server config). An empty `DBMCP_*` value counts as unset. Nothing is discovered automatically: a file is read only when you name it.
 
 | Flag | Env Variable | Description |
 |------|-------------|-------------|
 | `--config <PATH>` | `DBMCP_CONFIG` | YAML config file (`${}` interpolation, strict keys) |
-| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file of `KEY=VALUE` lines |
+| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file of `KEY=VALUE` lines; repeatable (env var: comma list), later wins |
 
 There are no per-setting flags. Booleans accept `true`/`false`, `1`/`0`, `t`/`f` (not `yes`/`no`); lists are comma-separated in env vars.
 

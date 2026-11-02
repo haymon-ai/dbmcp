@@ -45,11 +45,11 @@ The command line only names files; every setting comes from the environment or t
 | Flag | Env var | Description |
 |------|---------|-------------|
 | `--config <PATH>` | `DBMCP_CONFIG` | YAML config file |
-| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file |
+| `--env <PATH>` | `DBMCP_ENV_FILE` | Env file; repeatable |
 | `-h`, `--help` | — | Print help |
 | `-V`, `--version` | — | Print version |
 
-Each flag takes a single path and wins over its env var. The config file is chosen from `--config`, then the process `DBMCP_CONFIG`, then a `DBMCP_CONFIG` key inside the env file. The env file is chosen from `--env`, then the process `DBMCP_ENV_FILE`; a `DBMCP_ENV_FILE` key inside an env file is ignored.
+Each flag value is a single path, and a flag wins over its env var. `--config` takes one path. The config file is chosen from `--config`, then the process `DBMCP_CONFIG`, then a `DBMCP_CONFIG` key in the env files. `--env` may be repeated, and `DBMCP_ENV_FILE` takes a comma-separated list (items are trimmed); see [Multiple env files](#multiple-env-files). Giving `--env` at least once replaces the `DBMCP_ENV_FILE` list entirely. A `DBMCP_ENV_FILE` key inside an env file is ignored. An empty `--env` value or an empty list entry (`a.env,,b.env`) is an error; an empty `DBMCP_ENV_FILE` as a whole is unset.
 
 Paths are resolved as follows:
 
@@ -66,7 +66,7 @@ Paths are resolved as follows:
 Each setting is resolved independently, highest priority first:
 
 1. Process environment (`DBMCP_*`)
-2. Env file (`--env` / `DBMCP_ENV_FILE`)
+2. Env files (`--env` / `DBMCP_ENV_FILE`)
 3. Config file (`--config` / `DBMCP_CONFIG`)
 4. Built-in defaults
 
@@ -192,7 +192,7 @@ The resulting empty string is a real value for string settings; at integer, bool
 
 ## Env File
 
-The env file named by `--env` / `DBMCP_ENV_FILE` uses this format:
+Each env file named by `--env` / `DBMCP_ENV_FILE` uses this format:
 
 ```bash
 # Comments start with #
@@ -210,8 +210,8 @@ DBMCP_CONFIG=/srv/dbmcp/dbmcp.yaml    # may name the config file
 
 - Unquoted values end at ` #` (space, hash) and are trimmed.
 - Single-quoted values are taken literally; double-quoted values support escapes such as `\n` and `\"`.
-- Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file.
-- A bare `KEY` with no value takes its value from the process environment.
+- Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file, then earlier env files.
+- A bare `KEY` with no value takes its value from the process environment, or else from an earlier env file; if neither sets it, the line is skipped.
 
 The env file plays two roles at once:
 
@@ -219,6 +219,23 @@ The env file plays two roles at once:
 2. All of its keys, whatever their name, are available to `${}` in the config file, after the process environment.
 
 Errors are reported per line without echoing the file's contents (for example `line 2: key cannot contain a space`).
+
+### Multiple env files
+
+Repeat `--env` (or list several files in `DBMCP_ENV_FILE`) to layer env files, the way `docker compose --env-file a --env-file b` does:
+
+```bash
+dbmcp --env /srv/dbmcp/base.env --env /srv/dbmcp/local.env
+DBMCP_ENV_FILE=/srv/dbmcp/base.env,/srv/dbmcp/local.env dbmcp
+```
+
+- Files are read in list order, and a later file wins over an earlier one.
+- A later file's `${}` sees the keys of earlier files (after the process environment and its own earlier lines).
+- The files fold into one set of keys. A later `KEY=` (empty) overwrites an earlier value with an empty one, so the setting is unset and falls through to the config file or the default, not to the earlier env file.
+- The process environment beats every env file.
+- The last file that sets `DBMCP_CONFIG` names the config file.
+- Every non-empty `DBMCP_*` value in every file is checked, including values a later file overwrites.
+- Loading stops at the first file that cannot be read or parsed, reporting all of that file's errors. The same file may be listed twice; each problem is reported once.
 
 ## Path Resolution
 
@@ -274,10 +291,11 @@ Type errors never include the offending value, so a mistyped secret is not print
 
 ## Errors
 
-Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env file, read and parse the config file, interpolate, check every setting value from every source, check the rules — and stops at the first stage that fails, reporting every problem in that stage.
+Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env files in order (stopping at the first broken one), read and parse the config file, interpolate, check every setting value from every source, check the rules — and stops at the first stage that fails, reporting every problem in that stage.
 
 | Header | Cause |
 |--------|-------|
+| `DBMCP_ENV_FILE: empty entry in file list` | A file list has an empty entry (`a.env,,b.env`), checked before any file is read; `--env: empty path` for an empty flag value |
 | `failed to read config file <path> (from --config): <reason>` | A named file is missing, a directory, or unreadable (the origin is `--config`, `--env`, `DBMCP_CONFIG`, `DBMCP_ENV_FILE`, or `DBMCP_CONFIG in <env file>:<line>`; the env file variant starts with `failed to read env file`) |
 | `failed to load env file <path>:` | Env file syntax errors, one `line N: …` bullet each |
 | `failed to parse config file <path>:` | YAML syntax errors, with `file:line:column` |
@@ -285,7 +303,7 @@ Any configuration problem stops startup with exit code 1 and an error on stderr:
 | `invalid settings:` | Unknown keys and non-mapping sections in the config file, and values from any source with the wrong type (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, or empty list items. Values that lose to a higher-priority source are checked too |
 | `configuration validation failed:` | Rule violations between valid values |
 
-Under `invalid settings`, each bullet starts with where the value is, then the dotted YAML key: `/abs/dbmcp.yaml:2:14:` for the config file, `DBMCP_DB_PORT in /abs/.env:3:` for the env file, or `DBMCP_DB_PORT:` for the process environment. Bullets list the config file first, then the env file, then the process environment. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)`, `(from DBMCP_DB_PORT in /abs/.env:3)`, or `(from DBMCP_DB_PORT)`.
+Under `invalid settings`, each bullet starts with where the value is, then the dotted YAML key: `/abs/dbmcp.yaml:2:14:` for the config file, `DBMCP_DB_PORT in /abs/.env:3:` for an env file, or `DBMCP_DB_PORT:` for the process environment. Bullets list the config file first, then the env files in list order, then the process environment. A problem repeated by a file listed twice is reported once. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)`, `(from DBMCP_DB_PORT in /abs/.env:3)`, or `(from DBMCP_DB_PORT)`.
 
 Sample output:
 

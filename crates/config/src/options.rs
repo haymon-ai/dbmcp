@@ -11,8 +11,8 @@ use std::path::PathBuf;
 pub struct LoadOptions {
     /// `--config` value; beats `DBMCP_CONFIG`.
     pub config: Option<PathBuf>,
-    /// `--env` value; beats `DBMCP_ENV_FILE`.
-    pub env_file: Option<PathBuf>,
+    /// `--env` values in order; non-empty beats `DBMCP_ENV_FILE`.
+    pub env_files: Vec<PathBuf>,
     /// Process environment, the highest-ranked settings source.
     pub environment: HashMap<String, String>,
     /// Directory relative `--config` / `--env` paths resolve against.

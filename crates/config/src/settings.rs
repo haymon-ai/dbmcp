@@ -2,12 +2,13 @@
 //!
 //! [`check`] runs before any setting is resolved. It validates the config
 //! file's structure against the config schema, then checks every set value
-//! with its [`Kind`]: each YAML leaf, each non-empty env-file entry, and each
-//! non-empty process env var, even values that lose to a higher source or sit
-//! in a section that is not active. Path values come out resolved: YAML paths
-//! against the config file's directory. Every failure is an [`InputError`];
-//! when there are none, [`Settings`] holds each setting's winning value
-//! (non-empty process env > non-empty env file > YAML) and its [`Source`].
+//! with its [`Kind`]: each YAML leaf, each non-empty entry of every env file,
+//! and each non-empty process env var, even values that lose to a higher
+//! source, are overwritten by a later env file, or sit in a section that is
+//! not active. Path values come out resolved: YAML paths against the config
+//! file's directory. Every failure is an [`InputError`]; when there are none,
+//! [`Settings`] holds each setting's winning value and its [`Source`]:
+//! non-empty process env > the last env file setting it, if non-empty > YAML.
 //!
 //! [`Kind`]: crate::env::Kind
 
@@ -35,12 +36,14 @@ pub(crate) struct InputError {
 }
 
 impl InputError {
-    /// Orders errors by config file location, then env file line, then env name.
-    fn order(&self) -> (u8, u64, u64, &str) {
+    /// Orders errors by config file location, then env file and line, then env name.
+    ///
+    /// `rank` gives an env file's position in the list.
+    fn order(&self, rank: impl Fn(&Path) -> usize) -> (u8, usize, u64, u64, &str) {
         match &self.from {
-            Source::File { line, column, .. } => (0, *line, *column, &self.path),
-            Source::EnvFile { line, .. } => (1, *line as u64, 0, &self.path),
-            Source::Env(name) => (2, 0, 0, name),
+            Source::File { line, column, .. } => (0, 0, *line, *column, &self.path),
+            Source::EnvFile { path, line, .. } => (1, rank(path), *line as u64, 0, &self.path),
+            Source::Env(name) => (2, 0, 0, 0, name),
         }
     }
 }
@@ -71,15 +74,17 @@ impl Settings {
 
 /// Checks every source's values and returns each setting's winner.
 ///
-/// `file` is the interpolated config file and its path; `home` expands `~` in paths.
+/// `file` is the interpolated config file and its path; `env_files` are in
+/// list order; `home` expands `~` in paths.
 ///
 /// # Errors
 ///
 /// Returns every structure error in the file and every value that fails its
-/// setting's checks, from any source, sorted by [`InputError::order`].
+/// setting's checks, from any source, sorted by [`InputError::order`] and
+/// without repeats.
 pub(crate) fn check(
     file: Option<(&Path, &SpannedNode)>,
-    env_file: Option<&EnvFile>,
+    env_files: &[EnvFile],
     environment: &HashMap<String, String>,
     home: Option<&Path>,
 ) -> Result<Settings, Vec<InputError>> {
@@ -89,19 +94,22 @@ pub(crate) fn check(
     let mut settings = Settings::default();
     for &setting in SETTINGS {
         let Setting { path, env, kind } = setting;
+        // Each candidate is checked; only an eligible one may win.
         let mut candidates = Vec::new();
         if let Some(text) = environment.get(env).filter(|text| !text.is_empty()) {
-            candidates.push((Raw::Text(text), Source::Env(env)));
+            candidates.push((Raw::Text(text), Source::Env(env), true));
         }
-        if let Some(file) = env_file
-            && let Some((text, line)) = file.get_with_line(env).filter(|(text, _)| !text.is_empty())
-        {
-            let source = Source::EnvFile {
-                name: env,
-                path: file.path().to_path_buf(),
-                line,
-            };
-            candidates.push((Raw::Text(text), source));
+        // Only the last env file setting `env` may win; an empty value there clears it.
+        let last = env_files.iter().rposition(|file| file.get(env).is_some());
+        for (i, file) in env_files.iter().enumerate().rev() {
+            if let Some((text, line)) = file.get_with_line(env).filter(|(text, _)| !text.is_empty()) {
+                let source = Source::EnvFile {
+                    name: env,
+                    path: file.path().to_path_buf(),
+                    line,
+                };
+                candidates.push((Raw::Text(text), source, Some(i) == last));
+            }
         }
         if let Some((file, root)) = file
             && let Some(node) = leaf(root, path)
@@ -112,11 +120,11 @@ pub(crate) fn check(
                 column: node.referenced.column(),
             };
             let dir = file.parent().unwrap_or(Path::new(""));
-            candidates.push((Raw::Node { node: &node.value, dir }, source));
+            candidates.push((Raw::Node { node: &node.value, dir }, source, true));
         }
-        for (raw, source) in candidates {
+        for (raw, source, eligible) in candidates {
             match kind.check(raw, home) {
-                Ok(Some(value)) if !settings.values.contains_key(path) => {
+                Ok(Some(value)) if eligible && !settings.values.contains_key(path) => {
                     settings.values.insert(path, value);
                     settings.sources.insert(path, source);
                 }
@@ -132,7 +140,8 @@ pub(crate) fn check(
     if errors.is_empty() {
         return Ok(settings);
     }
-    errors.sort_by(|a, b| a.order().cmp(&b.order()));
+    let rank = |path: &Path| env_files.iter().position(|file| file.path() == path).unwrap_or(0);
+    errors.sort_by(|a, b| a.order(rank).cmp(&b.order(rank)));
     errors.dedup();
     Err(errors)
 }
@@ -181,14 +190,18 @@ mod tests {
 
         fn check(&self) -> Result<Settings, Vec<InputError>> {
             let root = self.yaml.map(|yaml| node::parse(yaml).expect("valid yaml"));
-            let env_file = self.env_file.map(|text| {
-                dotenv::parse(Path::new("/x/.env"), text, &|_| None)
-                    .expect("valid env file")
-                    .file
-            });
+            let env_files: Vec<_> = self
+                .env_file
+                .map(|text| {
+                    dotenv::parse(Path::new("/x/.env"), text, &|_| None, &|_| None)
+                        .expect("valid env file")
+                        .file
+                })
+                .into_iter()
+                .collect();
             check(
                 root.as_ref().map(|root| (Path::new("/x/dbmcp.yaml"), root)),
-                env_file.as_ref(),
+                &env_files,
                 &self.environment,
                 None,
             )
@@ -378,7 +391,7 @@ mod tests {
                     start + 1,
                     outcome.errors
                 );
-                if let Err(errors) = check(Some((&path, &root)), None, &HashMap::new(), None) {
+                if let Err(errors) = check(Some((&path, &root)), &[], &HashMap::new(), None) {
                     panic!("{}:{}: {errors:?}", path.display(), start + 1);
                 }
                 checked += 1;
