@@ -16,9 +16,9 @@ use crate::loader::LoadErrorKind;
 /// The kind of file a pick names.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum FileKind {
-    /// Env files: `--env` or `DBMCP_ENV_FILE`; `~` expands.
+    /// Env files: `--env-file` or `DBMCP_ENV_FILE`; `~` expands.
     Env,
-    /// YAML config files: `--config` or `DBMCP_CONFIG`; `~` stays literal.
+    /// YAML config files: `--config-file` or `DBMCP_CONFIG_FILE`; `~` stays literal.
     Config,
 }
 
@@ -34,8 +34,8 @@ impl FileKind {
     /// Returns the flag naming files of this kind.
     fn flag(self) -> &'static str {
         match self {
-            Self::Env => "--env",
-            Self::Config => "--config",
+            Self::Env => "--env-file",
+            Self::Config => "--config-file",
         }
     }
 }
@@ -173,7 +173,7 @@ mod tests {
     fn empty_flag_values_and_list_entries_are_list_errors() {
         assert_eq!(
             paths(FileKind::Env, &["a.env", ""], None),
-            Err("--env: empty path".to_owned())
+            Err("--env-file: empty path".to_owned())
         );
         assert_eq!(
             paths(FileKind::Config, &[], Some("a.yaml,,b.yaml")),

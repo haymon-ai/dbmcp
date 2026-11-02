@@ -407,7 +407,7 @@ mod tests {
 
         fn config(mut self, name: &str, text: &str) -> Self {
             self.write(name, text);
-            self.options.config.push(name.into());
+            self.options.config_files.push(name.into());
             self
         }
 
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn env_file_may_name_the_config_file() {
-        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG=conf/dbmcp.yaml\n");
+        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG_FILE=conf/dbmcp.yaml\n");
         fixture.write("conf/dbmcp.yaml", "transport: http\n");
         assert_eq!(fixture.ok().config.transport, Transport::Http);
     }
@@ -545,7 +545,7 @@ mod tests {
     fn config_flag_beats_config_env_vars() {
         let fixture = Fixture::new()
             .config("flag.yaml", "log_level: warn\n")
-            .env("DBMCP_CONFIG", "env.yaml");
+            .env("DBMCP_CONFIG_FILE", "env.yaml");
         fixture.write("env.yaml", "log_level: trace\n");
         assert_eq!(fixture.ok().log_level, LogLevel::Warn);
     }
@@ -560,19 +560,19 @@ mod tests {
 
     #[test]
     fn missing_files_are_hard_errors_naming_path_and_origin() {
-        let fixture = Fixture::new().env("DBMCP_CONFIG", "nope.yaml");
+        let fixture = Fixture::new().env("DBMCP_CONFIG_FILE", "nope.yaml");
         let error = fixture.err();
         let expected = format!(
             "failed to read config file {}",
             fixture.dir.path().join("nope.yaml").display()
         );
         assert!(error.starts_with(&expected), "{error}");
-        assert!(error.contains("(from DBMCP_CONFIG)"), "{error}");
+        assert!(error.contains("(from DBMCP_CONFIG_FILE)"), "{error}");
 
         let mut fixture = Fixture::new();
         fixture.options.env_files = vec![".".into()];
         let error = fixture.err();
-        assert!(error.contains("failed to read env file") && error.contains("(from --env): is a directory"));
+        assert!(error.contains("failed to read env file") && error.contains("(from --env-file): is a directory"));
     }
 
     #[test]
@@ -617,7 +617,7 @@ mod tests {
 
         let mut fixture = Fixture::new();
         fixture.options.env_files = vec!["missing.env".into(), PathBuf::new()];
-        assert_eq!(fixture.err(), "--env: empty path");
+        assert_eq!(fixture.err(), "--env-file: empty path");
     }
 
     #[test]
@@ -677,15 +677,15 @@ mod tests {
     #[test]
     fn the_last_env_file_names_the_config_file() {
         let fixture = Fixture::new()
-            .env_file("a.env", "DBMCP_CONFIG=a.yaml\n")
-            .env_file("b.env", "DBMCP_CONFIG=b.yaml\n");
+            .env_file("a.env", "DBMCP_CONFIG_FILE=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG_FILE=b.yaml\n");
         fixture.write("a.yaml", "log_level: warn\n");
         fixture.write("b.yaml", "log_level: debug\n");
         assert_eq!(fixture.ok().log_level, LogLevel::Debug);
 
         let fixture = Fixture::new()
-            .env_file("a.env", "DBMCP_CONFIG=a.yaml\n")
-            .env_file("b.env", "DBMCP_CONFIG=\n");
+            .env_file("a.env", "DBMCP_CONFIG_FILE=a.yaml\n")
+            .env_file("b.env", "DBMCP_CONFIG_FILE=\n");
         assert_eq!(fixture.ok().log_level, LogLevel::Info, "a later empty value clears it");
     }
 
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn config_var_is_a_list_from_process_env_or_env_files() {
-        let fixture = Fixture::new().env("DBMCP_CONFIG", "a.yaml , b.yaml");
+        let fixture = Fixture::new().env("DBMCP_CONFIG_FILE", "a.yaml , b.yaml");
         fixture.write("a.yaml", "log_level: warn\ntransport: http\n");
         fixture.write("b.yaml", "log_level: debug\n");
         let loaded = fixture.ok();
@@ -805,29 +805,33 @@ mod tests {
             (LogLevel::Debug, Transport::Http)
         );
 
-        let fixture = Fixture::new().env_file(".env", "DBMCP_CONFIG=a.yaml,b.yaml\n");
+        let fixture = Fixture::new().env_file(".env", "DBMCP_CONFIG_FILE=a.yaml,b.yaml\n");
         fixture.write("a.yaml", "log_level: warn\n");
         fixture.write("b.yaml", "log_level: debug\n");
         assert_eq!(fixture.ok().log_level, LogLevel::Debug);
         let fixture = fixture.config("c.yaml", "log_level: error\n");
-        assert_eq!(fixture.ok().log_level, LogLevel::Error, "--config replaces the list");
+        assert_eq!(
+            fixture.ok().log_level,
+            LogLevel::Error,
+            "--config-file replaces the list"
+        );
     }
 
     #[test]
     fn empty_config_entries_are_rejected_before_reading() {
         assert_eq!(
-            Fixture::new().env("DBMCP_CONFIG", "a.yaml,").err(),
-            "DBMCP_CONFIG: empty entry in file list"
+            Fixture::new().env("DBMCP_CONFIG_FILE", "a.yaml,").err(),
+            "DBMCP_CONFIG_FILE: empty entry in file list"
         );
-        let fixture = Fixture::new().env_file("x.env", "# c\nDBMCP_CONFIG=a.yaml,,b.yaml\n");
+        let fixture = Fixture::new().env_file("x.env", "# c\nDBMCP_CONFIG_FILE=a.yaml,,b.yaml\n");
         let env_file = fixture.dir.path().join("x.env").display().to_string();
         assert_eq!(
             fixture.err(),
-            format!("DBMCP_CONFIG in {env_file}:2: empty entry in file list")
+            format!("DBMCP_CONFIG_FILE in {env_file}:2: empty entry in file list")
         );
         let mut fixture = Fixture::new();
-        fixture.options.config = vec![PathBuf::new()];
-        assert_eq!(fixture.err(), "--config: empty path");
+        fixture.options.config_files = vec![PathBuf::new()];
+        assert_eq!(fixture.err(), "--config-file: empty path");
     }
 
     #[test]
@@ -1223,7 +1227,7 @@ mod tests {
     #[test]
     fn earlier_stages_have_no_diagnostics() {
         let error = Fixture::new()
-            .env("DBMCP_CONFIG", "missing.yaml")
+            .env("DBMCP_CONFIG_FILE", "missing.yaml")
             .load()
             .expect_err("missing file");
         assert!(diagnostics(&error).is_empty());

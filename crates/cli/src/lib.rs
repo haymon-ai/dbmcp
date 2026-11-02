@@ -1,7 +1,8 @@
 //! Command-line interface for the dbmcp MCP server.
 //!
-//! Parses the `--config` / `--env` flags with clap, loads the configuration,
-//! initialises tracing, and serves the selected transport (`stdio` or `http`).
+//! Parses the `--config-file` / `--env-file` flags with clap, loads the
+//! configuration, initialises tracing, and serves the selected transport
+//! (`stdio` or `http`).
 
 mod args;
 mod cli;

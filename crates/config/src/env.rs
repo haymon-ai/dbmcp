@@ -17,10 +17,10 @@ use crate::pii::{PiiCategory, PiiOperator};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
 
-/// Env var naming the YAML config file; a loader input, not a setting.
-pub const CONFIG_VAR: &str = "DBMCP_CONFIG";
+/// Env var naming the YAML config files; a loader input, not a setting.
+pub const CONFIG_FILE_VAR: &str = "DBMCP_CONFIG_FILE";
 
-/// Env var naming the dotenv file; a loader input, not a setting.
+/// Env var naming the dotenv files; a loader input, not a setting.
 pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
 
 /// One setting: its dotted YAML key path, env var name, and value kind.
@@ -473,7 +473,11 @@ mod tests {
     fn env_names_use_the_dbmcp_prefix_and_skip_loader_inputs() {
         for setting in SETTINGS {
             assert!(setting.env.starts_with("DBMCP_"), "{}", setting.env);
-            assert!(![CONFIG_VAR, ENV_FILE_VAR].contains(&setting.env), "{}", setting.env);
+            assert!(
+                ![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&setting.env),
+                "{}",
+                setting.env
+            );
         }
     }
 

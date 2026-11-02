@@ -1,10 +1,10 @@
 //! Reads every source, checks every setting value, and picks each winner.
 //!
 //! [`read`] is the loader's one entry point. It picks the env files
-//! (`--env` list > process `DBMCP_ENV_FILE` list, see [`pick`]) and reads
-//! them into the env layers (see [`layers`]), then picks the config files
-//! (`--config` list > `DBMCP_CONFIG` list in the env layers' setting view)
-//! and reads them (see [`files`]). Each reader stops at the first broken file.
+//! (`--env-file` list > process `DBMCP_ENV_FILE` list, see [`pick`]) and
+//! reads them into the env layers (see [`layers`]), then picks the config
+//! files (`--config-file` list > `DBMCP_CONFIG_FILE` list in the env layers'
+//! setting view) and reads them (see [`files`]). Each reader stops at the first broken file.
 //!
 //! [`check`] then takes the config files' structure errors from the config
 //! schema and checks every set value with its [`Kind`]: each leaf of every
@@ -26,7 +26,7 @@ mod pick;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::env::{CONFIG_VAR, ENV_FILE_VAR, Raw, SETTINGS, Setting, Value};
+use crate::env::{CONFIG_FILE_VAR, ENV_FILE_VAR, Raw, SETTINGS, Setting, Value};
 use crate::loader::LoadErrorKind;
 use crate::options::LoadOptions;
 use crate::source::Source;
@@ -99,12 +99,12 @@ pub(crate) fn read(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<
     let env_files = pick::files(FileKind::Env, &options.env_files, env_list, &options.working_dir, home)?;
     let layers = EnvLayers::read(&options.environment, env_files, warnings)?;
     let config_list = layers
-        .candidates(CONFIG_VAR)
+        .candidates(CONFIG_FILE_VAR)
         .find(|(_, _, eligible)| *eligible)
         .map(|(list, source, _)| (list, source.to_string()));
     let config_files = pick::files(
         FileKind::Config,
-        &options.config,
+        &options.config_files,
         config_list,
         &options.working_dir,
         home,
@@ -230,7 +230,7 @@ mod tests {
             }
             if let Some(yaml) = self.yaml {
                 fs::write(self.yaml_path(), yaml).expect("write config file");
-                options.config.push("dbmcp.yaml".into());
+                options.config_files.push("dbmcp.yaml".into());
             }
             match read(&options, &mut Vec::new()) {
                 Ok(settings) => Ok(settings),
@@ -416,7 +416,7 @@ mod tests {
                 let at = format!("{}:{}", path.display(), start + 1);
                 fs::write(dir.path().join("example.yaml"), &yaml).expect("write example");
                 let options = LoadOptions {
-                    config: vec!["example.yaml".into()],
+                    config_files: vec!["example.yaml".into()],
                     environment: required_vars(&yaml)
                         .into_iter()
                         .map(|name| (name, "placeholder".to_owned()))

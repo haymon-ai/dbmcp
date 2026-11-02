@@ -9,13 +9,13 @@ use std::path::PathBuf;
 /// Inputs to [`load`](crate::load).
 #[derive(Debug, Clone, Default)]
 pub struct LoadOptions {
-    /// `--config` values in order; non-empty beats `DBMCP_CONFIG`.
-    pub config: Vec<PathBuf>,
-    /// `--env` values in order; non-empty beats `DBMCP_ENV_FILE`.
+    /// `--config-file` values in order; non-empty beats `DBMCP_CONFIG_FILE`.
+    pub config_files: Vec<PathBuf>,
+    /// `--env-file` values in order; non-empty beats `DBMCP_ENV_FILE`.
     pub env_files: Vec<PathBuf>,
     /// Process environment, the highest-ranked settings source.
     pub environment: HashMap<String, String>,
-    /// Directory relative `--config` / `--env` paths resolve against.
+    /// Directory relative `--config-file` / `--env-file` paths resolve against.
     pub working_dir: PathBuf,
     /// Home directory for `~` expansion and the default `known_hosts`.
     pub home: Option<PathBuf>,
