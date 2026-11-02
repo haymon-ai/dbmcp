@@ -65,7 +65,7 @@ fn walk(
                 walk(value, &child, lookup, errors, warnings);
             }
         }
-        Node::Null | Node::Bool(_) | Node::Int(_) | Node::UInt(_) | Node::Float(_) => {}
+        Node::Null | Node::Bool(_) | Node::Int(_) | Node::UInt(_) | Node::Float(_) | Node::Unsupported(_) => {}
     }
 }
 

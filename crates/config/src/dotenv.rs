@@ -5,8 +5,8 @@
 //! the process value, unquoted values cut at ` #` and trimmed, single quotes
 //! literal, double quotes with shell escapes, multi-line quoted values, and
 //! `${}` expansion of unquoted and double-quoted values against the process
-//! env first, then earlier keys of the same file. Errors are collected per
-//! line and never echo file contents.
+//! env first, then earlier keys of the same file, then earlier env files.
+//! Errors are collected per line and never echo file contents.
 
 use std::path::{Path, PathBuf};
 
@@ -45,13 +45,21 @@ pub(crate) struct Parsed {
     pub(crate) warnings: Vec<String>,
 }
 
-/// Parses env file `text` read from `path`; `lookup` reads the process env.
+/// Parses env file `text` read from `path`.
+///
+/// `${}` references and bare `KEY` lines read `process` first, then earlier
+/// keys of this file, then `earlier` (the env files read before this one).
 ///
 /// # Errors
 ///
 /// Returns one `line N: reason` message per bad statement. An unterminated
 /// quote stops parsing, since the rest of the file cannot be split reliably.
-pub(crate) fn parse(path: &Path, text: &str, lookup: template::Lookup<'_>) -> Result<Parsed, Vec<String>> {
+pub(crate) fn parse(
+    path: &Path,
+    text: &str,
+    process: template::Lookup<'_>,
+    earlier: template::Lookup<'_>,
+) -> Result<Parsed, Vec<String>> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut entries: IndexMap<String, (String, usize)> = IndexMap::new();
     let mut errors = Vec::new();
@@ -76,6 +84,11 @@ pub(crate) fn parse(path: &Path, text: &str, lookup: template::Lookup<'_>) -> Re
             continue;
         }
         let value_start = consumed + key_scan.value_start;
+        let lookup = |name: &str| {
+            process(name)
+                .or_else(|| entries.get(name).map(|(value, _)| value.clone()))
+                .or_else(|| earlier(name))
+        };
         if key_scan.inherited {
             if let Some(value) = lookup(key) {
                 entries.insert(key.to_owned(), (value, line));
@@ -84,7 +97,6 @@ pub(crate) fn parse(path: &Path, text: &str, lookup: template::Lookup<'_>) -> Re
             continue;
         }
         let value_start = value_start + leading_space(&text[value_start..]);
-        let lookup_with_file = |name: &str| lookup(name).or_else(|| entries.get(name).map(|(value, _)| value.clone()));
         let (raw, expand, end) = match extract_value(&text[value_start..]) {
             Ok((raw, expand, len)) => (raw, expand, value_start + len),
             Err(reason) => {
@@ -95,7 +107,7 @@ pub(crate) fn parse(path: &Path, text: &str, lookup: template::Lookup<'_>) -> Re
         pos = end;
         let value = if expand {
             let mut unset = Vec::new();
-            match template::substitute(&raw, &lookup_with_file, &mut unset) {
+            match template::substitute(&raw, &lookup, &mut unset) {
                 Ok(value) => {
                     warnings.extend(unset.iter().map(|name| unset_warning(path, line, key, name)));
                     value
@@ -290,7 +302,7 @@ mod tests {
     }
 
     fn parse_str(text: &str) -> Result<Parsed, Vec<String>> {
-        parse(Path::new("/test.env"), text, &no_env)
+        parse(Path::new("/test.env"), text, &no_env, &no_env)
     }
 
     #[track_caller]
@@ -410,7 +422,7 @@ mod tests {
     fn expansion_prefers_process_env_then_earlier_keys() {
         let process = |name: &str| (name == "HOST").then(|| "process".to_owned());
         let text = "HOST=file\nPORT=5432\nURL=${HOST}:${PORT}\nRAW='${HOST}'\nESC=\"\\$HOST\"\n";
-        let parsed = parse(Path::new("/t.env"), text, &process).expect("valid");
+        let parsed = parse(Path::new("/t.env"), text, &process, &no_env).expect("valid");
         assert_eq!(parsed.file.get("URL"), Some("process:5432"));
         assert_eq!(parsed.file.get("RAW"), Some("${HOST}"));
         assert_eq!(parsed.file.get("ESC"), Some("$HOST"));
@@ -419,9 +431,24 @@ mod tests {
     #[test]
     fn inherited_keys_take_the_process_value() {
         let process = |name: &str| (name == "SET").then(|| "v".to_owned());
-        let parsed = parse(Path::new("/t.env"), "SET\nUNSET\nLAST", &process).expect("valid");
+        let parsed = parse(Path::new("/t.env"), "SET\nUNSET\nLAST", &process, &no_env).expect("valid");
         assert_eq!(parsed.file.get("SET"), Some("v"));
         assert_eq!(parsed.file.get("UNSET"), None);
+    }
+
+    #[test]
+    fn earlier_files_rank_after_process_env_and_this_file() {
+        let process = |name: &str| (name == "P").then(|| "process".to_owned());
+        let earlier = |name: &str| ["P", "A", "B", "C"].contains(&name).then(|| format!("earlier-{name}"));
+        let text = "A=here\nX=${P},${A},${B}\nC\nMISSING\n";
+        let parsed = parse(Path::new("/t.env"), text, &process, &earlier).expect("valid");
+        assert_eq!(parsed.file.get("X"), Some("process,here,earlier-B"));
+        assert_eq!(
+            parsed.file.get("C"),
+            Some("earlier-C"),
+            "a bare key inherits from earlier files"
+        );
+        assert_eq!(parsed.file.get("MISSING"), None);
     }
 
     #[test]

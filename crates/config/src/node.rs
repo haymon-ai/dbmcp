@@ -8,7 +8,7 @@ use std::fmt;
 
 use indexmap::IndexMap;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
-use serde_saphyr::{Location, Spanned};
+use serde_saphyr::{Location, Spanned, Tagged};
 
 /// A YAML value whose children carry their source location.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +29,8 @@ pub(crate) enum Node {
     Seq(Vec<Spanned<Node>>),
     /// A mapping with string keys, in file order, each with its key's location.
     Map(IndexMap<String, (Location, Spanned<Node>)>),
+    /// A node with a YAML tag outside the core schema; holds only the tag.
+    Unsupported(String),
 }
 
 impl Node {
@@ -42,6 +44,7 @@ impl Node {
             Self::Str(_) => "string",
             Self::Seq(_) => "sequence",
             Self::Map(_) => "mapping",
+            Self::Unsupported(_) => "tagged value",
         }
     }
 }
@@ -52,7 +55,10 @@ pub(crate) type SpannedNode = Spanned<Node>;
 /// Parses YAML `text` into a tree; an empty document yields [`Node::Null`].
 ///
 /// YAML 1.1 booleans (`yes`, `no`, `on`, `off`) stay strings, so an
-/// unquoted `strict_host_key_checking: no` keeps its enum meaning.
+/// unquoted `strict_host_key_checking: no` keeps its enum meaning. Core
+/// schema tags (`!!str`, `!!int`, …) are kept; a node with any other tag,
+/// YAML 1.1 types such as `!!binary` included, becomes [`Node::Unsupported`],
+/// wherever it sits. A tagged mapping key makes its entry unsupported.
 ///
 /// # Errors
 ///
@@ -65,7 +71,34 @@ pub(crate) fn parse(text: &str) -> Result<SpannedNode, serde_saphyr::Error> {
         strict_booleans: true,
         with_snippet: false,
     };
-    serde_saphyr::from_str_with_options(text, options)
+    serde_saphyr::from_str_with_options(text, options).map(untag)
+}
+
+/// The YAML 1.2 core schema tags, as `!!str`, `!!int`, … resolve.
+const CORE_TAGS: [&str; 7] = [
+    "tag:yaml.org,2002:str",
+    "tag:yaml.org,2002:int",
+    "tag:yaml.org,2002:float",
+    "tag:yaml.org,2002:bool",
+    "tag:yaml.org,2002:null",
+    "tag:yaml.org,2002:seq",
+    "tag:yaml.org,2002:map",
+];
+
+/// Returns `tag` when it lies outside the core schema.
+fn unsupported(tag: Option<String>) -> Option<String> {
+    tag.filter(|tag| !CORE_TAGS.contains(&tag.as_str()))
+}
+
+/// Replaces a node tagged outside the core schema with [`Node::Unsupported`].
+fn untag(node: Spanned<Tagged<Node>>) -> SpannedNode {
+    let Spanned {
+        value: Tagged(value, tag),
+        referenced,
+        defined,
+    } = node;
+    let value = unsupported(tag).map_or(value, Node::Unsupported);
+    Spanned::new(value, referenced, defined)
 }
 
 impl<'de> Deserialize<'de> for Node {
@@ -121,17 +154,23 @@ impl<'de> Visitor<'de> for NodeVisitor {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Node, A::Error> {
         let mut items = Vec::new();
-        while let Some(item) = seq.next_element::<SpannedNode>()? {
-            items.push(item);
+        while let Some(item) = seq.next_element::<Spanned<Tagged<Node>>>()? {
+            items.push(untag(item));
         }
         Ok(Node::Seq(items))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
         let mut entries = IndexMap::new();
-        while let Some(key) = map.next_key::<Spanned<String>>()? {
-            let value = map.next_value::<SpannedNode>()?;
-            entries.insert(key.value, (key.referenced, value));
+        while let Some(key) = map.next_key::<Spanned<Tagged<String>>>()? {
+            let value = untag(map.next_value::<Spanned<Tagged<Node>>>()?);
+            let Tagged(name, tag) = key.value;
+            // A tagged key makes its entry unsupported, reported at the key.
+            let value = match unsupported(tag) {
+                Some(tag) => Spanned::new(Node::Unsupported(tag), key.referenced, key.defined),
+                None => value,
+            };
+            entries.insert(name, (key.referenced, value));
         }
         Ok(Node::Map(entries))
     }
@@ -210,6 +249,52 @@ mod tests {
     fn empty_document_is_null() {
         assert_eq!(parse("").expect("empty is valid").value, Node::Null);
         assert_eq!(parse("  \n# only a comment\n").map(|n| n.value).ok(), Some(Node::Null));
+    }
+
+    #[test]
+    fn non_core_tags_become_unsupported_and_core_tags_are_kept() {
+        let root = parse("a: !reset []\nb: !!str 5\nc: !!int 7\nd: !x\n  k: v\ne: [1, !y 2]\n").expect("valid yaml");
+        let root = map(&root);
+        assert_eq!(root["a"].value, Node::Unsupported("!reset".into()));
+        assert_eq!((root["a"].referenced.line(), root["a"].referenced.column()), (1, 11));
+        assert_eq!(root["b"].value, Node::Str("5".into()));
+        assert_eq!(root["c"].value, Node::Int(7));
+        assert_eq!(root["d"].value, Node::Unsupported("!x".into()));
+        let Node::Seq(items) = &root["e"].value else {
+            panic!("expected sequence");
+        };
+        assert_eq!(items[1].value, Node::Unsupported("!y".into()));
+    }
+
+    #[test]
+    fn yaml_1_1_type_tags_are_unsupported() {
+        let root = parse("a: !!binary c2VjcmV0\nb: !!set {x, y}\n").expect("valid yaml");
+        let root = map(&root);
+        assert_eq!(root["a"].value, Node::Unsupported("tag:yaml.org,2002:binary".into()));
+        assert_eq!(root["b"].value, Node::Unsupported("tag:yaml.org,2002:set".into()));
+        // serde-saphyr rejects a timestamp before the tag reaches the tree.
+        assert!(parse("c: !!timestamp 2001-12-14\n").is_err());
+    }
+
+    #[test]
+    fn tagged_keys_make_their_entry_unsupported_at_the_key() {
+        let root = parse("!x database:\n  !y host: a\n  !!str port: 1\n").expect("valid yaml");
+        let root = map(&root);
+        let database = root["database"];
+        assert_eq!(database.value, Node::Unsupported("!x".into()));
+        assert_eq!((database.referenced.line(), database.referenced.column()), (1, 4));
+        let root = parse("database:\n  !y host: a\n  !!str port: 1\n").expect("valid yaml");
+        let database = map(&root)["database"];
+        assert_eq!(map(database)["host"].value, Node::Unsupported("!y".into()));
+        assert_eq!(map(database)["port"].value, Node::Int(1));
+    }
+
+    #[test]
+    fn tagged_root_is_unsupported() {
+        assert_eq!(
+            parse("!override\na: 1\n").expect("valid yaml").value,
+            Node::Unsupported("!override".into())
+        );
     }
 
     #[test]
