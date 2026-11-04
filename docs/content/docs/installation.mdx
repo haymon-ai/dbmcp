@@ -79,13 +79,7 @@ tar xzf dbmcp-aarch64-apple-darwin.tar.gz
 sudo mv dbmcp /usr/local/bin/
 ```
 
-**Intel**:
-
-```bash
-curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-apple-darwin.tar.gz
-tar xzf dbmcp-x86_64-apple-darwin.tar.gz
-sudo mv dbmcp /usr/local/bin/
-```
+**Intel**: not supported since 0.16.0. ONNX Runtime, used for NER-based PII detection, ships no x86_64 macOS build. Use the [Docker](#docker) image instead.
 
 ### Windows
 

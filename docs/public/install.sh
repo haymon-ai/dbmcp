@@ -183,7 +183,7 @@ main() {
         case "${PLATFORM_OS}-${PLATFORM_ARCH}" in
             linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
             linux-aarch64)  TARGET="aarch64-unknown-linux-gnu" ;;
-            darwin-x86_64)  TARGET="x86_64-apple-darwin" ;;
+            darwin-x86_64)  error "Intel Macs are not supported since dbmcp 0.16.0 (ONNX Runtime ships no x86_64 macOS build); use the Docker image instead" ;;
             darwin-aarch64) TARGET="aarch64-apple-darwin" ;;
             *)              error "no prebuilt binary for ${PLATFORM_OS}-${PLATFORM_ARCH}" ;;
         esac
