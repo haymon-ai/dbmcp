@@ -1,0 +1,51 @@
+{% import "macros" as macros %}
+{% if version.tag and from.tag -%}
+    ## [{{ version.tag }}]({{repository_url ~ "/compare/" ~ from.tag ~ ".." ~ version.tag}}) - {{ date | date(format="%Y-%m-%d") }}
+{% elif version.tag and from.id -%}
+    ## [{{ version.tag }}]({{repository_url ~ "/compare/" ~ from.id ~ ".." ~ version.tag}}) - {{ date | date(format="%Y-%m-%d") }}
+{% else -%}
+    {% set from_shorthand = from.id | truncate(length=7, end="") -%}
+    {% set to_shorthand = version.id | truncate(length=7, end="") -%}
+
+    ## Unreleased ([{{ from_shorthand ~ ".." ~ to_shorthand }}]({{repository_url ~ "/compare/" ~ from_shorthand ~ ".." ~ to_shorthand}}))
+{% endif -%}
+
+{% set breaking = commits | filter(attribute="breaking_change", value=true) -%}
+{% if breaking | length > 0 %}
+#### ⚠ BREAKING CHANGES
+{% for commit in breaking -%}
+{% set_global notes = [] -%}
+{% for footer in commit.footers -%}
+{% if footer.footer and footer.footer.token is matching("^BREAKING[ -]CHANGE$") -%}
+{% set note = footer.footer.content | split(pat="
+
+") | first | replace(from="
+", to=" ") -%}
+{% set_global notes = notes | concat(with=note) -%}
+{% endif -%}
+{% endfor -%}
+{% set shorthand = commit.id | truncate(length=7, end="") -%}
+{% set link = "([" ~ shorthand ~ "](" ~ repository_url ~ "/commit/" ~ commit.id ~ "))" -%}
+{% if notes | length > 0 -%}
+{% for note in notes -%}
+- {% if commit.scope %}(**{{ commit.scope }}**) {% endif %}{{ note }} - {{ link }}
+{% endfor -%}
+{% else -%}
+- {% if commit.scope %}(**{{ commit.scope }}**) {% endif %}{{ commit.summary }} - {{ link }}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+
+{% for value in commits | group_by_type-%}
+
+#### {{ value.0 | upper_first }}
+{% for scope, scoped_commits in value.1 | group_by(attribute="scope") -%}
+{% for commit in scoped_commits | sort(attribute="scope") -%}
+{{macros::remote(commit=commit)}}
+{% endfor -%}
+{% endfor -%}
+
+{% for commit in value.1 | unscoped -%}
+{{macros::remote(commit=commit)}}
+{% endfor -%}
+{% endfor -%}

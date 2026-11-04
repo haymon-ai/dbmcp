@@ -32,7 +32,7 @@ cog verify --file $1
 # Changelog configuration
 [changelog]
 path = "CHANGELOG.md"
-template = "remote"
+template = ".cog/changelog.tera"
 remote = "github.com"
 owner = "haymon-ai"
 repository = "dbmcp"
