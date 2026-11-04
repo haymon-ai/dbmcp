@@ -36,7 +36,7 @@ The **Type** column in the tables below determines how a value is written:
 | boolean | `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False` | `true` / `false` (or a quoted string from the env set) |
 | enum | One of the listed values, lowercase kebab-case, case-sensitive | Same |
 | list | Comma-separated; items are trimmed, empty items are rejected | YAML sequence (`[a, b]` or one `- item` per line), or a comma-separated string as in the env var; replaces the default wholesale |
-| path | Relative paths resolve against the working directory | Relative paths resolve against the YAML file's directory; leading `~` expands |
+| path | Process env: relative paths resolve against the working directory. Env file: against the env file's directory; leading `~` expands | Relative paths resolve against the YAML file's directory; leading `~` expands |
 
 `yes`/`no`/`on`/`off` are **not** booleans and are rejected. A default of `—` or *unset* means the setting is absent until you set it.
 
@@ -93,7 +93,7 @@ Default values for `database.port` and `database.user` depend on the selected ba
 | PostgreSQL | `5432` | `postgres` |
 | SQLite | N/A | N/A |
 
-SQLite does not use host, port, or user — only `database.name` (the file path) is required. In the YAML file, a relative SQLite path resolves against the file's directory; `:memory:` is passed through unchanged.
+SQLite does not use host, port, or user — only `database.name` (the file path) is required. In a YAML or env file, a relative SQLite path resolves against that file's directory; `:memory:` is passed through unchanged.
 
 ## SSL / TLS
 
@@ -251,7 +251,7 @@ Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bas
 | `ssh.keepalive_interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | seconds | `30` | SSH keepalive interval (`0` disables) |
 | `ssh.local_port` | `DBMCP_SSH_LOCAL_PORT` | integer | ephemeral | Local tunnel port |
 
-`ssh.user` and one of `ssh.password` / `ssh.key` are required with `ssh.host`. Setting any other `ssh` setting without `ssh.host` is a startup error, as is `ssh.key_passphrase` without `ssh.key`. A leading `~` in `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` expands to your home directory (in the YAML file, every path setting expands `~`); when no home directory can be determined, `ssh.known_hosts` must be set explicitly (unless the host-key policy is `no`). In YAML, an unquoted `strict_host_key_checking: no` is read as the string `no`, not a boolean, so it works as written.
+`ssh.user` and one of `ssh.password` / `ssh.key` are required with `ssh.host`. Setting any other `ssh` setting without `ssh.host` is a startup error, as is `ssh.key_passphrase` without `ssh.key`. A leading `~` in `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` expands to your home directory (in a YAML or env file, every path setting expands `~`); when no home directory can be determined, `ssh.known_hosts` must be set explicitly (unless the host-key policy is `no`). In YAML, an unquoted `strict_host_key_checking: no` is read as the string `no`, not a boolean, so it works as written.
 
 **Docker:** inside the container `~` is the image's home directory, not yours. Mount the private key and a `known_hosts` file into the container (readable by the container user) and point `DBMCP_SSH_KEY` / `DBMCP_SSH_KNOWN_HOSTS` at the mounted paths. Avoid `accept-new` with `--rm` containers: every new container starts with an empty `known_hosts` and trusts the first key it sees on each launch.
 

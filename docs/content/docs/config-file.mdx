@@ -18,14 +18,14 @@ database:
   name: myapp
 ```
 
-Point the server at it with `--config-file`. In an MCP client config such as `.mcp.json`, use an **absolute path**:
+Point the server at it with `--config-file`. In an MCP client config such as `.mcp.json`, use an **absolute path** or a path starting with `~/`:
 
 ```json
 {
   "mcpServers": {
     "dbmcp": {
       "command": "dbmcp",
-      "args": ["--config-file", "/home/me/projects/myapp/dbmcp.yaml"],
+      "args": ["--config-file", "~/projects/myapp/dbmcp.yaml"],
       "env": {
         "DB_PASSWORD": "secret"
       }
@@ -35,7 +35,7 @@ Point the server at it with `--config-file`. In an MCP client config such as `.m
 ```
 
 <Callout type="warn">
-Relative `--config-file` and `--env-file` paths resolve against the working directory of the `dbmcp` process. MCP clients choose that directory themselves and it is often not your project root, so always pass absolute paths from client configs.
+Relative `--config-file` and `--env-file` paths resolve against the working directory of the `dbmcp` process. MCP clients choose that directory themselves and it is often not your project root (Claude Desktop, for one, may start servers in `/`), so pass absolute or `~/` paths from client configs. Paths inside an env or config file resolve next to that file, so a project env file can name everything else relatively.
 </Callout>
 
 ## Flags
@@ -53,8 +53,8 @@ Both flags may be repeated, and both env vars take a comma-separated list (items
 
 Paths are resolved as follows:
 
-- Relative paths resolve against the current working directory, including a `DBMCP_CONFIG_FILE` read from the env file.
-- `--env-file` / `DBMCP_ENV_FILE` expand a leading `~` to your home directory. `--config-file` / `DBMCP_CONFIG_FILE` do not (your shell may still expand an unquoted `~` before `dbmcp` sees it).
+- A leading `~/` (or `~\` on Windows) expands to your home directory, for both flags and both env vars. A bare `~` or `~user` stays literal.
+- Relative paths from a flag or a process env var resolve against the current working directory. A `DBMCP_CONFIG_FILE` read from an env file resolves against that env file's directory.
 - A named file that is missing, is a directory, or cannot be read is a hard error. An empty file is valid and sets nothing.
 
 <Callout title="No auto-discovery">
@@ -263,9 +263,10 @@ Path settings resolve differently depending on where they are set:
 | Set in | Relative path resolves against | Leading `~` |
 |--------|-------------------------------|-------------|
 | Config file | The directory of the config file that sets it | Expanded |
-| `DBMCP_*` variable or env file | The working directory | Expanded only for `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` |
+| Env file | The directory of the env file that sets it | Expanded |
+| `DBMCP_*` process variable | The working directory | Expanded only for `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` |
 
-This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. A SQLite name of `:memory:` is passed through unchanged. Keeping certificates, keys, and SQLite files next to the config file and using relative paths makes the whole directory relocatable.
+This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. A SQLite name of `:memory:` is passed through unchanged. Keeping certificates, keys, and SQLite files next to the config or env file and using relative paths makes the whole directory relocatable.
 
 ## Running in Docker
 

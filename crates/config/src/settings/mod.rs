@@ -11,8 +11,8 @@
 //! config file, each non-empty entry of every env file, and each non-empty
 //! process env var, even values that lose to a higher source, are
 //! overwritten by a later file, or sit in a section that is not active.
-//! Path values come out resolved: YAML paths against their own config
-//! file's directory. Every failure is an [`InputError`]; when there are
+//! Path values come out resolved: config and env file paths against their
+//! own file's directory. Every failure is an [`InputError`]; when there are
 //! none, [`Settings`] holds each setting's winning value and its
 //! [`Source`]: the env layers' setting view (see [`EnvLayers::candidates`])
 //! > the last config file setting it.
@@ -94,21 +94,18 @@ impl Settings {
 /// Returns the first file list, read, parse, or interpolation failure,
 /// else [`LoadErrorKind::Settings`] with every [`InputError`].
 pub(crate) fn read(options: &LoadOptions, warnings: &mut Vec<String>) -> Result<Settings, LoadErrorKind> {
-    let env_list = layers::non_empty(&options.environment, ENV_FILE_VAR).map(|list| (list, ENV_FILE_VAR.to_owned()));
+    let working_dir = options.working_dir.as_path();
+    let env_list =
+        layers::non_empty(&options.environment, ENV_FILE_VAR).map(|list| (list, ENV_FILE_VAR.to_owned(), working_dir));
     let home = options.home.as_deref();
-    let env_files = pick::files(FileKind::Env, &options.env_files, env_list, &options.working_dir, home)?;
+    let env_files = pick::files(FileKind::Env, &options.env_files, env_list, working_dir, home)?;
     let layers = EnvLayers::read(&options.environment, env_files, warnings)?;
     let config_list = layers
         .candidates(CONFIG_FILE_VAR)
-        .find(|(_, _, eligible)| *eligible)
-        .map(|(list, source, _)| (list, source.to_string()));
-    let config_files = pick::files(
-        FileKind::Config,
-        &options.config_files,
-        config_list,
-        &options.working_dir,
-        home,
-    )?;
+        .find(|(.., eligible)| *eligible)
+        // A list from an env file resolves against that file's directory.
+        .map(|(list, dir, source, _)| (list, source.to_string(), dir.unwrap_or(working_dir)));
+    let config_files = pick::files(FileKind::Config, &options.config_files, config_list, working_dir, home)?;
     let files = ConfigFiles::read(config_files, &|name| layers.var(name), warnings)?;
     check(&files, &layers, home).map_err(LoadErrorKind::Settings)
 }
@@ -129,7 +126,10 @@ fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Re
         // Each candidate is checked; only an eligible one may win.
         let candidates = layers
             .candidates(env)
-            .map(|(text, source, eligible)| (Raw::Text(text), source, eligible))
+            .map(|(text, dir, source, eligible)| {
+                let raw = dir.map_or(Raw::Text(text), |dir| Raw::EnvFile { text, dir });
+                (raw, source, eligible)
+            })
             // A later config file wins where it sets a value; unset ones let earlier files through.
             .chain(files.candidates(path).map(|(raw, source)| (raw, source, true)));
         for (raw, source, eligible) in candidates {

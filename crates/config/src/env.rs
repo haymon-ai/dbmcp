@@ -60,20 +60,27 @@ pub enum Kind {
     },
     /// A filesystem path.
     ///
-    /// Values from the config file expand `~` and resolve against its
-    /// directory. Values from env vars stay as given unless `home_from_env`
-    /// is set, in which case a leading `~` expands too.
+    /// Values from a config or env file expand `~` and resolve against that
+    /// file's directory. Process env values stay as given unless
+    /// `home_from_env` is set, in which case a leading `~` expands too.
     Path {
-        /// Expand `~` in env and env-file values as well.
+        /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
 }
 
-/// A raw setting value: env or env-file text, or a YAML node.
+/// A raw setting value: process env or env-file text, or a YAML node.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Raw<'a> {
-    /// Text from the process env or env file.
+    /// Text from the process env.
     Text(&'a str),
+    /// Text from an env file.
+    EnvFile {
+        /// The value.
+        text: &'a str,
+        /// The env file's directory, which relative paths resolve against.
+        dir: &'a Path,
+    },
     /// A YAML value; strings are cast like env text.
     Node {
         /// The value.
@@ -115,12 +122,12 @@ impl Kind {
     pub(crate) fn check(self, raw: Raw<'_>, home: Option<&Path>) -> Result<Option<Value>, String> {
         let node = match raw {
             Raw::Node { node, .. } => Some(node),
-            Raw::Text(_) => None,
+            Raw::Text(_) | Raw::EnvFile { .. } => None,
         };
         let text = match (raw, node) {
             (_, Some(Node::Null)) => return Ok(None),
             (_, Some(Node::Unsupported(tag))) => return Err(unsupported_tag(tag)),
-            (Raw::Text(text), _) => Some(text),
+            (Raw::Text(text) | Raw::EnvFile { text, .. }, _) => Some(text),
             (_, Some(Node::Str(text))) => Some(text.as_str()),
             _ => None,
         };
@@ -138,7 +145,7 @@ impl Kind {
                 Value::Path(match raw {
                     // An empty value stays empty so the section's checks still see it.
                     _ if path.as_os_str().is_empty() => PathBuf::new(),
-                    Raw::Node { dir, .. } => resolve_in_file(path, dir, home),
+                    Raw::Node { dir, .. } | Raw::EnvFile { dir, .. } => resolve_in_file(path, dir, home),
                     Raw::Text(_) if home_from_env => expand_tilde(path, home),
                     Raw::Text(_) => path.to_path_buf(),
                 })
@@ -232,7 +239,7 @@ fn parse_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// Resolves a path found in the config file in `dir`.
+/// Resolves a path named in a file, or by a file list, against `dir`.
 ///
 /// Expands a leading `~` against `home`, then joins a relative result to `dir`.
 #[must_use]
@@ -290,10 +297,10 @@ const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len(
 /// A list of free-form strings.
 const LIST: Kind = Kind::List { choices: None };
 
-/// A path whose env values stay as given.
+/// A path whose process env values stay as given.
 const FILE_PATH: Kind = Kind::Path { home_from_env: false };
 
-/// A path whose env values also expand `~`.
+/// A path whose process env values also expand `~`.
 const HOME_PATH: Kind = Kind::Path { home_from_env: true };
 
 const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
@@ -507,6 +514,10 @@ mod tests {
         kind.check(Raw::Text(text), Some(&home()))
     }
 
+    fn env_file(kind: Kind, text: &str) -> Result<Option<Value>, String> {
+        kind.check(Raw::EnvFile { text, dir: &dir() }, Some(&home()))
+    }
+
     fn yaml_with(kind: Kind, yaml: &str, home: Option<&Path>) -> Result<Option<Value>, String> {
         let root = crate::node::parse(&format!("x: {yaml}\n")).expect("valid yaml");
         let Node::Map(entries) = root.value else {
@@ -660,6 +671,10 @@ mod tests {
             (text(FILE_PATH, "~/ca.pem"), PathBuf::from("~/ca.pem")),
             (text(HOME_PATH, "~/.ssh/id"), home().join(".ssh").join("id")),
             (text(HOME_PATH, ""), PathBuf::new()),
+            (env_file(FILE_PATH, "certs/ca.pem"), dir().join("certs/ca.pem")),
+            (env_file(FILE_PATH, "~/ca.pem"), home().join("ca.pem")),
+            (env_file(FILE_PATH, &absolute.display().to_string()), absolute),
+            (env_file(FILE_PATH, ""), PathBuf::new()),
         ];
         for (i, (result, expected)) in cases.into_iter().enumerate() {
             assert_eq!(path(result), expected, "case {i}");
