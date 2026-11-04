@@ -11,8 +11,9 @@
 //!    non-empty > the last config file setting it. There is no merged YAML
 //!    tree.
 //! 2. Build the [`Config`] from the winners and defaults, applying
-//!    activation rules and resolving a file-given sqlite database name
-//!    against its file's directory, then run [`Config::validate`] on it.
+//!    activation rules and resolving a sqlite database name from a config
+//!    or env file against that file's directory, then run
+//!    [`Config::validate`] on it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -249,7 +250,7 @@ impl Resolver<'_> {
         let name = self
             .string(env::DB_NAME)
             .map(|name| match self.settings.source(env::DB_NAME) {
-                Some(Source::File { path, .. })
+                Some(Source::File { path, .. } | Source::EnvFile { path, .. })
                     if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
                     let dir = path.parent().unwrap_or(Path::new(""));
@@ -535,8 +536,8 @@ mod tests {
     }
 
     #[test]
-    fn env_file_may_name_the_config_file() {
-        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG_FILE=conf/dbmcp.yaml\n");
+    fn env_file_may_name_the_config_file_relative_to_itself() {
+        let fixture = Fixture::new().env_file("conf/.env", "DBMCP_CONFIG_FILE=dbmcp.yaml\n");
         fixture.write("conf/dbmcp.yaml", "transport: http\n");
         assert_eq!(fixture.ok().config.transport, Transport::Http);
     }
@@ -1036,6 +1037,31 @@ mod tests {
             loaded.config.pii.expect("pii").ner_model,
             Some(fixture.dir.path().join("home").join("models"))
         );
+    }
+
+    #[test]
+    fn env_file_paths_resolve_against_the_env_file_directory() {
+        let fixture = Fixture::new()
+            .config("conf/dbmcp.yaml", "database:\n  backend: sqlite\n")
+            .env_file("envs/.env", "DBMCP_DB_NAME=data/app.db\nDBMCP_DB_SSL_CA=certs/ca.pem\n");
+        let loaded = fixture.ok();
+        let envs = fixture.dir.path().join("envs");
+        assert_eq!(
+            loaded.config.database.name,
+            Some(envs.join("data/app.db").display().to_string())
+        );
+        assert_eq!(
+            loaded.config.database.ssl_ca,
+            Some(envs.join("certs/ca.pem").display().to_string())
+        );
+    }
+
+    #[test]
+    fn config_file_flags_expand_tilde() {
+        let mut fixture = Fixture::new();
+        fixture.write("home/dbmcp.yaml", "database:\n  host: from-home\n");
+        fixture.options.config_files.push(Path::new("~").join("dbmcp.yaml"));
+        assert_eq!(fixture.ok().config.database.host, "from-home");
     }
 
     #[test]
