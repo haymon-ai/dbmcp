@@ -41,6 +41,12 @@ authors = [{ username = "athopen", signature = "Andreas Penz" }]
 
 # Commit type visibility in the changelog
 [commit_types]
+feat = { changelog_title = "🚀 Features" }
+fix = { changelog_title = "🐛 Bug Fixes" }
+perf = { changelog_title = "⚡ Performance" }
+refactor = { changelog_title = "🚜 Refactoring" }
+docs = { changelog_title = "📚 Documentation" }
+revert = { changelog_title = "⏪ Reverts" }
 chore = { omit_from_changelog = true }
 style = { omit_from_changelog = true }
 ci = { omit_from_changelog = true }
