@@ -2,6 +2,36 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.16.0](https://github.com/haymon-ai/dbmcp/compare/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51..v0.16.0) - 2026-11-04
+
+#### ⚠ BREAKING CHANGES
+- (**release**) no prebuilt binary for Intel macOS (x86_64-apple-darwin) is published anymore, and install.sh rejects Intel Macs. Use the Docker image instead. - ([850448f](https://github.com/haymon-ai/dbmcp/commit/850448f487d7b684d7ae732c1a5c6af829c984f9))
+- (**config**) relative paths in env files no longer resolve against the working directory. - ([d95d067](https://github.com/haymon-ai/dbmcp/commit/d95d067ac8a0dd890bb91003aefebeff4db72c2a))
+- (**config**) --config, --env and DBMCP_CONFIG are replaced by --config-file, --env-file and DBMCP_CONFIG_FILE. The public LoadOptions.config field is renamed config_files. - ([76de600](https://github.com/haymon-ai/dbmcp/commit/76de600dcba4c58adf3201f457d70c081c390fce))
+- (**config**) every dbmcp-config module is private. ConfigError, Diagnostic, Source, the env setting table, expand_tilde, the section validate() methods, and LoadError::diagnostics() are no longer public. ssh::home_dir moves to the crate root as dbmcp_config::home_dir. - ([5d09a37](https://github.com/haymon-ai/dbmcp/commit/5d09a37ed3436c34a547c8946294d17ae63cd5e5))
+- (**security**) in read-only mode, explainQuery on MySQL and MariaDB rejects plain EXPLAIN of INSERT, UPDATE and DELETE statements. - ([14fe562](https://github.com/haymon-ai/dbmcp/commit/14fe5627d0e2f50094013fa1f2062983a194a523))
+- (**cli**) every per-setting CLI flag is removed, including --transport and --log-level; passing one is now a usage error. Use the matching DBMCP_* env var, the --env file, or the --config YAML file instead (see the migration table in the configuration docs). Boolean values now accept only 1/0/t/f/true/false (and TRUE/True/FALSE/False); yes/no/on/off are rejected. - ([dbf716d](https://github.com/haymon-ai/dbmcp/commit/dbf716dfb93568b580049a1e6034dd9ddbaf46d6))
+- (**cli**) dbmcp_config::Secret and the secret module are removed; config fields holding credentials are Option<secrecy::SecretString>. - ([dbf716d](https://github.com/haymon-ai/dbmcp/commit/dbf716dfb93568b580049a1e6034dd9ddbaf46d6))
+- (**cli**) the dbmcp-config enums (Transport, LogLevel, DatabaseBackend, PiiOperator, PiiCategory, StrictHostKeyChecking) no longer implement clap::ValueEnum. - ([dbf716d](https://github.com/haymon-ai/dbmcp/commit/dbf716dfb93568b580049a1e6034dd9ddbaf46d6))
+- (**cli**) the stdio, http and version subcommands are removed. `dbmcp stdio ...` becomes `dbmcp ...`, `dbmcp http ...` becomes `dbmcp --transport http ...`, `dbmcp version` becomes `dbmcp --version`. MCP client configs drop `"args": ["stdio"]`. The Docker image no longer sets CMD; pass `--transport http` for HTTP. - ([fc178d0](https://github.com/haymon-ai/dbmcp/commit/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51))
+- (**cli**) every environment variable gains a DBMCP_ prefix (DB_HOST -> DBMCP_DB_HOST, PII_ENABLE -> DBMCP_PII_ENABLE, ...). Old names are ignored without warning: an unrenamed PII_ENABLE silently disables PII redaction, an unrenamed SSH_HOST silently connects without the tunnel, an unrenamed DB_READ_ONLY falls back to read-only. Rename .env files with: - ([fc178d0](https://github.com/haymon-ai/dbmcp/commit/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51))
+- (**cli**) HTTP options are ignored under stdio, but an unparsable value (e.g. DBMCP_HTTP_PORT=abc) now fails startup in every transport. - ([fc178d0](https://github.com/haymon-ai/dbmcp/commit/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51))
+#### 🚀 Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**cli**) load settings from env, env file, and YAML config (#264) - ([dbf716d](https://github.com/haymon-ai/dbmcp/commit/dbf716dfb93568b580049a1e6034dd9ddbaf46d6)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**cli**) replace transport subcommands with --transport flag and DBMCP_ env prefix (#263) - ([fc178d0](https://github.com/haymon-ai/dbmcp/commit/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**config**) resolve env-file paths against their file and expand ~ in config paths (#271) - ([d95d067](https://github.com/haymon-ai/dbmcp/commit/d95d067ac8a0dd890bb91003aefebeff4db72c2a)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**config**) load multiple config and env files (#270) - ([76de600](https://github.com/haymon-ai/dbmcp/commit/76de600dcba4c58adf3201f457d70c081c390fce)) - [@athopen](https://github.com/athopen)
+- (**config**) validate dbmcp.yaml against an embedded JSON Schema (#267) - ([8c64651](https://github.com/haymon-ai/dbmcp/commit/8c6465188609eeb4d6b0f4f5bb362b15334072ea)) - [@athopen](https://github.com/athopen)
+#### 🐛 Bug Fixes
+- (**deps**) pin ort to 2.0.0-rc.10 to fix macOS release build - ([4af272c](https://github.com/haymon-ai/dbmcp/commit/4af272cc0df0dd55ec03693d75b2c35be4c34f6e)) - athopen
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**release**) drop Intel macOS release binary - ([850448f](https://github.com/haymon-ai/dbmcp/commit/850448f487d7b684d7ae732c1a5c6af829c984f9)) - athopen
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**security**) enforce read-only mode with read-only transactions - ([14fe562](https://github.com/haymon-ai/dbmcp/commit/14fe5627d0e2f50094013fa1f2062983a194a523)) - athopen
+#### 🚜 Refactoring
+- (**cli**) own tunnel and server lifetime in server::serve (#265) - ([08c8461](https://github.com/haymon-ai/dbmcp/commit/08c846174feb58de2e621c2a184e2a9e87db0f43)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**config**) validate through Config and shrink public interface (#266) - ([5d09a37](https://github.com/haymon-ai/dbmcp/commit/5d09a37ed3436c34a547c8946294d17ae63cd5e5)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.15.2](https://github.com/haymon-ai/dbmcp/compare/e17717a3059b4ec33ecf78e7abe0d36938ad0785..v0.15.2) - 2026-10-26
 #### Bug Fixes
 - (**deps**) bump crypto-bigint and ctutils for RUSTSEC advisories (#262) - ([e17717a](https://github.com/haymon-ai/dbmcp/commit/e17717a3059b4ec33ecf78e7abe0d36938ad0785)) - [@athopen](https://github.com/athopen)
