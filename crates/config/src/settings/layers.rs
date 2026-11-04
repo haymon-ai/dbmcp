@@ -72,11 +72,12 @@ impl<'a> EnvLayers<'a> {
     /// Returns every non-empty value of `name` in the setting view, highest first.
     ///
     /// Yields the process value, then each env file's value from the last
-    /// file to the first. `eligible` marks the values that may win: the
+    /// file to the first, with that file's directory, which relative paths
+    /// resolve against. `eligible` marks the values that may win: the
     /// process value, and the last env file's value unless that file sets
     /// `name` empty. The others lose but must still be checked.
-    pub(super) fn candidates(&self, name: &'static str) -> impl Iterator<Item = (&str, Source, bool)> {
-        let process = non_empty(self.process, name).map(|text| (text, Source::Env(name), true));
+    pub(super) fn candidates(&self, name: &'static str) -> impl Iterator<Item = (&str, Option<&Path>, Source, bool)> {
+        let process = non_empty(self.process, name).map(|text| (text, None, Source::Env(name), true));
         let last = self.files.iter().rposition(|file| file.get(name).is_some());
         let files = self.files.iter().enumerate().rev().filter_map(move |(i, file)| {
             let (text, line) = file.get_with_line(name).filter(|(text, _)| !text.is_empty())?;
@@ -85,7 +86,8 @@ impl<'a> EnvLayers<'a> {
                 path: file.path().to_path_buf(),
                 line,
             };
-            Some((text, source, Some(i) == last))
+            let dir = file.path().parent().unwrap_or(Path::new(""));
+            Some((text, Some(dir), source, Some(i) == last))
         });
         process.into_iter().chain(files)
     }
@@ -181,9 +183,10 @@ mod tests {
         assert_eq!(
             candidates,
             [
-                ("process", Source::Env("DBMCP_X"), true),
+                ("process", None, Source::Env("DBMCP_X"), true),
                 (
                     "b",
+                    Some(Path::new("dir")),
                     Source::EnvFile {
                         name: "DBMCP_X",
                         path: path("b.env"),
@@ -193,6 +196,7 @@ mod tests {
                 ),
                 (
                     "a",
+                    Some(Path::new("dir")),
                     Source::EnvFile {
                         name: "DBMCP_X",
                         path: path("a.env"),
@@ -213,7 +217,7 @@ mod tests {
         let layers = fixture.layers();
         let candidates: Vec<_> = layers
             .candidates("DBMCP_X")
-            .map(|(text, _, eligible)| (text, eligible))
+            .map(|(text, _, _, eligible)| (text, eligible))
             .collect();
         assert_eq!(candidates, [("a", false)], "checked, but cannot win");
     }

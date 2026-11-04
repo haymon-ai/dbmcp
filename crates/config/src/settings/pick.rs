@@ -3,8 +3,9 @@
 //! [`files`] takes the flag values, else the comma list, resolves each
 //! path, and reads the files one at a time as the caller asks, so a
 //! reader that stops at a broken file never reads the files after it.
-//! Relative paths resolve against the working directory; only env file
-//! paths expand a leading `~`.
+//! Each path expands a leading `~`; relative flag paths then resolve
+//! against the working directory, relative list entries against the
+//! list's own base directory.
 
 use std::path::{Path, PathBuf};
 
@@ -16,9 +17,9 @@ use crate::loader::LoadErrorKind;
 /// The kind of file a pick names.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum FileKind {
-    /// Env files: `--env-file` or `DBMCP_ENV_FILE`; `~` expands.
+    /// Env files: `--env-file` or `DBMCP_ENV_FILE`.
     Env,
-    /// YAML config files: `--config-file` or `DBMCP_CONFIG_FILE`; `~` stays literal.
+    /// YAML config files: `--config-file` or `DBMCP_CONFIG_FILE`.
     Config,
 }
 
@@ -42,10 +43,11 @@ impl FileKind {
 
 /// Picks the `kind` files named by `flags`, else by the comma `list`.
 ///
-/// A flag given at least once replaces the list; `list` pairs the comma
-/// list with where it came from, and a blank list names no files. Yields
-/// each file's resolved path and text in order, reading each file only
-/// when asked. A file listed twice is read once, at its last place, which
+/// A flag given at least once replaces the list; `list` holds the comma
+/// list, where it came from, and the directory its relative entries
+/// resolve against, and a blank list names no files. Flag paths resolve
+/// against `working_dir`. Yields each file's resolved path and text in
+/// order, reading each file only when asked. A file listed twice is read once, at its last place, which
 /// keeps its precedence. No list yields nothing.
 ///
 /// # Errors
@@ -56,30 +58,31 @@ impl FileKind {
 pub(super) fn files(
     kind: FileKind,
     flags: &[PathBuf],
-    list: Option<(&str, String)>,
+    list: Option<(&str, String, &Path)>,
     working_dir: &Path,
     home: Option<&Path>,
 ) -> Result<impl Iterator<Item = Result<(PathBuf, String), LoadErrorKind>> + use<>, LoadErrorKind> {
-    let (raw, origin): (Vec<&Path>, String) = if !flags.is_empty() {
+    let (raw, origin, base): (Vec<&Path>, String, &Path) = if !flags.is_empty() {
         if flags.iter().any(|path| path.as_os_str().is_empty()) {
             return Err(LoadErrorKind::List {
                 origin: kind.flag().to_owned(),
                 problem: "empty path",
             });
         }
-        (flags.iter().map(PathBuf::as_path).collect(), kind.flag().to_owned())
-    } else if let Some((list, origin)) = list.filter(|(list, _)| !list.trim().is_empty()) {
-        (split_list(list, &origin)?, origin)
+        (
+            flags.iter().map(PathBuf::as_path).collect(),
+            kind.flag().to_owned(),
+            working_dir,
+        )
+    } else if let Some((list, origin, base)) = list.filter(|(list, ..)| !list.trim().is_empty()) {
+        (split_list(list, &origin)?, origin, base)
     } else {
-        (Vec::new(), String::new())
+        (Vec::new(), String::new(), working_dir)
     };
     let paths: IndexSet<PathBuf> = raw
         .into_iter()
         .rev()
-        .map(|raw| match kind {
-            FileKind::Env => working_dir.join(env::expand_tilde(raw, home)),
-            FileKind::Config => working_dir.join(raw),
-        })
+        .map(|raw| env::resolve_in_file(raw, base, home))
         .collect();
     Ok(paths.into_iter().rev().map(move |path| {
         let text = read_file(&path, kind.noun(), &origin)?;
@@ -132,7 +135,7 @@ mod tests {
     /// Returns the picked paths, or the list error as text.
     fn paths(kind: FileKind, flags: &[&str], list: Option<&str>) -> Result<Vec<PathBuf>, String> {
         let flags: Vec<PathBuf> = flags.iter().map(PathBuf::from).collect();
-        let list = list.map(|list| (list, "LIST".to_owned()));
+        let list = list.map(|list| (list, "LIST".to_owned(), Path::new("base")));
         let files =
             files(kind, &flags, list, Path::new("work"), Some(Path::new("home"))).map_err(|error| error.to_string())?;
         // Nothing exists on disk, so each item is a read error naming its path.
@@ -152,7 +155,7 @@ mod tests {
         );
         assert_eq!(
             paths(FileKind::Config, &[], Some(" b.yaml , c.yaml")),
-            Ok(vec![Path::new("work").join("b.yaml"), Path::new("work").join("c.yaml")])
+            Ok(vec![Path::new("base").join("b.yaml"), Path::new("base").join("c.yaml")])
         );
         assert_eq!(paths(FileKind::Config, &[], None), Ok(Vec::new()));
         assert_eq!(paths(FileKind::Config, &[], Some(" ")), Ok(Vec::new()));
@@ -182,17 +185,19 @@ mod tests {
     }
 
     #[test]
-    fn only_env_file_paths_expand_tilde() {
+    fn env_and_config_file_paths_expand_tilde() {
         let tilde = Path::new("~").join("x");
         let tilde = tilde.to_str().expect("utf-8");
-        assert_eq!(
-            paths(FileKind::Env, &[tilde], None),
-            Ok(vec![Path::new("work").join("home").join("x")])
-        );
-        assert_eq!(
-            paths(FileKind::Config, &[tilde], None),
-            Ok(vec![Path::new("work").join(tilde)])
-        );
+        for kind in [FileKind::Env, FileKind::Config] {
+            assert_eq!(
+                paths(kind, &[tilde], None),
+                Ok(vec![Path::new("work").join("home").join("x")])
+            );
+            assert_eq!(
+                paths(kind, &[], Some(tilde)),
+                Ok(vec![Path::new("base").join("home").join("x")])
+            );
+        }
     }
 
     #[test]
@@ -200,7 +205,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("a.env"), "A=1\n").expect("write");
         fs::create_dir(dir.path().join("sub")).expect("mkdir");
-        let list = Some(("a.env,missing.env,sub", "DBMCP_ENV_FILE".to_owned()));
+        let list = Some(("a.env,missing.env,sub", "DBMCP_ENV_FILE".to_owned(), dir.path()));
         let mut files = files(FileKind::Env, &[], list, dir.path(), None).expect("valid list");
         let (path, text) = files.next().expect("first").expect("readable");
         assert_eq!((path, text.as_str()), (dir.path().join("a.env"), "A=1\n"));

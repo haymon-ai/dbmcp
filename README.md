@@ -148,7 +148,7 @@ database:
 DB_PASSWORD=secret dbmcp --config-file /path/to/dbmcp.yaml
 ```
 
-From an MCP client, pass `"args": ["--config-file", "/absolute/path/to/dbmcp.yaml"]`; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/docs/config-file).
+From an MCP client, pass `"args": ["--config-file", "~/path/to/dbmcp.yaml"]` or an absolute path; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/docs/config-file).
 
 ## Configuration ⚙️
 

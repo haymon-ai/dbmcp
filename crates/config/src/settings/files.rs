@@ -207,7 +207,7 @@ mod tests {
             .candidates("database.host")
             .map(|(raw, _)| match raw {
                 Raw::Node { node, .. } => node.clone(),
-                Raw::Text(_) => panic!("config candidates are nodes"),
+                Raw::Text(_) | Raw::EnvFile { .. } => panic!("config candidates are nodes"),
             })
             .collect();
         assert_eq!(candidates, [Node::Null, Node::Str("a".into())]);
