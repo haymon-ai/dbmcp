@@ -127,9 +127,48 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
 
+  npmjs-org:
+    name: Publish to npmjs.org
+    needs: [release]
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          check-latest: true
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Stage binaries and versions
+        run: |
+          mkdir -p npm/dbmcp-{linux-x64,linux-arm64,darwin-arm64,win32-x64}/bin
+          tar xzf artifacts/dbmcp-x86_64-unknown-linux-gnu.tar.gz -C npm/dbmcp-linux-x64/bin
+          tar xzf artifacts/dbmcp-aarch64-unknown-linux-gnu.tar.gz -C npm/dbmcp-linux-arm64/bin
+          tar xzf artifacts/dbmcp-aarch64-apple-darwin.tar.gz -C npm/dbmcp-darwin-arm64/bin
+          unzip -q artifacts/dbmcp-x86_64-pc-windows-msvc.zip -d npm/dbmcp-win32-x64/bin
+          sed -i "s/\"0\.0\.0\"/\"${GITHUB_REF_NAME#v}\"/" npm/*/package.json
+
+      - name: Publish packages
+        run: |
+          # Platform packages first; skip versions already on npm so the job can be re-run.
+          # `./` makes npm read a local directory, not a GitHub `owner/repo` shorthand.
+          for name in dbmcp-linux-x64 dbmcp-linux-arm64 dbmcp-darwin-arm64 dbmcp-win32-x64 dbmcp; do
+            npm view "@haymon-ai/$name@${GITHUB_REF_NAME#v}" version > /dev/null 2>&1 || npm publish "./npm/$name" --access public
+          done
+
   registry-modelcontextprotocol-io:
     name: Publish to registry.modelcontextprotocol.io
-    needs: [ghcr-io]
+    needs: [ghcr-io, npmjs-org]
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:

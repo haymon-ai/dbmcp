@@ -1,0 +1,16 @@
+{
+  "name": "@haymon-ai/dbmcp-linux-arm64",
+  "version": "0.0.0",
+  "description": "The linux-arm64 binary for @haymon-ai/dbmcp.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haymon-ai/dbmcp.git"
+  },
+  "homepage": "https://dbmcp.haymon.ai",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["glibc"],
+  "files": ["bin/dbmcp"],
+  "preferUnplugged": true
+}
