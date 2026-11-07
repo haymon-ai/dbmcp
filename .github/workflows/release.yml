@@ -64,6 +64,10 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -78,21 +82,40 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # A Sigstore or attestation API outage must not block the release and the publish jobs after it.
+      - uses: actions/attest@v4
+        continue-on-error: true
+        with:
+          subject-path: artifacts/*
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          # One `<hash>  <name>` file per asset: Scoop's autoupdate reads `$url.sha256`, and `sha256sum -c` checks it.
+          for f in *; do sha256sum "$f" > "$f.sha256"; done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog.outputs.stdout }}
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
+          files: artifacts/*
 
   ghcr-io:
     name: Publish to ghcr.io
     needs: [release]
     runs-on: ubuntu-24.04
     continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
+
+      - uses: sigstore/cosign-installer@v4
 
       - uses: docker/setup-buildx-action@v4
 
@@ -105,7 +128,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -116,16 +139,30 @@ jobs:
             org.opencontainers.image.description=Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite
             org.opencontainers.image.licenses=MIT
 
-      - uses: docker/build-push-action@v7
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: mode=max
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
+
+      - uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
   npmjs-org:
     name: Publish to npmjs.org
