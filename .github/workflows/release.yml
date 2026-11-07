@@ -184,6 +184,13 @@ jobs:
       - name: Validate server.json
         run: ./mcp-publisher validate
 
+      - name: Wait for npm package
+        timeout-minutes: 10
+        run: |
+          # The registry rejects the npm package until npm serves the new version, a few minutes after publish.
+          # `--prefer-online` skips npm's cache, which keeps the package document for 5 minutes.
+          until npm view "@haymon-ai/dbmcp@${GITHUB_REF_NAME#v}" version --prefer-online > /dev/null 2>&1; do sleep 15; done
+
       - name: Publish to MCP Registry
         run: ./mcp-publisher publish
 
