@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.17.0](https://github.com/haymon-ai/dbmcp/compare/3cf71276757e3c41e59971487cb898134ed075de..v0.17.0) - 2026-11-07
+#### 🚀 Features
+- (**release**) publish npm launcher for npx installs (#285) - ([3cf7127](https://github.com/haymon-ai/dbmcp/commit/3cf71276757e3c41e59971487cb898134ed075de)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.16.0](https://github.com/haymon-ai/dbmcp/compare/fc178d0d0c9da52c9eb78382f34a2ca1592c8f51..v0.16.0) - 2026-11-04
 
 #### ⚠ BREAKING CHANGES
