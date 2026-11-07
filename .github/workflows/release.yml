@@ -82,28 +82,23 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate checksums
-        working-directory: artifacts
-        run: |
-          # One `<hash>  <name>` file per asset: Scoop's autoupdate reads `$url.sha256`, and `sha256sum -c` checks it.
-          for f in *.tar.gz *.zip; do sha256sum "$f" > "$f.sha256"; done
-
       # A Sigstore or attestation API outage must not block the release and the publish jobs after it.
       - uses: actions/attest@v4
         continue-on-error: true
         with:
-          subject-path: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
+          subject-path: artifacts/*
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          # One `<hash>  <name>` file per asset: Scoop's autoupdate reads `$url.sha256`, and `sha256sum -c` checks it.
+          for f in *; do sha256sum "$f" > "$f.sha256"; done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog.outputs.stdout }}
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
-            artifacts/*.sha256
+          files: artifacts/*
 
   ghcr-io:
     name: Publish to ghcr.io
@@ -115,6 +110,8 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
 
@@ -131,7 +128,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -157,7 +154,7 @@ jobs:
 
       - uses: actions/attest@v4
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
@@ -165,7 +162,7 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
-        run: cosign sign --yes --recursive "ghcr.io/${GITHUB_REPOSITORY}@${DIGEST}"
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
   npmjs-org:
     name: Publish to npmjs.org
