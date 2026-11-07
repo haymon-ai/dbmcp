@@ -88,7 +88,9 @@ jobs:
           # One `<hash>  <name>` file per asset: Scoop's autoupdate reads `$url.sha256`, and `sha256sum -c` checks it.
           for f in *.tar.gz *.zip; do sha256sum "$f" > "$f.sha256"; done
 
+      # A Sigstore or attestation API outage must not block the release and the publish jobs after it.
       - uses: actions/attest@v4
+        continue-on-error: true
         with:
           subject-path: |
             artifacts/*.tar.gz
@@ -162,7 +164,8 @@ jobs:
       - name: Sign image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}@${DIGEST}"
+        # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
+        run: cosign sign --yes --recursive "ghcr.io/${GITHUB_REPOSITORY}@${DIGEST}"
 
   npmjs-org:
     name: Publish to npmjs.org

@@ -179,11 +179,15 @@ curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_6
 sha256sum -c dbmcp-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
-On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`. On Windows, compare the hash by hand:
+On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`. On Windows (PowerShell), download the checksum next to the `dbmcp.zip` from the [Windows](#windows) steps and compare:
 
 ```powershell
-(Get-FileHash dbmcp.zip -Algorithm SHA256).Hash
+Invoke-WebRequest -Uri https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-pc-windows-msvc.zip.sha256 -OutFile dbmcp.zip.sha256
+$expected = (Get-Content dbmcp.zip.sha256).Split(' ')[0]
+(Get-FileHash dbmcp.zip -Algorithm SHA256).Hash -eq $expected
 ```
+
+This prints `True` when the hashes match. PowerShell's `-eq` ignores case, so the uppercase hash from `Get-FileHash` matches the lowercase one in the file.
 
 ### Build Provenance
 
