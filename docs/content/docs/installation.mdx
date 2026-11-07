@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install dbmcp via Docker, prebuilt binary, or from source
+description: Install dbmcp via Docker, prebuilt binary, npm, or from source
 ---
 
 Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
@@ -183,6 +183,33 @@ Verify the installation:
 dbmcp --help
 ```
 
+### npm
+
+With [Node.js](https://nodejs.org/) 18 or newer, MCP clients can launch dbmcp through `npx` without a separate install step:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_USER": "root"
+      }
+    }
+  }
+}
+```
+
+Pin a version with `@haymon-ai/dbmcp@<version>`. To install globally instead:
+
+```bash
+npm install -g @haymon-ai/dbmcp
+```
+
+The package is a small launcher. npm installs the native binary for your platform as an optional dependency, so don't install with `--omit=optional`. Prebuilt packages exist for Linux x64 and arm64 (glibc 2.34 and libstdc++ from GCC 12 or newer; musl/Alpine is not supported), macOS arm64, and Windows x64.
+
 ## Build from Source
 
 ### Prerequisites
@@ -217,5 +244,6 @@ dbmcp --help
 | Quick Install | Single command | Re-run to upgrade | Latest release | curl/wget or PowerShell | macOS, Linux, WSL, Windows |
 | Docker | `docker pull` | Pull latest tag | Any release tag | Docker | Linux, macOS, Windows |
 | Prebuilt Binary | Simple download | None | Any release | None | Linux, macOS, Windows |
+| npm / npx | No install step with `npx` | Unpinned `npx` fetches the latest | Any published version | Node.js 18+ | Linux (glibc), macOS arm64, Windows x64 |
 | Cargo Install | One command | `cargo install` to update | Any published version | Rust toolchain | All platforms Rust supports |
 | Build from Source | Multiple steps | Manual (git pull + rebuild) | Any commit/branch | Git + Rust toolchain | All platforms Rust supports |

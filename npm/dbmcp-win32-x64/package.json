@@ -1,0 +1,15 @@
+{
+  "name": "@haymon-ai/dbmcp-win32-x64",
+  "version": "0.0.0",
+  "description": "The win32-x64 binary for @haymon-ai/dbmcp.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haymon-ai/dbmcp.git"
+  },
+  "homepage": "https://dbmcp.haymon.ai",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/dbmcp.exe"],
+  "preferUnplugged": true
+}
