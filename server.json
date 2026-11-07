@@ -63,6 +63,14 @@
           "default": "false"
         }
       ]
+    },
+    {
+      "registryType": "npm",
+      "identifier": "@haymon-ai/dbmcp",
+      "version": "0.16.0",
+      "transport": {
+        "type": "stdio"
+      }
     }
   ],
   "environmentVariables": [

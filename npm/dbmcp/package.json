@@ -1,0 +1,26 @@
+{
+  "name": "@haymon-ai/dbmcp",
+  "version": "0.0.0",
+  "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haymon-ai/dbmcp.git"
+  },
+  "homepage": "https://dbmcp.haymon.ai",
+  "keywords": ["mcp", "mcp-server", "mysql", "mariadb", "postgres", "sqlite"],
+  "mcpName": "ai.haymon/dbmcp",
+  "bin": {
+    "dbmcp": "bin/dbmcp.js"
+  },
+  "files": ["bin/dbmcp.js"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@haymon-ai/dbmcp-darwin-arm64": "0.0.0",
+    "@haymon-ai/dbmcp-linux-arm64": "0.0.0",
+    "@haymon-ai/dbmcp-linux-x64": "0.0.0",
+    "@haymon-ai/dbmcp-win32-x64": "0.0.0"
+  }
+}

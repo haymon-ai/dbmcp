@@ -40,6 +40,12 @@ irm https://dbmcp.haymon.ai/install.ps1 | iex
 curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
+**npm** (MCP clients can also launch it with `npx -y @haymon-ai/dbmcp`):
+
+```bash
+npm install -g @haymon-ai/dbmcp
+```
+
 See the [installation docs](https://dbmcp.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
 
 ## Quick Start 🚀
