@@ -91,7 +91,8 @@ where
     ///
     /// Succeeds without a query while every pooled connection is busy:
     /// a ping would otherwise queue behind long-running queries and fail
-    /// a healthy server.
+    /// a healthy server. How often and how long callers ping (rate limit,
+    /// deadline, shutdown) is the caller's policy, not this method's.
     ///
     /// # Errors
     ///
