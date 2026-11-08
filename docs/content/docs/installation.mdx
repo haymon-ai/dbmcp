@@ -79,7 +79,7 @@ tar xzf dbmcp-aarch64-apple-darwin.tar.gz
 sudo mv dbmcp /usr/local/bin/
 ```
 
-**Intel**: not supported since 0.16.0. ONNX Runtime, used for NER-based PII detection, ships no x86_64 macOS build. Use the [Docker](#docker) image instead.
+**Intel**: not supported. ONNX Runtime, used for NER-based PII detection, ships no x86_64 macOS build. Use the [Docker](#docker) image instead.
 
 ### Windows
 
@@ -169,7 +169,7 @@ To run the image on Kubernetes, use the [Helm chart](/docs/kubernetes).
 
 ## Verify Downloads
 
-Releases after 0.17.0 publish a SHA-256 checksum for every release asset, signed build provenance attestations for the binaries, the Docker image, and the [Helm chart](/docs/kubernetes), and a keyless [cosign](https://docs.sigstore.dev/cosign/) signature for the image and the chart.
+Each release publishes a SHA-256 checksum for every release asset, signed build provenance attestations for the binaries, the Docker image, and the [Helm chart](/docs/kubernetes), and a keyless [cosign](https://docs.sigstore.dev/cosign/) signature for the image and the chart.
 
 ### Checksums
 
