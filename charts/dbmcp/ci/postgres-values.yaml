@@ -1,0 +1,11 @@
+# ct install values: a throwaway Postgres the CI workflow deploys into the default namespace.
+config:
+  database:
+    backend: postgres
+    host: postgres.default.svc.cluster.local
+    user: postgres
+    name: postgres
+database:
+  password: postgres
+auth:
+  token: ci-token

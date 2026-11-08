@@ -40,6 +40,7 @@ Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Work
 - **`crates/sql-lineage/`** (`dbmcp-sql-lineage`) — Column-level SQL lineage extraction: maps each output column of a statement to its physical `table.column` sources.
 - **`crates/ssh/`** (`dbmcp-ssh`) — Embedded SSH client that tunnels database connections through a bastion via a loopback listener (`Tunnel::start` → `TunnelHandle`).
 - **`crates/sqlx-json/`** (`sqlx-json`) — `RowExt` trait for type-safe row-to-JSON conversion. Per-backend implementations for `SqliteRow`, `PgRow`, and `MySqlRow`.
+- **`charts/dbmcp/`** — Helm chart (HTTP transport only), published as OCI to `oci://ghcr.io/haymon-ai/charts/dbmcp` by the `ghcr-io` release job after the image; `version`/`appVersion` bumped by cog with the crate version. `values.config` renders verbatim into the mounted `dbmcp.yaml`; the chart forces `DBMCP_TRANSPORT`, `DBMCP_HTTP_HOST`, `DBMCP_HTTP_PORT`, `DBMCP_HTTP_ALLOWED_HOSTS` via env. Tested by `.github/workflows/helm.yml` (`ct lint` + kind `ct install` against an image built from the commit); `ct.yaml` and `artifacthub-repo.yml` live at the repo root.
 - **Transport**: `transport` setting (`DBMCP_TRANSPORT`, default `stdio`); no subcommands. `stdio` serves Claude Desktop/Cursor; `http` serves Streamable HTTP with CORS via axum + tower-http. HTTP options are ignored under stdio.
 
 ## Configuration

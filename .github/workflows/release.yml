@@ -101,7 +101,7 @@ jobs:
           files: artifacts/*
 
   ghcr-io:
-    name: Publish to ghcr.io
+    name: Publish image and Helm chart to ghcr.io
     needs: [release]
     runs-on: ubuntu-24.04
     continue-on-error: true
@@ -112,6 +112,7 @@ jobs:
       attestations: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}
+      CHARTS: ghcr.io/${{ github.repository_owner }}/charts
     steps:
       - uses: actions/checkout@v7
 
@@ -163,6 +164,36 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
+
+      # The chart publishes after the image, so it never points at a missing image tag.
+      - uses: azure/setup-helm@v4
+
+      - uses: oras-project/setup-oras@v1
+
+      - id: chart
+        name: Package and push chart
+        run: |
+          helm package charts/dbmcp --version "${GITHUB_REF_NAME#v}" --app-version "${GITHUB_REF_NAME#v}"
+          helm push "dbmcp-${GITHUB_REF_NAME#v}.tgz" "oci://${CHARTS}"
+          digest=$(oras resolve "${CHARTS}/dbmcp:${GITHUB_REF_NAME#v}")
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.CHARTS }}/dbmcp
+          subject-digest: ${{ steps.chart.outputs.digest }}
+          push-to-registry: true
+
+      - name: Sign chart
+        env:
+          DIGEST: ${{ steps.chart.outputs.digest }}
+        run: cosign sign --yes "${CHARTS}/dbmcp@${DIGEST}"
+
+      - name: Push Artifact Hub metadata
+        run: |
+          oras push "${CHARTS}/dbmcp:artifacthub.io" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
 
   npmjs-org:
     name: Publish to npmjs.org

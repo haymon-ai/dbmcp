@@ -1,0 +1,7 @@
+# chart-testing config: https://github.com/helm/chart-testing
+chart-dirs:
+  - charts
+target-branch: master
+validate-maintainers: false
+# Chart.yaml versions follow the release tag (bumped by cog), not each chart change.
+check-version-increment: false

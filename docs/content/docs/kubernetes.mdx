@@ -1,0 +1,114 @@
+---
+title: Kubernetes
+description: Deploy dbmcp on Kubernetes with the Helm chart
+---
+
+The Helm chart runs dbmcp with the `http` transport behind a Service. HTTP mode is stateless, so you can run several replicas without session affinity.
+
+## Install
+
+The chart is published as an OCI artifact on GitHub Container Registry:
+
+```bash
+helm install dbmcp oci://ghcr.io/haymon-ai/charts/dbmcp \
+  --namespace dbmcp --create-namespace \
+  --values values.yaml
+```
+
+A minimal `values.yaml`:
+
+```yaml title="values.yaml"
+config:
+  database:
+    backend: postgres
+    host: postgres.db.svc.cluster.local
+    user: dbmcp
+    name: app
+
+database:
+  password: change-me
+
+auth:
+  token: change-me # e.g. openssl rand -hex 32
+```
+
+Clients then connect to `http://dbmcp.dbmcp.svc.cluster.local:9001/mcp` with `Authorization: Bearer <token>`. To try it from your machine:
+
+```bash
+kubectl --namespace dbmcp port-forward svc/dbmcp 9001
+```
+
+Then point your MCP client at `http://localhost:9001/mcp`.
+
+Pin a chart version with `--version <version>`. The chart version always matches the dbmcp version, and the chart deploys that same image tag by default.
+
+## Configuration
+
+`config` holds a regular [config file](/docs/config-file). The chart renders it into a ConfigMap and points `DBMCP_CONFIG_FILE` at it, so every [setting](/docs/configuration) works there. The chart sets these settings itself through environment variables, which take precedence over the file:
+
+| Setting | Value |
+|---------|-------|
+| `transport` | `http` |
+| `http.host` | `0.0.0.0` |
+| `http.port` | `service.port` (default `9001`) |
+| `http.allowed_hosts` | The Service DNS names, `localhost`, `127.0.0.1`, `::1`, every non-wildcard `ingress.hosts[].host`, and the entries of `config.http.allowed_hosts` |
+
+dbmcp matches `Host` headers exactly. If clients reach it under another name, such as a gateway hostname, add that name to `config.http.allowed_hosts`. Browser clients also need their origin in `config.http.allowed_origins`.
+
+Pods roll automatically when `config` changes.
+
+## Secrets
+
+`auth.token` and `database.password` go into a Secret the chart creates. They reach dbmcp as `DBMCP_HTTP_AUTH_TOKEN` and `DBMCP_DB_PASSWORD`. To manage the Secret yourself, for example with External Secrets or Sealed Secrets, reference it instead:
+
+```yaml title="values.yaml"
+existingSecret:
+  name: dbmcp-credentials
+  authTokenKey: auth-token   # required
+  passwordKey: db-password   # optional
+```
+
+The chart refuses to render without a token, because dbmcp will not serve a non-loopback address without one (see [HTTP Transport Authentication](/docs/security#http-transport-authentication)). `auth.dangerouslyAllowUnauthenticated: true` removes that check.
+
+For other secret settings, such as an SSH key passphrase, add `extraEnv` entries with `secretKeyRef`. Mount key and certificate files with `extraVolumes` and `extraVolumeMounts`, and reference their paths in `config`.
+
+## Ingress
+
+```yaml title="values.yaml"
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: dbmcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: dbmcp-tls
+      hosts:
+        - dbmcp.example.com
+```
+
+The Ingress hosts are added to the allowed hosts automatically. Wildcard hosts such as `*.example.com` are skipped, because dbmcp matches hosts exactly; list each concrete name in `config.http.allowed_hosts`. dbmcp answers with plain JSON instead of server-sent event streams, so the Ingress needs no buffering or timeout tweaks.
+
+## Probes
+
+The liveness and startup probes call `/healthz`, and the readiness probe calls `/readyz`, which checks the database (see [Health Probes](/docs/configuration#health-probes)). A pod becomes Ready only once its database answers, and leaves the Service when the database stops answering. Override the timings with `livenessProbe`, `readinessProbe`, and `startupProbe`.
+
+## Security
+
+By default the pod:
+
+- runs as the image's non-root user (uid and gid `65532`)
+- has a read-only root filesystem
+- drops all Linux capabilities and blocks privilege escalation
+- uses the `RuntimeDefault` seccomp profile
+- does not mount a service account token
+
+dbmcp needs no writable paths. For SSH tunnelling, mount the private key and a pre-filled `known_hosts` file from a Secret and set `ssh.key` and `ssh.known_hosts` to the mounted paths. Avoid `accept-new` (see [SSH Host-Key Verification](/docs/security#ssh-host-key-verification)): every new pod would trust the first key it sees.
+
+## Verify the Chart
+
+Each chart carries a keyless cosign signature and a build provenance attestation, verified like the image (see [Verify Downloads](/docs/installation#verify-downloads)).
+
+See [`values.yaml`](https://github.com/haymon-ai/dbmcp/blob/master/charts/dbmcp/values.yaml) for every value.
