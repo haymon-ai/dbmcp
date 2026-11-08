@@ -89,10 +89,18 @@ where
 
     /// Checks that the default database answers `SELECT 1`.
     ///
+    /// Succeeds without a query while every pooled connection is busy:
+    /// a ping would otherwise queue behind long-running queries and fail
+    /// a healthy server.
+    ///
     /// # Errors
     ///
     /// See trait-level documentation.
     async fn ping(&self) -> Result<(), SqlError> {
+        let pool = self.pool(None).await?;
+        if pool.size() > 0 && pool.num_idle() == 0 {
+            return Ok(());
+        }
         self.execute("SELECT 1", None).await.map(|_| ())
     }
 
