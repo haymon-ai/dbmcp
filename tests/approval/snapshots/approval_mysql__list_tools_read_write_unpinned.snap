@@ -80,8 +80,12 @@ expression: tools
     "inputSchema": {
       "properties": {
         "database": {
+          "default": null,
           "description": "Database containing the table. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "table": {
           "description": "Name of the table to drop. Must be non-empty.",
@@ -115,7 +119,7 @@ expression: tools
   {
     "name": "explainQuery",
     "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery\n- Checking table structure → use listTables(detailed=true)\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables(detailed=true)\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
     "inputSchema": {
       "properties": {
         "analyze": {
@@ -124,8 +128,12 @@ expression: tools
           "type": "boolean"
         },
         "database": {
+          "default": null,
           "description": "Database to explain against. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "query": {
           "description": "The SQL query to explain.",
@@ -140,7 +148,7 @@ expression: tools
     "outputSchema": {
       "properties": {
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.",
+          "description": "Result rows, each a JSON object keyed by a column name.\n\nThe schema declares objects; `RowExt::to_json` always builds one per row.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -167,8 +175,12 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -206,12 +218,20 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to list functions from. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "detailed": {
           "default": false,
@@ -219,8 +239,12 @@ expression: tools
           "type": "boolean"
         },
         "search": {
+          "default": null,
           "description": "Optional case-insensitive filter on function names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -268,12 +292,20 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to list procedures from. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "detailed": {
           "default": false,
@@ -281,8 +313,12 @@ expression: tools
           "type": "boolean"
         },
         "search": {
+          "default": null,
           "description": "Optional case-insensitive filter on procedure names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -330,12 +366,20 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to list tables from. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "detailed": {
           "default": false,
@@ -343,8 +387,12 @@ expression: tools
           "type": "boolean"
         },
         "search": {
+          "default": null,
           "description": "Optional case-insensitive filter on table names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -392,12 +440,20 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to list triggers from. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "detailed": {
           "default": false,
@@ -405,8 +461,12 @@ expression: tools
           "type": "boolean"
         },
         "search": {
+          "default": null,
           "description": "Optional case-insensitive filter on trigger names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -454,12 +514,20 @@ expression: tools
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to list views from. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "detailed": {
           "default": false,
@@ -467,8 +535,12 @@ expression: tools
           "type": "boolean"
         },
         "search": {
+          "default": null,
           "description": "Optional case-insensitive filter on view names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -512,16 +584,24 @@ expression: tools
   {
     "name": "readQuery",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → not allowed; this tool is read-only\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → rejected; this tool is read-only\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, USE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n- Switching database context (USE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
     "inputSchema": {
       "properties": {
         "cursor": {
+          "default": null,
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "database": {
+          "default": null,
           "description": "Database to run the query against. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "query": {
           "description": "The SQL query to execute.",
@@ -540,7 +620,7 @@ expression: tools
           "type": "string"
         },
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.",
+          "description": "Result rows, each a JSON object keyed by a column name.\n\nThe schema declares objects; `RowExt::to_json` always builds one per row.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -567,8 +647,12 @@ expression: tools
     "inputSchema": {
       "properties": {
         "database": {
+          "default": null,
           "description": "Database to run the query against. Defaults to the active database.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "query": {
           "description": "The SQL query to execute.",
@@ -583,7 +667,7 @@ expression: tools
     "outputSchema": {
       "properties": {
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.",
+          "description": "Result rows, each a JSON object keyed by a column name.\n\nThe schema declares objects; `RowExt::to_json` always builds one per row.",
           "items": {
             "additionalProperties": true,
             "type": "object"

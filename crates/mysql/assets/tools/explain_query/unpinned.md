@@ -9,7 +9,7 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Running actual queries → use readQuery
+- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)
 - Checking table structure → use listTables(detailed=true)
 </when_not_to_use>
 

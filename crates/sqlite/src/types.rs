@@ -23,7 +23,7 @@ pub struct DropTableRequest {
 /// Request for the `SQLite` `listTables` tool — supports optional search filter and detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListTablesRequest {
-    /// Opaque pagination cursor. Omit for the first page.
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
     /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
     #[serde(default)]
@@ -42,7 +42,7 @@ pub struct ListTablesRequest {
 /// Request for the `listViews` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListViewsRequest {
-    /// Opaque pagination cursor. Omit for the first page.
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
     /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
     #[serde(default)]
@@ -52,7 +52,7 @@ pub struct ListViewsRequest {
 /// Request for the `SQLite` `listTriggers` tool — supports optional search filter and detailed mode.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListTriggersRequest {
-    /// Opaque pagination cursor. Omit for the first page.
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
     /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
     #[serde(default)]
@@ -80,7 +80,7 @@ pub struct QueryRequest {
 pub struct ReadQueryRequest {
     /// The SQL query to execute.
     pub query: String,
-    /// Opaque pagination cursor. Omit for the first page.
+    /// Opaque pagination cursor. Omit (or pass `null`) for the first page.
     /// On subsequent calls, pass the `nextCursor` returned by the previous
     /// response verbatim. Cursors are opaque — do not parse, modify, or persist.
     /// Ignored for `EXPLAIN` statements.

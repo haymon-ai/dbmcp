@@ -200,6 +200,8 @@ pub struct ReadQueryRequest {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
+    ///
+    /// The schema declares objects; `RowExt::to_json` always builds one per row.
     #[schemars(with = "Vec<serde_json::Map<String, Value>>")]
     pub rows: Vec<Value>,
 }
@@ -208,6 +210,8 @@ pub struct QueryResponse {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ReadQueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
+    ///
+    /// The schema declares objects; `RowExt::to_json` always builds one per row.
     #[schemars(with = "Vec<serde_json::Map<String, Value>>")]
     pub rows: Vec<Value>,
     /// Opaque cursor pointing to the next page. Absent when this is the final

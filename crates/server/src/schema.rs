@@ -4,8 +4,9 @@
 //! schema generators with versions that strip the four metadata fields no MCP
 //! client consumes — root `$schema`, root `title`, root `description`, and the
 //! `$defs` / `$ref` indirection — while preserving every keyword the model and
-//! clients actually use. Optional properties' nullable `type` arrays collapse
-//! to a single `type` so schemas stay portable to single-type dialects. Each backend's `ToolBase` impls override
+//! clients actually use. In output schemas, optional properties' nullable
+//! `type` arrays collapse to a single `type` so they stay portable to
+//! single-type dialects. Each backend's `ToolBase` impls override
 //! [`input_schema`] / [`output_schema`] to call into this module so the input
 //! and output shapes are established at schema-generation time, not by
 //! post-processing the `tools/list` response.
@@ -21,11 +22,11 @@ use rmcp::model::JsonObject;
 use schemars::JsonSchema;
 use schemars::Schema;
 use schemars::generate::SchemaSettings;
-use schemars::transform::RecursiveTransform;
+use schemars::transform::{RecursiveTransform, Transform as _};
 use serde_json::Value;
 
 thread_local! {
-    static SCHEMA_CACHE: Mutex<HashMap<(TypeId, bool), Arc<JsonObject>>> = Mutex::new(HashMap::new());
+    static SCHEMA_CACHE: Mutex<HashMap<(TypeId, bool, bool), Arc<JsonObject>>> = Mutex::new(HashMap::new());
 }
 
 /// Returns the input JSON schema for the tool parameter type `T`.
@@ -34,9 +35,10 @@ thread_local! {
 /// `$defs` / `$ref` indirection. When `pinned` is `true`, also strips the
 /// root `database` property and removes it from `required` — used for tools
 /// registered against a database name pinned in config, where the field is
-/// not part of the client-facing input. Results are cached per
-/// `(TypeId, pinned)` in a thread-local map, so repeated calls for the same
-/// `T` and `pinned` return the same [`Arc`].
+/// not part of the client-facing input. Nullable `type` arrays are kept, since
+/// clients may send an explicit `null` and the server accepts it. Results are
+/// cached per `(TypeId, pinned)` in a thread-local map, so repeated calls for
+/// the same `T` and `pinned` return the same [`Arc`].
 ///
 /// # Panics
 ///
@@ -44,19 +46,13 @@ thread_local! {
 /// would indicate a broken derive.
 #[must_use]
 pub fn input_schema<T: JsonSchema + Any>(pinned: bool) -> Arc<JsonObject> {
-    SCHEMA_CACHE.with(|cache| {
-        cache
-            .lock()
-            .expect("schema cache poisoned")
-            .entry((TypeId::of::<T>(), pinned))
-            .or_insert_with(|| Arc::new(build::<T>(pinned)))
-            .clone()
-    })
+    cached::<T>(pinned, false)
 }
 
 /// Returns the output JSON schema for the tool result type `T`.
 ///
-/// Delegates to [`input_schema`] (same cache, same generation pipeline) and
+/// Uses the same cache and generation pipeline as [`input_schema`], plus
+/// collapsing `type: [T, "null"]` to `type: T` on optional properties, and
 /// enforces the MCP-spec invariant that the schema's root `type` is `"object"`.
 /// Output schemas never carry a pinned/unpinned variant, so the cache key is
 /// fixed at `pinned = false`.
@@ -67,7 +63,7 @@ pub fn input_schema<T: JsonSchema + Any>(pinned: bool) -> Arc<JsonObject> {
 /// when `T`'s `JsonSchema` impl produces a non-object JSON value.
 #[must_use]
 pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
-    let schema = input_schema::<T>(false);
+    let schema = cached::<T>(false, true);
     match schema.get("type") {
         Some(Value::String(t)) if t == "object" => schema,
         other => panic!(
@@ -78,6 +74,18 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
     }
 }
 
+/// Returns the cached schema for `T`, building it on first use.
+fn cached<T: JsonSchema + Any>(pinned: bool, output: bool) -> Arc<JsonObject> {
+    SCHEMA_CACHE.with(|cache| {
+        cache
+            .lock()
+            .expect("schema cache poisoned")
+            .entry((TypeId::of::<T>(), pinned, output))
+            .or_insert_with(|| Arc::new(build::<T>(pinned, output)))
+            .clone()
+    })
+}
+
 /// Builds the JSON schema object for `T` via schemars draft-2020-12.
 ///
 /// Configures `inline_subschemas = true` to fold every `$defs` / `$ref` into
@@ -85,16 +93,21 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// natively (schemars only inserts it when this is `Some`), and root-only
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
-/// root `database` property and remove it from the `required` array. A
-/// recursive transform collapses nullable `type` arrays on optional properties.
-fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
+/// root `database` property and remove it from the `required` array. When
+/// `output` is `true`, a recursive transform collapses nullable `type` arrays
+/// on optional properties.
+fn build<T: JsonSchema>(pinned: bool, output: bool) -> JsonObject {
     let value = SchemaSettings::draft2020_12()
         .with(|s| {
             s.inline_subschemas = true;
             s.meta_schema = None;
         })
         .with_transform(strip_root_metadata)
-        .with_transform(RecursiveTransform(strip_null_type))
+        .with_transform(move |schema: &mut Schema| {
+            if output {
+                RecursiveTransform(strip_null_type).transform(schema);
+            }
+        })
         .with_transform(move |schema: &mut Schema| {
             if pinned {
                 strip_root_database(schema);
@@ -126,38 +139,42 @@ fn strip_root_metadata(schema: &mut Schema) {
 
 /// Collapses `type: [T, "null"]` to `type: T` on optional object properties.
 ///
-/// An optional property (one not listed in `required`) is an optional request
-/// field or an output field skipped when `None`, so "absent" already carries
-/// the meaning of `null`. A single `type` keeps the schema portable to clients
-/// that map tool schemas onto single-type dialects (e.g. Gemini function
-/// declarations). Also drops the matching `default: null`. Required
-/// properties and array items keep their nullable type, since `null` is a
-/// real value there. Applied to every subschema via [`RecursiveTransform`].
+/// Applied to output schemas only. An optional output property (one not
+/// listed in `required`) is skipped when `None`, so it is never sent as
+/// `null`. A single `type` keeps the schema portable to clients that map tool
+/// schemas onto single-type dialects (e.g. Gemini function declarations).
+/// Also drops the matching `default: null`. Only an exact two-entry
+/// `[T, "null"]` array collapses; required properties and array items keep
+/// their nullable type, since `null` is a real value there. Applied to every
+/// subschema via [`RecursiveTransform`].
 fn strip_null_type(schema: &mut Schema) {
     let Some(object) = schema.as_object_mut() else {
         return;
     };
-    let required: Vec<String> = match object.get("required") {
-        Some(Value::Array(names)) => names.iter().filter_map(Value::as_str).map(String::from).collect(),
+    let required = match object.get("required") {
+        Some(Value::Array(names)) => names.clone(),
         _ => Vec::new(),
     };
     let Some(Value::Object(properties)) = object.get_mut("properties") else {
         return;
     };
     for (name, property) in properties.iter_mut() {
-        if required.contains(name) {
+        if required.iter().any(|value| value.as_str() == Some(name)) {
             continue;
         }
         let Value::Object(property) = property else {
             continue;
         };
-        if let Some(Value::Array(types)) = property.get_mut("type") {
-            types.retain(|value| value.as_str() != Some("null"));
-            if let [single] = types.as_slice() {
-                let single = single.clone();
-                property.insert("type".into(), single);
+        let kept = match property.get("type") {
+            Some(Value::Array(types)) if types.len() == 2 && types.contains(&Value::from("null")) => {
+                types.iter().find(|value| value.as_str() != Some("null")).cloned()
             }
-        }
+            _ => None,
+        };
+        let Some(kept) = kept else {
+            continue;
+        };
+        property.insert("type".into(), kept);
         if property.get("default") == Some(&Value::Null) {
             property.remove("default");
         }
@@ -190,6 +207,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+    use serde_json::json;
 
     /// Outer fixture struct whose schemars docs we expect to be stripped.
     #[derive(Deserialize, Serialize, JsonSchema)]
@@ -284,7 +302,7 @@ mod tests {
 
     #[test]
     fn build_preserves_properties() {
-        let schema = build::<Fixture>(false);
+        let schema = build::<Fixture>(false, false);
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
@@ -306,6 +324,8 @@ mod tests {
         search: Option<String>,
         #[serde(default)]
         nested: Option<Vec<Option<u32>>>,
+        #[serde(default)]
+        unit: Option<()>,
         inner: NullableInner,
     }
 
@@ -316,8 +336,8 @@ mod tests {
     }
 
     #[test]
-    fn input_schema_collapses_nullable_optional_properties() {
-        let schema = input_schema::<NullableFixture>(false);
+    fn output_schema_collapses_nullable_optional_properties() {
+        let schema = output_schema::<NullableFixture>();
         let value = Value::Object((*schema).clone());
         let search = &value["properties"]["search"];
         assert_eq!(search["type"], "string", "nullable type not collapsed: {value}");
@@ -326,11 +346,26 @@ mod tests {
         assert_eq!(nested["type"], "array", "nullable type not collapsed: {value}");
         assert_eq!(
             nested["items"]["type"],
-            serde_json::json!(["integer", "null"]),
+            json!(["integer", "null"]),
             "array items must keep `null`: {value}"
+        );
+        assert_eq!(
+            value["properties"]["unit"]["type"], "null",
+            "a null-only type must stay intact: {value}"
         );
         let inner = &value["properties"]["inner"]["properties"]["cursor"];
         assert_eq!(inner["type"], "string", "nested property not collapsed: {value}");
+    }
+
+    #[test]
+    fn input_schema_keeps_nullable_optional_properties() {
+        let schema = input_schema::<NullableFixture>(false);
+        let value = Value::Object((*schema).clone());
+        assert_eq!(
+            value["properties"]["search"]["type"],
+            json!(["string", "null"]),
+            "input must keep `null`, the server accepts it: {value}"
+        );
     }
 
     #[test]
