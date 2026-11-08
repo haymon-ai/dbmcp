@@ -4,7 +4,7 @@ List tables, optionally filtered and/or with full metadata.
 Use when:
 - Exploring the database to find relevant tables (brief mode, default).
 - Searching for a table by partial name (pass `search`).
-- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` tool.
+- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`).
 </usecase>
 
 <parameters>
