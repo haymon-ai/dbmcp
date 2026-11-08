@@ -1,0 +1,35 @@
+apiVersion: v2
+name: dbmcp
+description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite
+type: application
+version: 0.17.0
+appVersion: "0.17.0"
+kubeVersion: ">=1.25.0-0"
+home: https://dbmcp.haymon.ai
+icon: https://dbmcp.haymon.ai/logo.svg
+sources:
+  - https://github.com/haymon-ai/dbmcp
+keywords:
+  - mcp
+  - database
+  - mysql
+  - mariadb
+  - postgresql
+  - sqlite
+maintainers:
+  - name: athopen
+    url: https://github.com/athopen
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/category: database
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://dbmcp.haymon.ai/docs/kubernetes
+    - name: Source
+      url: https://github.com/haymon-ai/dbmcp
+  artifacthub.io/images: |
+    - name: dbmcp
+      image: ghcr.io/haymon-ai/dbmcp:0.17.0
+      platforms:
+        - linux/amd64
+        - linux/arm64

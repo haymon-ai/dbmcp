@@ -1,0 +1,5 @@
+# Artifact Hub repository metadata, pushed to oci://ghcr.io/haymon-ai/charts/dbmcp:artifacthub.io by the release workflow.
+# https://artifacthub.io/docs/topics/repositories/helm-charts/#oci-support
+# Set repositoryID (and optionally owners) after registering the repository on artifacthub.io.
+# repositoryID: <uuid from artifacthub.io>
+owners: []

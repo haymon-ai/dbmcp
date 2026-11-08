@@ -17,6 +17,8 @@ pre_bump_hooks = [
     "sed -i 's/\"version\": \".*\"/\"version\": \"{{version}}\"/' server.json",
     "sed -i 's|ghcr.io/haymon-ai/dbmcp:[0-9]*\\.[0-9]*\\.[0-9]*|ghcr.io/haymon-ai/dbmcp:{{version}}|g' server.json",
     "git add :/server.json",
+    "sed -i 's/^version: .*/version: {{version}}/; s/^appVersion: .*/appVersion: \"{{version}}\"/; s|ghcr.io/haymon-ai/dbmcp:[0-9]*\\.[0-9]*\\.[0-9]*|ghcr.io/haymon-ai/dbmcp:{{version}}|' charts/dbmcp/Chart.yaml",
+    "git add :/charts/dbmcp/Chart.yaml",
 ]
 
 # Post-bump: push commit and tag

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      },
+      "required": ["repository"]
+    },
+    "imagePullSecrets": { "type": "array" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "config": {
+      "type": "object",
+      "description": "dbmcp YAML config, validated by dbmcp itself at startup."
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "dangerouslyAllowUnauthenticated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "password": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "existingSecret": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "authTokenKey": { "type": "string", "minLength": 1 },
+        "passwordKey": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "annotations": { "type": "object" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "pathType": { "enum": ["Exact", "Prefix", "ImplementationSpecific"] }
+                  },
+                  "required": ["path", "pathType"]
+                }
+              }
+            },
+            "required": ["host", "paths"]
+          }
+        },
+        "tls": { "type": "array" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" },
+        "automount": { "type": "boolean" }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "livenessProbe": { "type": "object" },
+    "readinessProbe": { "type": "object" },
+    "startupProbe": { "type": "object" },
+    "resources": { "type": "object" },
+    "extraEnv": { "type": "array" },
+    "extraVolumes": { "type": "array" },
+    "extraVolumeMounts": { "type": "array" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" }
+  },
+  "additionalProperties": false
+}

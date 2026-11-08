@@ -1,0 +1,23 @@
+dbmcp serves MCP over Streamable HTTP at:
+
+  http://{{ include "dbmcp.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/mcp
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/mcp
+{{- end }}
+{{- end }}
+
+Try it from your machine:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "dbmcp.fullname" . }} {{ .Values.service.port }}
+  # then point your MCP client at http://localhost:{{ .Values.service.port }}/mcp
+{{- if not .Values.auth.dangerouslyAllowUnauthenticated }}
+  # with header: Authorization: Bearer <token from secret {{ include "dbmcp.secretName" . }}, key {{ .Values.existingSecret.authTokenKey }}>
+{{- else }}
+
+WARNING: /mcp accepts requests without a token. Anyone who reaches the Service can query the database.
+{{- end }}
+
+Pods turn Ready once the database answers /readyz. Check with:
+
+  kubectl --namespace {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
