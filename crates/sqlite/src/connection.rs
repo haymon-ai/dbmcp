@@ -133,6 +133,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ping_succeeds_on_memory_db() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            ..base_config()
+        });
+        connection.ping().await.expect("in-memory database answers");
+    }
+
+    #[tokio::test]
+    async fn ping_fails_on_missing_file() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some("/nonexistent-dbmcp-dir/missing.db".into()),
+            ..base_config()
+        });
+        assert!(connection.ping().await.is_err(), "missing file must not ping");
+    }
+
+    #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pool() {
         let connection = SqliteConnection::new(&base_config());
         connection.shutdown().await;

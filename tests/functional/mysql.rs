@@ -8,6 +8,8 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
+mod http_probe;
+
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
@@ -4427,4 +4429,41 @@ async fn test_read_only_rejects_side_effecting_functions() {
             .await
             .unwrap_or_else(|e| panic!("{query}: {e:?}"));
     }
+}
+
+/// Returns a `dbmcp` command pointed at the test container through env vars.
+fn mysql_command() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command
+        .env("DBMCP_DB_BACKEND", "mysql")
+        .env(
+            "DBMCP_DB_USER",
+            std::env::var("DBMCP_DB_USER").unwrap_or_else(|_| "root".into()),
+        )
+        .env("DBMCP_DB_NAME", "app");
+    command
+}
+
+#[tokio::test]
+async fn http_probes_answer_without_token() {
+    let server = http_probe::HttpServer::spawn(mysql_command()).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 200);
+    assert_eq!(server.get("/mcp").await, 401, "MCP endpoint must stay behind the token");
+}
+
+#[tokio::test]
+async fn http_readyz_fails_when_database_unreachable() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("reserve free port")
+        .port();
+    let mut command = mysql_command();
+    command
+        .env("DBMCP_DB_HOST", "127.0.0.1")
+        .env("DBMCP_DB_PORT", closed_port.to_string())
+        .env("DBMCP_DB_CONNECTION_TIMEOUT", "2");
+    let server = http_probe::HttpServer::spawn(command).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 503);
 }

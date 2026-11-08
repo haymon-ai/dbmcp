@@ -10,6 +10,8 @@
 //! ./tests/run.sh --filter sqlite
 //! ```
 
+mod http_probe;
+
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
@@ -2305,4 +2307,21 @@ async fn test_version_reports_binary_name_and_version() {
         .expect("run dbmcp --version");
     assert!(output.status.success(), "--version must succeed");
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[tokio::test]
+async fn http_probes_answer_without_token() {
+    let server = http_probe::HttpServer::spawn(sqlite_command()).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 200);
+    assert_eq!(server.get("/mcp").await, 401, "MCP endpoint must stay behind the token");
+}
+
+#[tokio::test]
+async fn http_readyz_fails_when_database_missing() {
+    let mut command = sqlite_command();
+    command.env("DBMCP_DB_NAME", "/nonexistent-dbmcp-dir/missing.db");
+    let server = http_probe::HttpServer::spawn(command).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 503);
 }

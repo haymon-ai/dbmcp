@@ -87,6 +87,15 @@ where
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
 
+    /// Checks that the default database answers `SELECT 1`.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation.
+    async fn ping(&self) -> Result<(), SqlError> {
+        self.execute("SELECT 1", None).await.map(|_| ())
+    }
+
     /// Runs a statement that returns no meaningful rows.
     ///
     /// # Errors

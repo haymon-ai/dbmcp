@@ -7,6 +7,8 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
+mod http_probe;
+
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
@@ -4181,4 +4183,41 @@ async fn test_read_only_discards_session_settings() {
             .expect("read search_path");
         assert_ne!(rows.rows[0]["sp"], "ro_probe_evil", "session setting leaked onto pool");
     }
+}
+
+/// Returns a `dbmcp` command pointed at the test container through env vars.
+fn postgres_command() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    command
+        .env("DBMCP_DB_BACKEND", "postgres")
+        .env(
+            "DBMCP_DB_USER",
+            std::env::var("DBMCP_DB_USER").unwrap_or_else(|_| "postgres".into()),
+        )
+        .env("DBMCP_DB_NAME", "app");
+    command
+}
+
+#[tokio::test]
+async fn http_probes_answer_without_token() {
+    let server = http_probe::HttpServer::spawn(postgres_command()).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 200);
+    assert_eq!(server.get("/mcp").await, 401, "MCP endpoint must stay behind the token");
+}
+
+#[tokio::test]
+async fn http_readyz_fails_when_database_unreachable() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("reserve free port")
+        .port();
+    let mut command = postgres_command();
+    command
+        .env("DBMCP_DB_HOST", "127.0.0.1")
+        .env("DBMCP_DB_PORT", closed_port.to_string())
+        .env("DBMCP_DB_CONNECTION_TIMEOUT", "2");
+    let server = http_probe::HttpServer::spawn(command).await;
+    assert_eq!(server.get("/healthz").await, 200);
+    assert_eq!(server.get("/readyz").await, 503);
 }
