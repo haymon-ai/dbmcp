@@ -34,12 +34,12 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 /// Wraps any backend adapter behind an [`Arc`] using the private
 /// [`DynHandler`] trait for type erasure. All database backends produce the same concrete
 /// type, eliminating the need for enum dispatch. The same `Arc` is held
-/// a second time as a [`Shutdown`] view so transports can drain pools
-/// via [`Server::shutdown`].
+/// a second time as a [`Pools`] view so transports can probe and drain
+/// pools via [`Server::ping`] and [`Server::shutdown`].
 #[derive(Clone)]
 pub struct Server {
     handler: Arc<dyn DynHandler>,
-    shutdown: Arc<dyn Shutdown>,
+    pools: Arc<dyn Pools>,
     error_context: Option<ErrorContext>,
 }
 
@@ -95,16 +95,20 @@ impl<H: ServerHandler> DynHandler for H {
     }
 }
 
-/// Boxed `Send` future returned by [`Shutdown::shutdown`].
-pub type ShutdownFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+/// Boxed `Send` future returned by [`Pools`] methods.
+pub type PoolFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Closes every live connection pool the server owns.
+/// Probes and closes the connection pools the server owns.
 ///
-/// Implemented by each backend handler so transports can drain pools
-/// gracefully on shutdown, separate from the type-erased [`Server`].
-pub trait Shutdown: Send + Sync {
+/// Implemented by each backend handler so transports can check database
+/// reachability and drain pools gracefully on shutdown, separate from
+/// the type-erased [`Server`].
+pub trait Pools: Send + Sync {
+    /// Resolves to `true` when the default database answers a trivial query.
+    fn ping(&self) -> PoolFuture<'_, bool>;
+
     /// Awaits a clean close of all pools. Idempotent.
-    fn shutdown(&self) -> ShutdownFuture<'_>;
+    fn shutdown(&self) -> PoolFuture<'_, ()>;
 }
 
 impl fmt::Debug for Server {
@@ -117,16 +121,16 @@ impl Server {
     /// Creates a new server from any backend adapter.
     ///
     /// One [`Arc`] is shared as two trait-object views — [`DynHandler`]
-    /// for request handling and [`Shutdown`] for pool draining — so the
+    /// for request handling and [`Pools`] for pool probing and draining — so the
     /// adapter itself is never cloned.
     pub fn new<S>(handler: S) -> Self
     where
-        S: ServerHandler + Shutdown,
+        S: ServerHandler + Pools,
     {
         let handler = Arc::new(handler);
         Self {
             handler: handler.clone(),
-            shutdown: handler,
+            pools: handler,
             error_context: None,
         }
     }
@@ -138,9 +142,14 @@ impl Server {
         self
     }
 
+    /// Returns `true` when the default database answers a trivial query.
+    pub async fn ping(&self) -> bool {
+        self.pools.ping().await
+    }
+
     /// Closes every live connection pool. Idempotent.
     pub async fn shutdown(&self) {
-        self.shutdown.shutdown().await;
+        self.pools.shutdown().await;
     }
 }
 

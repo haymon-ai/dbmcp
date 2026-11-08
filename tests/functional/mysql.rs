@@ -8,6 +8,8 @@
 //! ./tests/run.sh --filter mysql      # MySQL
 //! ```
 
+mod probe;
+
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
@@ -4427,4 +4429,14 @@ async fn test_read_only_rejects_side_effecting_functions() {
             .await
             .unwrap_or_else(|e| panic!("{query}: {e:?}"));
     }
+}
+
+#[tokio::test]
+async fn http_probes_answer_without_token() {
+    probe::assert_ready(probe::backend_command("mysql", "root")).await;
+}
+
+#[tokio::test]
+async fn http_readyz_fails_when_database_unreachable() {
+    probe::assert_unready(probe::unreachable(probe::backend_command("mysql", "root"))).await;
 }

@@ -148,7 +148,7 @@ docker run --rm \
   ghcr.io/haymon-ai/dbmcp
 ```
 
-Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`).
+Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`). The image has no shell or `curl`, so check health from the orchestrator with HTTP probes against [`/healthz` and `/readyz`](/docs/configuration#health-probes) rather than a Docker `HEALTHCHECK`.
 
 **SQLite with a mounted volume**:
 

@@ -7,6 +7,8 @@
 //! ./tests/run.sh --filter postgres
 //! ```
 
+mod probe;
+
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
@@ -4181,4 +4183,14 @@ async fn test_read_only_discards_session_settings() {
             .expect("read search_path");
         assert_ne!(rows.rows[0]["sp"], "ro_probe_evil", "session setting leaked onto pool");
     }
+}
+
+#[tokio::test]
+async fn http_probes_answer_without_token() {
+    probe::assert_ready(probe::backend_command("postgres", "postgres")).await;
+}
+
+#[tokio::test]
+async fn http_readyz_fails_when_database_unreachable() {
+    probe::assert_unready(probe::unreachable(probe::backend_command("postgres", "postgres"))).await;
 }

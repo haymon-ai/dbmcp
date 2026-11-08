@@ -1,8 +1,9 @@
 //! HTTP transport.
 //!
 //! Runs the MCP server over Streamable HTTP with CORS support and
-//! optional bearer-token authentication. Each HTTP session clones the
-//! server, sharing the underlying connection pools.
+//! optional bearer-token authentication, beside the unauthenticated
+//! [`probe`](crate::probe) routes. Each HTTP session clones the server,
+//! sharing the underlying connection pools.
 
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
@@ -22,6 +23,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
 use crate::error::ErrorKind;
+use crate::probe;
 use crate::server::shutdown_signal;
 
 /// Serves MCP over Streamable HTTP on the configured host and port.
@@ -42,6 +44,7 @@ pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), Err
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     info!("Listening on http://{bind_addr}/mcp");
+    info!("Health probes on http://{bind_addr}/healthz and /readyz");
     if config.auth_token.is_some() {
         info!("Bearer token authentication enabled");
     } else if config.is_loopback() {
@@ -69,9 +72,20 @@ pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), Err
 /// which match entries with the same rules via [`AllowedOrigins`]. An
 /// empty list disables rmcp's validator but grants no CORS access, so
 /// browsers stay blocked. When an auth token is configured, every request
-/// must pass [`require_bearer`] before it reaches the MCP service. CORS stays outermost so browser preflights,
-/// which never carry credentials, are answered without authentication.
+/// must pass [`require_bearer`] before it reaches the MCP service. The
+/// [`probe`] routes sit beside the MCP service, outside bearer auth and
+/// rmcp's Host/Origin validation, so probes need no credentials. CORS
+/// stays outermost so browser preflights, which never carry credentials,
+/// are answered without authentication.
 fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &CancellationToken) -> axum::Router {
+    let pinged = server.clone();
+    let probes = probe::router(
+        move || -> probe::PingFuture {
+            let server = pinged.clone();
+            Box::pin(async move { server.ping().await })
+        },
+        cancel_token.clone(),
+    );
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         Arc::new(NeverSessionManager::default()),
@@ -83,14 +97,14 @@ fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &Ca
             .with_allowed_origins(http_config.allowed_origins.clone()),
     );
 
-    let mut router = axum::Router::new().nest_service("/mcp", service);
+    let mut mcp = axum::Router::new().nest_service("/mcp", service);
     if let Some(token) = &http_config.auth_token {
-        router = router.layer(axum::middleware::from_fn_with_state(
+        mcp = mcp.layer(axum::middleware::from_fn_with_state(
             BearerAuth::new(token.expose_secret()),
             require_bearer,
         ));
     }
-    router.layer(build_cors_layer(http_config))
+    probes.merge(mcp).layer(build_cors_layer(http_config))
 }
 
 /// SHA-256 digest of the expected bearer token.
@@ -452,5 +466,29 @@ mod tests {
             .await
             .expect("oneshot");
         assert!(response.status().is_success(), "status={}", response.status());
+    }
+
+    fn probe(uri: &str, host: &str) -> Request<Body> {
+        Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .expect("build request")
+    }
+
+    #[tokio::test]
+    async fn healthz_returns_200_without_token() {
+        let (status, body) = send(router_with_token(), probe("/healthz", "localhost")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body, "ok");
+    }
+
+    #[tokio::test]
+    async fn probes_skip_host_validation() {
+        for uri in ["/healthz", "/readyz"] {
+            let (status, body) = send(router_with_token(), probe(uri, "evil.example")).await;
+            assert_eq!(status, StatusCode::OK, "uri={uri} body={body}");
+        }
     }
 }
