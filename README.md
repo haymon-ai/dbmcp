@@ -48,6 +48,8 @@ npm install -g @haymon-ai/dbmcp
 
 See the [installation docs](https://dbmcp.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
 
+MCP Registry name: `mcp-name: ai.haymon/dbmcp`
+
 ## Quick Start 🚀
 
 ### Using `.mcp.json` (recommended)

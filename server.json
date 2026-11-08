@@ -71,6 +71,15 @@
       "transport": {
         "type": "stdio"
       }
+    },
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "dbmcp",
+      "version": "0.17.0",
+      "transport": {
+        "type": "stdio"
+      }
     }
   ],
   "environmentVariables": [
