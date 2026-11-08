@@ -1,0 +1,134 @@
+# Default values for the dbmcp chart.
+# The chart always runs dbmcp with the `http` transport.
+# See https://dbmcp.haymon.ai/docs/kubernetes
+
+image:
+  repository: ghcr.io/haymon-ai/dbmcp
+  # -- Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# HTTP mode is stateless, so replicas need no session affinity.
+replicaCount: 1
+
+# dbmcp YAML config, rendered verbatim into a ConfigMap as dbmcp.yaml.
+# Every key from https://dbmcp.haymon.ai/docs/configuration works here.
+# The chart sets transport, http.host, http.port, and http.allowed_hosts through
+# environment variables, which win over this file; entries in http.allowed_hosts
+# are added to the Service DNS names, localhost, and the Ingress hosts.
+# Keep secrets out of it: use `auth`, `database.password`, or `existingSecret` below.
+config: {}
+#  database:
+#    backend: postgres
+#    host: postgres.default.svc.cluster.local
+#    user: dbmcp
+#    name: app
+#  http:
+#    allowed_hosts:
+#      - mcp.example.com
+#    allowed_origins:
+#      - https://app.example.com
+
+auth:
+  # -- Bearer token clients send as `Authorization: Bearer <token>`.
+  # Required unless `existingSecret.name` or `dangerouslyAllowUnauthenticated` is set.
+  token: ""
+  # -- Serve /mcp without a token. Anyone who reaches the Service can query the database.
+  dangerouslyAllowUnauthenticated: false
+
+database:
+  # -- Database password. Stored in a Secret the chart creates.
+  password: ""
+
+# Use a Secret you manage instead of the one the chart creates.
+existingSecret:
+  # -- Name of the existing Secret. When set, `auth.token` and `database.password` are ignored.
+  name: ""
+  # -- Key holding the bearer token (required unless unauthenticated).
+  authTokenKey: auth-token
+  # -- Key holding the database password (optional).
+  passwordKey: db-password
+
+service:
+  type: ClusterIP
+  port: 9001
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: dbmcp.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: dbmcp-tls
+  #    hosts:
+  #      - dbmcp.local
+
+serviceAccount:
+  create: true
+  # -- Defaults to the full name when `create` is true, `default` otherwise.
+  name: ""
+  annotations: {}
+  automount: false
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  timeoutSeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  timeoutSeconds: 3
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 15
+
+resources: {}
+#  requests:
+#    cpu: 50m
+#    memory: 32Mi
+#  limits:
+#    memory: 128Mi
+
+# -- Extra environment variables, e.g. DBMCP_* settings from your own Secrets.
+extraEnv: []
+# -- Extra volumes, e.g. SSH keys, TLS CA bundles, or a SQLite file.
+extraVolumes: []
+extraVolumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dbmcp.fullname" . }}
+  labels:
+    {{- include "dbmcp.labels" . | nindent 4 }}
+data:
+  dbmcp.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
