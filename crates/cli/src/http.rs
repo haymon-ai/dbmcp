@@ -1,15 +1,14 @@
 //! HTTP transport.
 //!
 //! Runs the MCP server over Streamable HTTP with CORS support and
-//! optional bearer-token authentication, plus unauthenticated health
-//! probes. Each HTTP session clones the server, sharing the underlying
-//! connection pools.
+//! optional bearer-token authentication, beside the unauthenticated
+//! [`probe`](crate::probe) routes. Each HTTP session clones the server,
+//! sharing the underlying connection pools.
 
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use dbmcp_config::{AllowedOrigins, HttpConfig};
 use dbmcp_server::Server;
 use rmcp::transport::streamable_http_server::{
@@ -18,14 +17,13 @@ use rmcp::transport::streamable_http_server::{
 use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
 use crate::error::ErrorKind;
+use crate::probe;
 use crate::server::shutdown_signal;
 
 /// Serves MCP over Streamable HTTP on the configured host and port.
@@ -75,15 +73,19 @@ pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), Err
 /// empty list disables rmcp's validator but grants no CORS access, so
 /// browsers stay blocked. When an auth token is configured, every request
 /// must pass [`require_bearer`] before it reaches the MCP service. The
-/// [`healthz`] and [`readyz`] probes sit beside the MCP service, outside
-/// bearer auth and rmcp's Host/Origin validation, so probes need no
-/// credentials; [`Readiness`] bounds how often they reach the database. CORS stays outermost so browser preflights, which never
-/// carry credentials, are answered without authentication.
+/// [`probe`] routes sit beside the MCP service, outside bearer auth and
+/// rmcp's Host/Origin validation, so probes need no credentials. CORS
+/// stays outermost so browser preflights, which never carry credentials,
+/// are answered without authentication.
 fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &CancellationToken) -> axum::Router {
-    let probes = axum::Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .with_state(Readiness::new(server.clone(), cancel_token.clone()));
+    let pinged = server.clone();
+    let probes = probe::router(
+        move || -> probe::PingFuture {
+            let server = pinged.clone();
+            Box::pin(async move { server.ping().await })
+        },
+        cancel_token.clone(),
+    );
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         Arc::new(NeverSessionManager::default()),
@@ -103,71 +105,6 @@ fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &Ca
         ));
     }
     probes.merge(mcp).layer(build_cors_layer(http_config))
-}
-
-/// Liveness probe: answers `200 ok` while the process serves requests.
-async fn healthz() -> &'static str {
-    "ok"
-}
-
-/// Readiness probe: `200 ok` when the default database answers, else `503`.
-///
-/// The body never carries the failure cause, since the probe is unauthenticated.
-async fn readyz(State(readiness): State<Readiness>) -> (StatusCode, &'static str) {
-    if readiness.check().await {
-        (StatusCode::OK, "ok")
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
-    }
-}
-
-/// Shared, rate-limited database readiness check behind [`readyz`].
-///
-/// The probe is unauthenticated, so concurrent requests share one
-/// in-flight ping and reuse its result for [`Readiness::CACHE_TTL`]; a
-/// flood costs at most one database query per window. Each ping is cut
-/// off after [`Readiness::DEADLINE`], whatever the configured timeouts,
-/// and readiness fails once shutdown starts so orchestrators stop routing.
-#[derive(Clone)]
-struct Readiness {
-    server: Server,
-    shutdown: CancellationToken,
-    last: Arc<Mutex<Option<(Instant, bool)>>>,
-}
-
-impl Readiness {
-    /// How long a ping result answers later probes.
-    const CACHE_TTL: Duration = Duration::from_secs(1);
-
-    /// Upper bound on a single ping, independent of database timeouts.
-    const DEADLINE: Duration = Duration::from_secs(2);
-
-    fn new(server: Server, shutdown: CancellationToken) -> Self {
-        Self {
-            server,
-            shutdown,
-            last: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    async fn check(&self) -> bool {
-        if self.shutdown.is_cancelled() {
-            return false;
-        }
-        // Holding the lock across the ping makes concurrent probes wait
-        // for it and then read its cached result.
-        let mut last = self.last.lock().await;
-        if let Some((at, ready)) = *last
-            && at.elapsed() < Self::CACHE_TTL
-        {
-            return ready;
-        }
-        let ready = tokio::time::timeout(Self::DEADLINE, self.server.ping())
-            .await
-            .unwrap_or(false);
-        *last = Some((Instant::now(), ready));
-        ready
-    }
 }
 
 /// SHA-256 digest of the expected bearer token.
@@ -554,63 +491,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn readyz_returns_200_when_database_reachable() {
-        let (status, body) = send(router_with_token(), probe("/readyz", "localhost")).await;
-        assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body, "ok");
-    }
-
-    #[tokio::test]
-    async fn readyz_returns_503_when_database_unreachable() {
-        let database = DatabaseConfig {
-            name: Some("/nonexistent-dbmcp-dir/missing.db".into()),
-            ..sqlite_memory_db_config()
-        };
-        let router = router_with_server(
-            HttpConfig::default_allowed_origins(),
-            Some(TEST_TOKEN.into()),
-            server_with(database),
-        );
-        let (status, body) = send(router, probe("/readyz", "localhost")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body, "unavailable");
-    }
-
-    #[tokio::test]
     async fn probes_skip_host_validation() {
         for uri in ["/healthz", "/readyz"] {
             let (status, body) = send(router_with_token(), probe(uri, "evil.example")).await;
             assert_eq!(status, StatusCode::OK, "uri={uri} body={body}");
         }
-    }
-
-    fn memory_readiness() -> (Readiness, CancellationToken) {
-        let shutdown = CancellationToken::new();
-        (
-            Readiness::new(server_with(sqlite_memory_db_config()), shutdown.clone()),
-            shutdown,
-        )
-    }
-
-    #[tokio::test]
-    async fn readiness_fails_once_shutdown_starts() {
-        let (readiness, shutdown) = memory_readiness();
-        assert!(readiness.check().await, "reachable database is ready");
-        shutdown.cancel();
-        assert!(!readiness.check().await, "shutdown must fail readiness");
-    }
-
-    #[tokio::test]
-    async fn readiness_reuses_recent_result() {
-        let (readiness, _shutdown) = memory_readiness();
-        *readiness.last.lock().await = Some((Instant::now(), false));
-        assert!(!readiness.check().await, "fresh cached result answers without a ping");
-        *readiness.last.lock().await = Some((
-            Instant::now()
-                .checked_sub(Readiness::CACHE_TTL)
-                .expect("monotonic clock past one TTL"),
-            false,
-        ));
-        assert!(readiness.check().await, "expired result triggers a new ping");
     }
 }
