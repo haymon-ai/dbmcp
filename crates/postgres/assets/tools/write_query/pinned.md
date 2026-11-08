@@ -10,7 +10,6 @@ Use when:
 <when_not_to_use>
 - Read-only queries (SELECT, SHOW) → use readQuery
 - Query performance analysis → use explainQuery
-- Creating/dropping entire databases → use createDatabase or dropDatabase
 </when_not_to_use>
 
 <examples>

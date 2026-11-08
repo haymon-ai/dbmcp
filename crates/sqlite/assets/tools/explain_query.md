@@ -8,7 +8,7 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Running actual queries → use readQuery or writeQuery
+- Running actual queries → use readQuery
 - Checking table structure → use listTables with `detailed: true`
 </when_not_to_use>
 

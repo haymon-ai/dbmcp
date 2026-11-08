@@ -4,7 +4,8 @@
 //! schema generators with versions that strip the four metadata fields no MCP
 //! client consumes — root `$schema`, root `title`, root `description`, and the
 //! `$defs` / `$ref` indirection — while preserving every keyword the model and
-//! clients actually use. Each backend's `ToolBase` impls override
+//! clients actually use. Optional properties' nullable `type` arrays collapse
+//! to a single `type` so schemas stay portable to single-type dialects. Each backend's `ToolBase` impls override
 //! [`input_schema`] / [`output_schema`] to call into this module so the input
 //! and output shapes are established at schema-generation time, not by
 //! post-processing the `tools/list` response.
@@ -20,6 +21,7 @@ use rmcp::model::JsonObject;
 use schemars::JsonSchema;
 use schemars::Schema;
 use schemars::generate::SchemaSettings;
+use schemars::transform::RecursiveTransform;
 use serde_json::Value;
 
 thread_local! {
@@ -83,7 +85,8 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// natively (schemars only inserts it when this is `Some`), and root-only
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
-/// root `database` property and remove it from the `required` array.
+/// root `database` property and remove it from the `required` array. A
+/// recursive transform collapses nullable `type` arrays on optional properties.
 fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
     let value = SchemaSettings::draft2020_12()
         .with(|s| {
@@ -91,6 +94,7 @@ fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
             s.meta_schema = None;
         })
         .with_transform(strip_root_metadata)
+        .with_transform(RecursiveTransform(strip_null_type))
         .with_transform(move |schema: &mut Schema| {
             if pinned {
                 strip_root_database(schema);
@@ -117,6 +121,46 @@ fn strip_root_metadata(schema: &mut Schema) {
     if let Some(object) = schema.as_object_mut() {
         object.remove("title");
         object.remove("description");
+    }
+}
+
+/// Collapses `type: [T, "null"]` to `type: T` on optional object properties.
+///
+/// An optional property (one not listed in `required`) is an optional request
+/// field or an output field skipped when `None`, so "absent" already carries
+/// the meaning of `null`. A single `type` keeps the schema portable to clients
+/// that map tool schemas onto single-type dialects (e.g. Gemini function
+/// declarations). Also drops the matching `default: null`. Required
+/// properties and array items keep their nullable type, since `null` is a
+/// real value there. Applied to every subschema via [`RecursiveTransform`].
+fn strip_null_type(schema: &mut Schema) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    let required: Vec<String> = match object.get("required") {
+        Some(Value::Array(names)) => names.iter().filter_map(Value::as_str).map(String::from).collect(),
+        _ => Vec::new(),
+    };
+    let Some(Value::Object(properties)) = object.get_mut("properties") else {
+        return;
+    };
+    for (name, property) in properties.iter_mut() {
+        if required.contains(name) {
+            continue;
+        }
+        let Value::Object(property) = property else {
+            continue;
+        };
+        if let Some(Value::Array(types)) = property.get_mut("type") {
+            types.retain(|value| value.as_str() != Some("null"));
+            if let [single] = types.as_slice() {
+                let single = single.clone();
+                property.insert("type".into(), single);
+            }
+        }
+        if property.get("default") == Some(&Value::Null) {
+            property.remove("default");
+        }
     }
 }
 
@@ -253,6 +297,40 @@ mod tests {
             Some("Doc-comment kept on the property — must survive schema generation."),
             "per-property descriptions must survive schema generation"
         );
+    }
+
+    /// Fixture with optional fields that schemars renders as nullable.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct NullableFixture {
+        #[serde(default)]
+        search: Option<String>,
+        #[serde(default)]
+        nested: Option<Vec<Option<u32>>>,
+        inner: NullableInner,
+    }
+
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct NullableInner {
+        #[serde(default)]
+        cursor: Option<String>,
+    }
+
+    #[test]
+    fn input_schema_collapses_nullable_optional_properties() {
+        let schema = input_schema::<NullableFixture>(false);
+        let value = Value::Object((*schema).clone());
+        let search = &value["properties"]["search"];
+        assert_eq!(search["type"], "string", "nullable type not collapsed: {value}");
+        assert!(search.get("default").is_none(), "`default: null` not dropped: {value}");
+        let nested = &value["properties"]["nested"];
+        assert_eq!(nested["type"], "array", "nullable type not collapsed: {value}");
+        assert_eq!(
+            nested["items"]["type"],
+            serde_json::json!(["integer", "null"]),
+            "array items must keep `null`: {value}"
+        );
+        let inner = &value["properties"]["inner"]["properties"]["cursor"];
+        assert_eq!(inner["type"], "string", "nested property not collapsed: {value}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ## Workflow
 
-1. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
+1. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call.
 2. Call `listViews` to see views.
 3. Call `listTriggers` to see triggers.
 4. Call `listFunctions` to see stored functions.

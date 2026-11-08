@@ -1,7 +1,7 @@
 ## Workflow
 
 1. Call `listDatabases` to discover available databases.
-2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call — this supersedes the legacy `getTableSchema` workflow.
+2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call.
 3. Call `listViews` to see views in the `public` schema.
 4. Call `listTriggers` to see user-defined triggers in the `public` schema.
 5. Call `listFunctions` to see user-defined functions in the `public` schema.

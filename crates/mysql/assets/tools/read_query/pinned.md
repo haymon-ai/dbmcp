@@ -10,7 +10,7 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Data changes (INSERT, UPDATE, DELETE) → use writeQuery
+- Data changes (INSERT, UPDATE, DELETE) → not allowed; this tool is read-only
 - Query performance analysis → use explainQuery
 - Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)
 </when_not_to_use>
@@ -19,7 +19,7 @@ Use when:
 ✓ "SELECT * FROM users WHERE status = 'active'"
 ✓ "SELECT COUNT(*) FROM orders GROUP BY region"
 ✓ "SHOW TABLES" or "DESCRIBE users"
-✗ "INSERT INTO users ..." → use writeQuery
+✗ "INSERT INTO users ..." → rejected; this tool is read-only
 ✗ "EXPLAIN SELECT ..." → use explainQuery for structured analysis
 </examples>
 

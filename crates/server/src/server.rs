@@ -9,8 +9,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerConfig, Tool,
+    CallToolRequestParams, CallToolResponse, Implementation, ListPromptsRequestMethod, ListPromptsResult,
+    ListResourceTemplatesRequestMethod, ListResourceTemplatesResult, ListResourcesRequestMethod, ListResourcesResult,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
@@ -187,6 +188,33 @@ impl ServerHandler for Server {
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.handler.get_tool(name)
+    }
+
+    /// Rejects `prompts/list`: the server advertises only the tools capability.
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Err(ErrorData::method_not_found::<ListPromptsRequestMethod>())
+    }
+
+    /// Rejects `resources/list`: the server advertises only the tools capability.
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Err(ErrorData::method_not_found::<ListResourcesRequestMethod>())
+    }
+
+    /// Rejects `resources/templates/list`: the server advertises only tools.
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Err(ErrorData::method_not_found::<ListResourceTemplatesRequestMethod>())
     }
 }
 
