@@ -105,7 +105,7 @@ By default the pod:
 - uses the `RuntimeDefault` seccomp profile
 - does not mount a service account token
 
-dbmcp needs no writable paths. For SSH tunnelling, mount the private key and a pre-filled `known_hosts` file from a Secret and set `ssh.key` and `ssh.known_hosts` to the mounted paths. Avoid `accept-new` (see [SSH Host-Key Verification](/docs/security#ssh-host-key-verification)): every new pod would trust the first key it sees.
+dbmcp needs no writable paths. For SSH tunnelling, mount a pre-filled `known_hosts` file beside the key (see [Secrets](#secrets)). Avoid `accept-new` (see [SSH Host-Key Verification](/docs/security#ssh-host-key-verification)): every new pod would trust the first key it sees.
 
 ## Verify the Chart
 

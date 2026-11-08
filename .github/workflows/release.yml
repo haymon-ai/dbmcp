@@ -173,7 +173,7 @@ jobs:
       - id: chart
         name: Package and push chart
         run: |
-          helm package charts/dbmcp --version "${GITHUB_REF_NAME#v}" --app-version "${GITHUB_REF_NAME#v}"
+          helm package charts/dbmcp
           helm push "dbmcp-${GITHUB_REF_NAME#v}.tgz" "oci://${CHARTS}"
           digest=$(oras resolve "${CHARTS}/dbmcp:${GITHUB_REF_NAME#v}")
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"

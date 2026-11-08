@@ -71,8 +71,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - uses: azure/setup-helm@v4
 
@@ -85,39 +83,36 @@ jobs:
       - name: Lint
         run: ct lint --config ct.yaml --all
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      # The chart's probes need /healthz and /readyz, which a published image may predate,
-      # so test against an image of this commit, on the release image's base.
-      # A debug build is enough for an install test and skips the release profile's LTO.
-      - name: Build image
-        run: |
-          cargo build
-          mkdir image && cp target/debug/dbmcp image/
-          docker build -t dbmcp:ci -f - image <<'EOF'
-          FROM gcr.io/distroless/cc-debian12
-          COPY dbmcp /dbmcp
-          USER nonroot
-          ENTRYPOINT ["/dbmcp"]
-          EOF
-
       - uses: helm/kind-action@v1
 
-      - name: Load image into kind
-        run: kind load docker-image dbmcp:ci --name chart-testing
-
+      # Postgres starts in the background while the image builds.
       - name: Start Postgres
         run: |
           kubectl create deployment postgres --image=postgres:18-alpine --port=5432
           kubectl set env deployment/postgres POSTGRES_PASSWORD=postgres
           kubectl expose deployment postgres --port=5432
-          kubectl rollout status deployment/postgres --timeout=120s
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The chart's probes need /healthz and /readyz, which a published image may predate,
+      # so test against an image of this commit, built from the release Dockerfile with
+      # its download stage replaced by the local binary.
+      # A debug build is enough for an install test and skips the release profile's LTO.
+      - name: Build image
+        run: |
+          cargo build
+          mkdir -p image/tmp && cp target/debug/dbmcp image/tmp/
+          docker build -t dbmcp:ci --build-context download=image .
+
+      - name: Load image into kind
+        run: kind load docker-image dbmcp:ci --name chart-testing
 
       - name: Install and test
-        run: >-
-          ct install --config ct.yaml --all
-          --helm-extra-set-args "--set image.repository=dbmcp --set image.tag=ci --set image.pullPolicy=Never"
+        run: |
+          kubectl rollout status deployment/postgres --timeout=120s
+          ct install --config ct.yaml --all \
+            --helm-extra-set-args "--set image.repository=dbmcp --set image.tag=ci --set image.pullPolicy=Never"
 
   mariadb:
     name: MariaDB

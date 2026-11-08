@@ -71,7 +71,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "dbmcp.secretName" . }}
                   key: {{ .Values.existingSecret.passwordKey }}
-                  optional: {{ not (empty .Values.existingSecret.name) }}
+                  optional: true
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
