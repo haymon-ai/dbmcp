@@ -10,7 +10,6 @@ Use when:
 ✓ "Drop the temp_logs table" → dropTable(table="temp_logs")
 ✓ "Force drop with dependencies" → dropTable(table="temp_logs", cascade=true)
 ✗ "Delete rows from a table" → use writeQuery with DELETE
-✗ "Drop a database" → use dropDatabase instead
 </examples>
 
 <safety>

@@ -69,6 +69,7 @@ pub struct ListEntriesResponse {
     pub entries: ListEntries,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -114,6 +115,7 @@ pub struct ListDatabasesResponse {
     pub databases: Vec<String>,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
 }
 
@@ -200,6 +202,7 @@ pub struct ReadQueryRequest {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
+    #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
 }
 
@@ -207,11 +210,13 @@ pub struct QueryResponse {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ReadQueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
+    #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
     /// Opaque cursor pointing to the next page. Absent when this is the final
     /// page, when the result fits in one page, or when the statement is a
     /// non-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
 }
 

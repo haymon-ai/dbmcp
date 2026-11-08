@@ -4,7 +4,7 @@ List tables in the connected database, optionally filtered and/or with full meta
 Use when:
 - Exploring a database to find relevant tables (brief mode, default).
 - Searching for a table by partial name (pass `search`).
-- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`). This supersedes the legacy `getTableSchema` workflow.
+- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`).
 </usecase>
 
 <parameters>
