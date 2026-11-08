@@ -58,12 +58,25 @@ These settings are only used when `transport` is `http`; the whole `http` sectio
 | `http.port` | `DBMCP_HTTP_PORT` | integer | `9001` | Bind port for the HTTP server |
 | `http.allowed_origins` | `DBMCP_HTTP_ALLOWED_ORIGINS` | list | `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`, `https://localhost:*`, `https://127.0.0.1:*`, `https://[::1]:*` | Allowed browser origins. Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup. An empty YAML list (`allowed_origins: []`) disables `Origin` validation for non-browser deployments; this is only expressible in YAML. |
 | `http.allowed_hosts` | `DBMCP_HTTP_ALLOWED_HOSTS` | list | `localhost`, `127.0.0.1`, `::1` | Allowed host names. Enforced server-side; HTTP/2 `:authority` is honored. An empty list is rejected. |
-| `http.auth_token` | `DBMCP_HTTP_AUTH_TOKEN` | string | *(unset)* | Bearer token required on every request (`Authorization: Bearer <token>`). Required for non-loopback binds. |
+| `http.auth_token` | `DBMCP_HTTP_AUTH_TOKEN` | string | *(unset)* | Bearer token required on every `/mcp` request (`Authorization: Bearer <token>`). Health probes stay open. Required for non-loopback binds. |
 | `http.allow_unauthenticated` | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | boolean | `false` | Allow a non-loopback bind without a token. Only behind a reverse proxy that authenticates callers. |
 
 > **Security note**: Binding a non-loopback host (e.g. `DBMCP_HTTP_HOST=0.0.0.0`) without `DBMCP_HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
 
 > **Security note**: The default `http.allowed_origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `DBMCP_HTTP_ALLOWED_ORIGINS` to the explicit origins you trust (e.g. `http://localhost:5173`).
+
+### Health Probes
+
+The `http` transport serves two `GET` endpoints for Kubernetes probes, load balancers, and gateways. The MCP spec defines no health method, so they live outside the protocol:
+
+| Path | Checks | Response |
+|------|--------|----------|
+| `/healthz` | The process serves HTTP requests (liveness) | `200 ok` |
+| `/readyz` | The default database answers `SELECT 1` within 2 seconds (readiness) | `200 ok`, or `503 unavailable` |
+
+Both skip the bearer token and the `Origin`/`Host` allowlists, so probes need no credentials. Bodies never carry error details. Under stdio neither endpoint exists.
+
+`/readyz` caps its database load: concurrent probes share one check, and its result answers every probe for one second. It returns `503` once shutdown starts. The default database is `database.name`; on PostgreSQL without a name it is the database named after `database.user`, so set `database.name` if that database does not exist. While every pooled connection is busy serving queries, the database counts as ready. Point Kubernetes `livenessProbe` and `readinessProbe` `httpGet` checks at these paths on the HTTP port.
 
 ## Database Connection
 

@@ -7,7 +7,8 @@
 
 use dbmcp_config::{Config, DatabaseConfig};
 use dbmcp_pii::{MaybeRedact, Redactor};
-use dbmcp_server::{Server, Shutdown, ShutdownFuture, ToolHandler, ToolRouterExt, ToolSpec, server_info};
+use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
+use dbmcp_sql::Connection;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
@@ -127,8 +128,12 @@ impl ToolHandler for PostgresHandler {
     }
 }
 
-impl Shutdown for PostgresHandler {
-    fn shutdown(&self) -> ShutdownFuture<'_> {
+impl Pools for PostgresHandler {
+    fn ping(&self) -> PoolFuture<'_, bool> {
+        Box::pin(async move { self.connection.ping().await.is_ok() })
+    }
+
+    fn shutdown(&self) -> PoolFuture<'_, ()> {
         Box::pin(async move { self.connection.shutdown().await })
     }
 }

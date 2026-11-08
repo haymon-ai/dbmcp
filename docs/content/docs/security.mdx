@@ -66,6 +66,8 @@ The `http` transport serves the database to any caller that can reach the port, 
 
 The `Origin` and `Host` allowlists remain enforced alongside the token. They stop browser-driven DNS-rebinding attacks, but a direct HTTP client can send any header value, so they are **not** authentication.
 
+The [health probes](/docs/configuration#health-probes) `/healthz` and `/readyz` answer without a token and ignore the allowlists. They reveal only whether the server and its database are up.
+
 ## SSH Host-Key Verification
 
 When the [SSH tunnel](/docs/configuration#ssh-tunnel) is enabled, the SSH server's host key is verified against `known_hosts` before any password or key signature is sent. Under `yes` and `accept-new`, credentials never reach an impostor that `known_hosts` would reject; under `no` they can (see below).

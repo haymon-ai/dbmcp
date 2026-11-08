@@ -12,5 +12,5 @@ pub mod tool;
 pub mod types;
 
 pub use schema::{input_schema, output_schema};
-pub use server::{Server, Shutdown, ShutdownFuture, server_info};
+pub use server::{PoolFuture, Pools, Server, server_info};
 pub use tool::{ErrorContext, ToolHandler, ToolRouterExt, ToolSpec};

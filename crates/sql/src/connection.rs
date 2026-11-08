@@ -87,6 +87,24 @@ where
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
 
+    /// Checks that the default database answers `SELECT 1`.
+    ///
+    /// Succeeds without a query while every pooled connection is busy:
+    /// a ping would otherwise queue behind long-running queries and fail
+    /// a healthy server. How often and how long callers ping (rate limit,
+    /// deadline, shutdown) is the caller's policy, not this method's.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation.
+    async fn ping(&self) -> Result<(), SqlError> {
+        let pool = self.pool(None).await?;
+        if pool.size() > 0 && pool.num_idle() == 0 {
+            return Ok(());
+        }
+        self.execute("SELECT 1", None).await.map(|_| ())
+    }
+
     /// Runs a statement that returns no meaningful rows.
     ///
     /// # Errors

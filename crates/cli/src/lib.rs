@@ -8,6 +8,7 @@ mod args;
 mod cli;
 mod error;
 mod http;
+mod probe;
 mod server;
 mod stdio;
 
