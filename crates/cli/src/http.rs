@@ -191,22 +191,7 @@ mod tests {
         router_with(HttpConfig::default_allowed_origins(), Some(TEST_TOKEN.into()))
     }
 
-    fn server_with(database: DatabaseConfig) -> Server {
-        let config = Config {
-            transport: Transport::Stdio,
-            database,
-            http: None,
-            pii: None,
-            ssh: None,
-        };
-        crate::server::build_server(&config).expect("server builds in test")
-    }
-
     fn router_with(origins: Vec<String>, auth_token: Option<String>) -> axum::Router {
-        router_with_server(origins, auth_token, server_with(sqlite_memory_db_config()))
-    }
-
-    fn router_with_server(origins: Vec<String>, auth_token: Option<String>, server: Server) -> axum::Router {
         let http_config = HttpConfig {
             host: HttpConfig::DEFAULT_HOST.into(),
             port: HttpConfig::DEFAULT_PORT,
@@ -215,7 +200,16 @@ mod tests {
             auth_token: auth_token.map(SecretString::from),
             allow_unauthenticated: false,
         };
-        build_http_router(&http_config, server, &CancellationToken::new())
+        let config = Config {
+            transport: Transport::Stdio,
+            database: sqlite_memory_db_config(),
+            http: None,
+            pii: None,
+            ssh: None,
+        };
+        let server = crate::server::build_server(&config).expect("server builds in test");
+        let cancel = CancellationToken::new();
+        build_http_router(&http_config, server, &cancel)
     }
 
     async fn send(router: axum::Router, request: Request<Body>) -> (StatusCode, String) {
