@@ -27,7 +27,7 @@ expression: tools
     "outputSchema": {
       "properties": {
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.\n\nThe schema declares objects; `RowExt::to_json` always builds one per row.",
+          "description": "Result rows, each a JSON object keyed by a column name.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -474,7 +474,7 @@ expression: tools
           "type": "string"
         },
         "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.\n\nThe schema declares objects; `RowExt::to_json` always builds one per row.",
+          "description": "Result rows, each a JSON object keyed by a column name.",
           "items": {
             "additionalProperties": true,
             "type": "object"

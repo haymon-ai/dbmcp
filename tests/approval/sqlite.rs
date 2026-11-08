@@ -174,19 +174,18 @@ async fn test_call_unknown_tool_is_protocol_error() {
 #[tokio::test]
 async fn test_unadvertised_list_methods_are_method_not_found() {
     common::run_with_client(server(true), |peer| async move {
-        let not_found = |result: Result<(), ServiceError>| match result {
-            Err(ServiceError::McpError(error)) => error.code == ErrorCode::METHOD_NOT_FOUND,
-            _ => false,
-        };
-        let resources = peer.list_resources(None).await.map(drop);
-        assert!(not_found(resources), "resources/list must be method-not-found");
-        let templates = peer.list_resource_templates(None).await.map(drop);
         assert!(
-            not_found(templates),
+            matches!(peer.list_resources(None).await, Err(ServiceError::McpError(e)) if e.code == ErrorCode::METHOD_NOT_FOUND),
+            "resources/list must be method-not-found"
+        );
+        assert!(
+            matches!(peer.list_resource_templates(None).await, Err(ServiceError::McpError(e)) if e.code == ErrorCode::METHOD_NOT_FOUND),
             "resources/templates/list must be method-not-found"
         );
-        let prompts = peer.list_prompts(None).await.map(drop);
-        assert!(not_found(prompts), "prompts/list must be method-not-found");
+        assert!(
+            matches!(peer.list_prompts(None).await, Err(ServiceError::McpError(e)) if e.code == ErrorCode::METHOD_NOT_FOUND),
+            "prompts/list must be method-not-found"
+        );
     })
     .await;
 }
