@@ -32,18 +32,10 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
 }
 
 fn handler_with_page_size(page_size: u16) -> PostgresHandler {
-    let config = DatabaseConfig {
+    handler_with(DatabaseConfig {
         page_size,
         ..base_db_config(false)
-    };
-    PostgresHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
     })
-    .expect("handler builds")
 }
 
 fn handler_with(config: DatabaseConfig) -> PostgresHandler {
@@ -98,14 +90,19 @@ async fn session_timeout(handler: &PostgresHandler) -> String {
         .to_owned()
 }
 
-/// Builds a size-1 pool handler with the given query timeout.
-fn single_connection_handler(query_timeout: u64) -> PostgresHandler {
-    handler_with(DatabaseConfig {
+/// Returns a size-1 pool config with the given query timeout.
+fn single_connection_config(query_timeout: u64) -> DatabaseConfig {
+    DatabaseConfig {
         query_timeout,
         max_pool_size: 1,
         connection_timeout: Some(5),
         ..base_db_config(false)
-    })
+    }
+}
+
+/// Builds a size-1 pool handler with the given query timeout.
+fn single_connection_handler(query_timeout: u64) -> PostgresHandler {
+    handler_with(single_connection_config(query_timeout))
 }
 
 /// Asserts that `result` is a timeout and the pool serves `SELECT 1` again.
@@ -123,15 +120,7 @@ async fn assert_timed_out<T>(handler: &PostgresHandler, result: Result<T, rmcp::
 }
 
 fn handler(read_only: bool) -> PostgresHandler {
-    let config = base_db_config(read_only);
-    PostgresHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds")
+    handler_with(base_db_config(read_only))
 }
 
 #[tokio::test]
@@ -479,15 +468,8 @@ async fn test_server_timeout_mapped_under_zero() {
         .await
         .expect("session timeout set");
 
-    let err = handler
-        .read_query(slow_sql("qt_mapped_zero"), None, None)
-        .await
-        .map(|_| ())
-        .expect_err("server timeout fires");
-    assert!(
-        err.to_string().contains("timed out"),
-        "Expected timeout message, got: {err}"
-    );
+    let result = handler.read_query(slow_sql("qt_mapped_zero"), None, None).await;
+    assert_timed_out(&handler, result, "qt_mapped_zero").await;
 }
 
 #[tokio::test]

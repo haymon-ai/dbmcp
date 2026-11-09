@@ -6,8 +6,7 @@
 
 use std::time::Duration;
 
-use sqlx::SqlStr;
-use sqlx::pool::PoolConnection;
+use sqlx::{ConnectOptions as _, SqlStr};
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
@@ -22,9 +21,9 @@ pub const GRACE: Duration = Duration::from_secs(5);
 ///
 /// The server-side session timeout (set per connection by each backend)
 /// normally stops the statement at `timeout_secs`. This function waits
-/// `timeout_secs` + 5 s; on expiry it drops the query future, spawns a kill
-/// of the statement from a one-off connection (capped at 5 s, failures
-/// logged), and returns [`SqlError::QueryTimeout`]. A server timeout error
+/// `timeout_secs` + [`GRACE`]; on expiry it drops the query future, spawns a
+/// kill of the statement from a one-off connection (capped at [`GRACE`],
+/// failures logged), and returns [`SqlError::QueryTimeout`]. A server timeout error
 /// ([`Connection::is_timeout`]) also maps to [`SqlError::QueryTimeout`],
 /// even when `timeout_secs` is `0`; with `0` there is no timer and no kill.
 ///
@@ -32,7 +31,7 @@ pub const GRACE: Duration = Duration::from_secs(5);
 /// session id ([`Connection::session_id`] returns `None`) has no server
 /// timeout, so its timer stops at `timeout_secs` and nothing is killed.
 ///
-/// The SQL text is only copied into the error on the timeout path.
+/// The SQL text is only copied into an owned `String` on the timeout path.
 ///
 /// # Errors
 ///
@@ -96,35 +95,29 @@ where
 
     let Ok(result) = tokio::time::timeout_at(deadline, op(&mut conn, sql)).await else {
         if let Some(id) = id {
-            tokio::spawn(kill_statement::<C>(pool, conn, id));
+            // `conn` stays out of the pool until the kill ends, so nothing reuses it
+            // while the statement may still run. It is then detached: sqlx can't
+            // always return a connection whose query future was dropped mid-flight,
+            // and would keep its slot forever. After a failed kill the statement may
+            // run on, outside `max_connections`, until the server ends it.
+            tokio::spawn(async move {
+                let kill = async {
+                    let mut killer = pool.connect_options().connect().await?;
+                    let result = C::kill(&mut killer, id).await;
+                    let _ = sqlx::Connection::close(killer).await;
+                    result
+                };
+                match tokio::time::timeout(GRACE, kill).await {
+                    Ok(Ok(())) => debug!(session_id = id, "killed timed-out statement"),
+                    Ok(Err(error)) => warn!(%error, session_id = id, "failed to kill timed-out statement"),
+                    Err(_) => warn!(session_id = id, "kill of timed-out statement did not finish in time"),
+                }
+                drop(conn.detach());
+            });
         }
         return Err(timed_out());
     };
     result.map_err(map_error)
-}
-
-/// Kills the statement on session `id`, holding `conn` until the kill ends.
-///
-/// Keeping `conn` out of the pool means no other call can reuse it while
-/// the timed-out statement may still run. Once the kill ends, whatever its
-/// outcome, `conn` is detached and dropped: sqlx can't always return a
-/// connection whose query future was dropped mid-flight, and would keep its
-/// pool slot forever. After a failed kill the statement may run on, outside
-/// `max_connections`, until the server ends it or notices the closed socket.
-async fn kill_statement<C>(pool: sqlx::Pool<C::DB>, conn: PoolConnection<C::DB>, id: u64)
-where
-    C: Connection + ?Sized,
-    for<'c> &'c mut <C::DB as sqlx::Database>::Connection: sqlx::Executor<'c, Database = C::DB>,
-    usize: sqlx::ColumnIndex<<C::DB as sqlx::Database>::Row>,
-    <C::DB as sqlx::Database>::Row: sqlx_json::RowExt,
-    <C::DB as sqlx::Database>::QueryResult: sqlx_json::QueryResult,
-{
-    match tokio::time::timeout(GRACE, C::kill(pool, id)).await {
-        Ok(Ok(running)) => debug!(session_id = id, running, "killed timed-out statement"),
-        Ok(Err(error)) => warn!(%error, session_id = id, "failed to kill timed-out statement"),
-        Err(_) => warn!(session_id = id, "kill of timed-out statement did not finish in time"),
-    }
-    drop(conn.detach());
 }
 
 #[cfg(test)]
@@ -145,14 +138,21 @@ mod tests {
         sqlx::Error::Configuration("server timeout".into())
     }
 
-    fn is_server_timeout(error: &sqlx::Error) -> bool {
-        matches!(error, sqlx::Error::Configuration(m) if m.to_string() == "server timeout")
-    }
+    /// Stub mode: no server, so no session id and nothing to kill.
+    const NO_SERVER: u8 = 0;
+    /// Stub mode: reports [`SESSION`] and records kills in [`KILLED`].
+    const SERVER: u8 = 1;
+    /// Stub mode: the session id lookup never answers.
+    const SLOW_ID: u8 = 2;
 
-    /// Stub backend without a server: no session id, nothing to kill.
-    struct NoServer;
+    /// Stub backend whose session id lookup behaves per `MODE`.
+    struct Stub<const MODE: u8>;
 
-    impl Connection for NoServer {
+    type NoServer = Stub<NO_SERVER>;
+    type Server = Stub<SERVER>;
+    type SlowId = Stub<SLOW_ID>;
+
+    impl<const MODE: u8> Connection for Stub<MODE> {
         type DB = sqlx::Sqlite;
 
         async fn pool(&self, _target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
@@ -164,70 +164,20 @@ mod tests {
         }
 
         fn is_timeout(error: &sqlx::Error) -> bool {
-            is_server_timeout(error)
+            matches!(error, sqlx::Error::Configuration(m) if m.to_string() == "server timeout")
         }
 
         async fn session_id(_conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
-            Ok(None)
+            match MODE {
+                NO_SERVER => Ok(None),
+                SLOW_ID => std::future::pending().await,
+                _ => Ok(Some(SESSION)),
+            }
         }
 
-        fn kill(_pool: sqlx::SqlitePool, _id: u64) -> impl Future<Output = Result<bool, sqlx::Error>> + Send {
-            std::future::ready(Ok(false))
-        }
-    }
-
-    /// Stub server backend: reports [`SESSION`] and records kills in [`KILLED`].
-    struct Server;
-
-    impl Connection for Server {
-        type DB = sqlx::Sqlite;
-
-        async fn pool(&self, _target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
-            Err(SqlError::Connection("stub has no pool".into()))
-        }
-
-        fn query_timeout(&self) -> u64 {
-            0
-        }
-
-        fn is_timeout(error: &sqlx::Error) -> bool {
-            is_server_timeout(error)
-        }
-
-        async fn session_id(_conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
-            Ok(Some(SESSION))
-        }
-
-        fn kill(_pool: sqlx::SqlitePool, id: u64) -> impl Future<Output = Result<bool, sqlx::Error>> + Send {
+        fn kill(_conn: &mut sqlx::SqliteConnection, id: u64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
             KILLED.store(id, Ordering::SeqCst);
-            std::future::ready(Ok(true))
-        }
-    }
-
-    /// Stub server backend whose session id lookup never answers.
-    struct SlowId;
-
-    impl Connection for SlowId {
-        type DB = sqlx::Sqlite;
-
-        async fn pool(&self, _target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
-            Err(SqlError::Connection("stub has no pool".into()))
-        }
-
-        fn query_timeout(&self) -> u64 {
-            0
-        }
-
-        fn is_timeout(error: &sqlx::Error) -> bool {
-            is_server_timeout(error)
-        }
-
-        async fn session_id(_conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
-            std::future::pending().await
-        }
-
-        fn kill(_pool: sqlx::SqlitePool, _id: u64) -> impl Future<Output = Result<bool, sqlx::Error>> + Send {
-            std::future::ready(Ok(false))
+            std::future::ready(Ok(()))
         }
     }
 

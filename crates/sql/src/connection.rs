@@ -1,8 +1,8 @@
 //! Connection abstraction shared across database backends.
 //!
 //! Defines [`Connection`] — the single trait every backend implements.
-//! Backends provide pool resolution and timeout config; default method
-//! implementations handle query execution.
+//! Backends provide pool resolution, timeout config, and timeout hooks;
+//! default method implementations handle query execution.
 
 use crate::SqlError;
 use serde_json::Value;
@@ -99,14 +99,15 @@ where
     /// Returns the driver error if the lookup query fails.
     async fn session_id(conn: &mut <Self::DB as sqlx::Database>::Connection) -> Result<Option<u64>, sqlx::Error>;
 
-    /// Cancels the statement running on session `id` from a one-off connection.
-    ///
-    /// Returns `false` when the session no longer exists.
+    /// Cancels the statement running on session `id`, sent over a one-off `conn`.
     ///
     /// # Errors
     ///
-    /// Returns the driver error if connecting or cancelling fails.
-    fn kill(pool: sqlx::Pool<Self::DB>, id: u64) -> impl Future<Output = Result<bool, sqlx::Error>> + Send;
+    /// Returns the driver error if cancelling fails.
+    fn kill(
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+        id: u64,
+    ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
     /// Checks that the default database answers `SELECT 1`.
     ///

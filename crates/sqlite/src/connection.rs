@@ -72,9 +72,9 @@ impl Connection for SqliteConnection {
         Ok(None)
     }
 
-    fn kill(_pool: SqlitePool, _id: u64) -> impl Future<Output = Result<bool, sqlx::Error>> + Send {
+    fn kill(_conn: &mut sqlx::SqliteConnection, _id: u64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
         // Unreachable: `session_id` is `None`, so nothing is ever killed.
-        std::future::ready(Ok(false))
+        std::future::ready(Ok(()))
     }
 }
 /// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].

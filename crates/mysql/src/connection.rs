@@ -11,8 +11,8 @@ use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
+use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
-use sqlx::{AssertSqlSafe, ConnectOptions};
 use tracing::{info, warn};
 
 /// Maximum number of cached per-database connection pools.
@@ -133,26 +133,23 @@ impl Connection for MysqlConnection {
             .map(Some)
     }
 
-    async fn kill(pool: MySqlPool, id: u64) -> Result<bool, sqlx::Error> {
-        let mut conn = pool.connect_options().connect().await?;
+    async fn kill(conn: &mut sqlx::MySqlConnection, id: u64) -> Result<(), sqlx::Error> {
         // `id` is a server-returned integer, not user input. MySQL 9 prepares
         // `KILL QUERY ?`, but sqlx can't decode its parameter type (0xf3).
-        let result = sqlx::raw_sql(AssertSqlSafe(format!("KILL QUERY {id}")))
-            .execute(&mut conn)
-            .await;
-        let _ = sqlx::Connection::close(conn).await;
-        match result {
-            Ok(_) => Ok(true),
-            // 1094: unknown thread id, the statement already ended.
+        match sqlx::raw_sql(AssertSqlSafe(format!("KILL QUERY {id}")))
+            .execute(conn)
+            .await
+        {
+            // 1094: unknown thread id, the session already ended.
             Err(error)
                 if error
                     .as_database_error()
                     .and_then(|e| e.try_downcast_ref::<MySqlDatabaseError>())
                     .is_some_and(|e| e.number() == 1094) =>
             {
-                Ok(false)
+                Ok(())
             }
-            Err(error) => Err(error),
+            result => result.map(|_| ()),
         }
     }
 }

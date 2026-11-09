@@ -41,15 +41,7 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
 }
 
 fn handler(read_only: bool) -> MysqlHandler {
-    let config = base_db_config(read_only);
-    MysqlHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds")
+    handler_with(base_db_config(read_only))
 }
 
 fn handler_with(config: DatabaseConfig) -> MysqlHandler {
@@ -112,14 +104,19 @@ async fn session_timeout(handler: &MysqlHandler) -> f64 {
         .unwrap_or_else(|| panic!("unexpected {variable} value: {value}"))
 }
 
-/// Builds a size-1 pool handler with the given query timeout.
-fn single_connection_handler(query_timeout: u64) -> MysqlHandler {
-    handler_with(DatabaseConfig {
+/// Returns a size-1 pool config with the given query timeout.
+fn single_connection_config(query_timeout: u64) -> DatabaseConfig {
+    DatabaseConfig {
         query_timeout,
         max_pool_size: 1,
         connection_timeout: Some(5),
         ..base_db_config(false)
-    })
+    }
+}
+
+/// Builds a size-1 pool handler with the given query timeout.
+fn single_connection_handler(query_timeout: u64) -> MysqlHandler {
+    handler_with(single_connection_config(query_timeout))
 }
 
 /// Asserts that `result` is a timeout and the pool serves `SELECT 1` again.
@@ -137,18 +134,10 @@ async fn assert_timed_out<T>(handler: &MysqlHandler, result: Result<T, rmcp::Err
 }
 
 fn handler_with_page_size(page_size: u16) -> MysqlHandler {
-    let config = DatabaseConfig {
+    handler_with(DatabaseConfig {
         page_size,
         ..base_db_config(false)
-    };
-    MysqlHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
     })
-    .expect("handler builds")
 }
 
 #[tokio::test]
@@ -498,15 +487,8 @@ async fn test_server_timeout_mapped_under_zero() {
         .await
         .expect("session timeout set");
 
-    let err = handler
-        .read_query(slow_sql("qt_mapped_zero"), None, None)
-        .await
-        .map(|_| ())
-        .expect_err("server timeout fires");
-    assert!(
-        err.to_string().contains("timed out"),
-        "Expected timeout message, got: {err}"
-    );
+    let result = handler.read_query(slow_sql("qt_mapped_zero"), None, None).await;
+    assert_timed_out(&handler, result, "qt_mapped_zero").await;
 }
 
 #[tokio::test]
@@ -562,12 +544,6 @@ async fn test_server_timeout_stops_slow_write() {
     assert_timed_out(&handler, result, "qt_server_write").await;
 }
 
-/// Asserts that `elapsed` falls in the client backstop window.
-fn assert_backstop_elapsed(elapsed: std::time::Duration) {
-    let secs = elapsed.as_secs_f64();
-    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
-}
-
 #[tokio::test]
 async fn test_backstop_kills_statement_outside_server_timeout() {
     if backend() != DatabaseBackend::Mysql {
@@ -581,7 +557,8 @@ async fn test_backstop_kills_statement_outside_server_timeout() {
         .to_owned();
     let start = std::time::Instant::now();
     let result = handler.write_query(sql, None).await;
-    assert_backstop_elapsed(start.elapsed());
+    let secs = start.elapsed().as_secs_f64();
+    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_do").await;
 }
 
@@ -594,14 +571,12 @@ async fn test_backstop_kills_statement_when_session_set_fails() {
     // Backend mismatch: MariaDB rejects max_execution_time, so the SET only warns.
     let handler = handler_with(DatabaseConfig {
         backend: DatabaseBackend::Mysql,
-        query_timeout: 1,
-        max_pool_size: 1,
-        connection_timeout: Some(5),
-        ..base_db_config(false)
+        ..single_connection_config(1)
     });
     let start = std::time::Instant::now();
     let result = handler.read_query(slow_sql("qt_backstop_mismatch"), None, None).await;
-    assert_backstop_elapsed(start.elapsed());
+    let secs = start.elapsed().as_secs_f64();
+    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_mismatch").await;
 }
 

@@ -11,7 +11,6 @@ use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
-use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::{info, warn};
 
@@ -136,15 +135,13 @@ impl Connection for PostgresConnection {
             .map_err(|e| sqlx::Error::Decode(Box::new(e)))
     }
 
-    async fn kill(pool: PgPool, id: u64) -> Result<bool, sqlx::Error> {
+    async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {
         let pid = i32::try_from(id).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-        let mut conn = pool.connect_options().connect().await?;
-        let result = sqlx::query_scalar("SELECT pg_cancel_backend($1)")
+        sqlx::query("SELECT pg_cancel_backend($1)")
             .bind(pid)
-            .fetch_one(&mut conn)
-            .await;
-        let _ = sqlx::Connection::close(conn).await;
-        result
+            .execute(conn)
+            .await
+            .map(|_| ())
     }
 }
 /// Creates a lazy `PostgreSQL` pool for `db_name`.
