@@ -7,4 +7,8 @@ ignore = [
     # compile-time-only dep via tokenizers -> macro_rules_attribute -> paste.
     # No source uses it directly and there is no upstream fix to take.
     "RUSTSEC-2024-0436",
+    # libsqlite3-sys: bundled SQLite CVE-2026-119375. Transitive dep via
+    # sqlx-sqlite 0.9.0, which caps libsqlite3-sys at <0.38; the fix needs
+    # >=0.39. Drop once a sqlx release allows it.
+    "RUSTSEC-2026-0459",
 ]
