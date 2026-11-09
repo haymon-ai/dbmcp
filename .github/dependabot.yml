@@ -8,6 +8,10 @@ updates:
       all-cargo-deps:
         patterns:
           - "*"
+    ignore:
+      # ort is exact-pinned: rc.11+ breaks the aarch64-apple-darwin release
+      # (fat LTO) link and ships no x86_64-apple-darwin prebuilt.
+      - dependency-name: ort
 
   - package-ecosystem: github-actions
     directory: /
