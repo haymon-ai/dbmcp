@@ -17,3 +17,19 @@ updates:
       all-actions-deps:
         patterns:
           - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      all-docker-deps:
+        patterns:
+          - "*"
+    ignore:
+      # The Rust image tag follows `rust-toolchain.toml`; take only its digest updates.
+      - dependency-name: rust
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch

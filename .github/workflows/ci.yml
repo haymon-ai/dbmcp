@@ -64,6 +64,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --lib --bins
 
+  # The release and helm images replace the Dockerfile's source build stage,
+  # so build it here the way `docker build .` and the Docker MCP Catalog do.
+  docker:
+    name: Docker
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check Rust image matches rust-toolchain.toml
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          grep -q "^FROM rust:${channel}-" Dockerfile \
+            || { echo "::error file=Dockerfile::rust image tag must match rust-toolchain.toml channel ${channel}"; exit 1; }
+
+      - name: Build image from source
+        run: docker build -t dbmcp:src .
+
+      - name: Run image
+        run: docker run --rm dbmcp:src --version
+
   helm:
     name: Helm chart
     runs-on: ubuntu-24.04
@@ -97,13 +117,13 @@ jobs:
 
       # The chart's probes need /healthz and /readyz, which a published image may predate,
       # so test against an image of this commit, built from the release Dockerfile with
-      # its download stage replaced by the local binary.
+      # its source build stage replaced by the local binary.
       # A debug build is enough for an install test and skips the release profile's LTO.
       - name: Build image
         run: |
           cargo build
-          mkdir -p image/tmp && cp target/debug/dbmcp image/tmp/
-          docker build -t dbmcp:ci --build-context download=image .
+          mkdir -p image/out/amd64 && cp target/debug/dbmcp image/out/amd64/
+          docker build -t dbmcp:ci --build-context build=image .
 
       - name: Load image into kind
         run: kind load docker-image dbmcp:ci --name chart-testing
