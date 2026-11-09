@@ -46,6 +46,22 @@ fn handler_with_page_size(page_size: u16) -> PostgresHandler {
     .expect("handler builds")
 }
 
+fn handler_with(config: DatabaseConfig) -> PostgresHandler {
+    PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: config,
+        http: None,
+        pii: None,
+        ssh: None,
+    })
+    .expect("handler builds")
+}
+
+/// Returns a read that runs far longer than any test timeout, tagged by `marker`.
+fn slow_sql(marker: &str) -> String {
+    format!("SELECT '{marker}' AS m, pg_sleep(30)")
+}
+
 fn handler(read_only: bool) -> PostgresHandler {
     let config = base_db_config(read_only);
     PostgresHandler::new(&Config {
@@ -426,6 +442,29 @@ async fn test_query_timeout_cancels_slow_query() {
         elapsed.as_secs() < 10,
         "Timeout should fire in ~2s, not {:.1}s",
         elapsed.as_secs_f64()
+    );
+}
+
+#[tokio::test]
+async fn test_server_timeout_mapped_under_zero() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 0,
+        max_pool_size: 1,
+        ..base_db_config(false)
+    });
+    handler
+        .write_query("SET statement_timeout = '1s'".into(), None)
+        .await
+        .expect("session timeout set");
+
+    let err = handler
+        .read_query(slow_sql("qt_mapped_zero"), None, None)
+        .await
+        .map(|_| ())
+        .expect_err("server timeout fires");
+    assert!(
+        err.to_string().contains("timed out"),
+        "Expected timeout message, got: {err}"
     );
 }
 

@@ -120,6 +120,13 @@ impl Connection for PostgresConnection {
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
+
+    fn is_timeout(error: &sqlx::Error) -> bool {
+        // 57014 is shared with other cancels; only `statement_timeout` counts.
+        error
+            .as_database_error()
+            .is_some_and(|e| e.code().as_deref() == Some("57014") && e.message().contains("statement timeout"))
+    }
 }
 /// Creates a lazy `PostgreSQL` pool for `db_name`.
 ///

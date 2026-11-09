@@ -11,7 +11,7 @@ use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
+use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
 use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
@@ -115,6 +115,14 @@ impl Connection for MysqlConnection {
 
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
+    }
+
+    fn is_timeout(error: &sqlx::Error) -> bool {
+        // 3024: MySQL `max_execution_time`; 1969: MariaDB `max_statement_time`.
+        error
+            .as_database_error()
+            .and_then(|e| e.try_downcast_ref::<MySqlDatabaseError>())
+            .is_some_and(|e| matches!(e.number(), 3024 | 1969))
     }
 }
 /// Creates a lazy `MySQL` pool for `db_name`.

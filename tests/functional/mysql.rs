@@ -44,6 +44,34 @@ fn handler(read_only: bool) -> MysqlHandler {
     .expect("handler builds")
 }
 
+fn handler_with(config: DatabaseConfig) -> MysqlHandler {
+    MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: config,
+        http: None,
+        pii: None,
+        ssh: None,
+    })
+    .expect("handler builds")
+}
+
+/// Returns a read that runs far longer than any test timeout, tagged by `marker`.
+fn slow_sql(marker: &str) -> String {
+    format!(
+        "SELECT '{marker}' AS m, COUNT(*) AS n FROM information_schema.columns a, \
+         information_schema.columns b, information_schema.columns c"
+    )
+}
+
+/// Returns whether the server behind `handler` is `MariaDB`.
+async fn is_mariadb(handler: &MysqlHandler) -> bool {
+    let response = handler
+        .read_query("SELECT VERSION() AS v".into(), None, None)
+        .await
+        .expect("version query");
+    response.rows[0]["v"].as_str().is_some_and(|v| v.contains("MariaDB"))
+}
+
 fn handler_with_page_size(page_size: u16) -> MysqlHandler {
     let config = DatabaseConfig {
         page_size,
@@ -425,6 +453,33 @@ async fn test_query_timeout_cancels_slow_query() {
         elapsed.as_secs() < 10,
         "Timeout should fire in ~2s, not {:.1}s",
         elapsed.as_secs_f64()
+    );
+}
+
+#[tokio::test]
+async fn test_server_timeout_mapped_under_zero() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 0,
+        max_pool_size: 1,
+        ..base_db_config(false)
+    });
+    if !is_mariadb(&handler).await {
+        eprintln!("skip: needs a MariaDB server");
+        return;
+    }
+    handler
+        .write_query("SET SESSION max_statement_time = 1".into(), None)
+        .await
+        .expect("session timeout set");
+
+    let err = handler
+        .read_query(slow_sql("qt_mapped_zero"), None, None)
+        .await
+        .map(|_| ())
+        .expect_err("server timeout fires");
+    assert!(
+        err.to_string().contains("timed out"),
+        "Expected timeout message, got: {err}"
     );
 }
 

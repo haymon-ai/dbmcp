@@ -63,6 +63,10 @@ impl Connection for SqliteConnection {
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
+
+    fn is_timeout(_error: &sqlx::Error) -> bool {
+        false
+    }
 }
 /// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].
 ///

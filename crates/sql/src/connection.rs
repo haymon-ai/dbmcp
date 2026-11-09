@@ -50,9 +50,10 @@ where
 
 /// Unified query surface every backend tool handler uses.
 ///
-/// Backends supply three required items — [`DB`](Connection::DB),
-/// [`pool`](Connection::pool), and [`query_timeout`](Connection::query_timeout)
-/// — and receive default implementations for query execution.
+/// Backends supply four required items — [`DB`](Connection::DB),
+/// [`pool`](Connection::pool), [`query_timeout`](Connection::query_timeout),
+/// and [`is_timeout`](Connection::is_timeout) — and receive default
+/// implementations for query execution.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
 /// through the unprepared text protocol, required for statements like `MySQL`
@@ -87,6 +88,9 @@ where
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
 
+    /// Returns whether `error` is this backend's server-side statement timeout.
+    fn is_timeout(error: &sqlx::Error) -> bool;
+
     /// Checks that the default database answers `SELECT 1`.
     ///
     /// Succeeds without a query while every pooled connection is busy:
@@ -116,7 +120,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             Ok(pool.execute((sql, arguments)).await?.rows_affected())
         })
         .await
@@ -133,7 +137,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             let rows = pool.fetch_all((sql, arguments)).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
@@ -161,7 +165,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             let mut tx = pool.begin_with("START TRANSACTION READ ONLY").await?;
             let rows = (&mut *tx).fetch_all((sql, arguments)).await?;
             tx.rollback().await?;
@@ -185,7 +189,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             let row = pool.fetch_optional((sql, arguments)).await?;
             Ok(row.and_then(|r| r.try_get(0usize).ok()))
         })
@@ -204,7 +208,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             let rows = pool.fetch_all((sql, arguments)).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })
@@ -225,7 +229,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
+        execute_with_timeout::<Self, _>(self.query_timeout(), sql, |sql| async move {
             let rows = pool.fetch_all((sql, arguments)).await?;
             rows.iter().map(T::from_row).collect()
         })
