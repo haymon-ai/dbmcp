@@ -6,13 +6,13 @@
 
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -173,6 +173,25 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
     }
 
+    if config.query_timeout > 0 {
+        let (sql, value) = match config.backend {
+            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", config.query_timeout),
+            _ => (
+                "SET SESSION max_execution_time = ?",
+                config.query_timeout.saturating_mul(1000),
+            ),
+        };
+        pool_opts = pool_opts.after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                // A failed SET keeps the connection: only the client timeout applies.
+                if let Err(error) = sqlx::query(sql).bind(value).execute(&mut *conn).await {
+                    warn!(%error, "session statement timeout not set; relying on the client timeout");
+                }
+                Ok(())
+            })
+        });
+    }
+
     pool_opts.connect_lazy_with(conn_ops)
 }
 
@@ -185,7 +204,6 @@ pub(crate) fn quote_ident(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

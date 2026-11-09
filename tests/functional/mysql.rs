@@ -16,9 +16,17 @@ use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use serde_json::Value;
 
+/// Returns the backend under test from `DBMCP_DB_BACKEND` (default `Mysql`).
+fn backend() -> DatabaseBackend {
+    match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+        Ok("mariadb") => DatabaseBackend::Mariadb,
+        _ => DatabaseBackend::Mysql,
+    }
+}
+
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
-        backend: DatabaseBackend::Mysql,
+        backend: backend(),
         host: std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port: std::env::var("DBMCP_DB_PORT")
             .ok()
@@ -63,13 +71,69 @@ fn slow_sql(marker: &str) -> String {
     )
 }
 
-/// Returns whether the server behind `handler` is `MariaDB`.
-async fn is_mariadb(handler: &MysqlHandler) -> bool {
+/// Polls a second connection until no statement tagged `marker` runs.
+async fn assert_statement_gone(marker: &str) {
+    let observer = handler(true);
+    let sql = format!(
+        "SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST \
+         WHERE INFO LIKE '%{marker}%' AND ID <> CONNECTION_ID()"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let response = observer
+            .read_query(sql.clone(), None, None)
+            .await
+            .expect("processlist query");
+        if response.rows[0]["n"].as_i64() == Some(0) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statement {marker} still running after 10s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+/// Reads the session statement timeout variable for the backend under test.
+async fn session_timeout(handler: &MysqlHandler) -> f64 {
+    let variable = match backend() {
+        DatabaseBackend::Mariadb => "max_statement_time",
+        _ => "max_execution_time",
+    };
     let response = handler
-        .read_query("SELECT VERSION() AS v".into(), None, None)
+        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None)
         .await
-        .expect("version query");
-    response.rows[0]["v"].as_str().is_some_and(|v| v.contains("MariaDB"))
+        .expect("session variable query");
+    let value = &response.rows[0]["v"];
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .unwrap_or_else(|| panic!("unexpected {variable} value: {value}"))
+}
+
+/// Builds a size-1 pool handler with the given query timeout.
+fn single_connection_handler(query_timeout: u64) -> MysqlHandler {
+    handler_with(DatabaseConfig {
+        query_timeout,
+        max_pool_size: 1,
+        connection_timeout: Some(5),
+        ..base_db_config(false)
+    })
+}
+
+/// Asserts that `result` is a timeout and the pool serves `SELECT 1` again.
+async fn assert_timed_out<T>(handler: &MysqlHandler, result: Result<T, rmcp::ErrorData>, marker: &str) {
+    let err = result.map(|_| ()).expect_err("statement times out");
+    assert!(
+        err.to_string().contains("timed out"),
+        "Expected timeout message, got: {err}"
+    );
+    assert_statement_gone(marker).await;
+    handler
+        .read_query("SELECT 1 AS one".into(), None, None)
+        .await
+        .expect("pool slot freed after timeout");
 }
 
 fn handler_with_page_size(page_size: u16) -> MysqlHandler {
@@ -423,50 +487,12 @@ async fn test_uses_default_pool_for_matching_database() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_cancels_slow_query() {
-    let config = DatabaseConfig {
-        query_timeout: 2,
-        ..base_db_config(false)
-    };
-    let handler = MysqlHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds");
-
-    let start = std::time::Instant::now();
-    let response = handler
-        .read_query("SELECT SLEEP(30)".into(), Some("app".into()), None)
-        .await;
-    let elapsed = start.elapsed();
-
-    assert!(response.is_err(), "Expected timeout error");
-    let err_msg = response.map(|_| ()).unwrap_err().to_string();
-    assert!(
-        err_msg.contains("timed out"),
-        "Expected timeout message, got: {err_msg}"
-    );
-    assert!(
-        elapsed.as_secs() < 10,
-        "Timeout should fire in ~2s, not {:.1}s",
-        elapsed.as_secs_f64()
-    );
-}
-
-#[tokio::test]
 async fn test_server_timeout_mapped_under_zero() {
-    let handler = handler_with(DatabaseConfig {
-        query_timeout: 0,
-        max_pool_size: 1,
-        ..base_db_config(false)
-    });
-    if !is_mariadb(&handler).await {
-        eprintln!("skip: needs a MariaDB server");
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb");
         return;
     }
+    let handler = single_connection_handler(0);
     handler
         .write_query("SET SESSION max_statement_time = 1".into(), None)
         .await
@@ -484,24 +510,56 @@ async fn test_server_timeout_mapped_under_zero() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_disabled_with_zero() {
-    let config = DatabaseConfig {
-        query_timeout: 0,
-        ..base_db_config(false)
+async fn test_session_timeout_set_from_query_timeout() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 3,
+        ..base_db_config(true)
+    });
+    let expected = match backend() {
+        DatabaseBackend::Mariadb => 3.0,
+        _ => 3000.0,
     };
-    let handler = MysqlHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds");
+    assert!((session_timeout(&handler).await - expected).abs() < f64::EPSILON);
+}
 
-    let response = handler
-        .read_query("SELECT 1 AS value".into(), Some("app".into()), None)
-        .await;
+#[tokio::test]
+async fn test_query_timeout_zero_leaves_server_defaults() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 0,
+        ..base_db_config(true)
+    });
+    assert!(session_timeout(&handler).await.abs() < f64::EPSILON);
+
+    let response = handler.read_query("SELECT 1 AS value".into(), None, None).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
+}
+
+#[tokio::test]
+async fn test_server_timeout_stops_slow_read() {
+    let handler = single_connection_handler(1);
+    let start = std::time::Instant::now();
+    let result = handler.read_query(slow_sql("qt_server_read"), None, None).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
+    assert_timed_out(&handler, result, "qt_server_read").await;
+}
+
+#[tokio::test]
+async fn test_server_timeout_stops_slow_write() {
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: MySQL's server timeout covers SELECT only");
+        return;
+    }
+    let handler = single_connection_handler(1);
+    let sql = format!(
+        "CREATE TEMPORARY TABLE qt_server_write AS {}",
+        slow_sql("qt_server_write")
+    );
+    let start = std::time::Instant::now();
+    let result = handler.write_query(sql, None).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
+    assert_timed_out(&handler, result, "qt_server_write").await;
 }
 
 #[tokio::test]
@@ -1231,25 +1289,6 @@ async fn test_create_drop_database_with_double_quote() {
         result.is_ok(),
         "drop database with double-quote should succeed: {result:?}"
     );
-}
-
-#[tokio::test]
-async fn test_timeout_on_list_tables() {
-    let mut config = base_db_config(true);
-    config.query_timeout = 1;
-    let handler = MysqlHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds");
-
-    let result = handler
-        .read_query("SELECT SLEEP(60)".into(), Some("app".into()), None)
-        .await;
-    assert!(result.is_err(), "slow query should time out");
 }
 
 const MY_DB: &str = "app";

@@ -112,8 +112,8 @@ pub struct DatabaseConfig {
 
     /// Query execution timeout in seconds.
     ///
-    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `0` disables the
-    /// timeout entirely.
+    /// Defaults to [`Self::DEFAULT_QUERY_TIMEOUT_SECS`]. `0` disables dbmcp's
+    /// server and client timeouts; server defaults apply.
     pub query_timeout: u64,
 
     /// Maximum items returned in a single paginated tool response.

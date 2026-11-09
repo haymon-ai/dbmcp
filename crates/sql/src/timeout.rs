@@ -4,17 +4,26 @@
 //! a `tokio::time::timeout` guard (`0` disables it).  All backend crates use this
 //! single function instead of duplicating timeout logic.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use sqlx::SqlStr;
 
 use crate::{Connection, SqlError};
 
+/// Extra time the client timer waits beyond the server statement timeout.
+///
+/// The server timeout fires first; equal timers race, and a query future
+/// dropped while the server's error arrives leaves the connection unusable.
+pub const GRACE: Duration = Duration::from_secs(5);
+
 /// Runs a query operation with an optional query timeout.
 ///
 /// `op` is handed the [`SqlStr`] to execute and returns the in-flight
 /// query future. When `timeout_secs` is greater than zero, that future is
-/// wrapped with [`tokio::time::timeout`]; on expiry it is dropped
+/// wrapped with [`tokio::time::timeout`] at `timeout_secs` + [`GRACE`],
+/// leaving the server-side session timeout room to fire first; on expiry it is dropped
 /// (cancelling the in-flight query) and [`SqlError::QueryTimeout`] is
 /// returned with the elapsed time and the SQL text. `0` runs without a
 /// timeout. A server timeout error ([`Connection::is_timeout`]) also maps
@@ -49,7 +58,7 @@ where
         sql: err_sql.as_str().to_owned(),
     };
     let result = if timeout_secs > 0 {
-        tokio::time::timeout(Duration::from_secs(timeout_secs), op(sql))
+        tokio::time::timeout(Duration::from_secs(timeout_secs) + GRACE, op(sql))
             .await
             .map_err(|_| timed_out())?
     } else {
@@ -151,7 +160,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn slow_query_times_out() {
         let result: Result<i32, SqlError> =
             execute_with_timeout::<Stub, _>(1, SqlStr::from_static("SELECT SLEEP(60)"), |_| async {
@@ -162,7 +171,7 @@ mod tests {
         let err = result.expect_err("should time out");
         match err {
             SqlError::QueryTimeout { elapsed_secs, sql } => {
-                assert!(elapsed_secs >= 0.9, "elapsed too small: {elapsed_secs}");
+                assert!(elapsed_secs >= 5.9, "elapsed too small: {elapsed_secs}");
                 assert_eq!(sql, "SELECT SLEEP(60)");
             }
             other => panic!("expected QueryTimeout, got: {other}"),

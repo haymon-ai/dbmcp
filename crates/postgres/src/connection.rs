@@ -12,7 +12,7 @@ use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -171,6 +171,24 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
 
     if let Some(timeout) = config.connection_timeout {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
+    }
+
+    if config.query_timeout > 0 {
+        let millis = config.query_timeout.saturating_mul(1000).to_string();
+        pool_opts = pool_opts.after_connect(move |conn, _meta| {
+            let millis = millis.clone();
+            Box::pin(async move {
+                // A failed SET keeps the connection: only the client timeout applies.
+                if let Err(error) = sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+                    .bind(millis)
+                    .execute(&mut *conn)
+                    .await
+                {
+                    warn!(%error, "session statement timeout not set; relying on the client timeout");
+                }
+                Ok(())
+            })
+        });
     }
 
     pool_opts.connect_lazy_with(conn_ops)

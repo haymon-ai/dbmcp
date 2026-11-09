@@ -59,7 +59,67 @@ fn handler_with(config: DatabaseConfig) -> PostgresHandler {
 
 /// Returns a read that runs far longer than any test timeout, tagged by `marker`.
 fn slow_sql(marker: &str) -> String {
-    format!("SELECT '{marker}' AS m, pg_sleep(30)")
+    format!("SELECT '{marker}' AS m, pg_sleep(30)::text AS slept")
+}
+
+/// Polls a second connection until no statement tagged `marker` runs.
+async fn assert_statement_gone(marker: &str) {
+    let observer = handler(true);
+    let sql = format!(
+        "SELECT count(*) AS n FROM pg_stat_activity \
+         WHERE query LIKE '%{marker}%' AND state = 'active' AND pid <> pg_backend_pid()"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let response = observer
+            .read_query(sql.clone(), None, None)
+            .await
+            .expect("pg_stat_activity query");
+        if response.rows[0]["n"].as_i64() == Some(0) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statement {marker} still running after 10s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+/// Reads the session `statement_timeout`.
+async fn session_timeout(handler: &PostgresHandler) -> String {
+    let response = handler
+        .read_query("SHOW statement_timeout".into(), None, None)
+        .await
+        .expect("SHOW statement_timeout");
+    response.rows[0]["statement_timeout"]
+        .as_str()
+        .expect("statement_timeout is text")
+        .to_owned()
+}
+
+/// Builds a size-1 pool handler with the given query timeout.
+fn single_connection_handler(query_timeout: u64) -> PostgresHandler {
+    handler_with(DatabaseConfig {
+        query_timeout,
+        max_pool_size: 1,
+        connection_timeout: Some(5),
+        ..base_db_config(false)
+    })
+}
+
+/// Asserts that `result` is a timeout and the pool serves `SELECT 1` again.
+async fn assert_timed_out<T>(handler: &PostgresHandler, result: Result<T, rmcp::ErrorData>, marker: &str) {
+    let err = result.map(|_| ()).expect_err("statement times out");
+    assert!(
+        err.to_string().contains("timed out"),
+        "Expected timeout message, got: {err}"
+    );
+    assert_statement_gone(marker).await;
+    handler
+        .read_query("SELECT 1 AS one".into(), None, None)
+        .await
+        .expect("pool slot freed after timeout");
 }
 
 fn handler(read_only: bool) -> PostgresHandler {
@@ -412,46 +472,8 @@ async fn test_uses_default_pool_for_matching_database() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_cancels_slow_query() {
-    let config = DatabaseConfig {
-        query_timeout: 2,
-        ..base_db_config(false)
-    };
-    let handler = PostgresHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds");
-
-    let start = std::time::Instant::now();
-    let response = handler
-        .read_query("SELECT pg_sleep(30)".into(), Some("app".into()), None)
-        .await;
-    let elapsed = start.elapsed();
-
-    assert!(response.is_err(), "Expected timeout error");
-    let err_msg = response.map(|_| ()).unwrap_err().to_string();
-    assert!(
-        err_msg.contains("timed out"),
-        "Expected timeout message, got: {err_msg}"
-    );
-    assert!(
-        elapsed.as_secs() < 10,
-        "Timeout should fire in ~2s, not {:.1}s",
-        elapsed.as_secs_f64()
-    );
-}
-
-#[tokio::test]
 async fn test_server_timeout_mapped_under_zero() {
-    let handler = handler_with(DatabaseConfig {
-        query_timeout: 0,
-        max_pool_size: 1,
-        ..base_db_config(false)
-    });
+    let handler = single_connection_handler(0);
     handler
         .write_query("SET statement_timeout = '1s'".into(), None)
         .await
@@ -469,24 +491,48 @@ async fn test_server_timeout_mapped_under_zero() {
 }
 
 #[tokio::test]
-async fn test_query_timeout_disabled_with_zero() {
-    let config = DatabaseConfig {
-        query_timeout: 0,
-        ..base_db_config(false)
-    };
-    let handler = PostgresHandler::new(&Config {
-        transport: Transport::Stdio,
-        database: config,
-        http: None,
-        pii: None,
-        ssh: None,
-    })
-    .expect("handler builds");
+async fn test_session_timeout_set_from_query_timeout() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 3,
+        ..base_db_config(true)
+    });
+    assert_eq!(session_timeout(&handler).await, "3s");
+}
 
-    let response = handler
-        .read_query("SELECT 1 AS value".into(), Some("app".into()), None)
-        .await;
+#[tokio::test]
+async fn test_query_timeout_zero_leaves_server_defaults() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 0,
+        ..base_db_config(true)
+    });
+    assert_eq!(session_timeout(&handler).await, "0");
+
+    let response = handler.read_query("SELECT 1 AS value".into(), None, None).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
+}
+
+#[tokio::test]
+async fn test_server_timeout_stops_slow_read() {
+    let handler = single_connection_handler(1);
+    let start = std::time::Instant::now();
+    let result = handler.read_query(slow_sql("qt_server_read"), None, None).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
+    assert_timed_out(&handler, result, "qt_server_read").await;
+}
+
+#[tokio::test]
+async fn test_server_timeout_stops_slow_write() {
+    let handler = single_connection_handler(1);
+    let sql = format!(
+        "CREATE TEMPORARY TABLE qt_server_write AS {}",
+        slow_sql("qt_server_write")
+    );
+    let start = std::time::Instant::now();
+    let result = handler.write_query(sql, None).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
+    assert_timed_out(&handler, result, "qt_server_write").await;
 }
 
 #[tokio::test]
