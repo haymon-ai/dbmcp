@@ -13,7 +13,7 @@ use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -126,10 +126,12 @@ impl Connection for MysqlConnection {
             .is_some_and(|e| matches!(e.number(), 3024 | 1969))
     }
 
-    async fn arm(&self, conn: &mut sqlx::MySqlConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
-        let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn)
-            .await?;
+    async fn session_id(&self, conn: &mut sqlx::MySqlConnection) -> Result<Option<u64>, sqlx::Error> {
+        let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()").fetch_one(conn).await?;
+        Ok(Some(id))
+    }
+
+    async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection) -> Result<(), sqlx::Error> {
         let (sql, value) = match self.config.backend {
             DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", self.config.query_timeout),
             _ => (
@@ -137,12 +139,7 @@ impl Connection for MysqlConnection {
                 self.config.query_timeout.saturating_mul(1000),
             ),
         };
-        // A failed SET keeps the statement: only the client timeout applies.
-        if let Err(error) = sqlx::query(sql).bind(value).execute(conn).await {
-            warn!(%error, "session statement timeout not set; relying on the client timeout");
-            return Ok((Some(id), false));
-        }
-        Ok((Some(id), true))
+        sqlx::query(sql).bind(value).execute(conn).await.map(|_| ())
     }
 
     async fn kill(conn: &mut sqlx::MySqlConnection, id: u64) -> Result<(), sqlx::Error> {

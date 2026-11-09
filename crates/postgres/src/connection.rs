@@ -12,7 +12,7 @@ use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -128,23 +128,19 @@ impl Connection for PostgresConnection {
             .is_some_and(|e| e.code().as_deref() == Some("57014") && e.message().contains("statement timeout"))
     }
 
-    async fn arm(&self, conn: &mut sqlx::PgConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
-        let millis = self.config.query_timeout.saturating_mul(1000).to_string();
-        let armed =
-            sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid() FROM set_config('statement_timeout', $1, false)")
-                .bind(millis)
-                .fetch_one(conn)
-                .await;
-        // A failed SET keeps the statement: only the client timeout applies.
-        let pid = match armed {
-            Ok(pid) => pid,
-            Err(error) => {
-                warn!(%error, "session statement timeout not set; relying on the client timeout");
-                return Ok((None, false));
-            }
-        };
+    async fn session_id(&self, conn: &mut sqlx::PgConnection) -> Result<Option<u64>, sqlx::Error> {
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(conn).await?;
         let pid = u64::try_from(pid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
-        Ok((Some(pid), true))
+        Ok(Some(pid))
+    }
+
+    async fn set_timeout(&self, conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+        let millis = self.config.query_timeout.saturating_mul(1000).to_string();
+        sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+            .bind(millis)
+            .execute(conn)
+            .await
+            .map(|_| ())
     }
 
     async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {

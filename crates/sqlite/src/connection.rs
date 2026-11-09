@@ -68,12 +68,17 @@ impl Connection for SqliteConnection {
         false
     }
 
-    async fn arm(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
-        Ok((None, false))
+    async fn session_id(&self, _conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
+        Ok(None)
+    }
+
+    async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+        // Unreachable: `session_id` returns no id, so no server timeout is set.
+        Ok(())
     }
 
     async fn kill(_conn: &mut sqlx::SqliteConnection, _id: u64) -> Result<(), sqlx::Error> {
-        // Unreachable: `arm` returns no session id, so nothing is ever killed.
+        // Unreachable: `session_id` returns no id, so nothing is ever killed.
         Ok(())
     }
 }

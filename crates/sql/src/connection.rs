@@ -52,9 +52,9 @@ where
 ///
 /// Backends supply the [`DB`](Connection::DB) type, [`pool`](Connection::pool),
 /// [`query_timeout`](Connection::query_timeout), and the timeout hooks
-/// [`is_timeout`](Connection::is_timeout), [`arm`](Connection::arm),
-/// and [`kill`](Connection::kill), and receive default implementations for
-/// query execution.
+/// [`is_timeout`](Connection::is_timeout), [`session_id`](Connection::session_id),
+/// [`set_timeout`](Connection::set_timeout), and [`kill`](Connection::kill),
+/// and receive default implementations for query execution.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
 /// through the unprepared text protocol, required for statements like `MySQL`
@@ -92,18 +92,25 @@ where
     /// Returns whether `error` is this backend's server-side statement timeout.
     fn is_timeout(error: &sqlx::Error) -> bool;
 
-    /// Sets the server statement timeout on `conn` and reads its session id.
+    /// Reads the server session id of `conn`; `None` means no server.
     ///
-    /// Returns the session id (`None` without a server) and whether the
-    /// timeout was set. A failed timeout `SET` is logged, not returned.
+    /// Without a session id, no server statement timeout is set and a
+    /// timed-out statement is not killed.
     ///
     /// # Errors
     ///
-    /// Returns the driver error if the session id lookup fails.
-    async fn arm(
-        &self,
-        conn: &mut <Self::DB as sqlx::Database>::Connection,
-    ) -> Result<(Option<u64>, bool), sqlx::Error>;
+    /// Returns the driver error if the lookup fails.
+    async fn session_id(&self, conn: &mut <Self::DB as sqlx::Database>::Connection)
+    -> Result<Option<u64>, sqlx::Error>;
+
+    /// Sets the server statement timeout on `conn` from the query timeout.
+    ///
+    /// Called only when [`session_id`](Connection::session_id) returned an id.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver error if the server rejects the timeout.
+    async fn set_timeout(&self, conn: &mut <Self::DB as sqlx::Database>::Connection) -> Result<(), sqlx::Error>;
 
     /// Cancels the statement running on session `id`, sent over a one-off `conn`.
     ///
