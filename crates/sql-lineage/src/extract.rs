@@ -12,7 +12,7 @@ use crate::{resolve, statement};
 ///
 /// Handles read queries (`SELECT`) and write statements (`INSERT`, `UPDATE`,
 /// `DELETE`, `CREATE TABLE AS SELECT`, `MERGE`); writes set [`Lineage::target`].
-/// Other statements (`SHOW`, `DESCRIBE`, `USE`, `EXPLAIN`) succeed empty.
+/// Other statements (e.g. `SHOW`, `DESCRIBE`, `EXPLAIN`) succeed empty.
 ///
 /// # Errors
 /// Returns [`LineageError`] if the SQL fails to parse, contains more than one

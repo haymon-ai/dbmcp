@@ -9,7 +9,7 @@ SQL validation, identifier quoting, pagination, and timeout helpers powering [db
 
 ## What you get
 
-- Read-only enforcement: only `SELECT`, `SHOW`, `DESC`, `DESCRIBE`, `USE` allowed
+- Read-only enforcement: only `SELECT`, `SHOW`, `DESC`, `DESCRIBE`, `EXPLAIN` allowed
 - AST-based validation via `sqlparser` (comments + string contents stripped first)
 - Blocks file-exfiltration patterns (`LOAD_FILE`, `SELECT INTO OUTFILE/DUMPFILE`)
 - Identifier validation + per-backend quoting — no string interpolation

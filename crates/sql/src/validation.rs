@@ -13,7 +13,7 @@ pub enum StatementKind {
     /// `SELECT`, `WITH ... SELECT`, or compound queries (`UNION`/`INTERSECT`/`EXCEPT`).
     /// Composable inside a subquery wrap with an appended `LIMIT` / `OFFSET`.
     Select,
-    /// `SHOW`, `DESC` / `DESCRIBE`, `USE`, or `EXPLAIN` — read-only but not
+    /// `SHOW`, `DESC` / `DESCRIBE`, or `EXPLAIN` — read-only but not
     /// composable as a subquery source. Returned in a single response.
     NonSelect,
 }
@@ -22,7 +22,8 @@ pub enum StatementKind {
 ///
 /// Parses the query using the given dialect and checks:
 /// 1. Exactly one statement (multi-statement injection blocked)
-/// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, USE, EXPLAIN)
+/// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN); `USE`
+///    is rejected because it would leak to later queries on a pooled connection
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
 /// 5. No dangerous functions (file access, large objects, sequences, extensions,
@@ -79,8 +80,7 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
         | Statement::ShowFunctions { .. }
         | Statement::ShowViews { .. }
         | Statement::ShowObjects(_)
-        | Statement::ExplainTable { .. }
-        | Statement::Use(_) => Ok(StatementKind::NonSelect),
+        | Statement::ExplainTable { .. } => Ok(StatementKind::NonSelect),
         _ => Err(SqlError::ReadOnlyViolation),
     }
 }
@@ -289,10 +289,6 @@ mod tests {
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read_only("USE app", &DIALECT).unwrap(),
-            StatementKind::NonSelect,
-        );
-        assert_eq!(
             validate_read_only("EXPLAIN SELECT 1", &DIALECT).unwrap(),
             StatementKind::NonSelect,
         );
@@ -320,8 +316,11 @@ mod tests {
     }
 
     #[test]
-    fn test_use_allowed() {
-        assert!(validate_read_only("USE mydb", &DIALECT).is_ok());
+    fn test_use_blocked() {
+        assert!(matches!(
+            validate_read_only("USE mydb", &DIALECT),
+            Err(SqlError::ReadOnlyViolation)
+        ));
     }
 
     // === Blocked statement types ===

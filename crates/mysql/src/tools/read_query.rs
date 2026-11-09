@@ -107,7 +107,7 @@ impl MysqlHandler {
     /// transaction, so the database rejects writes the validator misses.
     /// It then dispatches on the classified [`StatementKind`]: `Select` is
     /// wrapped in a subquery with a server-controlled `LIMIT`/`OFFSET`;
-    /// `NonSelect` (SHOW, DESCRIBE, USE, EXPLAIN) is executed as-is and
+    /// `NonSelect` (SHOW, DESCRIBE, EXPLAIN) is executed as-is and
     /// returned in a single page. A malformed `cursor` is rejected by the
     /// serde deserializer before this method is called, which rmcp reports
     /// as a tool result with `isError: true`.

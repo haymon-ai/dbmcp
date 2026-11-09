@@ -1072,16 +1072,27 @@ async fn test_read_query_group_by() {
 }
 
 #[tokio::test]
-async fn test_read_query_use_statement() {
-    let handler = handler(false);
+async fn test_read_query_use_statement_rejected() {
+    // A size-1 pool: every call reuses the connection a leaked USE would taint.
+    let handler = handler_with(single_connection_config(0));
 
-    // USE passes read_only validation and executes without returning rows
     let response = handler
-        .read_query("USE app".into(), Some("app".into()), None)
+        .read_query("USE analytics".into(), Some("app".into()), None)
         .await
-        .unwrap();
-    let rows = &response.rows;
-    assert!(rows.is_empty(), "USE returns no rows");
+        .expect_err("USE must be rejected by readQuery");
+    assert!(
+        response.message.contains("Query blocked"),
+        "expected read-only rejection, got: {}",
+        response.message
+    );
+
+    for _ in 0..3 {
+        let response = handler
+            .read_query("SELECT DATABASE() AS db".into(), None, None)
+            .await
+            .expect("SELECT DATABASE() runs");
+        assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
+    }
 }
 
 #[tokio::test]

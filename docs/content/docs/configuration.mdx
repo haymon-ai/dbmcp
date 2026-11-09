@@ -131,7 +131,7 @@ When `database.ssl` is enabled, the server validates that any provided certifica
 | `database.page_size` | `DBMCP_DB_PAGE_SIZE` | integer | `100` | Max items per paginated tool response (range 1–500) |
 | `log_level` | `DBMCP_LOG_LEVEL` | enum | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace`. Logs go to stderr. |
 
-> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `DBMCP_DB_READ_ONLY=false` (or `read_only: false` under `database` in the config file) to enable write tools.
+> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN` only). Set `DBMCP_DB_READ_ONLY=false` (or `read_only: false` under `database` in the config file) to enable write tools.
 
 The page size applies uniformly to every paginated tool; see the [Cursor Pagination](/docs/features#cursor-pagination) section on the Features page for the full protocol.
 

@@ -22,8 +22,9 @@ The `readQuery` tool enforces AST-based SQL validation as defence-in-depth. Only
 - `SELECT` — read data from tables
 - `SHOW` — view database and table metadata
 - `DESCRIBE` / `DESC` — inspect table structure
-- `USE` — switch between databases
 - `EXPLAIN` — view query execution plans
+
+`USE` is rejected: it would change the database of a pooled connection for later queries. Pass the `database` argument to target another database.
 
 This validation is always enforced, even when read-only mode is disabled, preventing write statements from being smuggled through the read tool.
 

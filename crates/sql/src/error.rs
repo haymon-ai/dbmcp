@@ -9,7 +9,7 @@ const CONNECTION_KIND: &str = "connection";
 #[derive(Debug, thiserror::Error)]
 pub enum SqlError {
     /// Query blocked by read-only mode.
-    #[error("Query blocked: only SELECT, SHOW, DESC, DESCRIBE, USE, EXPLAIN queries are allowed in read-only mode")]
+    #[error("Query blocked: only SELECT, SHOW, DESC, DESCRIBE, EXPLAIN queries are allowed in read-only mode")]
     ReadOnlyViolation,
 
     /// `LOAD_FILE()` function blocked for security.
