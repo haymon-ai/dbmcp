@@ -67,7 +67,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and d
 
 ## Security Constraints
 
-- **Read-only mode**: ONLY allow SQL prefixed with SELECT, SHOW, DESC, DESCRIBE, USE, EXPLAIN (the wrapped statement must itself be read-only). **ALWAYS** block `LOAD_FILE()`, `SELECT INTO OUTFILE/DUMPFILE`. Strip comments and string contents before validation.
+- **Read-only mode**: ONLY allow SQL prefixed with SELECT, SHOW, DESC, DESCRIBE, EXPLAIN (never `USE`, which `writeQuery` rejects too: it leaks to pooled connections) (the wrapped statement must itself be read-only). **ALWAYS** block `LOAD_FILE()`, `SELECT INTO OUTFILE/DUMPFILE`. Strip comments and string contents before validation.
 - **MULTI_STATEMENTS**: **NEVER** enable the MULTI_STATEMENTS client flag. The connection MUST clear it to prevent multi-statement SQL injection.
 - **Parameterized queries**: **NEVER** interpolate user values into SQL strings. Use parameterized queries exclusively.
 - **Identifier validation**: **ALWAYS** validate database/table names (alphanumeric and underscore). Never use string interpolation for identifiers — use proper quoting per backend.

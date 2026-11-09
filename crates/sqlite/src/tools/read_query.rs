@@ -6,7 +6,7 @@ use dbmcp_server::types::ReadQueryResponse;
 
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
-use dbmcp_sql::validation::validate_read_only;
+use dbmcp_sql::validation::validate_read;
 
 use super::prelude::*;
 use crate::types::ReadQueryRequest;
@@ -74,12 +74,13 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
-    /// read-only, or [`SqlError::Query`] if the backend reports an error.
+    /// read-only, [`SqlError::UseBlocked`] for `USE`, or [`SqlError::Query`]
+    /// if the backend reports an error.
     pub async fn read_query(
         &self,
         ReadQueryRequest { query, cursor }: ReadQueryRequest,
     ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read_only(&query, &sqlparser::dialect::SQLiteDialect {})?;
+        let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
