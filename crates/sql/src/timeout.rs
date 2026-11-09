@@ -1,8 +1,8 @@
 //! Query-level timeout wrapper for SQL operations.
 //!
 //! Provides [`execute_with_timeout`], the client-side backstop behind each
-//! backend's session statement timeout. All backend crates use it instead of
-//! duplicating timeout logic.
+//! backend's session statement timeout. Every [`Connection`] query method
+//! runs through it.
 
 use std::time::Duration;
 
@@ -10,12 +10,13 @@ use sqlx::{ConnectOptions as _, SqlStr};
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
+use crate::connection::IntoSafeQuery;
 use crate::{Connection, SqlError};
 
 /// Extra time the client backstop waits beyond the server statement timeout.
 ///
 /// Also caps the kill of a timed-out statement.
-pub const GRACE: Duration = Duration::from_secs(5);
+pub(crate) const GRACE: Duration = Duration::from_secs(5);
 
 /// Runs a query operation under the client-side timeout backstop.
 ///
@@ -28,7 +29,9 @@ pub const GRACE: Duration = Duration::from_secs(5);
 /// ([`Connection::is_timeout`]) also maps to [`SqlError::QueryTimeout`],
 /// even when the timeout is `0`; with `0` there is no arm, timer, or kill.
 ///
-/// `op` runs on a connection acquired from `pool`. When the server timeout
+/// `query` is split into its SQL text and arguments, and `op` runs them on a
+/// connection acquired from `connection`'s pool for `database` (resolved
+/// before the timer starts). When the server timeout
 /// was not set, the timer stops at the timeout without [`GRACE`]; without a
 /// session id, nothing is killed.
 ///
@@ -36,24 +39,31 @@ pub const GRACE: Duration = Duration::from_secs(5);
 ///
 /// # Errors
 ///
+/// * [`SqlError::InvalidIdentifier`] — `database` failed validation.
 /// * [`SqlError::QueryTimeout`] — the server or client-side timeout fired.
 /// * [`SqlError::Connection`] — the database could not be reached
 ///   (I/O, TLS, protocol, or connection pool failure).
 /// * [`SqlError::Query`] — the underlying query failed for any other
 ///   reason (e.g. syntax error).
-pub async fn execute_with_timeout<C, T>(
+pub(crate) async fn execute_with_timeout<C, Q, T>(
     connection: &C,
-    pool: sqlx::Pool<C::DB>,
-    sql: SqlStr,
-    op: impl AsyncFnOnce(&mut <C::DB as sqlx::Database>::Connection, SqlStr) -> Result<T, sqlx::Error>,
+    database: Option<&str>,
+    query: Q,
+    op: impl AsyncFnOnce(
+        &mut <C::DB as sqlx::Database>::Connection,
+        (SqlStr, Option<<C::DB as sqlx::Database>::Arguments>),
+    ) -> Result<T, sqlx::Error>,
 ) -> Result<T, SqlError>
 where
     C: Connection + ?Sized,
+    Q: IntoSafeQuery<C::DB>,
     for<'c> &'c mut <C::DB as sqlx::Database>::Connection: sqlx::Executor<'c, Database = C::DB>,
     usize: sqlx::ColumnIndex<<C::DB as sqlx::Database>::Row>,
     <C::DB as sqlx::Database>::Row: sqlx_json::RowExt,
     <C::DB as sqlx::Database>::QueryResult: sqlx_json::QueryResult,
 {
+    let (sql, arguments) = query.into_sql_and_args()?;
+    let pool = connection.pool(database).await?;
     let timeout_secs = connection.query_timeout();
     let start = Instant::now();
     let err_sql = sql.clone();
@@ -80,7 +90,7 @@ where
     let backstop = start.checked_add(limit.saturating_add(GRACE));
     let Some(deadline) = backstop.filter(|_| timeout_secs > 0) else {
         let mut conn = pool.acquire().await.map_err(map_error)?;
-        return op(&mut conn, sql).await.map_err(map_error);
+        return op(&mut conn, (sql, arguments)).await.map_err(map_error);
     };
 
     let mut conn = tokio::time::timeout_at(deadline, pool.acquire())
@@ -95,7 +105,7 @@ where
     let (id, armed) = armed.map_err(map_error)?;
     let deadline = if armed { deadline } else { start + limit };
 
-    let Ok(result) = tokio::time::timeout_at(deadline, op(&mut conn, sql)).await else {
+    let Ok(result) = tokio::time::timeout_at(deadline, op(&mut conn, (sql, arguments))).await else {
         if let Some(id) = id {
             // `conn` stays out of the pool until the kill ends, so nothing reuses it
             // while the statement may still run. It is then detached: sqlx can't
@@ -160,15 +170,20 @@ mod tests {
         SlowArm,
     }
 
-    /// Stub backend with a fixed query timeout and arm behaviour.
+    /// Stub backend with a fixed pool, query timeout, and arm behaviour.
     struct Stub {
+        pool: sqlx::SqlitePool,
         mode: Mode,
         timeout_secs: u64,
     }
 
     impl Stub {
-        fn new(mode: Mode, timeout_secs: u64) -> Self {
-            Self { mode, timeout_secs }
+        fn new(pool: &sqlx::SqlitePool, mode: Mode, timeout_secs: u64) -> Self {
+            Self {
+                pool: pool.clone(),
+                mode,
+                timeout_secs,
+            }
         }
     }
 
@@ -176,7 +191,7 @@ mod tests {
         type DB = sqlx::Sqlite;
 
         async fn pool(&self, _target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError> {
-            Err(SqlError::Connection("stub has no pool".into()))
+            Ok(self.pool.clone())
         }
 
         fn query_timeout(&self) -> u64 {
@@ -253,7 +268,10 @@ mod tests {
         panic!("kill task did not run");
     }
 
-    async fn never(_conn: &mut sqlx::SqliteConnection, _sql: SqlStr) -> Result<i32, sqlx::Error> {
+    /// SQL text and arguments `op` receives.
+    type Query = (SqlStr, Option<sqlx::sqlite::SqliteArguments>);
+
+    async fn never(_conn: &mut sqlx::SqliteConnection, _query: Query) -> Result<i32, sqlx::Error> {
         std::future::pending().await
     }
 
@@ -262,9 +280,9 @@ mod tests {
         let pool = pool().await;
         for timeout_secs in [0, 5] {
             let result: Result<i32, SqlError> = execute_with_timeout(
-                &Stub::new(Mode::Server, timeout_secs),
-                pool.clone(),
-                SqlStr::from_static("SELECT slow"),
+                &Stub::new(&pool, Mode::Server, timeout_secs),
+                None,
+                "SELECT slow",
                 async |_, _| Err(server_timeout()),
             )
             .await;
@@ -275,20 +293,19 @@ mod tests {
     #[tokio::test]
     async fn fast_query_succeeds_with_timeout() {
         let pool = pool().await;
-        let stub = Stub::new(Mode::Server, 5);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT 1"), async |_, _| Ok(42)).await;
+        let stub = Stub::new(&pool, Mode::Server, 5);
+        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(42)).await;
         assert_eq!(result.expect("should succeed"), 42);
     }
 
     #[tokio::test]
     async fn query_error_propagates_as_app_error() {
         let pool = pool().await;
-        let stub = Stub::new(Mode::Server, 5);
-        let result: Result<i32, SqlError> =
-            execute_with_timeout(&stub, pool, SqlStr::from_static("BAD SQL"), async |_, _| {
-                Err(sqlx::Error::Configuration("syntax error".into()))
-            })
-            .await;
+        let stub = Stub::new(&pool, Mode::Server, 5);
+        let result: Result<i32, SqlError> = execute_with_timeout(&stub, None, "BAD SQL", async |_, _| {
+            Err(sqlx::Error::Configuration("syntax error".into()))
+        })
+        .await;
         let err = result.expect_err("should fail");
         assert!(
             matches!(err, SqlError::Query(ref msg) if msg.contains("syntax error")),
@@ -308,13 +325,11 @@ mod tests {
             sqlx::Error::WorkerCrashed,
         ] {
             let message = error.to_string();
-            let result: Result<i32, SqlError> = execute_with_timeout(
-                &Stub::new(Mode::Server, 0),
-                pool.clone(),
-                SqlStr::from_static("SELECT 1"),
-                async |_, _| Err(error),
-            )
-            .await;
+            let result: Result<i32, SqlError> =
+                execute_with_timeout(&Stub::new(&pool, Mode::Server, 0), None, "SELECT 1", async |_, _| {
+                    Err(error)
+                })
+                .await;
             let err = result.expect_err("should fail");
             assert!(matches!(err, SqlError::Connection(ref m) if *m == message), "{err:?}");
             assert_eq!(err.to_string(), format!("Database error: {message}"));
@@ -324,8 +339,8 @@ mod tests {
     #[tokio::test]
     async fn backstop_fires_after_grace_and_kills_session() {
         let pool = paused_pool().await;
-        let stub = Stub::new(Mode::Server, 1);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT slow"), never).await;
+        let stub = Stub::new(&pool, Mode::Server, 1);
+        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
         assert_killed(SESSION).await;
     }
@@ -333,8 +348,8 @@ mod tests {
     #[tokio::test]
     async fn unarmed_deadline_has_no_grace_and_kills_session() {
         let pool = paused_pool().await;
-        let stub = Stub::new(Mode::Unarmed, 1);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT slow"), never).await;
+        let stub = Stub::new(&pool, Mode::Unarmed, 1);
+        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 1.0, 1.5);
         assert_killed(UNARMED_SESSION).await;
     }
@@ -342,16 +357,16 @@ mod tests {
     #[tokio::test]
     async fn no_server_deadline_has_no_grace() {
         let pool = paused_pool().await;
-        let stub = Stub::new(Mode::NoServer, 1);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT slow"), never).await;
+        let stub = Stub::new(&pool, Mode::NoServer, 1);
+        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 1.0, 1.5);
     }
 
     #[tokio::test]
     async fn arm_expiry_times_out() {
         let pool = paused_pool().await;
-        let stub = Stub::new(Mode::SlowArm, 1);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT slow"), never).await;
+        let stub = Stub::new(&pool, Mode::SlowArm, 1);
+        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
     }
 
@@ -359,24 +374,24 @@ mod tests {
     async fn acquire_expiry_times_out() {
         let pool = paused_pool().await;
         let _busy = pool.acquire().await.expect("hold the only connection");
-        let stub = Stub::new(Mode::Server, 1);
-        let result = execute_with_timeout(&stub, pool.clone(), SqlStr::from_static("SELECT slow"), never).await;
+        let stub = Stub::new(&pool, Mode::Server, 1);
+        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
     }
 
     #[tokio::test]
     async fn huge_timeout_runs_without_timer() {
         let pool = pool().await;
-        let stub = Stub::new(Mode::Server, u64::MAX);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT 1"), async |_, _| Ok(1)).await;
+        let stub = Stub::new(&pool, Mode::Server, u64::MAX);
+        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(1)).await;
         assert_eq!(result.expect("should succeed"), 1);
     }
 
     #[tokio::test]
     async fn zero_timeout_disables_limit() {
         let pool = pool().await;
-        let stub = Stub::new(Mode::Server, 0);
-        let result = execute_with_timeout(&stub, pool, SqlStr::from_static("SELECT 1"), async |_, _| Ok(1)).await;
+        let stub = Stub::new(&pool, Mode::Server, 0);
+        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(1)).await;
         assert_eq!(result.expect("should succeed"), 1);
     }
 }

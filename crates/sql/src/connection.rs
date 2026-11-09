@@ -142,10 +142,8 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
-            Ok(conn.execute((sql, arguments)).await?.rows_affected())
+        execute_with_timeout(self, database, query, async |conn, query| {
+            Ok(conn.execute(query).await?.rows_affected())
         })
         .await
     }
@@ -159,10 +157,8 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
-            let rows = conn.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
         .await
@@ -187,11 +183,9 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, database, query, async |conn, query| {
             let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
-            let rows = (&mut *tx).fetch_all((sql, arguments)).await?;
+            let rows = (&mut *tx).fetch_all(query).await?;
             tx.rollback().await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
@@ -211,10 +205,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
-            let row = conn.fetch_optional((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let row = conn.fetch_optional(query).await?;
             Ok(row.and_then(|r| r.try_get(0usize).ok()))
         })
         .await
@@ -230,10 +222,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
-            let rows = conn.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })
         .await
@@ -251,10 +241,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> FromRow<'r, <Self::DB as sqlx::Database>::Row> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self, pool, sql, async move |conn, sql| {
-            let rows = conn.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             rows.iter().map(T::from_row).collect()
         })
         .await
