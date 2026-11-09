@@ -2,7 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{QueryRequest, QueryResponse};
-use dbmcp_sql::validation::reject_use;
+use dbmcp_sql::validation::validate_write;
 
 use super::prelude::*;
 
@@ -108,7 +108,7 @@ impl MysqlHandler {
     /// Returns [`SqlError::UseBlocked`] for `USE`, or [`SqlError`] if the
     /// query fails.
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<QueryResponse, ErrorData> {
-        reject_use(&query, &sqlparser::dialect::MySqlDialect {})?;
+        validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 

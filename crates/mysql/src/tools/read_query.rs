@@ -5,7 +5,7 @@ use dbmcp_server::listing::{self, Cursor};
 use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
-use dbmcp_sql::validation::validate_read_only;
+use dbmcp_sql::validation::validate_read;
 
 use super::prelude::*;
 
@@ -122,7 +122,7 @@ impl MysqlHandler {
         database: Option<String>,
         cursor: Option<Cursor>,
     ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
+        let kind = validate_read(&query, &sqlparser::dialect::MySqlDialect {})?;
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 

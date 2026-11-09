@@ -1,4 +1,4 @@
-//! AST-based SQL validation for read-only mode enforcement.
+//! AST-based SQL validation for the read and write query tools.
 
 use crate::SqlError;
 use std::ops::ControlFlow;
@@ -37,7 +37,7 @@ pub enum StatementKind {
 /// # Errors
 ///
 /// Returns [`SqlError`] if the query is not allowed in read-only mode.
-pub fn validate_read_only(sql: &str, dialect: &impl Dialect) -> Result<StatementKind, SqlError> {
+pub fn validate_read(sql: &str, dialect: &impl Dialect) -> Result<StatementKind, SqlError> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Err(SqlError::ReadOnlyViolation);
@@ -86,16 +86,17 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
     }
 }
 
-/// Rejects `USE`, which would change the database of a pooled connection.
+/// Validates SQL for the write tool, rejecting `USE`.
 ///
-/// Meant for tools that run arbitrary SQL. SQL that fails to parse passes
+/// `USE` would change the database of a pooled connection for later
+/// queries. Every other statement is allowed. SQL that fails to parse passes
 /// through, so the database reports its own error for syntax the parser
-/// does not know.
+/// does not know (e.g. `MySQL` routine bodies, `DO`).
 ///
 /// # Errors
 ///
 /// Returns [`SqlError::UseBlocked`] if any parsed statement is `USE`.
-pub fn reject_use(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
+pub fn validate_write(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
     let Ok(statements) = Parser::parse_sql(dialect, sql) else {
         return Ok(());
     };
@@ -107,7 +108,7 @@ pub fn reject_use(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
 
 /// Validates that a SQL string contains exactly one statement.
 ///
-/// Unlike [`validate_read_only`], any statement type is accepted. Use this
+/// Unlike [`validate_read`], any statement type is accepted. Use this
 /// where the input is embedded into a wrapper (e.g. `EXPLAIN {query}`) that
 /// must never smuggle additional statements past the driver.
 ///
@@ -289,27 +290,27 @@ mod tests {
     #[test]
     fn classifies_select_vs_non_select() {
         // Select-like: plain SELECT, CTE, compound queries all map to StatementKind::Select.
-        assert_eq!(validate_read_only("SELECT 1", &DIALECT).unwrap(), StatementKind::Select,);
+        assert_eq!(validate_read("SELECT 1", &DIALECT).unwrap(), StatementKind::Select,);
         assert_eq!(
-            validate_read_only("WITH x AS (SELECT 1) SELECT * FROM x", &DIALECT).unwrap(),
+            validate_read("WITH x AS (SELECT 1) SELECT * FROM x", &DIALECT).unwrap(),
             StatementKind::Select,
         );
         assert_eq!(
-            validate_read_only("SELECT 1 UNION SELECT 2", &DIALECT).unwrap(),
+            validate_read("SELECT 1 UNION SELECT 2", &DIALECT).unwrap(),
             StatementKind::Select,
         );
 
         // Catalog/metadata statements map to StatementKind::NonSelect.
         assert_eq!(
-            validate_read_only("SHOW DATABASES", &DIALECT).unwrap(),
+            validate_read("SHOW DATABASES", &DIALECT).unwrap(),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read_only("DESCRIBE users", &DIALECT).unwrap(),
+            validate_read("DESCRIBE users", &DIALECT).unwrap(),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read_only("EXPLAIN SELECT 1", &DIALECT).unwrap(),
+            validate_read("EXPLAIN SELECT 1", &DIALECT).unwrap(),
             StatementKind::NonSelect,
         );
     }
@@ -318,41 +319,44 @@ mod tests {
 
     #[test]
     fn test_select_allowed() {
-        assert!(validate_read_only("SELECT * FROM users", &DIALECT).is_ok());
-        assert!(validate_read_only("select * from users", &DIALECT).is_ok());
+        assert!(validate_read("SELECT * FROM users", &DIALECT).is_ok());
+        assert!(validate_read("select * from users", &DIALECT).is_ok());
     }
 
     #[test]
     fn test_show_allowed() {
-        assert!(validate_read_only("SHOW DATABASES", &DIALECT).is_ok());
-        assert!(validate_read_only("SHOW TABLES", &DIALECT).is_ok());
+        assert!(validate_read("SHOW DATABASES", &DIALECT).is_ok());
+        assert!(validate_read("SHOW TABLES", &DIALECT).is_ok());
     }
 
     #[test]
     fn test_describe_allowed() {
         // sqlparser parses DESC/DESCRIBE as ExplainTable
-        assert!(validate_read_only("DESC users", &DIALECT).is_ok());
-        assert!(validate_read_only("DESCRIBE users", &DIALECT).is_ok());
+        assert!(validate_read("DESC users", &DIALECT).is_ok());
+        assert!(validate_read("DESCRIBE users", &DIALECT).is_ok());
     }
 
     #[test]
     fn test_use_blocked() {
-        assert!(matches!(
-            validate_read_only("USE mydb", &DIALECT),
-            Err(SqlError::UseBlocked)
-        ));
+        assert!(matches!(validate_read("USE mydb", &DIALECT), Err(SqlError::UseBlocked)));
     }
 
     #[test]
-    fn test_reject_use() {
-        assert!(matches!(reject_use("USE mydb", &DIALECT), Err(SqlError::UseBlocked)));
+    fn test_validate_write() {
         assert!(matches!(
-            reject_use("INSERT INTO t VALUES (1); USE mydb", &DIALECT),
+            validate_write("USE mydb", &DIALECT),
             Err(SqlError::UseBlocked)
         ));
-        assert!(reject_use("INSERT INTO t VALUES (1)", &DIALECT).is_ok());
-        assert!(reject_use("SET @x = 1", &DIALECT).is_ok());
-        assert!(reject_use("NOT VALID SQL ((", &DIALECT).is_ok());
+        assert!(matches!(
+            validate_write("INSERT INTO t VALUES (1); USE mydb", &DIALECT),
+            Err(SqlError::UseBlocked)
+        ));
+        assert!(validate_write("INSERT INTO t VALUES (1)", &DIALECT).is_ok());
+        assert!(validate_write("SET @x = 1", &DIALECT).is_ok());
+        assert!(
+            validate_write("DO 1", &DIALECT).is_ok(),
+            "unparseable SQL passes through"
+        );
     }
 
     // === Blocked statement types ===
@@ -360,7 +364,7 @@ mod tests {
     #[test]
     fn test_insert_blocked() {
         assert!(matches!(
-            validate_read_only("INSERT INTO users VALUES (1)", &DIALECT),
+            validate_read("INSERT INTO users VALUES (1)", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -368,7 +372,7 @@ mod tests {
     #[test]
     fn test_update_blocked() {
         assert!(matches!(
-            validate_read_only("UPDATE users SET name='x'", &DIALECT),
+            validate_read("UPDATE users SET name='x'", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -376,7 +380,7 @@ mod tests {
     #[test]
     fn test_delete_blocked() {
         assert!(matches!(
-            validate_read_only("DELETE FROM users", &DIALECT),
+            validate_read("DELETE FROM users", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -384,7 +388,7 @@ mod tests {
     #[test]
     fn test_drop_blocked() {
         assert!(matches!(
-            validate_read_only("DROP TABLE users", &DIALECT),
+            validate_read("DROP TABLE users", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -392,7 +396,7 @@ mod tests {
     #[test]
     fn test_create_blocked() {
         assert!(matches!(
-            validate_read_only("CREATE TABLE test (id INT)", &DIALECT),
+            validate_read("CREATE TABLE test (id INT)", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -405,7 +409,7 @@ mod tests {
         // (or the comment hides the DELETE, making it one SELECT).
         // Either way, if it parses as multiple statements, it's blocked.
         // If the parser treats -- as a comment and only sees SELECT 1, it's allowed.
-        let result = validate_read_only("SELECT 1 -- \nDELETE FROM users", &DIALECT);
+        let result = validate_read("SELECT 1 -- \nDELETE FROM users", &DIALECT);
         // The parser should treat -- as comment, so only SELECT 1 remains → allowed
         assert!(result.is_ok() || matches!(result, Err(SqlError::MultiStatement)));
     }
@@ -414,7 +418,7 @@ mod tests {
     fn test_comment_bypass_multi_line() {
         // "/* SELECT */ DELETE FROM users" — parser strips comment, sees DELETE
         assert!(matches!(
-            validate_read_only("/* SELECT */ DELETE FROM users", &DIALECT),
+            validate_read("/* SELECT */ DELETE FROM users", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
@@ -424,7 +428,7 @@ mod tests {
     #[test]
     fn test_load_file_blocked() {
         assert!(matches!(
-            validate_read_only("SELECT LOAD_FILE('/etc/passwd')", &DIALECT),
+            validate_read("SELECT LOAD_FILE('/etc/passwd')", &DIALECT),
             Err(SqlError::LoadFileBlocked)
         ));
     }
@@ -432,7 +436,7 @@ mod tests {
     #[test]
     fn test_load_file_case_insensitive() {
         assert!(matches!(
-            validate_read_only("SELECT load_file('/etc/passwd')", &DIALECT),
+            validate_read("SELECT load_file('/etc/passwd')", &DIALECT),
             Err(SqlError::LoadFileBlocked)
         ));
     }
@@ -441,7 +445,7 @@ mod tests {
     fn test_load_file_with_spaces() {
         // sqlparser normalizes function calls, so spaces before ( are handled
         assert!(matches!(
-            validate_read_only("SELECT LOAD_FILE ('/etc/passwd')", &DIALECT),
+            validate_read("SELECT LOAD_FILE ('/etc/passwd')", &DIALECT),
             Err(SqlError::LoadFileBlocked)
         ));
     }
@@ -451,7 +455,7 @@ mod tests {
     #[test]
     fn test_into_outfile_blocked() {
         assert!(matches!(
-            validate_read_only("SELECT * FROM users INTO OUTFILE '/tmp/out'", &DIALECT),
+            validate_read("SELECT * FROM users INTO OUTFILE '/tmp/out'", &DIALECT),
             Err(SqlError::IntoOutfileBlocked)
         ));
     }
@@ -459,7 +463,7 @@ mod tests {
     #[test]
     fn test_into_dumpfile_blocked() {
         assert!(matches!(
-            validate_read_only("SELECT * FROM users INTO DUMPFILE '/tmp/out'", &DIALECT),
+            validate_read("SELECT * FROM users INTO DUMPFILE '/tmp/out'", &DIALECT),
             Err(SqlError::IntoOutfileBlocked)
         ));
     }
@@ -469,23 +473,20 @@ mod tests {
     #[test]
     fn test_load_file_in_string_allowed() {
         // LOAD_FILE inside a string literal is NOT a function call in the AST
-        assert!(validate_read_only("SELECT 'LOAD_FILE(/etc/passwd)' FROM dual", &DIALECT).is_ok());
+        assert!(validate_read("SELECT 'LOAD_FILE(/etc/passwd)' FROM dual", &DIALECT).is_ok());
     }
 
     // === Empty / comment-only queries ===
 
     #[test]
     fn test_empty_query_blocked() {
-        assert!(matches!(
-            validate_read_only("", &DIALECT),
-            Err(SqlError::ReadOnlyViolation)
-        ));
+        assert!(matches!(validate_read("", &DIALECT), Err(SqlError::ReadOnlyViolation)));
     }
 
     #[test]
     fn test_comment_only_blocked() {
         // Comment-only input: parser returns empty statements or parse error
-        let result = validate_read_only("-- just a comment", &DIALECT);
+        let result = validate_read("-- just a comment", &DIALECT);
         assert!(result.is_err());
     }
 
@@ -494,7 +495,7 @@ mod tests {
     #[test]
     fn test_multi_statement_blocked() {
         assert!(matches!(
-            validate_read_only("SELECT 1; SELECT 2", &DIALECT),
+            validate_read("SELECT 1; SELECT 2", &DIALECT),
             Err(SqlError::MultiStatement)
         ));
     }
@@ -502,7 +503,7 @@ mod tests {
     #[test]
     fn test_multi_statement_injection_blocked() {
         assert!(matches!(
-            validate_read_only("SELECT 1; DROP TABLE users", &DIALECT),
+            validate_read("SELECT 1; DROP TABLE users", &DIALECT),
             Err(SqlError::MultiStatement)
         ));
     }
@@ -510,50 +511,44 @@ mod tests {
     #[test]
     fn test_set_statement_blocked() {
         assert!(matches!(
-            validate_read_only("SET @var = 1", &DIALECT),
+            validate_read("SET @var = 1", &DIALECT),
             Err(SqlError::ReadOnlyViolation)
         ));
     }
 
     #[test]
     fn test_malformed_sql_rejected() {
-        let result = validate_read_only("SELEC * FORM users", &DIALECT);
+        let result = validate_read("SELEC * FORM users", &DIALECT);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_select_with_subquery_allowed() {
-        assert!(validate_read_only("SELECT * FROM (SELECT 1) AS t", &DIALECT).is_ok());
+        assert!(validate_read("SELECT * FROM (SELECT 1) AS t", &DIALECT).is_ok());
     }
 
     #[test]
     fn test_select_with_where_allowed() {
-        assert!(validate_read_only("SELECT * FROM users WHERE id = 1", &DIALECT).is_ok());
+        assert!(validate_read("SELECT * FROM users WHERE id = 1", &DIALECT).is_ok());
     }
 
     #[test]
     fn test_select_count_allowed() {
-        assert!(validate_read_only("SELECT COUNT(*) FROM users", &DIALECT).is_ok());
+        assert!(validate_read("SELECT COUNT(*) FROM users", &DIALECT).is_ok());
     }
 
     // === T015: Multi-dialect parameterized tests ===
 
     fn assert_allowed_all_dialects(sql: &str) {
-        assert!(validate_read_only(sql, &MYSQL).is_ok(), "MySQL should allow: {sql}");
-        assert!(
-            validate_read_only(sql, &POSTGRES).is_ok(),
-            "Postgres should allow: {sql}"
-        );
-        assert!(validate_read_only(sql, &SQLITE).is_ok(), "SQLite should allow: {sql}");
+        assert!(validate_read(sql, &MYSQL).is_ok(), "MySQL should allow: {sql}");
+        assert!(validate_read(sql, &POSTGRES).is_ok(), "Postgres should allow: {sql}");
+        assert!(validate_read(sql, &SQLITE).is_ok(), "SQLite should allow: {sql}");
     }
 
     fn assert_blocked_all_dialects(sql: &str) {
-        assert!(validate_read_only(sql, &MYSQL).is_err(), "MySQL should block: {sql}");
-        assert!(
-            validate_read_only(sql, &POSTGRES).is_err(),
-            "Postgres should block: {sql}"
-        );
-        assert!(validate_read_only(sql, &SQLITE).is_err(), "SQLite should block: {sql}");
+        assert!(validate_read(sql, &MYSQL).is_err(), "MySQL should block: {sql}");
+        assert!(validate_read(sql, &POSTGRES).is_err(), "Postgres should block: {sql}");
+        assert!(validate_read(sql, &SQLITE).is_err(), "SQLite should block: {sql}");
     }
 
     #[test]
@@ -634,15 +629,9 @@ mod tests {
     #[test]
     fn multi_statement_blocked_all_dialects() {
         let sql = "SELECT 1; DROP TABLE x";
-        assert!(matches!(validate_read_only(sql, &MYSQL), Err(SqlError::MultiStatement)));
-        assert!(matches!(
-            validate_read_only(sql, &POSTGRES),
-            Err(SqlError::MultiStatement)
-        ));
-        assert!(matches!(
-            validate_read_only(sql, &SQLITE),
-            Err(SqlError::MultiStatement)
-        ));
+        assert!(matches!(validate_read(sql, &MYSQL), Err(SqlError::MultiStatement)));
+        assert!(matches!(validate_read(sql, &POSTGRES), Err(SqlError::MultiStatement)));
+        assert!(matches!(validate_read(sql, &SQLITE), Err(SqlError::MultiStatement)));
     }
 
     #[test]
@@ -655,7 +644,7 @@ mod tests {
 
     #[test]
     fn postgres_copy_to_blocked() {
-        let result = validate_read_only("COPY users TO '/tmp/out.csv'", &POSTGRES);
+        let result = validate_read("COPY users TO '/tmp/out.csv'", &POSTGRES);
         assert!(
             matches!(result, Err(SqlError::ReadOnlyViolation)),
             "Postgres COPY TO should be blocked: {result:?}"
@@ -664,22 +653,22 @@ mod tests {
 
     #[test]
     fn postgres_copy_from_blocked() {
-        let result = validate_read_only("COPY users FROM '/tmp/in.csv'", &POSTGRES);
+        let result = validate_read("COPY users FROM '/tmp/in.csv'", &POSTGRES);
         assert!(result.is_err(), "Postgres COPY FROM should be blocked: {result:?}");
     }
 
     #[test]
     fn postgres_generate_series_allowed() {
-        assert!(validate_read_only("SELECT * FROM generate_series(1, 10)", &POSTGRES).is_ok());
+        assert!(validate_read("SELECT * FROM generate_series(1, 10)", &POSTGRES).is_ok());
     }
 
     // === T017: SQLite-specific and cross-dialect tests ===
 
     #[test]
     fn show_databases_across_dialects() {
-        assert!(validate_read_only("SHOW DATABASES", &MYSQL).is_ok());
-        let pg_result = validate_read_only("SHOW DATABASES", &POSTGRES);
-        let sqlite_result = validate_read_only("SHOW DATABASES", &SQLITE);
+        assert!(validate_read("SHOW DATABASES", &MYSQL).is_ok());
+        let pg_result = validate_read("SHOW DATABASES", &POSTGRES);
+        let sqlite_result = validate_read("SHOW DATABASES", &SQLITE);
         assert!(
             pg_result.is_ok() || pg_result.is_err(),
             "Postgres may or may not parse SHOW DATABASES"
@@ -701,7 +690,7 @@ mod tests {
     #[test]
     fn unicode_cyrillic_semicolon_not_misclassified() {
         let sql = "SELECT 1\u{037E} DROP TABLE users";
-        let result = validate_read_only(sql, &MYSQL);
+        let result = validate_read(sql, &MYSQL);
         assert!(
             result.is_err(),
             "SQL with Cyrillic question mark should not silently succeed as single SELECT"
@@ -711,9 +700,9 @@ mod tests {
     #[test]
     fn unicode_fullwidth_semicolon_not_misclassified() {
         let sql = "SELECT 1\u{FF1B} DROP TABLE users";
-        let result = validate_read_only(sql, &MYSQL);
+        let result = validate_read(sql, &MYSQL);
         assert!(
-            result.is_err() || validate_read_only(sql, &MYSQL).is_ok(),
+            result.is_err() || validate_read(sql, &MYSQL).is_ok(),
             "fullwidth semicolon is a single token, not a statement separator"
         );
     }
@@ -756,9 +745,9 @@ mod tests {
             "SELECT pg_log_backend_memory_contexts(1)",
         ] {
             for (name, result) in [
-                ("MySQL", validate_read_only(sql, &MYSQL)),
-                ("Postgres", validate_read_only(sql, &POSTGRES)),
-                ("SQLite", validate_read_only(sql, &SQLITE)),
+                ("MySQL", validate_read(sql, &MYSQL)),
+                ("Postgres", validate_read(sql, &POSTGRES)),
+                ("SQLite", validate_read(sql, &SQLITE)),
             ] {
                 // Some dialects can't parse every form; a parse error is also a rejection.
                 assert!(result.is_err(), "{name} should block {sql:?}, got {result:?}");
@@ -769,7 +758,7 @@ mod tests {
             }
         }
         assert!(matches!(
-            validate_read_only("SELECT pg_read_file('/etc/passwd')", &POSTGRES),
+            validate_read("SELECT pg_read_file('/etc/passwd')", &POSTGRES),
             Err(SqlError::DangerousFunctionBlocked(f)) if f == "pg_read_file"
         ));
     }
@@ -781,7 +770,7 @@ mod tests {
             "SELECT mysql.LOAD_FILE('/etc/passwd')",
         ] {
             assert!(
-                matches!(validate_read_only(sql, &MYSQL), Err(SqlError::LoadFileBlocked)),
+                matches!(validate_read(sql, &MYSQL), Err(SqlError::LoadFileBlocked)),
                 "expected LoadFileBlocked for {sql:?}"
             );
         }
@@ -795,10 +784,7 @@ mod tests {
             "SELECT * FROM generate_series(1, 10)",
             "SELECT nextval_hint, upper(name) FROM users",
         ] {
-            assert!(
-                validate_read_only(sql, &POSTGRES).is_ok(),
-                "expected {sql:?} to be allowed"
-            );
+            assert!(validate_read(sql, &POSTGRES).is_ok(), "expected {sql:?} to be allowed");
         }
     }
 
@@ -814,9 +800,9 @@ mod tests {
             "EXPLAIN ANALYZE DROP TABLE users",
         ] {
             for result in [
-                validate_read_only(sql, &MYSQL),
-                validate_read_only(sql, &POSTGRES),
-                validate_read_only(sql, &SQLITE),
+                validate_read(sql, &MYSQL),
+                validate_read(sql, &POSTGRES),
+                validate_read(sql, &SQLITE),
             ] {
                 assert!(result.is_err(), "expected {sql:?} to be blocked, got {result:?}");
             }
@@ -832,7 +818,7 @@ mod tests {
             "EXPLAIN ANALYZE SELECT * INTO evil FROM users",
         ] {
             assert!(
-                matches!(validate_read_only(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
+                matches!(validate_read(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
                 "expected ReadOnlyViolation for {sql:?}"
             );
         }
@@ -841,15 +827,15 @@ mod tests {
     #[test]
     fn explain_of_read_allowed() {
         for sql in ["EXPLAIN SELECT 1", "EXPLAIN ANALYZE SELECT * FROM users"] {
-            assert_eq!(validate_read_only(sql, &MYSQL).unwrap(), StatementKind::NonSelect);
-            assert_eq!(validate_read_only(sql, &POSTGRES).unwrap(), StatementKind::NonSelect);
+            assert_eq!(validate_read(sql, &MYSQL).unwrap(), StatementKind::NonSelect);
+            assert_eq!(validate_read(sql, &POSTGRES).unwrap(), StatementKind::NonSelect);
         }
         assert_eq!(
-            validate_read_only("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1", &POSTGRES).unwrap(),
+            validate_read("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1", &POSTGRES).unwrap(),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read_only("EXPLAIN QUERY PLAN SELECT 1", &SQLITE).unwrap(),
+            validate_read("EXPLAIN QUERY PLAN SELECT 1", &SQLITE).unwrap(),
             StatementKind::NonSelect,
         );
     }
@@ -857,7 +843,7 @@ mod tests {
     #[test]
     fn explain_checks_dangerous_functions() {
         assert!(matches!(
-            validate_read_only("EXPLAIN ANALYZE SELECT LOAD_FILE('/etc/passwd')", &MYSQL),
+            validate_read("EXPLAIN ANALYZE SELECT LOAD_FILE('/etc/passwd')", &MYSQL),
             Err(SqlError::LoadFileBlocked)
         ));
     }
@@ -872,7 +858,7 @@ mod tests {
             "SELECT * INTO evil FROM users",
         ] {
             assert!(
-                matches!(validate_read_only(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
+                matches!(validate_read(sql, &POSTGRES), Err(SqlError::ReadOnlyViolation)),
                 "expected ReadOnlyViolation for {sql:?}"
             );
         }
@@ -881,7 +867,7 @@ mod tests {
     #[test]
     fn null_byte_in_sql() {
         let sql = "SELECT 1\x00; DROP TABLE x";
-        let result = validate_read_only(sql, &MYSQL);
+        let result = validate_read(sql, &MYSQL);
         assert!(result.is_err(), "SQL with null byte should be rejected: {result:?}");
     }
 }
