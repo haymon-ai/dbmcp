@@ -6,12 +6,13 @@
 
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
+use sqlx::AssertSqlSafe;
+use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
 use tracing::info;
 
 /// Maximum number of cached per-database connection pools.
@@ -116,6 +117,50 @@ impl Connection for MysqlConnection {
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
+
+    fn is_timeout(error: &sqlx::Error) -> bool {
+        // 3024: MySQL `max_execution_time`; 1969: MariaDB `max_statement_time`.
+        error
+            .as_database_error()
+            .and_then(|e| e.try_downcast_ref::<MySqlDatabaseError>())
+            .is_some_and(|e| matches!(e.number(), 3024 | 1969))
+    }
+
+    async fn session_id(&self, conn: &mut sqlx::MySqlConnection) -> Result<Option<u64>, sqlx::Error> {
+        let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()").fetch_one(conn).await?;
+        Ok(Some(id))
+    }
+
+    async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection) -> Result<(), sqlx::Error> {
+        let (sql, value) = match self.config.backend {
+            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", self.config.query_timeout),
+            _ => (
+                "SET SESSION max_execution_time = ?",
+                self.config.query_timeout.saturating_mul(1000),
+            ),
+        };
+        sqlx::query(sql).bind(value).execute(conn).await.map(|_| ())
+    }
+
+    async fn kill(conn: &mut sqlx::MySqlConnection, id: u64) -> Result<(), sqlx::Error> {
+        // `id` is a server-returned integer, not user input. MySQL 9 prepares
+        // `KILL QUERY ?`, but sqlx can't decode its parameter type (0xf3).
+        match sqlx::raw_sql(AssertSqlSafe(format!("KILL QUERY {id}")))
+            .execute(conn)
+            .await
+        {
+            // 1094: unknown thread id, the session already ended.
+            Err(error)
+                if error
+                    .as_database_error()
+                    .and_then(|e| e.try_downcast_ref::<MySqlDatabaseError>())
+                    .is_some_and(|e| e.number() == 1094) =>
+            {
+                Ok(())
+            }
+            result => result.map(|_| ()),
+        }
+    }
 }
 /// Creates a lazy `MySQL` pool for `db_name`.
 ///
@@ -177,7 +222,6 @@ pub(crate) fn quote_ident(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

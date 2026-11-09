@@ -23,7 +23,8 @@ TIMEOUT="${TIMEOUT:-30}"
 TEST_TYPE="${TEST_TYPE:-all}"
 
 # Matrix: service_name:db_type:container_port
-#   service_name    — matches compose.yml service
+#   service_name    — matches compose.yml service; its prefix before `_` is the
+#                     DBMCP_DB_BACKEND passed to the functional tests
 #   db_type         — mysql, postgres, or sqlite
 #   container_port  — internal port to resolve via `docker compose port`
 #
@@ -161,6 +162,7 @@ run_entry() {
     local service="$1"
     local db_type="$2"
     local container_port="$3"
+    local backend="${service%%_*}"
 
     local test_bins
     test_bins=$(test_bins_for "$db_type")
@@ -249,7 +251,7 @@ run_entry() {
                 rm -f "$tls_ca"
             else
                 test_output=$(
-                    DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
+                    DBMCP_DB_BACKEND="$backend" DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
                     cargo test --test "$bin" -- --test-threads=1 2>&1
                 ) || test_exit=$?
             fi

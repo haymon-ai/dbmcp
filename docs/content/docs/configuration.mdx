@@ -127,13 +127,42 @@ When `database.ssl` is enabled, the server validates that any provided certifica
 | `database.read_only` | `DBMCP_DB_READ_ONLY` | boolean | `true` | Enable read-only mode |
 | `database.max_pool_size` | `DBMCP_DB_MAX_POOL_SIZE` | integer | `5` | Maximum database connection pool size (at least 1) |
 | `database.connection_timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | seconds | — | Connection timeout (at least 1; unset uses the driver default) |
-| `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query execution timeout (`0` disables it) |
+| `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query timeout (`0` disables it; see [Query Timeout](#query-timeout)) |
 | `database.page_size` | `DBMCP_DB_PAGE_SIZE` | integer | `100` | Max items per paginated tool response (range 1–500) |
 | `log_level` | `DBMCP_LOG_LEVEL` | enum | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace`. Logs go to stderr. |
 
 > **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `USE`, `EXPLAIN` only). Set `DBMCP_DB_READ_ONLY=false` (or `read_only: false` under `database` in the config file) to enable write tools.
 
 The page size applies uniformly to every paginated tool; see the [Cursor Pagination](/docs/features#cursor-pagination) section on the Features page for the full protocol.
+
+### Query Timeout
+
+Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
+
+1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout equal to `query_timeout`, so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
+2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
+
+Either way the agent sees `Query timed out after …`. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
+
+| Backend | Server variable | Covers |
+|---|---|---|
+| MySQL | `max_execution_time` (ms) | Top-level `SELECT` only. Writes, DDL, and `CALL` rely on the backstop kill. |
+| MariaDB | `max_statement_time` (s) | Every top-level statement, including `CALL` |
+| PostgreSQL | `statement_timeout` (ms) | Every statement. A timeout aborts the surrounding transaction. |
+
+On MySQL, a `SLEEP()` interrupted by the server timeout returns `1` instead of an error, so the call succeeds early rather than timing out.
+
+With `read_only: false`, writes and DDL are also subject to the timeout. A long migration or bulk `UPDATE` run through dbmcp is stopped. Raise `query_timeout` or set it to `0` for such work.
+
+#### Connection Poolers and Proxies
+
+- **PgBouncer transaction mode: not supported for timeouts.** The session timeout can leak to other clients, and the backstop kill can hit another client's statement. Use session mode, or skip dbmcp's timeout (`query_timeout: 0`) and set one on the role: `ALTER ROLE dbmcp SET statement_timeout = '30s'`.
+- **RDS Proxy:** the session `SET` pins each connection to one backend, so proxy multiplexing is lost. Timeouts still work. To avoid pinning, use `query_timeout: 0` plus a role- or parameter-group-level timeout.
+- **ProxySQL:** supported. It answers `CONNECTION_ID()` and routes `KILL` itself.
+
+#### Troubleshooting
+
+If the session `SET` fails (wrong `backend`, value out of range), dbmcp logs a `warn` on every query and relies on the backstop, which then fires at `query_timeout` without the extra 5 s.
 
 ## PII
 

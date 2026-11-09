@@ -1,8 +1,8 @@
 //! Connection abstraction shared across database backends.
 //!
 //! Defines [`Connection`] — the single trait every backend implements.
-//! Backends provide pool resolution and timeout config; default method
-//! implementations handle query execution.
+//! Backends provide pool resolution, timeout config, and timeout hooks;
+//! default method implementations handle query execution.
 
 use crate::SqlError;
 use serde_json::Value;
@@ -50,9 +50,11 @@ where
 
 /// Unified query surface every backend tool handler uses.
 ///
-/// Backends supply three required items — [`DB`](Connection::DB),
-/// [`pool`](Connection::pool), and [`query_timeout`](Connection::query_timeout)
-/// — and receive default implementations for query execution.
+/// Backends supply the [`DB`](Connection::DB) type, [`pool`](Connection::pool),
+/// [`query_timeout`](Connection::query_timeout), and the timeout hooks
+/// [`is_timeout`](Connection::is_timeout), [`session_id`](Connection::session_id),
+/// [`set_timeout`](Connection::set_timeout), and [`kill`](Connection::kill),
+/// and receive default implementations for query execution.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
 /// through the unprepared text protocol, required for statements like `MySQL`
@@ -67,7 +69,7 @@ where
 /// - [`SqlError::Connection`] — the underlying driver failed.
 /// - [`SqlError::QueryTimeout`] — the query exceeded the configured timeout.
 #[allow(async_fn_in_trait)]
-pub trait Connection: Send + Sync
+pub trait Connection: Send + Sync + 'static
 where
     for<'c> &'c mut <Self::DB as sqlx::Database>::Connection: Executor<'c, Database = Self::DB>,
     usize: sqlx::ColumnIndex<<Self::DB as sqlx::Database>::Row>,
@@ -86,6 +88,39 @@ where
 
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
+
+    /// Returns whether `error` is this backend's server-side statement timeout.
+    fn is_timeout(error: &sqlx::Error) -> bool;
+
+    /// Reads the server session id of `conn`; `None` means no server.
+    ///
+    /// Without a session id, no server statement timeout is set and a
+    /// timed-out statement is not killed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver error if the lookup fails.
+    async fn session_id(&self, conn: &mut <Self::DB as sqlx::Database>::Connection)
+    -> Result<Option<u64>, sqlx::Error>;
+
+    /// Sets the server statement timeout on `conn` from the query timeout.
+    ///
+    /// Called only when [`session_id`](Connection::session_id) returned an id.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver error if the server rejects the timeout.
+    async fn set_timeout(&self, conn: &mut <Self::DB as sqlx::Database>::Connection) -> Result<(), sqlx::Error>;
+
+    /// Cancels the statement running on session `id`, sent over a one-off `conn`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver error if cancelling fails.
+    fn kill(
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+        id: u64,
+    ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
     /// Checks that the default database answers `SELECT 1`.
     ///
@@ -114,10 +149,8 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            Ok(pool.execute((sql, arguments)).await?.rows_affected())
+        execute_with_timeout(self, database, query, async |conn, query| {
+            Ok(conn.execute(query).await?.rows_affected())
         })
         .await
     }
@@ -131,10 +164,8 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            let rows = pool.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
         .await
@@ -159,11 +190,9 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            let mut tx = pool.begin_with("START TRANSACTION READ ONLY").await?;
-            let rows = (&mut *tx).fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
+            let rows = (&mut *tx).fetch_all(query).await?;
             tx.rollback().await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
@@ -183,10 +212,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            let row = pool.fetch_optional((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let row = conn.fetch_optional(query).await?;
             Ok(row.and_then(|r| r.try_get(0usize).ok()))
         })
         .await
@@ -202,10 +229,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            let rows = pool.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })
         .await
@@ -223,10 +248,8 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> FromRow<'r, <Self::DB as sqlx::Database>::Row> + Send + Unpin,
     {
-        let (sql, arguments) = query.into_sql_and_args()?;
-        let pool = self.pool(database).await?;
-        execute_with_timeout(self.query_timeout(), sql, |sql| async move {
-            let rows = pool.fetch_all((sql, arguments)).await?;
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let rows = conn.fetch_all(query).await?;
             rows.iter().map(T::from_row).collect()
         })
         .await
