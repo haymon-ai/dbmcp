@@ -291,27 +291,30 @@ mod tests {
     #[test]
     fn classifies_select_vs_non_select() {
         // Select-like: plain SELECT, CTE, compound queries all map to StatementKind::Select.
-        assert_eq!(validate_read("SELECT 1", &DIALECT).unwrap(), StatementKind::Select,);
         assert_eq!(
-            validate_read("WITH x AS (SELECT 1) SELECT * FROM x", &DIALECT).unwrap(),
+            validate_read("SELECT 1", &DIALECT).expect("query is valid"),
             StatementKind::Select,
         );
         assert_eq!(
-            validate_read("SELECT 1 UNION SELECT 2", &DIALECT).unwrap(),
+            validate_read("WITH x AS (SELECT 1) SELECT * FROM x", &DIALECT).expect("query is valid"),
+            StatementKind::Select,
+        );
+        assert_eq!(
+            validate_read("SELECT 1 UNION SELECT 2", &DIALECT).expect("query is valid"),
             StatementKind::Select,
         );
 
         // Catalog/metadata statements map to StatementKind::NonSelect.
         assert_eq!(
-            validate_read("SHOW DATABASES", &DIALECT).unwrap(),
+            validate_read("SHOW DATABASES", &DIALECT).expect("query is valid"),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read("DESCRIBE users", &DIALECT).unwrap(),
+            validate_read("DESCRIBE users", &DIALECT).expect("query is valid"),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read("EXPLAIN SELECT 1", &DIALECT).unwrap(),
+            validate_read("EXPLAIN SELECT 1", &DIALECT).expect("query is valid"),
             StatementKind::NonSelect,
         );
     }
@@ -824,15 +827,21 @@ mod tests {
     #[test]
     fn explain_of_read_allowed() {
         for sql in ["EXPLAIN SELECT 1", "EXPLAIN ANALYZE SELECT * FROM users"] {
-            assert_eq!(validate_read(sql, &MYSQL).unwrap(), StatementKind::NonSelect);
-            assert_eq!(validate_read(sql, &POSTGRES).unwrap(), StatementKind::NonSelect);
+            assert_eq!(
+                validate_read(sql, &MYSQL).expect("query is valid"),
+                StatementKind::NonSelect
+            );
+            assert_eq!(
+                validate_read(sql, &POSTGRES).expect("query is valid"),
+                StatementKind::NonSelect
+            );
         }
         assert_eq!(
-            validate_read("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1", &POSTGRES).unwrap(),
+            validate_read("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1", &POSTGRES).expect("query is valid"),
             StatementKind::NonSelect,
         );
         assert_eq!(
-            validate_read("EXPLAIN QUERY PLAN SELECT 1", &SQLITE).unwrap(),
+            validate_read("EXPLAIN QUERY PLAN SELECT 1", &SQLITE).expect("query is valid"),
             StatementKind::NonSelect,
         );
     }

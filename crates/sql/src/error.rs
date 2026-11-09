@@ -25,7 +25,7 @@ pub enum SqlError {
     IntoOutfileBlocked,
 
     /// `USE` blocked: it would change the database of a pooled connection.
-    #[error("Query blocked: USE is not allowed; pass the `database` argument to target another database")]
+    #[error("Query blocked: USE is not allowed")]
     UseBlocked,
 
     /// Multiple SQL statements blocked.
