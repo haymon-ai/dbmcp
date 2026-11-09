@@ -128,11 +128,23 @@ impl Connection for PostgresConnection {
             .is_some_and(|e| e.code().as_deref() == Some("57014") && e.message().contains("statement timeout"))
     }
 
-    async fn session_id(conn: &mut sqlx::PgConnection) -> Result<Option<u64>, sqlx::Error> {
-        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(conn).await?;
-        u64::try_from(pid)
-            .map(Some)
-            .map_err(|e| sqlx::Error::Decode(Box::new(e)))
+    async fn arm(&self, conn: &mut sqlx::PgConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
+        let millis = self.config.query_timeout.saturating_mul(1000).to_string();
+        let armed =
+            sqlx::query_as::<_, (String, i32)>("SELECT set_config('statement_timeout', $1, false), pg_backend_pid()")
+                .bind(millis)
+                .fetch_one(conn)
+                .await;
+        // A failed SET keeps the statement: only the client timeout applies.
+        let (_, pid) = match armed {
+            Ok(row) => row,
+            Err(error) => {
+                warn!(%error, "session statement timeout not set; relying on the client timeout");
+                return Ok((None, false));
+            }
+        };
+        let pid = u64::try_from(pid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        Ok((Some(pid), true))
     }
 
     async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {
@@ -187,24 +199,6 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
 
     if let Some(timeout) = config.connection_timeout {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
-    }
-
-    if config.query_timeout > 0 {
-        let millis = config.query_timeout.saturating_mul(1000).to_string();
-        pool_opts = pool_opts.after_connect(move |conn, _meta| {
-            let millis = millis.clone();
-            Box::pin(async move {
-                // A failed SET keeps the connection: only the client timeout applies.
-                if let Err(error) = sqlx::query("SELECT set_config('statement_timeout', $1, false)")
-                    .bind(millis)
-                    .execute(&mut *conn)
-                    .await
-                {
-                    warn!(%error, "session statement timeout not set; relying on the client timeout");
-                }
-                Ok(())
-            })
-        });
     }
 
     pool_opts.connect_lazy_with(conn_ops)

@@ -139,7 +139,7 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 
 Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
 
-1. **Server timeout.** dbmcp sets a session statement timeout equal to `query_timeout` on every pooled connection. The database stops the statement itself, and the connection stays usable.
+1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout equal to `query_timeout`, so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
 2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
 
 Either way the agent sees `Query timed out after …`. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
@@ -162,7 +162,7 @@ With `read_only: false`, writes and DDL are also subject to the timeout. A long 
 
 #### Troubleshooting
 
-If the session `SET` fails (wrong `backend`, value out of range), dbmcp logs a `warn` and relies on the backstop.
+If the session `SET` fails (wrong `backend`, value out of range), dbmcp logs a `warn` on every query and relies on the backstop, which then fires at `query_timeout` without the extra 5 s.
 
 ## PII
 

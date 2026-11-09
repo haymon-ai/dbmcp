@@ -568,7 +568,8 @@ async fn test_backstop_kills_statement_when_session_set_fails() {
         eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb");
         return;
     }
-    // Backend mismatch: MariaDB rejects max_execution_time, so the SET only warns.
+    // Backend mismatch: MariaDB rejects max_execution_time, so the SET only warns
+    // and the backstop fires at the timeout, without grace.
     let handler = handler_with(DatabaseConfig {
         backend: DatabaseBackend::Mysql,
         ..single_connection_config(1)
@@ -576,7 +577,7 @@ async fn test_backstop_kills_statement_when_session_set_fails() {
     let start = std::time::Instant::now();
     let result = handler.read_query(slow_sql("qt_backstop_mismatch"), None, None).await;
     let secs = start.elapsed().as_secs_f64();
-    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
+    assert!((1.0..3.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_mismatch").await;
 }
 

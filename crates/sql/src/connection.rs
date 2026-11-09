@@ -52,7 +52,7 @@ where
 ///
 /// Backends supply the [`DB`](Connection::DB) type, [`pool`](Connection::pool),
 /// [`query_timeout`](Connection::query_timeout), and the timeout hooks
-/// [`is_timeout`](Connection::is_timeout), [`session_id`](Connection::session_id),
+/// [`is_timeout`](Connection::is_timeout), [`arm`](Connection::arm),
 /// and [`kill`](Connection::kill), and receive default implementations for
 /// query execution.
 ///
@@ -92,12 +92,18 @@ where
     /// Returns whether `error` is this backend's server-side statement timeout.
     fn is_timeout(error: &sqlx::Error) -> bool;
 
-    /// Reads the server session id of `conn`, or `None` without a server.
+    /// Sets the server statement timeout on `conn` and reads its session id.
+    ///
+    /// Returns the session id (`None` without a server) and whether the
+    /// timeout was set. A failed timeout `SET` is logged, not returned.
     ///
     /// # Errors
     ///
-    /// Returns the driver error if the lookup query fails.
-    async fn session_id(conn: &mut <Self::DB as sqlx::Database>::Connection) -> Result<Option<u64>, sqlx::Error>;
+    /// Returns the driver error if the session id lookup fails.
+    async fn arm(
+        &self,
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+    ) -> Result<(Option<u64>, bool), sqlx::Error>;
 
     /// Cancels the statement running on session `id`, sent over a one-off `conn`.
     ///
@@ -138,7 +144,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             Ok(conn.execute((sql, arguments)).await?.rows_affected())
         })
         .await
@@ -155,7 +161,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             let rows = conn.fetch_all((sql, arguments)).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
@@ -183,7 +189,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
             let rows = (&mut *tx).fetch_all((sql, arguments)).await?;
             tx.rollback().await?;
@@ -207,7 +213,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             let row = conn.fetch_optional((sql, arguments)).await?;
             Ok(row.and_then(|r| r.try_get(0usize).ok()))
         })
@@ -226,7 +232,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             let rows = conn.fetch_all((sql, arguments)).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })
@@ -247,7 +253,7 @@ where
     {
         let (sql, arguments) = query.into_sql_and_args()?;
         let pool = self.pool(database).await?;
-        execute_with_timeout::<Self, _>(self.query_timeout(), pool, sql, async move |conn, sql| {
+        execute_with_timeout(self, pool, sql, async move |conn, sql| {
             let rows = conn.fetch_all((sql, arguments)).await?;
             rows.iter().map(T::from_row).collect()
         })

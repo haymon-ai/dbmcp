@@ -518,20 +518,6 @@ async fn test_server_timeout_stops_slow_write() {
 }
 
 #[tokio::test]
-async fn test_backstop_kills_statement_without_server_timeout() {
-    let handler = single_connection_handler(1);
-    handler
-        .write_query("SET statement_timeout = 0".into(), None)
-        .await
-        .expect("server timeout cleared");
-    let start = std::time::Instant::now();
-    let result = handler.read_query(slow_sql("qt_backstop_pg"), None, None).await;
-    let secs = start.elapsed().as_secs_f64();
-    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
-    assert_timed_out(&handler, result, "qt_backstop_pg").await;
-}
-
-#[tokio::test]
 async fn test_drop_table_success() {
     let handler = handler(false);
 

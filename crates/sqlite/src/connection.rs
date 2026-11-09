@@ -68,12 +68,12 @@ impl Connection for SqliteConnection {
         false
     }
 
-    async fn session_id(_conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
-        Ok(None)
+    async fn arm(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
+        Ok((None, false))
     }
 
     fn kill(_conn: &mut sqlx::SqliteConnection, _id: u64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
-        // Unreachable: `session_id` is `None`, so nothing is ever killed.
+        // Unreachable: `arm` returns no session id, so nothing is ever killed.
         std::future::ready(Ok(()))
     }
 }

@@ -126,11 +126,23 @@ impl Connection for MysqlConnection {
             .is_some_and(|e| matches!(e.number(), 3024 | 1969))
     }
 
-    async fn session_id(conn: &mut sqlx::MySqlConnection) -> Result<Option<u64>, sqlx::Error> {
-        sqlx::query_scalar("SELECT CONNECTION_ID()")
-            .fetch_one(conn)
-            .await
-            .map(Some)
+    async fn arm(&self, conn: &mut sqlx::MySqlConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
+        let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn)
+            .await?;
+        let (sql, value) = match self.config.backend {
+            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", self.config.query_timeout),
+            _ => (
+                "SET SESSION max_execution_time = ?",
+                self.config.query_timeout.saturating_mul(1000),
+            ),
+        };
+        // A failed SET keeps the statement: only the client timeout applies.
+        if let Err(error) = sqlx::query(sql).bind(value).execute(conn).await {
+            warn!(%error, "session statement timeout not set; relying on the client timeout");
+            return Ok((Some(id), false));
+        }
+        Ok((Some(id), true))
     }
 
     async fn kill(conn: &mut sqlx::MySqlConnection, id: u64) -> Result<(), sqlx::Error> {
@@ -199,25 +211,6 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
 
     if let Some(timeout) = config.connection_timeout {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
-    }
-
-    if config.query_timeout > 0 {
-        let (sql, value) = match config.backend {
-            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", config.query_timeout),
-            _ => (
-                "SET SESSION max_execution_time = ?",
-                config.query_timeout.saturating_mul(1000),
-            ),
-        };
-        pool_opts = pool_opts.after_connect(move |conn, _meta| {
-            Box::pin(async move {
-                // A failed SET keeps the connection: only the client timeout applies.
-                if let Err(error) = sqlx::query(sql).bind(value).execute(&mut *conn).await {
-                    warn!(%error, "session statement timeout not set; relying on the client timeout");
-                }
-                Ok(())
-            })
-        });
     }
 
     pool_opts.connect_lazy_with(conn_ops)
