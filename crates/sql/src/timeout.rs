@@ -106,9 +106,11 @@ where
 /// Kills the statement on session `id`, holding `conn` until the kill ends.
 ///
 /// Keeping `conn` out of the pool means no other call can reuse it while
-/// the timed-out statement may still run. After a finished kill, `conn` is
-/// detached and dropped: sqlx can't always return a connection whose query
-/// future was dropped mid-flight, and would keep its pool slot forever.
+/// the timed-out statement may still run. Once the kill ends, whatever its
+/// outcome, `conn` is detached and dropped: sqlx can't always return a
+/// connection whose query future was dropped mid-flight, and would keep its
+/// pool slot forever. After a failed kill the statement may run on, outside
+/// `max_connections`, until the server ends it or notices the closed socket.
 async fn kill_statement<C>(pool: sqlx::Pool<C::DB>, conn: PoolConnection<C::DB>, id: u64)
 where
     C: Connection + ?Sized,
@@ -118,13 +120,11 @@ where
     <C::DB as sqlx::Database>::QueryResult: sqlx_json::QueryResult,
 {
     match tokio::time::timeout(GRACE, C::kill(pool, id)).await {
-        Ok(Ok(running)) => {
-            debug!(session_id = id, running, "killed timed-out statement");
-            drop(conn.detach());
-        }
+        Ok(Ok(running)) => debug!(session_id = id, running, "killed timed-out statement"),
         Ok(Err(error)) => warn!(%error, session_id = id, "failed to kill timed-out statement"),
         Err(_) => warn!(session_id = id, "kill of timed-out statement did not finish in time"),
     }
+    drop(conn.detach());
 }
 
 #[cfg(test)]
