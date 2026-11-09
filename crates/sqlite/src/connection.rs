@@ -2,7 +2,8 @@
 //!
 //! Owns the single lazy [`SqlitePool`] used by [`SqliteHandler`](crate::SqliteHandler).
 //! `SQLite` is a single-file, single-writer backend; the pool is fixed
-//! at one connection.
+//! at one connection. In read-only mode the file is opened with
+//! `SQLITE_OPEN_READONLY`, so `SQLite` itself rejects every write.
 
 use std::time::Duration;
 
@@ -85,8 +86,12 @@ impl Connection for SqliteConnection {
 /// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].
 ///
 /// Forces `max_connections` to 1 — `SQLite` is a single-writer backend.
+/// Opens the file read-only when `config.read_only` is set, backing the
+/// statement filter at the database: `SQLite` has no read-only transactions.
 fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
-    let conn_ops = SqliteConnectOptions::new().filename(config.name.as_deref().unwrap_or_default());
+    let conn_ops = SqliteConnectOptions::new()
+        .filename(config.name.as_deref().unwrap_or_default())
+        .read_only(config.read_only);
     let mut pool_opts = sqlx::pool::PoolOptions::new()
         .max_connections(1)
         .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
@@ -179,6 +184,33 @@ mod tests {
             ..base_config()
         });
         assert!(connection.ping().await.is_err(), "missing file must not ping");
+    }
+
+    #[tokio::test]
+    async fn read_only_connection_rejects_writes() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: true,
+            ..base_config()
+        });
+        let error = connection
+            .execute("CREATE TABLE t (id INTEGER)", None)
+            .await
+            .expect_err("read-only connection must reject writes");
+        assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn read_write_connection_allows_writes() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: false,
+            ..base_config()
+        });
+        connection
+            .execute("CREATE TABLE t (id INTEGER)", None)
+            .await
+            .expect("read-write connection accepts writes");
     }
 
     #[tokio::test]
