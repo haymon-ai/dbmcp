@@ -164,6 +164,7 @@ jobs:
       - name: Functional tests
         run: cargo test --test functional_mysql -- --test-threads=1
         env:
+          DBMCP_DB_BACKEND: mariadb
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
       - name: Authorize SSH test keys

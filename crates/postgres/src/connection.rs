@@ -120,6 +120,37 @@ impl Connection for PostgresConnection {
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
+
+    fn is_timeout(error: &sqlx::Error) -> bool {
+        // 57014 is shared with other cancels; only `statement_timeout` counts.
+        error
+            .as_database_error()
+            .is_some_and(|e| e.code().as_deref() == Some("57014") && e.message().contains("statement timeout"))
+    }
+
+    async fn session_id(&self, conn: &mut sqlx::PgConnection) -> Result<Option<u64>, sqlx::Error> {
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(conn).await?;
+        let pid = u64::try_from(pid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        Ok(Some(pid))
+    }
+
+    async fn set_timeout(&self, conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+        let millis = self.config.query_timeout.saturating_mul(1000).to_string();
+        sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+            .bind(millis)
+            .execute(conn)
+            .await
+            .map(|_| ())
+    }
+
+    async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {
+        let pid = i32::try_from(id).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        sqlx::query("SELECT pg_cancel_backend($1)")
+            .bind(pid)
+            .execute(conn)
+            .await
+            .map(|_| ())
+    }
 }
 /// Creates a lazy `PostgreSQL` pool for `db_name`.
 ///

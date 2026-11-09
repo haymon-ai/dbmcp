@@ -63,6 +63,24 @@ impl Connection for SqliteConnection {
     fn query_timeout(&self) -> u64 {
         self.config.query_timeout
     }
+
+    fn is_timeout(_error: &sqlx::Error) -> bool {
+        false
+    }
+
+    async fn session_id(&self, _conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
+        Ok(None)
+    }
+
+    async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+        // Unreachable: `session_id` returns no id, so no server timeout is set.
+        Ok(())
+    }
+
+    async fn kill(_conn: &mut sqlx::SqliteConnection, _id: u64) -> Result<(), sqlx::Error> {
+        // Unreachable: `session_id` returns no id, so nothing is ever killed.
+        Ok(())
+    }
 }
 /// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].
 ///
