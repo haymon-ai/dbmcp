@@ -101,7 +101,7 @@ where
 
     /// Cancels the statement running on session `id` from a one-off connection.
     ///
-    /// Returns `false` when no statement was running.
+    /// Returns `false` when the session no longer exists.
     ///
     /// # Errors
     ///

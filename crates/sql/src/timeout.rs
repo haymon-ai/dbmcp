@@ -74,21 +74,24 @@ where
         e => SqlError::Query(e.to_string()),
     };
 
-    if timeout_secs == 0 {
+    let limit = Duration::from_secs(timeout_secs);
+    // A timeout too large for an `Instant` never fires: treat it like `0`.
+    let backstop = start.checked_add(limit.saturating_add(GRACE));
+    let Some(deadline) = backstop.filter(|_| timeout_secs > 0) else {
         let mut conn = pool.acquire().await.map_err(map_error)?;
         return op(&mut conn, sql).await.map_err(map_error);
-    }
+    };
 
-    let limit = Duration::from_secs(timeout_secs);
-    let deadline = start + limit + GRACE;
     let mut conn = tokio::time::timeout_at(deadline, pool.acquire())
         .await
         .map_err(|_| timed_out())?
         .map_err(map_error)?;
-    let id = tokio::time::timeout_at(deadline, C::session_id(&mut conn))
-        .await
-        .map_err(|_| timed_out())?
-        .map_err(map_error)?;
+    let Ok(id) = tokio::time::timeout_at(deadline, C::session_id(&mut conn)).await else {
+        // The lookup was dropped mid-flight: keep the connection out of the pool.
+        drop(conn.detach());
+        return Err(timed_out());
+    };
+    let id = id.map_err(map_error)?;
     let deadline = if id.is_some() { deadline } else { start + limit };
 
     let Ok(result) = tokio::time::timeout_at(deadline, op(&mut conn, sql)).await else {
@@ -366,6 +369,15 @@ mod tests {
         let result =
             execute_with_timeout::<Server, _>(1, pool.clone(), SqlStr::from_static("SELECT slow"), never).await;
         assert_timed_out(result, 6.0, 6.5);
+    }
+
+    #[tokio::test]
+    async fn huge_timeout_runs_without_timer() {
+        let pool = pool().await;
+        let result =
+            execute_with_timeout::<Server, _>(u64::MAX, pool, SqlStr::from_static("SELECT 1"), async |_, _| Ok(1))
+                .await;
+        assert_eq!(result.expect("should succeed"), 1);
     }
 
     #[tokio::test]
