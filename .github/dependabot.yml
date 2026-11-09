@@ -17,3 +17,19 @@ updates:
       all-actions-deps:
         patterns:
           - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      all-docker-deps:
+        patterns:
+          - "*"
+    ignore:
+      # rust-toolchain.toml picks the Rust version; take only digest updates.
+      - dependency-name: rust
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch

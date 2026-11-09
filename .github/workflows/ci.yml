@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -97,13 +102,13 @@ jobs:
 
       # The chart's probes need /healthz and /readyz, which a published image may predate,
       # so test against an image of this commit, built from the release Dockerfile with
-      # its download stage replaced by the local binary.
+      # its source build stage replaced by the local binary.
       # A debug build is enough for an install test and skips the release profile's LTO.
       - name: Build image
         run: |
           cargo build
-          mkdir -p image/tmp && cp target/debug/dbmcp image/tmp/
-          docker build -t dbmcp:ci --build-context download=image .
+          mkdir -p image/out/amd64 && cp target/debug/dbmcp image/out/amd64/
+          docker build -t dbmcp:ci --build-context build=image .
 
       - name: Load image into kind
         run: kind load docker-image dbmcp:ci --name chart-testing

@@ -140,18 +140,31 @@ jobs:
             org.opencontainers.image.description=Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite
             org.opencontainers.image.licenses=MIT
 
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dbmcp-*-unknown-linux-gnu
+          path: artifacts
+          merge-multiple: true
+
+      # The release binaries replace the Dockerfile's build stage.
+      - name: Stage binaries
+        run: |
+          mkdir -p dist/out/amd64 dist/out/arm64
+          tar xzf artifacts/dbmcp-x86_64-unknown-linux-gnu.tar.gz -C dist/out/amd64
+          tar xzf artifacts/dbmcp-aarch64-unknown-linux-gnu.tar.gz -C dist/out/arm64
+          test -x dist/out/amd64/dbmcp && test -x dist/out/arm64/dbmcp
+
       - id: build
         uses: docker/build-push-action@v7
         with:
           context: .
+          build-contexts: build=dist
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: mode=max
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
 
       - uses: actions/attest@v4
         with:
