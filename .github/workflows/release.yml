@@ -146,7 +146,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # The image ships the release binaries: they replace the Dockerfile's source build stage.
+      # The release binaries replace the Dockerfile's build stage.
       - name: Stage binaries
         run: |
           mkdir -p dist/out/amd64 dist/out/arm64

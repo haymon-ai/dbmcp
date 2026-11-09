@@ -27,7 +27,7 @@ updates:
         patterns:
           - "*"
     ignore:
-      # The Rust image tag follows `rust-toolchain.toml`; take only its digest updates.
+      # rust-toolchain.toml picks the Rust version; take only digest updates.
       - dependency-name: rust
         update-types:
           - version-update:semver-major

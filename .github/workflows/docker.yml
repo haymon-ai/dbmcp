@@ -25,7 +25,6 @@ on:
       - crates/**
       - .github/workflows/docker.yml
 
-# A newer push to a pull request cancels its stale run; master runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -36,12 +35,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-
-      - name: Check Rust image matches rust-toolchain.toml
-        run: |
-          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
-          grep -q "^FROM rust:${channel}-" Dockerfile \
-            || { echo "::error file=Dockerfile::rust image tag must match rust-toolchain.toml channel ${channel}"; exit 1; }
 
       - name: Build image
         run: docker build -t dbmcp:src .

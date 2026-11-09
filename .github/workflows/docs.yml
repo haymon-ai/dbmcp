@@ -17,7 +17,6 @@ permissions:
   pages: write
   id-token: write
 
-# A newer push to a pull request cancels its stale build.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -65,7 +64,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-24.04
     needs: build
-    # Deploys queue one at a time and never cancel one in progress.
     concurrency:
       group: pages
       cancel-in-progress: false

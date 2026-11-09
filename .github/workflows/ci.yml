@@ -5,7 +5,6 @@ on:
     branches: [master]
   pull_request:
 
-# A newer push to a pull request cancels its stale run; master runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
