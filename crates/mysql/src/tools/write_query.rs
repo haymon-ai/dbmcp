@@ -2,6 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{QueryRequest, QueryResponse};
+use dbmcp_sql::validation::reject_use;
 
 use super::prelude::*;
 
@@ -99,10 +100,16 @@ impl AsyncTool<MysqlHandler> for UnpinnedWriteQueryTool {
 impl MysqlHandler {
     /// Executes a write SQL query.
     ///
+    /// Rejects `USE`: it would change the database of the pooled connection
+    /// for later queries.
+    ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the query fails.
+    /// Returns [`SqlError::UseBlocked`] for `USE`, or [`SqlError`] if the
+    /// query fails.
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<QueryResponse, ErrorData> {
+        reject_use(&query, &sqlparser::dialect::MySqlDialect {})?;
+
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let rows = self.connection.fetch_json(query.as_str(), database).await?;

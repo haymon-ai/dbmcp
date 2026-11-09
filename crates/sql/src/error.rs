@@ -24,6 +24,10 @@ pub enum SqlError {
     #[error("Operation forbidden: SELECT INTO OUTFILE/DUMPFILE is not allowed for security reasons")]
     IntoOutfileBlocked,
 
+    /// `USE` blocked: it would change the database of a pooled connection.
+    #[error("Query blocked: USE is not allowed; pass the `database` argument to target another database")]
+    UseBlocked,
+
     /// Multiple SQL statements blocked.
     #[error("Query blocked: only single statements are allowed")]
     MultiStatement,

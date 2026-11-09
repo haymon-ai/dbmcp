@@ -81,8 +81,28 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
         | Statement::ShowViews { .. }
         | Statement::ShowObjects(_)
         | Statement::ExplainTable { .. } => Ok(StatementKind::NonSelect),
+        Statement::Use(_) => Err(SqlError::UseBlocked),
         _ => Err(SqlError::ReadOnlyViolation),
     }
+}
+
+/// Rejects `USE`, which would change the database of a pooled connection.
+///
+/// Meant for tools that run arbitrary SQL. SQL that fails to parse passes
+/// through, so the database reports its own error for syntax the parser
+/// does not know.
+///
+/// # Errors
+///
+/// Returns [`SqlError::UseBlocked`] if any parsed statement is `USE`.
+pub fn reject_use(sql: &str, dialect: &impl Dialect) -> Result<(), SqlError> {
+    let Ok(statements) = Parser::parse_sql(dialect, sql) else {
+        return Ok(());
+    };
+    if statements.iter().any(|stmt| matches!(stmt, Statement::Use(_))) {
+        return Err(SqlError::UseBlocked);
+    }
+    Ok(())
 }
 
 /// Validates that a SQL string contains exactly one statement.
@@ -319,8 +339,20 @@ mod tests {
     fn test_use_blocked() {
         assert!(matches!(
             validate_read_only("USE mydb", &DIALECT),
-            Err(SqlError::ReadOnlyViolation)
+            Err(SqlError::UseBlocked)
         ));
+    }
+
+    #[test]
+    fn test_reject_use() {
+        assert!(matches!(reject_use("USE mydb", &DIALECT), Err(SqlError::UseBlocked)));
+        assert!(matches!(
+            reject_use("INSERT INTO t VALUES (1); USE mydb", &DIALECT),
+            Err(SqlError::UseBlocked)
+        ));
+        assert!(reject_use("INSERT INTO t VALUES (1)", &DIALECT).is_ok());
+        assert!(reject_use("SET @x = 1", &DIALECT).is_ok());
+        assert!(reject_use("NOT VALID SQL ((", &DIALECT).is_ok());
     }
 
     // === Blocked statement types ===

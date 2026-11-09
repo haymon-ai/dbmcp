@@ -10,6 +10,7 @@ Use when:
 <when_not_to_use>
 - Read-only queries (SELECT, SHOW) → use readQuery
 - Query performance analysis → use explainQuery
+- Switching database context (USE is rejected) → the database is fixed by configuration
 </when_not_to_use>
 
 <examples>

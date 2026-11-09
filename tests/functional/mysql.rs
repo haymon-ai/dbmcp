@@ -1096,6 +1096,28 @@ async fn test_read_query_use_statement_rejected() {
 }
 
 #[tokio::test]
+async fn test_write_query_use_statement_rejected() {
+    // A size-1 pool: every call reuses the connection a leaked USE would taint.
+    let handler = handler_with(single_connection_config(0));
+
+    let error = handler
+        .write_query("USE analytics".into(), Some("app".into()))
+        .await
+        .expect_err("USE must be rejected by writeQuery");
+    assert!(
+        error.message.contains("USE is not allowed"),
+        "expected USE rejection, got: {}",
+        error.message
+    );
+
+    let response = handler
+        .read_query("SELECT DATABASE() AS db".into(), None, None)
+        .await
+        .expect("SELECT DATABASE() runs");
+    assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
+}
+
+#[tokio::test]
 async fn test_read_query_show_databases() {
     let handler = handler(false);
 
