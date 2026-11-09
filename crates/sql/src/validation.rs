@@ -91,7 +91,8 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
 /// `USE` would change the database of a pooled connection for later
 /// queries. Every other statement is allowed. SQL that fails to parse passes
 /// through, so the database reports its own error for syntax the parser
-/// does not know (e.g. `MySQL` routine bodies, `DO`).
+/// does not know (e.g. `MySQL` routine bodies, `DO`). Only `MySQL` and
+/// `MariaDB` have `USE`, so only their write tool calls this.
 ///
 /// # Errors
 ///
@@ -339,10 +340,6 @@ mod tests {
     #[test]
     fn test_use_blocked() {
         assert!(matches!(validate_read("USE mydb", &DIALECT), Err(SqlError::UseBlocked)));
-    }
-
-    #[test]
-    fn test_validate_write() {
         assert!(matches!(
             validate_write("USE mydb", &DIALECT),
             Err(SqlError::UseBlocked)
