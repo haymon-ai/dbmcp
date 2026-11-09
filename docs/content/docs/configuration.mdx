@@ -140,7 +140,7 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
 
 1. **Server timeout.** dbmcp sets a session statement timeout equal to `query_timeout` on every pooled connection. The database stops the statement itself, and the connection stays usable.
-2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error.
+2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
 
 Either way the agent sees `Query timed out after …`. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
 
@@ -156,8 +156,9 @@ With `read_only: false`, writes and DDL are also subject to the timeout. A long 
 
 #### Connection Poolers and Proxies
 
-- **PgBouncer transaction mode: not supported for timeouts.** The session timeout can leak to other clients. Use session mode, or skip dbmcp's timeout (`query_timeout: 0`) and set one on the role: `ALTER ROLE dbmcp SET statement_timeout = '30s'`.
+- **PgBouncer transaction mode: not supported for timeouts.** The session timeout can leak to other clients, and the backstop kill can hit another client's statement. Use session mode, or skip dbmcp's timeout (`query_timeout: 0`) and set one on the role: `ALTER ROLE dbmcp SET statement_timeout = '30s'`.
 - **RDS Proxy:** the session `SET` pins each connection to one backend, so proxy multiplexing is lost. Timeouts still work. To avoid pinning, use `query_timeout: 0` plus a role- or parameter-group-level timeout.
+- **ProxySQL:** supported. It answers `CONNECTION_ID()` and routes `KILL` itself.
 
 #### Troubleshooting
 

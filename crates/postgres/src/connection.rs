@@ -11,6 +11,7 @@ use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
+use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::{info, warn};
 
@@ -126,6 +127,24 @@ impl Connection for PostgresConnection {
         error
             .as_database_error()
             .is_some_and(|e| e.code().as_deref() == Some("57014") && e.message().contains("statement timeout"))
+    }
+
+    async fn session_id(conn: &mut sqlx::PgConnection) -> Result<Option<u64>, sqlx::Error> {
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(conn).await?;
+        u64::try_from(pid)
+            .map(Some)
+            .map_err(|e| sqlx::Error::Decode(Box::new(e)))
+    }
+
+    async fn kill(pool: PgPool, id: u64) -> Result<bool, sqlx::Error> {
+        let pid = i32::try_from(id).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        let mut conn = pool.connect_options().connect().await?;
+        let result = sqlx::query_scalar("SELECT pg_cancel_backend($1)")
+            .bind(pid)
+            .fetch_one(&mut conn)
+            .await;
+        let _ = sqlx::Connection::close(conn).await;
+        result
     }
 }
 /// Creates a lazy `PostgreSQL` pool for `db_name`.

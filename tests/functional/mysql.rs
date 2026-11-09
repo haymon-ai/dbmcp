@@ -562,6 +562,49 @@ async fn test_server_timeout_stops_slow_write() {
     assert_timed_out(&handler, result, "qt_server_write").await;
 }
 
+/// Asserts that `elapsed` falls in the client backstop window.
+fn assert_backstop_elapsed(elapsed: std::time::Duration) {
+    let secs = elapsed.as_secs_f64();
+    assert!((6.0..9.0).contains(&secs), "backstop fired after {secs:.1}s");
+}
+
+#[tokio::test]
+async fn test_backstop_kills_statement_outside_server_timeout() {
+    if backend() != DatabaseBackend::Mysql {
+        eprintln!("skip: needs DBMCP_DB_BACKEND=mysql");
+        return;
+    }
+    let handler = single_connection_handler(1);
+    // MySQL's server timeout covers SELECT only, so DO runs on to the backstop.
+    let sql = "DO 'qt_backstop_do', (SELECT COUNT(*) FROM information_schema.columns a, \
+               information_schema.columns b, information_schema.columns c)"
+        .to_owned();
+    let start = std::time::Instant::now();
+    let result = handler.write_query(sql, None).await;
+    assert_backstop_elapsed(start.elapsed());
+    assert_timed_out(&handler, result, "qt_backstop_do").await;
+}
+
+#[tokio::test]
+async fn test_backstop_kills_statement_when_session_set_fails() {
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb");
+        return;
+    }
+    // Backend mismatch: MariaDB rejects max_execution_time, so the SET only warns.
+    let handler = handler_with(DatabaseConfig {
+        backend: DatabaseBackend::Mysql,
+        query_timeout: 1,
+        max_pool_size: 1,
+        connection_timeout: Some(5),
+        ..base_db_config(false)
+    });
+    let start = std::time::Instant::now();
+    let result = handler.read_query(slow_sql("qt_backstop_mismatch"), None, None).await;
+    assert_backstop_elapsed(start.elapsed());
+    assert_timed_out(&handler, result, "qt_backstop_mismatch").await;
+}
+
 #[tokio::test]
 async fn test_drop_table_success() {
     let handler = handler(false);
