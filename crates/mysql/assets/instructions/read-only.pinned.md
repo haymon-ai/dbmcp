@@ -5,7 +5,7 @@
 3. Call `listTriggers` to see triggers.
 4. Call `listFunctions` to see stored functions.
 5. Call `listProcedures` to see stored procedures.
-6. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
+6. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, EXPLAIN).
 7. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
 
 Per-database tools default to the active database; pass `database` to target another.

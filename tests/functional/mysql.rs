@@ -1072,16 +1072,47 @@ async fn test_read_query_group_by() {
 }
 
 #[tokio::test]
-async fn test_read_query_use_statement() {
-    let handler = handler(false);
+async fn test_read_query_use_statement_rejected() {
+    // A size-1 pool: every call reuses the connection a leaked USE would taint.
+    let handler = single_connection_handler(0);
 
-    // USE passes read_only validation and executes without returning rows
-    let response = handler
-        .read_query("USE app".into(), Some("app".into()), None)
+    let error = handler
+        .read_query("USE analytics".into(), Some("app".into()), None)
         .await
-        .unwrap();
-    let rows = &response.rows;
-    assert!(rows.is_empty(), "USE returns no rows");
+        .expect_err("USE must be rejected by readQuery");
+    assert!(
+        error.message.contains("USE is not allowed"),
+        "expected USE rejection, got: {}",
+        error.message
+    );
+
+    let response = handler
+        .read_query("SELECT DATABASE() AS db".into(), None, None)
+        .await
+        .expect("SELECT DATABASE() runs");
+    assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
+}
+
+#[tokio::test]
+async fn test_write_query_use_statement_rejected() {
+    // A size-1 pool: every call reuses the connection a leaked USE would taint.
+    let handler = single_connection_handler(0);
+
+    let error = handler
+        .write_query("USE analytics".into(), Some("app".into()))
+        .await
+        .expect_err("USE must be rejected by writeQuery");
+    assert!(
+        error.message.contains("USE is not allowed"),
+        "expected USE rejection, got: {}",
+        error.message
+    );
+
+    let response = handler
+        .read_query("SELECT DATABASE() AS db".into(), None, None)
+        .await
+        .expect("SELECT DATABASE() runs");
+    assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
 }
 
 #[tokio::test]

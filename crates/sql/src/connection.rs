@@ -57,8 +57,8 @@ where
 /// and receive default implementations for query execution.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
-/// through the unprepared text protocol, required for statements like `MySQL`
-/// `USE`) or a parameterized `sqlx::query(sql).bind(...)` value (run as a
+/// through the unprepared text protocol, which some `MySQL` statements need)
+/// or a parameterized `sqlx::query(sql).bind(...)` value (run as a
 /// prepared statement).
 ///
 /// # Errors
@@ -177,7 +177,7 @@ where
     /// pass read-only validation (sequences, large objects, user-defined
     /// functions) cannot modify data. The transaction is always rolled back,
     /// which on `PostgreSQL` also discards session settings changed by the
-    /// statement; `MySQL` session state (`USE`, user variables) persists.
+    /// statement; `MySQL` user variables persist.
     ///
     /// Requires `START TRANSACTION READ ONLY` support (`MySQL`, `MariaDB`,
     /// `PostgreSQL`); `SQLite` rejects it.

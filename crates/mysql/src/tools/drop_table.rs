@@ -101,8 +101,7 @@ impl AsyncTool<MysqlHandler> for UnpinnedDropTableTool {
 impl MysqlHandler {
     /// Drops a table from a database.
     ///
-    /// Switches to the target database with `USE`, then executes
-    /// `DROP TABLE`.
+    /// Executes `DROP TABLE` on the pool for the target database.
     ///
     /// # Errors
     ///

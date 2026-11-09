@@ -9,7 +9,7 @@ const CONNECTION_KIND: &str = "connection";
 #[derive(Debug, thiserror::Error)]
 pub enum SqlError {
     /// Query blocked by read-only mode.
-    #[error("Query blocked: only SELECT, SHOW, DESC, DESCRIBE, USE, EXPLAIN queries are allowed in read-only mode")]
+    #[error("Query blocked: only SELECT, SHOW, DESC, DESCRIBE, EXPLAIN queries are allowed in read-only mode")]
     ReadOnlyViolation,
 
     /// `LOAD_FILE()` function blocked for security.
@@ -23,6 +23,10 @@ pub enum SqlError {
     /// INTO OUTFILE/DUMPFILE blocked for security.
     #[error("Operation forbidden: SELECT INTO OUTFILE/DUMPFILE is not allowed for security reasons")]
     IntoOutfileBlocked,
+
+    /// `USE` blocked: it would change the database of a pooled connection.
+    #[error("Query blocked: USE is not allowed")]
+    UseBlocked,
 
     /// Multiple SQL statements blocked.
     #[error("Query blocked: only single statements are allowed")]

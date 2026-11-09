@@ -272,7 +272,7 @@ See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination)
 
 ### readQuery
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, USE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, `USE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
 
 ### writeQuery
 

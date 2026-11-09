@@ -6,7 +6,7 @@
 4. Call `listTriggers` to see triggers.
 5. Call `listFunctions` to see stored functions.
 6. Call `listProcedures` to see stored procedures.
-7. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, USE, EXPLAIN).
+7. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, EXPLAIN).
 8. Use `writeQuery` for data changes (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).
 9. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
 10. Use `createDatabase` to create a new database.

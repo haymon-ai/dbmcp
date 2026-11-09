@@ -2,7 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
-use dbmcp_sql::validation::{validate_read_only, validate_single_statement};
+use dbmcp_sql::validation::{validate_read, validate_single_statement};
 
 use super::prelude::*;
 
@@ -121,7 +121,7 @@ impl MysqlHandler {
         analyze: bool,
     ) -> Result<QueryResponse, ErrorData> {
         if analyze && self.config.read_only {
-            let _ = validate_read_only(&query, &sqlparser::dialect::MySqlDialect {})?;
+            let _ = validate_read(&query, &sqlparser::dialect::MySqlDialect {})?;
         } else {
             validate_single_statement(&query, &sqlparser::dialect::MySqlDialect {})?;
         }

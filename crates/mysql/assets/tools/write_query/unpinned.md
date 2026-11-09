@@ -11,6 +11,7 @@ Use when:
 - Read-only queries (SELECT, SHOW) → use readQuery
 - Query performance analysis → use explainQuery
 - Creating/dropping entire databases → use createDatabase or dropDatabase
+- Switching database context (USE is rejected) → pass the `database` argument
 </when_not_to_use>
 
 <examples>
