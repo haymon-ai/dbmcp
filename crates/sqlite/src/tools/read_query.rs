@@ -74,7 +74,8 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
-    /// read-only, or [`SqlError::Query`] if the backend reports an error.
+    /// read-only, [`SqlError::UseBlocked`] for `USE`, or [`SqlError::Query`]
+    /// if the backend reports an error.
     pub async fn read_query(
         &self,
         ReadQueryRequest { query, cursor }: ReadQueryRequest,
