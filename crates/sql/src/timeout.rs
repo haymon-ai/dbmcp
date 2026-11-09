@@ -20,22 +20,15 @@ pub(crate) const GRACE: Duration = Duration::from_secs(5);
 
 /// Runs a query operation under the client-side timeout backstop.
 ///
-/// Before `op` runs, [`Connection::arm`] sets the server-side statement
-/// timeout on the acquired connection, which normally stops the statement at
-/// `connection`'s [`query_timeout`](Connection::query_timeout). This function
-/// waits that long + [`GRACE`]; on expiry it drops the query future, spawns a
-/// kill of the statement from a one-off connection (capped at [`GRACE`],
-/// failures logged), and returns [`SqlError::QueryTimeout`]. A server timeout error
-/// ([`Connection::is_timeout`]) also maps to [`SqlError::QueryTimeout`],
-/// even when the timeout is `0`; with `0` there is no arm, timer, or kill.
-///
-/// `query` is split into its SQL text and arguments, and `op` runs them on a
-/// connection acquired from `connection`'s pool for `database` (resolved
-/// before the timer starts). When the server timeout
-/// was not set, the timer stops at the timeout without [`GRACE`]; without a
-/// session id, nothing is killed.
-///
-/// The SQL text is only copied into an owned `String` on the timeout path.
+/// Resolves `connection`'s pool for `database`, acquires a connection, and
+/// calls [`Connection::arm`] to set the server statement timeout before `op`
+/// runs `query`'s SQL text and arguments on it. The backstop waits
+/// [`query_timeout`](Connection::query_timeout) + [`GRACE`] (no [`GRACE`] when
+/// the server timeout was not set); on expiry it drops the query future,
+/// spawns a kill of the session (if `arm` reported one) from a one-off
+/// connection capped at [`GRACE`], and returns [`SqlError::QueryTimeout`].
+/// A server timeout error ([`Connection::is_timeout`]) also maps to
+/// [`SqlError::QueryTimeout`]; a `0` timeout skips the arm, timer, and kill.
 ///
 /// # Errors
 ///
@@ -97,39 +90,39 @@ where
         .await
         .map_err(|_| timed_out())?
         .map_err(map_error)?;
-    let Ok(armed) = tokio::time::timeout_at(deadline, connection.arm(&mut conn)).await else {
+    let Ok(arm) = tokio::time::timeout_at(deadline, connection.arm(&mut conn)).await else {
         // The arm was dropped mid-flight: keep the connection out of the pool.
         drop(conn.detach());
         return Err(timed_out());
     };
-    let (id, armed) = armed.map_err(map_error)?;
-    let deadline = if armed { deadline } else { start + limit };
+    let (id, armed) = arm.map_err(map_error)?;
+    let query_deadline = if armed { deadline } else { start + limit };
 
-    let Ok(result) = tokio::time::timeout_at(deadline, op(&mut conn, (sql, arguments))).await else {
-        if let Some(id) = id {
-            // `conn` stays out of the pool until the kill ends, so nothing reuses it
-            // while the statement may still run. It is then detached: sqlx can't
-            // always return a connection whose query future was dropped mid-flight,
-            // and would keep its slot forever. After a failed kill the statement may
-            // run on, outside `max_connections`, until the server ends it.
-            tokio::spawn(async move {
-                let kill = async {
-                    let mut killer = pool.connect_options().connect().await?;
-                    let result = C::kill(&mut killer, id).await;
-                    let _ = sqlx::Connection::close(killer).await;
-                    result
-                };
-                match tokio::time::timeout(GRACE, kill).await {
-                    Ok(Ok(())) => debug!(session_id = id, "killed timed-out statement"),
-                    Ok(Err(error)) => warn!(%error, session_id = id, "failed to kill timed-out statement"),
-                    Err(_) => warn!(session_id = id, "kill of timed-out statement did not finish in time"),
-                }
-                drop(conn.detach());
-            });
-        }
-        return Err(timed_out());
-    };
-    result.map_err(map_error)
+    if let Ok(result) = tokio::time::timeout_at(query_deadline, op(&mut conn, (sql, arguments))).await {
+        return result.map_err(map_error);
+    }
+    if let Some(id) = id {
+        // `conn` stays out of the pool until the kill ends, so nothing reuses it
+        // while the statement may still run. It is then detached: sqlx can't
+        // always return a connection whose query future was dropped mid-flight,
+        // and would keep its slot forever. After a failed kill the statement may
+        // run on, outside `max_connections`, until the server ends it.
+        tokio::spawn(async move {
+            let kill = async {
+                let mut killer = pool.connect_options().connect().await?;
+                let result = C::kill(&mut killer, id).await;
+                let _ = sqlx::Connection::close(killer).await;
+                result
+            };
+            match tokio::time::timeout(GRACE, kill).await {
+                Ok(Ok(())) => debug!(session_id = id, "killed timed-out statement"),
+                Ok(Err(error)) => warn!(%error, session_id = id, "failed to kill timed-out statement"),
+                Err(_) => warn!(session_id = id, "kill of timed-out statement did not finish in time"),
+            }
+            drop(conn.detach());
+        });
+    }
+    Err(timed_out())
 }
 
 #[cfg(test)]
@@ -211,9 +204,9 @@ mod tests {
             }
         }
 
-        fn kill(_conn: &mut sqlx::SqliteConnection, id: u64) -> impl Future<Output = Result<(), sqlx::Error>> + Send {
+        async fn kill(_conn: &mut sqlx::SqliteConnection, id: u64) -> Result<(), sqlx::Error> {
             KILLED.fetch_or(1 << id, Ordering::SeqCst);
-            std::future::ready(Ok(()))
+            Ok(())
         }
     }
 
@@ -291,11 +284,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fast_query_succeeds_with_timeout() {
+    async fn fast_query_succeeds_for_any_timeout() {
         let pool = pool().await;
-        let stub = Stub::new(&pool, Mode::Server, 5);
-        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(42)).await;
-        assert_eq!(result.expect("should succeed"), 42);
+        // `0` disables the limit; `u64::MAX` overflows an `Instant` and runs without a timer.
+        for timeout_secs in [0, 5, u64::MAX] {
+            let stub = Stub::new(&pool, Mode::Server, timeout_secs);
+            let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(42)).await;
+            assert_eq!(result.expect("should succeed"), 42, "timeout {timeout_secs}");
+        }
     }
 
     #[tokio::test]
@@ -377,21 +373,5 @@ mod tests {
         let stub = Stub::new(&pool, Mode::Server, 1);
         let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
-    }
-
-    #[tokio::test]
-    async fn huge_timeout_runs_without_timer() {
-        let pool = pool().await;
-        let stub = Stub::new(&pool, Mode::Server, u64::MAX);
-        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(1)).await;
-        assert_eq!(result.expect("should succeed"), 1);
-    }
-
-    #[tokio::test]
-    async fn zero_timeout_disables_limit() {
-        let pool = pool().await;
-        let stub = Stub::new(&pool, Mode::Server, 0);
-        let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(1)).await;
-        assert_eq!(result.expect("should succeed"), 1);
     }
 }

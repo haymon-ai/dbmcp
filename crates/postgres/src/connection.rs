@@ -131,13 +131,13 @@ impl Connection for PostgresConnection {
     async fn arm(&self, conn: &mut sqlx::PgConnection) -> Result<(Option<u64>, bool), sqlx::Error> {
         let millis = self.config.query_timeout.saturating_mul(1000).to_string();
         let armed =
-            sqlx::query_as::<_, (String, i32)>("SELECT set_config('statement_timeout', $1, false), pg_backend_pid()")
+            sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid() FROM set_config('statement_timeout', $1, false)")
                 .bind(millis)
                 .fetch_one(conn)
                 .await;
         // A failed SET keeps the statement: only the client timeout applies.
-        let (_, pid) = match armed {
-            Ok(row) => row,
+        let pid = match armed {
+            Ok(pid) => pid,
             Err(error) => {
                 warn!(%error, "session statement timeout not set; relying on the client timeout");
                 return Ok((None, false));

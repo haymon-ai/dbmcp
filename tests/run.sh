@@ -22,10 +22,10 @@ COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
 TIMEOUT="${TIMEOUT:-30}"
 TEST_TYPE="${TEST_TYPE:-all}"
 
-# Matrix: service_name:db_type:backend:container_port
-#   service_name    — matches compose.yml service
+# Matrix: service_name:db_type:container_port
+#   service_name    — matches compose.yml service; its prefix before `_` is the
+#                     DBMCP_DB_BACKEND passed to the functional tests
 #   db_type         — mysql, postgres, or sqlite
-#   backend         — DBMCP_DB_BACKEND passed to the functional tests
 #   container_port  — internal port to resolve via `docker compose port`
 #
 # Test binary names are derived by convention:
@@ -33,10 +33,10 @@ TEST_TYPE="${TEST_TYPE:-all}"
 #   approval   → approval_$type   (e.g. "approval_mysql", "approval_sqlite")
 #   ssh        → functional_ssh for mysql/postgres, run through the sshd service
 MATRIX=(
-    "mariadb_12:mysql:mariadb:3306"
-    "mysql_9:mysql:mysql:3306"
-    "postgres_18:postgres:postgres:5432"
-    "sqlite:sqlite:sqlite:0"
+    "mariadb_12:mysql:3306"
+    "mysql_9:mysql:3306"
+    "postgres_18:postgres:5432"
+    "sqlite:sqlite:0"
 )
 
 declare -a RESULTS=()
@@ -161,8 +161,8 @@ test_bins_for() {
 run_entry() {
     local service="$1"
     local db_type="$2"
-    local backend="$3"
-    local container_port="$4"
+    local container_port="$3"
+    local backend="${service%%_*}"
 
     local test_bins
     test_bins=$(test_bins_for "$db_type")
@@ -336,9 +336,9 @@ echo "Building project..."
 cargo test --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
 
 for entry in "${MATRIX[@]}"; do
-    IFS=':' read -r service db_type backend container_port <<< "$entry"
+    IFS=':' read -r service db_type container_port <<< "$entry"
     [ -n "$FILTER" ] && [[ "$service" != *"$FILTER"* ]] && continue
-    run_entry "$service" "$db_type" "$backend" "$container_port"
+    run_entry "$service" "$db_type" "$container_port"
 done
 
 if [ ${#RESULTS[@]} -eq 0 ]; then
