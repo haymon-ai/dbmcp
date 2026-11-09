@@ -179,9 +179,9 @@ jobs:
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
       # The chart publishes after the image, so it never points at a missing image tag.
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@v2
 
       - id: chart
         name: Package and push chart
