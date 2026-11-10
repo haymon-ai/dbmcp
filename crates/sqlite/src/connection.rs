@@ -10,7 +10,10 @@ use std::time::Duration;
 use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use sqlparser::ast::Statement;
+use sqlparser::dialect::SQLiteDialect;
+use sqlparser::parser::Parser;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqliteQueryResult};
 use tracing::info;
 
 /// Owns the lazy `SQLite` pool and the logic that builds it.
@@ -67,6 +70,27 @@ impl Connection for SqliteConnection {
 
     fn is_timeout(_error: &sqlx::Error) -> bool {
         false
+    }
+
+    /// Counts only the statements that set the change count and rowid.
+    ///
+    /// `SQLite` keeps both per connection, so other statements still report
+    /// earlier values. Unparsable SQL reports `0`.
+    fn counts(sql: &str, results: &[SqliteQueryResult]) -> (u64, Option<u64>) {
+        let statements = Parser::parse_sql(&SQLiteDialect {}, sql).unwrap_or_default();
+        let mut rows_affected = 0;
+        let mut last_insert_id = None;
+        for (statement, result) in statements.iter().zip(results) {
+            match statement {
+                Statement::Insert(_) if result.rows_affected() > 0 => {
+                    rows_affected += result.rows_affected();
+                    last_insert_id = u64::try_from(result.last_insert_rowid()).ok();
+                }
+                Statement::Update(_) | Statement::Delete(_) => rows_affected += result.rows_affected(),
+                _ => {}
+            }
+        }
+        (rows_affected, last_insert_id)
     }
 
     async fn session_id(&self, _conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
@@ -218,5 +242,105 @@ mod tests {
         let connection = SqliteConnection::new(&base_config());
         connection.shutdown().await;
         connection.shutdown().await;
+    }
+
+    /// Opens a writable in-memory database holding table `t`.
+    ///
+    /// The pool's single connection keeps the change count and rowid
+    /// between statements, as in production.
+    async fn memory_with_table() -> SqliteConnection {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: false,
+            ..base_config()
+        });
+        connection
+            .execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)", None)
+            .await
+            .expect("create table");
+        connection
+    }
+
+    async fn counts(connection: &SqliteConnection, sql: &str) -> (u64, Option<u64>) {
+        let (_, rows_affected, last_insert_id) = connection.execute_json(sql, None).await.expect(sql);
+        (rows_affected, last_insert_id)
+    }
+
+    #[tokio::test]
+    async fn execute_json_reports_insert_changes_and_rowid() {
+        let connection = memory_with_table().await;
+        assert_eq!(
+            counts(&connection, "INSERT INTO t (a) VALUES (1), (2)").await,
+            (2, Some(2))
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_json_counts_replace_as_insert() {
+        let connection = memory_with_table().await;
+        counts(&connection, "INSERT INTO t (id, a) VALUES (3, 1)").await;
+        assert_eq!(
+            counts(&connection, "REPLACE INTO t (id, a) VALUES (3, 9)").await,
+            (1, Some(3))
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_json_reports_update_and_delete_without_stale_rowid() {
+        let connection = memory_with_table().await;
+        counts(&connection, "INSERT INTO t (a) VALUES (1), (2)").await;
+        assert_eq!(counts(&connection, "UPDATE t SET a = 5").await, (2, None));
+        assert_eq!(counts(&connection, "DELETE FROM t").await, (2, None));
+    }
+
+    #[tokio::test]
+    async fn execute_json_reports_no_rowid_for_noop_upsert() {
+        let connection = memory_with_table().await;
+        counts(&connection, "INSERT INTO t (id, a) VALUES (1, 1)").await;
+        assert_eq!(
+            counts(
+                &connection,
+                "INSERT INTO t (id, a) VALUES (1, 1) ON CONFLICT DO NOTHING"
+            )
+            .await,
+            (0, None)
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_json_ignores_stale_counters_after_schema_change() {
+        let connection = memory_with_table().await;
+        counts(&connection, "INSERT INTO t (a) VALUES (1)").await;
+        assert_eq!(counts(&connection, "CREATE TABLE u (b INTEGER)").await, (0, None));
+    }
+
+    #[tokio::test]
+    async fn execute_json_pairs_statements_with_results() {
+        let connection = memory_with_table().await;
+        let sql = "INSERT INTO t (a) VALUES (1); CREATE TABLE u (b INTEGER); UPDATE t SET a = 3";
+        assert_eq!(counts(&connection, sql).await, (2, Some(1)));
+    }
+
+    #[tokio::test]
+    async fn execute_json_reports_zero_for_unparsable_sql() {
+        let connection = memory_with_table().await;
+        counts(&connection, "CREATE INDEX idx ON t (a)").await;
+        counts(&connection, "INSERT INTO t (a) VALUES (1)").await;
+        // Valid SQLite that sqlparser rejects.
+        assert_eq!(
+            counts(&connection, "DELETE FROM t INDEXED BY idx WHERE a = 1").await,
+            (0, None)
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_json_returns_returning_rows() {
+        let connection = memory_with_table().await;
+        let (rows, rows_affected, last_insert_id) = connection
+            .execute_json("INSERT INTO t (a) VALUES (7) RETURNING a", None)
+            .await
+            .expect("insert returning");
+        assert_eq!(rows, vec![serde_json::json!({"a": 7})]);
+        assert_eq!((rows_affected, last_insert_id), (1, Some(1)));
     }
 }

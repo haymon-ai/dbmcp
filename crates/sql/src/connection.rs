@@ -5,9 +5,10 @@
 //! default method implementations handle query execution.
 
 use crate::SqlError;
+use futures_util::TryStreamExt as _;
 use serde_json::Value;
-use sqlx::{AssertSqlSafe, Decode, Execute, Executor, FromRow, Row, SqlSafeStr, SqlStr, Type};
-use sqlx_json::{QueryResult as _, RowExt};
+use sqlx::{AssertSqlSafe, Decode, Either, Execute, Executor, FromRow, Row, SqlSafeStr, SqlStr, Type};
+use sqlx_json::{QueryResult, RowExt};
 
 use crate::timeout::execute_with_timeout;
 
@@ -54,7 +55,9 @@ where
 /// [`query_timeout`](Connection::query_timeout), and the timeout hooks
 /// [`is_timeout`](Connection::is_timeout), [`session_id`](Connection::session_id),
 /// [`set_timeout`](Connection::set_timeout), and [`kill`](Connection::kill),
-/// and receive default implementations for query execution.
+/// and receive default implementations for query execution. They may
+/// override [`counts`](Connection::counts) when their query results do
+/// not describe their own statement.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
 /// through the unprepared text protocol, which some `MySQL` statements need)
@@ -169,6 +172,51 @@ where
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
         .await
+    }
+
+    /// Runs a statement and returns its rows as JSON, affected rows, and insert id.
+    ///
+    /// One execution yields both the returned rows (e.g. `RETURNING`) and
+    /// the counts, which [`counts`](Connection::counts) folds from the
+    /// per-statement results.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation.
+    async fn execute_json<Q>(
+        &self,
+        query: Q,
+        database: Option<&str>,
+    ) -> Result<(Vec<Value>, u64, Option<u64>), SqlError>
+    where
+        Q: IntoSafeQuery<Self::DB>,
+    {
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let sql = query.0.clone();
+            let mut stream = conn.fetch_many(query);
+            let mut rows = Vec::new();
+            let mut results = Vec::new();
+            while let Some(item) = stream.try_next().await? {
+                match item {
+                    Either::Left(result) => results.push(result),
+                    Either::Right(row) => rows.push(row.to_json()),
+                }
+            }
+            let (rows_affected, last_insert_id) = Self::counts(sql.as_str(), &results);
+            Ok((rows, rows_affected, last_insert_id))
+        })
+        .await
+    }
+
+    /// Folds per-statement results of `sql` into affected rows and the last insert id.
+    ///
+    /// The default sums [`QueryResult::rows_affected`] and keeps the last
+    /// [`QueryResult::last_insert_id`]. Backends whose results do not
+    /// describe their own statement override it.
+    fn counts(_sql: &str, results: &[<Self::DB as sqlx::Database>::QueryResult]) -> (u64, Option<u64>) {
+        let rows_affected = results.iter().map(QueryResult::rows_affected).sum();
+        let last_insert_id = results.iter().rev().find_map(QueryResult::last_insert_id);
+        (rows_affected, last_insert_id)
     }
 
     /// Runs a statement in a read-only transaction and collects every row as JSON.

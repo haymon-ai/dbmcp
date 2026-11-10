@@ -1,7 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::QueryResponse;
+use dbmcp_server::types::WriteQueryResponse;
 
 use super::prelude::*;
 use crate::types::QueryRequest;
@@ -15,7 +15,7 @@ pub(crate) struct WriteQueryTool;
 
 impl ToolBase for WriteQueryTool {
     type Parameter = QueryRequest;
-    type Output = QueryResponse;
+    type Output = WriteQueryResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -61,9 +61,13 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if the query fails.
-    pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<QueryResponse, ErrorData> {
-        let rows = self.connection.fetch_json(query.as_str(), None).await?;
+    pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
+        let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), None).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        Ok(QueryResponse { rows })
+        Ok(WriteQueryResponse {
+            rows,
+            rows_affected,
+            last_insert_id,
+        })
     }
 }
