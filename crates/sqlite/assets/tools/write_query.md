@@ -20,5 +20,10 @@ Use when:
 </examples>
 
 <what_it_returns>
-A JSON array of affected/returning row objects, each keyed by column name.
+An object with:
+- `rows`: rows returned by a `RETURNING` clause, each keyed by column name; empty otherwise.
+- `rowsAffected`: rows inserted, updated, or deleted. `0` for schema changes.
+- `lastInsertId`: the rowid of the last row inserted by an `INSERT`/`REPLACE`. Absent after other statements; use `RETURNING` for `WITHOUT ROWID` tables and upserts.
+
+No follow-up `SELECT` is needed to confirm a write.
 </what_it_returns>

@@ -4584,3 +4584,63 @@ async fn http_probes_answer_without_token() {
 async fn http_readyz_fails_when_database_unreachable() {
     probe::assert_unready(probe::unreachable(probe::backend_command("mysql", "root"))).await;
 }
+
+#[tokio::test]
+async fn test_write_query_reports_rows_affected_and_insert_id() {
+    let handler = handler(false);
+    let db = Some("app".to_string());
+
+    let insert = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Counter', 'counter1@test.com'), ('Counter', 'counter2@test.com')"
+                .into(),
+            db.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(insert.rows.is_empty());
+    assert_eq!(insert.rows_affected, 2);
+    let first_id = handler
+        .read_query(
+            "SELECT MIN(id) AS id FROM users WHERE email LIKE 'counter_@test.com'".into(),
+            db.clone(),
+            None,
+        )
+        .await
+        .unwrap()
+        .rows[0]["id"]
+        .as_u64();
+    assert_eq!(
+        insert.last_insert_id, first_id,
+        "lastInsertId is the first id of a multi-row insert"
+    );
+
+    // Matched rows count even when no value changes (sqlx sets CLIENT_FOUND_ROWS).
+    let update = handler
+        .write_query(
+            "UPDATE users SET name = 'Counter' WHERE email LIKE 'counter_@test.com'".into(),
+            db.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update.rows_affected, 2);
+    assert_eq!(update.last_insert_id, None);
+
+    let create = handler
+        .write_query("CREATE TABLE counter_ddl (id INT PRIMARY KEY)".into(), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(create.rows_affected, 0);
+    assert_eq!(create.last_insert_id, None);
+    handler
+        .write_query("DROP TABLE counter_ddl".into(), db.clone())
+        .await
+        .unwrap();
+
+    let delete = handler
+        .write_query("DELETE FROM users WHERE email LIKE 'counter_@test.com'".into(), db)
+        .await
+        .unwrap();
+    assert_eq!(delete.rows_affected, 2);
+    assert_eq!(delete.last_insert_id, None);
+}

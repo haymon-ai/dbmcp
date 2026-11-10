@@ -5,8 +5,9 @@
 //! default method implementations handle query execution.
 
 use crate::SqlError;
+use futures_util::TryStreamExt as _;
 use serde_json::Value;
-use sqlx::{AssertSqlSafe, Decode, Execute, Executor, FromRow, Row, SqlSafeStr, SqlStr, Type};
+use sqlx::{AssertSqlSafe, Decode, Either, Execute, Executor, FromRow, Row, SqlSafeStr, SqlStr, Type};
 use sqlx_json::{QueryResult as _, RowExt};
 
 use crate::timeout::execute_with_timeout;
@@ -167,6 +168,38 @@ where
         execute_with_timeout(self, database, query, async |conn, query| {
             let rows = conn.fetch_all(query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
+        })
+        .await
+    }
+
+    /// Runs a statement and collects its rows as JSON plus each statement's result.
+    ///
+    /// One execution yields both the returned rows (e.g. `RETURNING`) and
+    /// one [`QueryResult`](sqlx::Database::QueryResult) per executed
+    /// statement, in order, carrying the affected row count and insert id.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation.
+    async fn fetch_json_with_results<Q>(
+        &self,
+        query: Q,
+        database: Option<&str>,
+    ) -> Result<(Vec<Value>, Vec<<Self::DB as sqlx::Database>::QueryResult>), SqlError>
+    where
+        Q: IntoSafeQuery<Self::DB>,
+    {
+        execute_with_timeout(self, database, query, async |conn, query| {
+            let mut stream = conn.fetch_many(query);
+            let mut rows = Vec::new();
+            let mut results = Vec::new();
+            while let Some(item) = stream.try_next().await? {
+                match item {
+                    Either::Left(result) => results.push(result),
+                    Either::Right(row) => rows.push(row.to_json()),
+                }
+            }
+            Ok((rows, results))
         })
         .await
     }
