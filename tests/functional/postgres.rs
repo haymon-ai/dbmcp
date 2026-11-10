@@ -4261,3 +4261,50 @@ async fn http_probes_answer_without_token() {
 async fn http_readyz_fails_when_database_unreachable() {
     probe::assert_unready(probe::unreachable(probe::backend_command("postgres", "postgres"))).await;
 }
+
+#[tokio::test]
+async fn test_write_query_reports_rows_affected() {
+    let handler = handler(false);
+    let db = Some("app".to_string());
+
+    let insert = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Counter', 'counter1@test.com'), ('Counter', 'counter2@test.com')"
+                .into(),
+            db.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(insert.rows.is_empty());
+    assert_eq!(insert.rows_affected, 2);
+    assert_eq!(
+        insert.last_insert_id, None,
+        "PostgreSQL reports generated keys via RETURNING"
+    );
+
+    let returning = handler
+        .write_query(
+            "UPDATE users SET name = 'Counted' WHERE email LIKE 'counter_@test.com' RETURNING id".into(),
+            db.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(returning.rows.len(), 2);
+    assert_eq!(returning.rows_affected, 2);
+
+    let create = handler
+        .write_query("CREATE TABLE counter_ddl (id INT PRIMARY KEY)".into(), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(create.rows_affected, 0);
+    handler
+        .write_query("DROP TABLE counter_ddl".into(), db.clone())
+        .await
+        .unwrap();
+
+    let delete = handler
+        .write_query("DELETE FROM users WHERE email LIKE 'counter_@test.com'".into(), db)
+        .await
+        .unwrap();
+    assert_eq!(delete.rows_affected, 2);
+}

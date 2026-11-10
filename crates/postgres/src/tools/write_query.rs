@@ -1,7 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::{QueryRequest, QueryResponse};
+use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 
 use super::prelude::*;
 
@@ -23,7 +23,7 @@ pub(crate) struct PinnedWriteQueryTool;
 
 impl ToolBase for PinnedWriteQueryTool {
     type Parameter = QueryRequest;
-    type Output = QueryResponse;
+    type Output = WriteQueryResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -62,7 +62,7 @@ pub(crate) struct UnpinnedWriteQueryTool;
 
 impl ToolBase for UnpinnedWriteQueryTool {
     type Parameter = QueryRequest;
-    type Output = QueryResponse;
+    type Output = WriteQueryResponse;
     type Error = ErrorData;
 
     fn name() -> Cow<'static, str> {
@@ -102,10 +102,15 @@ impl PostgresHandler {
     /// # Errors
     ///
     /// Returns [`SqlError`] if the query fails.
-    pub async fn write_query(&self, query: String, database: Option<String>) -> Result<QueryResponse, ErrorData> {
+    pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let rows = self.connection.fetch_json(query.as_str(), database).await?;
+        let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        Ok(QueryResponse { rows })
+
+        Ok(WriteQueryResponse {
+            rows,
+            rows_affected,
+            last_insert_id,
+        })
     }
 }

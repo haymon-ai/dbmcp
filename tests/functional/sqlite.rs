@@ -2320,3 +2320,63 @@ async fn http_readyz_fails_when_database_missing() {
     command.env("DBMCP_DB_NAME", "/nonexistent-dbmcp-dir/missing.db");
     probe::assert_unready(command).await;
 }
+
+#[tokio::test]
+async fn test_write_query_reports_rows_affected_and_insert_id() {
+    let handler = handler(false);
+
+    let insert = handler
+        .write_query(QueryRequest {
+            query: "INSERT INTO users (name, email) VALUES ('Counter', 'counter1@test.com')".into(),
+        })
+        .await
+        .unwrap();
+    assert!(insert.rows.is_empty());
+    assert_eq!(insert.rows_affected, 1);
+    let id = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT id FROM users WHERE email = 'counter1@test.com'".into(),
+            cursor: None,
+        })
+        .await
+        .unwrap()
+        .rows[0]["id"]
+        .as_u64();
+    assert_eq!(insert.last_insert_id, id);
+
+    // SQLite keeps the change count and rowid per connection; they must not leak
+    // into later statements that set neither.
+    let create = handler
+        .write_query(QueryRequest {
+            query: "CREATE TABLE counter_ddl (id INTEGER PRIMARY KEY)".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(create.rows_affected, 0);
+    assert_eq!(create.last_insert_id, None);
+    handler
+        .write_query(QueryRequest {
+            query: "DROP TABLE counter_ddl".into(),
+        })
+        .await
+        .unwrap();
+
+    let update = handler
+        .write_query(QueryRequest {
+            query: "UPDATE users SET name = 'Counted' WHERE email = 'counter1@test.com' RETURNING id".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(update.rows.len(), 1);
+    assert_eq!(update.rows_affected, 1);
+    assert_eq!(update.last_insert_id, None);
+
+    let delete = handler
+        .write_query(QueryRequest {
+            query: "DELETE FROM users WHERE email = 'counter1@test.com'".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(delete.rows_affected, 1);
+    assert_eq!(delete.last_insert_id, None);
+}
