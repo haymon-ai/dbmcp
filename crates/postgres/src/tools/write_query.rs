@@ -3,8 +3,6 @@
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 
-use sqlx::postgres::PgQueryResult;
-
 use super::prelude::*;
 
 const NAME: &str = "writeQuery";
@@ -106,16 +104,13 @@ impl PostgresHandler {
     /// Returns [`SqlError`] if the query fails.
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let (rows, results) = self
-            .connection
-            .fetch_json_with_results(query.as_str(), database)
-            .await?;
+        let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        let rows_affected = results.iter().map(PgQueryResult::rows_affected).sum();
+
         Ok(WriteQueryResponse {
             rows,
             rows_affected,
-            last_insert_id: None,
+            last_insert_id,
         })
     }
 }

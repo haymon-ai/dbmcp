@@ -4,8 +4,6 @@ use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 use dbmcp_sql::validation::validate_write;
 
-use sqlx::mysql::MySqlQueryResult;
-
 use super::prelude::*;
 
 const NAME: &str = "writeQuery";
@@ -114,17 +112,8 @@ impl MysqlHandler {
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let (rows, results) = self
-            .connection
-            .fetch_json_with_results(query.as_str(), database)
-            .await?;
+        let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        let rows_affected = results.iter().map(MySqlQueryResult::rows_affected).sum();
-        let last_insert_id = results
-            .iter()
-            .rev()
-            .map(MySqlQueryResult::last_insert_id)
-            .find(|id| *id != 0);
 
         Ok(WriteQueryResponse {
             rows,
