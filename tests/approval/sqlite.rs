@@ -213,6 +213,18 @@ async fn test_tool_error_text_is_marked_untrusted() {
 }
 
 #[tokio::test]
+async fn test_write_tool_error_text_is_marked_untrusted() {
+    common::run_with_client(server(false), |peer| async move {
+        let result = call_tool(&peer, "dropTable", Some(object(json!({"table": "missing_table"}))))
+            .await
+            .expect("tool error must not be a protocol error");
+        assert_eq!(result.is_error, Some(true));
+        assert!(text(&result).contains("<untrusted-data-"), "got: {}", text(&result));
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_call_tool_without_arguments() {
     common::run_with_client(server(true), |peer| async move {
         let result = call_tool(&peer, "listViews", None).await.expect("listViews succeeds");
