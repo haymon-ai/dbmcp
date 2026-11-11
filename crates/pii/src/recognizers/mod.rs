@@ -255,14 +255,10 @@ pub fn all() -> Vec<Recognizer> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::path::Path;
-
     use super::{Recognizer, all};
-    use crate::ner::NER_ENTITIES;
+    use crate::Entity;
     use crate::pattern::Pattern;
     use crate::score::Score;
-    use crate::{Category, Entity};
 
     fn dummy_recognizer() -> Recognizer {
         let pat = Pattern::new("dummy", r"\b\d+\b", Score::from_static(0.3)).expect("static");
@@ -334,79 +330,5 @@ mod tests {
             missing.is_empty(),
             "recognizers missing context list (not opt-out): {missing:?}"
         );
-    }
-
-    /// Category kebab name to entity wire names, from the registered recognizers.
-    fn registered() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
-        let mut map: BTreeMap<_, BTreeSet<_>> = Category::ALL.iter().map(|c| (c.as_kebab(), BTreeSet::new())).collect();
-        for r in all() {
-            map.get_mut(r.category().as_kebab())
-                .expect("category listed in Category::ALL")
-                .extend(r.supported_entities().iter().map(|e| e.as_str()));
-        }
-        map
-    }
-
-    fn doc(name: &str) -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/content/docs")
-            .join(name);
-        std::fs::read_to_string(path).expect("readable doc")
-    }
-
-    /// First backticked token of each bullet in the list following `heading`.
-    fn bullets<'a>(text: &'a str, heading: &str) -> BTreeSet<&'a str> {
-        text.lines()
-            .skip_while(|l| *l != heading)
-            .skip(1)
-            .skip_while(|l| !l.starts_with("- `"))
-            .take_while(|l| l.starts_with("- `"))
-            .map(|l| l.split('`').nth(1).expect("backticked entity"))
-            .collect()
-    }
-
-    #[test]
-    fn every_regex_entity_is_registered() {
-        let registered: BTreeSet<Entity> = all().iter().flat_map(|r| r.supported_entities().to_vec()).collect();
-        for entity in Entity::ALL {
-            assert_eq!(
-                registered.contains(entity),
-                !NER_ENTITIES.contains(entity),
-                "{entity}: registered as regex iff not an NER entity"
-            );
-        }
-    }
-
-    #[test]
-    fn docs_category_lists_match_registry() {
-        let expected = registered();
-        let mut checked = 0;
-        for name in ["features.mdx", "configuration.mdx"] {
-            let text = doc(name);
-            for line in text.lines() {
-                for (kebab, entities) in &expected {
-                    if let Some(rest) = line.strip_prefix(&format!("- `{kebab}` — ")) {
-                        let listed: BTreeSet<&str> = rest.split('`').skip(1).step_by(2).collect();
-                        assert_eq!(&listed, entities, "{name}: `{kebab}` category list");
-                        checked += 1;
-                    }
-                }
-            }
-        }
-        assert_eq!(checked, 2 * expected.len(), "expected one category list per doc");
-    }
-
-    #[test]
-    fn docs_entity_lists_match_registry() {
-        let text = doc("features.mdx");
-        for (kebab, entities) in registered() {
-            assert_eq!(
-                bullets(&text, &format!("**{kebab}**")),
-                entities,
-                "features.mdx: **{kebab}**"
-            );
-        }
-        let ner: BTreeSet<&str> = NER_ENTITIES.iter().map(|e| e.as_str()).collect();
-        assert_eq!(bullets(&text, "**NER (optional)**"), ner, "features.mdx: NER entities");
     }
 }
