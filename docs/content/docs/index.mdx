@@ -5,7 +5,7 @@ description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLi
 
 <Demo />
 
-Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/docs/clients).
+Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
 
 ## Supported Databases
 
@@ -24,11 +24,11 @@ Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MC
 - **Read-only by default** — write operations are blocked unless explicitly enabled
 - **Stdio and HTTP transport** — works as a local stdio server or a remote HTTP server with CORS preflight and server-side Origin/Host allowlists
 - **Multi-database support** — connect to MySQL, MariaDB, PostgreSQL, or SQLite with a single binary
-- **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/docs/features/ssh-tunnel))
-- **Optional data privacy** — opt-in redaction of personal and sensitive values in query tool output ([details](/docs/privacy))
+- **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/features/ssh-tunnel))
+- **Optional data privacy** — opt-in redaction of personal and sensitive values in query tool output ([details](/privacy))
 
 ## How It Works
 
 Database MCP exposes your database schema and data through the MCP protocol. AI assistants can discover tables, inspect schemas, and run read-only SQL queries to answer questions about your data — all without the risk of accidental modifications.
 
-See the [Installation](/docs/installation) guide to get started.
+See the [Installation](/installation) guide to get started.

@@ -17,7 +17,7 @@ By default, Database MCP runs in **read-only mode**. This controls which tools t
 
 In read-only mode, write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`) are not registered with the MCP client. The AI assistant never sees them in the tool list, which prevents it from attempting write operations entirely.
 
-When read-only mode is disabled, the full tool set becomes available. See [Tools](/docs/tools#tool-availability) for the complete tool availability matrix.
+When read-only mode is disabled, the full tool set becomes available. See [Tools](/tools#tool-availability) for the complete tool availability matrix.
 
 ## SQL Validation in `readQuery`
 
@@ -30,7 +30,7 @@ The `readQuery` tool enforces AST-based SQL validation as defence-in-depth. Only
 
 `USE` is rejected, in `readQuery` and in `writeQuery`: it would change the database of a pooled connection for later queries. Pass the `database` argument to target another database.
 
-> **Limitation**: `writeQuery` only detects `USE` in SQL the parser can read. On MySQL and MariaDB, a `USE` that follows a statement the parser does not support (for example `DO 1; USE other`) still runs, because database connections accept multi-statement queries (see [Multi-Statement Blocking](/docs/security#multi-statement-blocking)).
+> **Limitation**: `writeQuery` only detects `USE` in SQL the parser can read. On MySQL and MariaDB, a `USE` that follows a statement the parser does not support (for example `DO 1; USE other`) still runs, because database connections accept multi-statement queries (see [Multi-Statement Blocking](/security#multi-statement-blocking)).
 
 This validation is always enforced, even when read-only mode is disabled, preventing write statements from being smuggled through the read tool.
 

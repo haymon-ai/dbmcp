@@ -1,6 +1,5 @@
 import Link from 'fumadocs-core/link';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
-import { docsRoute } from '@/lib/shared';
 import { githubUrl } from '@/lib/layout.shared';
 
 /** A previous/next target: the page's title and URL. */
@@ -59,7 +58,7 @@ export function PageFooter({
       </div>
       <p className="mt-12 text-xs text-subtle">
         © Haymon · Database MCP is released under the{' '}
-        <Link href={`${docsRoute}/license`} className="underline">
+        <Link href="/license" className="underline">
           MIT License
         </Link>
       </p>

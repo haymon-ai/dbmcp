@@ -41,7 +41,7 @@ $env:INSTALL_DIR = "C:\tools\dbmcp"; irm https://dbmcp.haymon.ai/install.ps1 | i
 set INSTALL_DIR=C:\tools\dbmcp && curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
-For other ways to install, see [Binaries](/docs/installation/binaries), [Docker](/docs/installation/docker), [Package Managers](/docs/installation/package-managers), and [Build from source](/docs/installation/from-source). To check a download, see [Verify downloads](#verify-downloads).
+For other ways to install, see [Binaries](/installation/binaries), [Docker](/installation/docker), [Package Managers](/installation/package-managers), and [Build from source](/installation/from-source). To check a download, see [Verify downloads](#verify-downloads).
 
 ## Comparison
 
@@ -56,7 +56,7 @@ For other ways to install, see [Binaries](/docs/installation/binaries), [Docker]
 
 ## Verify downloads
 
-Each release publishes a SHA-256 checksum for every release asset, signed build provenance attestations for the binaries, the Docker image, and the [Helm chart](/docs/kubernetes), and a keyless [cosign](https://docs.sigstore.dev/cosign/) signature for the image and the chart.
+Each release publishes a SHA-256 checksum for every release asset, signed build provenance attestations for the binaries, the Docker image, and the [Helm chart](/kubernetes), and a keyless [cosign](https://docs.sigstore.dev/cosign/) signature for the image and the chart.
 
 ### Checksums
 
@@ -68,7 +68,7 @@ curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_6
 sha256sum -c dbmcp-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
-On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`. On Windows (PowerShell), download the checksum next to the `dbmcp.zip` from the [Windows](/docs/installation/binaries#windows) steps and compare:
+On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`. On Windows (PowerShell), download the checksum next to the `dbmcp.zip` from the [Windows](/installation/binaries#windows) steps and compare:
 
 ```powershell
 Invoke-WebRequest -Uri https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-pc-windows-msvc.zip.sha256 -OutFile dbmcp.zip.sha256

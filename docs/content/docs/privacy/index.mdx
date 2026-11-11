@@ -5,7 +5,7 @@ description: Keep personal and sensitive values in your data out of what the AI 
 
 <Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
 
-The recording runs with the optional [Machine Learning](/docs/privacy/machine-learning) model enabled, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/docs/privacy/data-types).
+The recording runs with the optional [Machine Learning](/privacy/machine-learning) model enabled, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/privacy/data-types).
 
 Query results often contain personal or sensitive data (often called PII, personally identifiable information): email addresses, phone numbers, IBANs, API keys, names. Database MCP can find these values in tool output and rewrite them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
 
@@ -29,7 +29,7 @@ pii:
   operator: mask
 ```
 
-Or set `DBMCP_PII_ENABLE=true` (and optionally `DBMCP_PII_OPERATOR=mask`). See [Redaction](/docs/privacy/redaction) for every setting.
+Or set `DBMCP_PII_ENABLE=true` (and optionally `DBMCP_PII_OPERATOR=mask`). See [Redaction](/privacy/redaction) for every setting.
 
 ## Limits
 
@@ -37,6 +37,6 @@ Treat PII redaction as a layer that reduces what an enabled assistant sees in re
 
 ## In this section
 
-- [Redaction](/docs/privacy/redaction): settings, operators, categories, and JSON columns.
-- [Machine Learning](/docs/privacy/machine-learning): optional machine-learning model for names of people, places, and organizations.
-- [Data types](/docs/privacy/data-types): every kind of data the built-in recognizers find.
+- [Redaction](/privacy/redaction): settings, operators, categories, and JSON columns.
+- [Machine Learning](/privacy/machine-learning): optional machine-learning model for names of people, places, and organizations.
+- [Data types](/privacy/data-types): every kind of data the built-in recognizers find.

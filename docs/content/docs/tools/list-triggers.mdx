@@ -3,7 +3,7 @@ title: listTriggers
 description: Reference for the listTriggers tool
 ---
 
-List user-defined triggers on tables in a database. Internal constraint, foreign-key, and `sqlite_*` triggers are excluded. Results are paginated — see [Cursor Pagination](/docs/features/pagination#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
+List user-defined triggers on tables in a database. Internal constraint, foreign-key, and `sqlite_*` triggers are excluded. Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
 
 The tool accepts these optional parameters:
 

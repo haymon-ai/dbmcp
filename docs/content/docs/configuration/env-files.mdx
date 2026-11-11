@@ -26,7 +26,7 @@ DBMCP_CONFIG_FILE=/srv/dbmcp.yaml     # may name the config files
 
 Each env file plays two roles at once:
 
-1. Its `DBMCP_*` keys set settings directly, between the process environment and the config files in [precedence](/docs/configuration/precedence). An empty value is unset, as everywhere.
+1. Its `DBMCP_*` keys set settings directly, between the process environment and the config files in [precedence](/configuration/precedence). An empty value is unset, as everywhere.
 2. All of its keys, whatever their name, are available to `${}` in the config files, after the process environment.
 
 Errors are reported per line without echoing the file's contents (for example `line 2: key cannot contain a space`).

@@ -4,9 +4,9 @@ import type { source } from './source';
 
 type Page = InferPageType<typeof source>;
 
-/** Markdown copy of a page, served under `/llms.mdx/docs/<slug>/content.md`. */
+/** Markdown copy of a page, served under `/llms.mdx/<slug>/content.md`. */
 export function markdownUrl(page: Page): string {
-  return `${basePath}/llms.mdx/docs/${[...page.slugs, 'content.md'].join('/')}`;
+  return `${basePath}/llms.mdx/${[...page.slugs, 'content.md'].join('/')}`;
 }
 
 /** A page rendered as plain Markdown for LLMs. */

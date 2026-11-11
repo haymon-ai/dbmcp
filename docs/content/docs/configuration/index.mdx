@@ -3,7 +3,7 @@ title: Configuration
 description: Every dbmcp setting with its YAML key, environment variable, type, and default
 ---
 
-Database MCP reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. The table below lists every setting; each key links to the page that explains it, with its type and full description. For the file formats, `${}` interpolation, and path rules, see [Config files](/docs/configuration/config-files).
+Database MCP reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. The table below lists every setting; each key links to the page that explains it, with its type and full description. For the file formats, `${}` interpolation, and path rules, see [Config files](/configuration/config-files).
 
 The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json) for editor completion and validation. Editors backed by the YAML language server (VS Code's YAML extension, JetBrains IDEs, Neovim, Zed) pick it up from this modeline on the first line of the file:
 
@@ -17,51 +17,51 @@ The `master` URL tracks the latest schema; replace `master` with a release tag s
 
 | YAML key | Env var | Default |
 |----------|---------|---------|
-| [`transport`](/docs/features/transports) | `DBMCP_TRANSPORT` | `stdio` |
-| [`http.host`](/docs/features/transports) | `DBMCP_HTTP_HOST` | `127.0.0.1` |
-| [`http.port`](/docs/features/transports) | `DBMCP_HTTP_PORT` | `9001` |
-| [`http.allowed_origins`](/docs/features/transports) | `DBMCP_HTTP_ALLOWED_ORIGINS` | Loopback origins, any port |
-| [`http.allowed_hosts`](/docs/features/transports) | `DBMCP_HTTP_ALLOWED_HOSTS` | `localhost`, `127.0.0.1`, `::1` |
-| [`http.auth_token`](/docs/features/transports) | `DBMCP_HTTP_AUTH_TOKEN` | *(unset)* |
-| [`http.allow_unauthenticated`](/docs/features/transports) | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | `false` |
-| [`database.backend`](/docs/features/database) | `DBMCP_DB_BACKEND` | `mysql` |
-| [`database.host`](/docs/features/database) | `DBMCP_DB_HOST` | `localhost` |
-| [`database.port`](/docs/features/database) | `DBMCP_DB_PORT` | Backend-dependent |
-| [`database.user`](/docs/features/database) | `DBMCP_DB_USER` | Backend-dependent |
-| [`database.password`](/docs/features/database) | `DBMCP_DB_PASSWORD` | — |
-| [`database.name`](/docs/features/database) | `DBMCP_DB_NAME` | — |
-| [`database.charset`](/docs/features/database) | `DBMCP_DB_CHARSET` | — |
-| [`database.ssl`](/docs/features/database) | `DBMCP_DB_SSL` | `false` |
-| [`database.ssl_ca`](/docs/features/database) | `DBMCP_DB_SSL_CA` | — |
-| [`database.ssl_cert`](/docs/features/database) | `DBMCP_DB_SSL_CERT` | — |
-| [`database.ssl_key`](/docs/features/database) | `DBMCP_DB_SSL_KEY` | — |
-| [`database.ssl_verify_cert`](/docs/features/database) | `DBMCP_DB_SSL_VERIFY_CERT` | `true` |
-| [`database.read_only`](/docs/security/read-only) | `DBMCP_DB_READ_ONLY` | `true` |
-| [`database.max_pool_size`](/docs/features/database) | `DBMCP_DB_MAX_POOL_SIZE` | `5` |
-| [`database.connection_timeout`](/docs/features/database) | `DBMCP_DB_CONNECTION_TIMEOUT` | — |
-| [`database.query_timeout`](/docs/features/query-timeouts) | `DBMCP_DB_QUERY_TIMEOUT` | `30` |
-| [`database.max_query_timeout`](/docs/features/query-timeouts) | `DBMCP_DB_MAX_QUERY_TIMEOUT` | `query_timeout` |
-| [`database.page_size`](/docs/features/pagination) | `DBMCP_DB_PAGE_SIZE` | `100` |
-| [`database.max_cell_chars`](/docs/features/pagination) | `DBMCP_DB_MAX_CELL_CHARS` | `4096` |
-| [`database.max_response_chars`](/docs/features/pagination) | `DBMCP_DB_MAX_RESPONSE_CHARS` | `32000` |
+| [`transport`](/features/transports) | `DBMCP_TRANSPORT` | `stdio` |
+| [`http.host`](/features/transports) | `DBMCP_HTTP_HOST` | `127.0.0.1` |
+| [`http.port`](/features/transports) | `DBMCP_HTTP_PORT` | `9001` |
+| [`http.allowed_origins`](/features/transports) | `DBMCP_HTTP_ALLOWED_ORIGINS` | Loopback origins, any port |
+| [`http.allowed_hosts`](/features/transports) | `DBMCP_HTTP_ALLOWED_HOSTS` | `localhost`, `127.0.0.1`, `::1` |
+| [`http.auth_token`](/features/transports) | `DBMCP_HTTP_AUTH_TOKEN` | *(unset)* |
+| [`http.allow_unauthenticated`](/features/transports) | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | `false` |
+| [`database.backend`](/features/database) | `DBMCP_DB_BACKEND` | `mysql` |
+| [`database.host`](/features/database) | `DBMCP_DB_HOST` | `localhost` |
+| [`database.port`](/features/database) | `DBMCP_DB_PORT` | Backend-dependent |
+| [`database.user`](/features/database) | `DBMCP_DB_USER` | Backend-dependent |
+| [`database.password`](/features/database) | `DBMCP_DB_PASSWORD` | — |
+| [`database.name`](/features/database) | `DBMCP_DB_NAME` | — |
+| [`database.charset`](/features/database) | `DBMCP_DB_CHARSET` | — |
+| [`database.ssl`](/features/database) | `DBMCP_DB_SSL` | `false` |
+| [`database.ssl_ca`](/features/database) | `DBMCP_DB_SSL_CA` | — |
+| [`database.ssl_cert`](/features/database) | `DBMCP_DB_SSL_CERT` | — |
+| [`database.ssl_key`](/features/database) | `DBMCP_DB_SSL_KEY` | — |
+| [`database.ssl_verify_cert`](/features/database) | `DBMCP_DB_SSL_VERIFY_CERT` | `true` |
+| [`database.read_only`](/security/read-only) | `DBMCP_DB_READ_ONLY` | `true` |
+| [`database.max_pool_size`](/features/database) | `DBMCP_DB_MAX_POOL_SIZE` | `5` |
+| [`database.connection_timeout`](/features/database) | `DBMCP_DB_CONNECTION_TIMEOUT` | — |
+| [`database.query_timeout`](/features/query-timeouts) | `DBMCP_DB_QUERY_TIMEOUT` | `30` |
+| [`database.max_query_timeout`](/features/query-timeouts) | `DBMCP_DB_MAX_QUERY_TIMEOUT` | `query_timeout` |
+| [`database.page_size`](/features/pagination) | `DBMCP_DB_PAGE_SIZE` | `100` |
+| [`database.max_cell_chars`](/features/pagination) | `DBMCP_DB_MAX_CELL_CHARS` | `4096` |
+| [`database.max_response_chars`](/features/pagination) | `DBMCP_DB_MAX_RESPONSE_CHARS` | `32000` |
 | [`log_level`](#logging) | `DBMCP_LOG_LEVEL` | `info` |
-| [`pii.enabled`](/docs/privacy/redaction) | `DBMCP_PII_ENABLE` | `false` |
-| [`pii.operator`](/docs/privacy/redaction) | `DBMCP_PII_OPERATOR` | `replace` |
-| [`pii.categories`](/docs/privacy/redaction) | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* |
-| [`pii.ner_enabled`](/docs/privacy/machine-learning) | `DBMCP_PII_NER_ENABLE` | `false` |
-| [`pii.ner_model`](/docs/privacy/machine-learning) | `DBMCP_PII_NER_MODEL` | *unset* |
-| [`ssh.host`](/docs/features/ssh-tunnel) | `DBMCP_SSH_HOST` | — |
-| [`ssh.port`](/docs/features/ssh-tunnel) | `DBMCP_SSH_PORT` | `22` |
-| [`ssh.user`](/docs/features/ssh-tunnel) | `DBMCP_SSH_USER` | — |
-| [`ssh.password`](/docs/features/ssh-tunnel) | `DBMCP_SSH_PASSWORD` | — |
-| [`ssh.key`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEY` | — |
-| [`ssh.key_passphrase`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEY_PASSPHRASE` | — |
-| [`ssh.known_hosts`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` |
-| [`ssh.strict_host_key_checking`](/docs/features/ssh-tunnel) | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `yes` |
-| [`ssh.keepalive_interval`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `30` |
-| [`ssh.local_port`](/docs/features/ssh-tunnel) | `DBMCP_SSH_LOCAL_PORT` | ephemeral |
+| [`pii.enabled`](/privacy/redaction) | `DBMCP_PII_ENABLE` | `false` |
+| [`pii.operator`](/privacy/redaction) | `DBMCP_PII_OPERATOR` | `replace` |
+| [`pii.categories`](/privacy/redaction) | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* |
+| [`pii.ner_enabled`](/privacy/machine-learning) | `DBMCP_PII_NER_ENABLE` | `false` |
+| [`pii.ner_model`](/privacy/machine-learning) | `DBMCP_PII_NER_MODEL` | *unset* |
+| [`ssh.host`](/features/ssh-tunnel) | `DBMCP_SSH_HOST` | — |
+| [`ssh.port`](/features/ssh-tunnel) | `DBMCP_SSH_PORT` | `22` |
+| [`ssh.user`](/features/ssh-tunnel) | `DBMCP_SSH_USER` | — |
+| [`ssh.password`](/features/ssh-tunnel) | `DBMCP_SSH_PASSWORD` | — |
+| [`ssh.key`](/features/ssh-tunnel) | `DBMCP_SSH_KEY` | — |
+| [`ssh.key_passphrase`](/features/ssh-tunnel) | `DBMCP_SSH_KEY_PASSPHRASE` | — |
+| [`ssh.known_hosts`](/features/ssh-tunnel) | `DBMCP_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` |
+| [`ssh.strict_host_key_checking`](/features/ssh-tunnel) | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `yes` |
+| [`ssh.keepalive_interval`](/features/ssh-tunnel) | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `30` |
+| [`ssh.local_port`](/features/ssh-tunnel) | `DBMCP_SSH_LOCAL_PORT` | ephemeral |
 
-For where these values come from and which source wins, see [Precedence](/docs/configuration/precedence).
+For where these values come from and which source wins, see [Precedence](/configuration/precedence).
 
 ## Value Formats
 
@@ -180,4 +180,4 @@ After — the same settings as environment variables:
 }
 ```
 
-To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config-file", "/abs/path/dbmcp.yaml"]`; see [Config files](/docs/configuration/config-files).
+To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config-file", "/abs/path/dbmcp.yaml"]`; see [Config files](/configuration/config-files).

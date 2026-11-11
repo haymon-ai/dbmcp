@@ -33,7 +33,7 @@ docker run --rm \
   ghcr.io/haymon-ai/dbmcp
 ```
 
-Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`). The image has no shell or `curl`, so check health from the orchestrator with HTTP probes against [`/healthz` and `/readyz`](/docs/features/health-probes) rather than a Docker `HEALTHCHECK`.
+Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`). The image has no shell or `curl`, so check health from the orchestrator with HTTP probes against [`/healthz` and `/readyz`](/features/health-probes) rather than a Docker `HEALTHCHECK`.
 
 **SQLite with a mounted volume**:
 
@@ -45,11 +45,11 @@ docker run -i --rm \
   ghcr.io/haymon-ai/dbmcp
 ```
 
-To redact personal data in query results, add `-e DBMCP_PII_ENABLE=true` to any of these commands (see [Data Privacy](/docs/privacy)).
+To redact personal data in query results, add `-e DBMCP_PII_ENABLE=true` to any of these commands (see [Data Privacy](/privacy)).
 
 Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/dbmcp:<version>`.
 
-To run the image on Kubernetes, use the [Helm chart](/docs/kubernetes).
+To run the image on Kubernetes, use the [Helm chart](/kubernetes).
 
 ## Configuration in the container
 
@@ -70,7 +70,7 @@ docker run -i --rm \
 docker run -i --rm --env-file ./dbmcp.env ghcr.io/haymon-ai/dbmcp
 ```
 
-**Mounted config file** — mount the directory read-only and name the file with `DBMCP_CONFIG_FILE` (or pass `--config-file` after the image name). Relative paths inside the file resolve against the mounted directory, so keep certificates and keys beside it. To use a [dbmcp env file](/docs/configuration/env-files), mount the env file too and set `DBMCP_ENV_FILE`.
+**Mounted config file** — mount the directory read-only and name the file with `DBMCP_CONFIG_FILE` (or pass `--config-file` after the image name). Relative paths inside the file resolve against the mounted directory, so keep certificates and keys beside it. To use a [dbmcp env file](/configuration/env-files), mount the env file too and set `DBMCP_ENV_FILE`.
 
 ```bash
 docker run -i --rm \

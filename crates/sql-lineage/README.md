@@ -16,4 +16,4 @@ Column-level SQL lineage extraction powering [dbmcp](https://dbmcp.haymon.ai) �
 - Fail-closed — unresolvable columns (`SELECT *` over base tables, ambiguous unqualified columns in joins) abort the whole extraction
 - Never connects to or executes against a database — analyzes SQL text only
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

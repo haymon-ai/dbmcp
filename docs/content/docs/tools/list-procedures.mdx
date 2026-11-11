@@ -3,7 +3,7 @@ title: listProcedures
 description: Reference for the listProcedures tool
 ---
 
-List user-defined stored procedures in a database, optionally filtered by `search` substring and/or expanded with `detailed: true`. Available on MySQL/MariaDB and PostgreSQL (`public` schema, PostgreSQL 11+). Not available for SQLite. Results are paginated — see [Cursor Pagination](/docs/features/pagination#cursor-pagination) for the protocol. The `search` value (case-insensitive `LIKE`/`ILIKE` substring; `%` matches any sequence, `_` a single character) must remain identical across paginated calls for cursor continuity.
+List user-defined stored procedures in a database, optionally filtered by `search` substring and/or expanded with `detailed: true`. Available on MySQL/MariaDB and PostgreSQL (`public` schema, PostgreSQL 11+). Not available for SQLite. Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. The `search` value (case-insensitive `LIKE`/`ILIKE` substring; `%` matches any sequence, `_` a single character) must remain identical across paginated calls for cursor continuity.
 
 In **brief mode** (default) the response is a sorted JSON array of procedure-name strings. PostgreSQL overloads appear as one entry per overload — duplicate name strings are expected:
 

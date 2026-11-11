@@ -14,4 +14,4 @@ Shared MCP server primitives for [dbmcp](https://dbmcp.haymon.ai) — the single
 - `listing` module (`Cursor`, `paginate`, `list_entries`) for paging big result sets across MCP calls
 - `Server` wrapper + `server_info()` advertised to clients
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

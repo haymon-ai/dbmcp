@@ -23,7 +23,7 @@ The server runs as an HTTP service with Streamable HTTP transport, CORS prefligh
 |----------|---------|------|---------|-------------|
 | `transport` | `DBMCP_TRANSPORT` | enum | `stdio` | MCP transport: `stdio` or `http` |
 
-`transport` defaults to `stdio`, which requires no additional configuration beyond the [database settings](/docs/features/database).
+`transport` defaults to `stdio`, which requires no additional configuration beyond the [database settings](/features/database).
 
 ## HTTP settings
 
@@ -51,4 +51,4 @@ The `http` transport serves the database to any caller that can reach the port, 
 
 The `Origin` and `Host` allowlists remain enforced alongside the token. They stop browser-driven DNS-rebinding attacks, but a direct HTTP client can send any header value, so they are **not** authentication.
 
-The [health probes](/docs/features/health-probes) `/healthz` and `/readyz` answer without a token and ignore the allowlists. They reveal only whether the server and its database are up.
+The [health probes](/features/health-probes) `/healthz` and `/readyz` answer without a token and ignore the allowlists. They reveal only whether the server and its database are up.

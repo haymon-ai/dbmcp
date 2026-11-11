@@ -16,4 +16,4 @@ PostgreSQL backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MC
 - Parameterised queries everywhere — user values never touch SQL strings
 - Optional PII redaction on every `readQuery` payload; walks JSON/JSONB recursively
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

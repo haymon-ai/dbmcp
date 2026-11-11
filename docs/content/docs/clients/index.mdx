@@ -5,23 +5,23 @@ description: Add dbmcp to Claude, Codex, VS Code, Cursor, and other MCP clients
 
 Every MCP client keeps its server list in a different file under a different key. Each client below has its own page with a ready-to-paste entry.
 
-Each example has two tabs: **bin** runs the `dbmcp` binary from your `PATH` (see [Installation](/docs/installation)), and **npx** runs `npx -y @haymon-ai/dbmcp`, which needs [Node.js](https://nodejs.org/) 18 or newer and no separate install (see [npm](/docs/installation/package-managers#npm)). To run the Docker image instead, see [Docker or installed binary](#docker-or-installed-binary).
+Each example has two tabs: **bin** runs the `dbmcp` binary from your `PATH` (see [Installation](/installation)), and **npx** runs `npx -y @haymon-ai/dbmcp`, which needs [Node.js](https://nodejs.org/) 18 or newer and no separate install (see [npm](/installation/package-managers#npm)). To run the Docker image instead, see [Docker or installed binary](#docker-or-installed-binary).
 
-The examples connect to MySQL with `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`. Replace the values with your own; every setting is listed in [Configuration](/docs/configuration). An empty `DBMCP_*` value counts as unset, so a blank value falls back to the default.
+The examples connect to MySQL with `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`. Replace the values with your own; every setting is listed in [Configuration](/configuration). An empty `DBMCP_*` value counts as unset, so a blank value falls back to the default.
 
 ## Clients
 
-- [Claude Desktop](/docs/clients/claude-desktop)
-- [Claude Code](/docs/clients/claude-code)
-- [Codex](/docs/clients/codex)
-- [VS Code](/docs/clients/vs-code)
-- [Cursor](/docs/clients/cursor)
-- [Windsurf (Devin Desktop)](/docs/clients/windsurf)
-- [Zed](/docs/clients/zed)
-- [Gemini CLI](/docs/clients/gemini-cli)
-- [Goose](/docs/clients/goose)
-- [JetBrains AI Assistant](/docs/clients/jetbrains)
-- [LM Studio](/docs/clients/lm-studio)
+- [Claude Desktop](/clients/claude-desktop)
+- [Claude Code](/clients/claude-code)
+- [Codex](/clients/codex)
+- [VS Code](/clients/vs-code)
+- [Cursor](/clients/cursor)
+- [Windsurf (Devin Desktop)](/clients/windsurf)
+- [Zed](/clients/zed)
+- [Gemini CLI](/clients/gemini-cli)
+- [Goose](/clients/goose)
+- [JetBrains AI Assistant](/clients/jetbrains)
+- [LM Studio](/clients/lm-studio)
 
 ## One-click install
 
@@ -49,13 +49,13 @@ The Cursor and LM Studio buttons add this server:
 }
 ```
 
-The VS Code buttons add the [VS Code](/docs/clients/vs-code) entry, with an input for each `DBMCP_DB_*` value.
+The VS Code buttons add the [VS Code](/clients/vs-code) entry, with an input for each `DBMCP_DB_*` value.
 
 ## Docker or installed binary
 
 Every client example works with another launcher: change only `command` and `args`, and keep `env`.
 
-With the binary from the [install script](/docs/installation#quick-install-recommended) on your `PATH`:
+With the binary from the [install script](/installation#quick-install-recommended) on your `PATH`:
 
 ```json
 {
@@ -64,7 +64,7 @@ With the binary from the [install script](/docs/installation#quick-install-recom
 }
 ```
 
-With [Docker](/docs/installation/docker), pass each variable through with `-e NAME` (no value: Docker copies it from the `env` block). Use `host.docker.internal` to reach a database on your machine:
+With [Docker](/installation/docker), pass each variable through with `-e NAME` (no value: Docker copies it from the `env` block). Use `host.docker.internal` to reach a database on your machine:
 
 ```json
 {
@@ -100,4 +100,4 @@ Docker also needs `-i`: without it the container gets no stdin and the client ca
 | HTTP transport in config | Yes | No | Yes | Yes |
 | Project-scoped config | Yes | No | Yes | No |
 
-Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config-file", "/abs/path/dbmcp.yaml"]` or `"args": ["--env-file", "/abs/path/dbmcp.env"]`. See [Config files](/docs/configuration/config-files).
+Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config-file", "/abs/path/dbmcp.yaml"]` or `"args": ["--env-file", "/abs/path/dbmcp.env"]`. See [Config files](/configuration/config-files).

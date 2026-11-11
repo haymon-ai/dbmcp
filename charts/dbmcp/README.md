@@ -6,4 +6,4 @@ Runs [dbmcp](https://github.com/haymon-ai/dbmcp), a single-binary MCP server for
 helm install dbmcp oci://ghcr.io/haymon-ai/charts/dbmcp --values values.yaml
 ```
 
-See the [Kubernetes guide](https://dbmcp.haymon.ai/docs/kubernetes) for a minimal `values.yaml`, secrets, Ingress, and probes, and [`values.yaml`](values.yaml) for every value.
+See the [Kubernetes guide](https://dbmcp.haymon.ai/kubernetes) for a minimal `values.yaml`, secrets, Ingress, and probes, and [`values.yaml`](values.yaml) for every value.

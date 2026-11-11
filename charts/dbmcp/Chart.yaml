@@ -24,7 +24,7 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/links: |
     - name: Documentation
-      url: https://dbmcp.haymon.ai/docs/kubernetes
+      url: https://dbmcp.haymon.ai/kubernetes
     - name: Source
       url: https://github.com/haymon-ai/dbmcp
   artifacthub.io/images: |

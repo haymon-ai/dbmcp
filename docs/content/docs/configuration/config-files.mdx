@@ -3,7 +3,7 @@ title: Config files
 description: Load settings from YAML config files and env files with --config-file and --env-file
 ---
 
-Besides `DBMCP_*` environment variables, Database MCP can read its settings from a YAML **config file** and a dotenv-style **env file**. All three are optional and work together. This page covers how files are named and loaded; the full list of settings lives in [Configuration](/docs/configuration).
+Besides `DBMCP_*` environment variables, Database MCP can read its settings from a YAML **config file** and a dotenv-style **env file**. All three are optional and work together. This page covers how files are named and loaded; the full list of settings lives in [Configuration](/configuration).
 
 ## Quick Start
 
@@ -49,7 +49,7 @@ The command line only names files; every setting comes from the environment or t
 | `-h`, `--help` | — | Print help |
 | `-V`, `--version` | — | Print version |
 
-Both flags may be repeated, and both env vars take a comma-separated list (items are trimmed); command-line order is merge order and a later file wins. See [Multiple config files](#multiple-config-files) and [Multiple env files](/docs/configuration/env-files#multiple-env-files). Each flag value is a single path, and a flag given at least once replaces its env var's list entirely. The config files come from `--config-file`, then the process `DBMCP_CONFIG_FILE`, then a `DBMCP_CONFIG_FILE` key in the env files (the last env file that sets it). A `DBMCP_ENV_FILE` key inside an env file is ignored. An empty flag value or an empty list entry (`a.yaml,,b.yaml`) is an error; an empty env var as a whole is unset. The same file may be listed more than once.
+Both flags may be repeated, and both env vars take a comma-separated list (items are trimmed); command-line order is merge order and a later file wins. See [Multiple config files](#multiple-config-files) and [Multiple env files](/configuration/env-files#multiple-env-files). Each flag value is a single path, and a flag given at least once replaces its env var's list entirely. The config files come from `--config-file`, then the process `DBMCP_CONFIG_FILE`, then a `DBMCP_CONFIG_FILE` key in the env files (the last env file that sets it). A `DBMCP_ENV_FILE` key inside an env file is ignored. An empty flag value or an empty list entry (`a.yaml,,b.yaml`) is an error; an empty env var as a whole is unset. The same file may be listed more than once.
 
 Paths are resolved as follows:
 
