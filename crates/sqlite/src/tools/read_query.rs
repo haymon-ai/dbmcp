@@ -3,7 +3,7 @@
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing;
 use dbmcp_server::truncate;
-use dbmcp_server::types::ReadQueryResponse;
+use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};
 
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
@@ -79,20 +79,21 @@ impl SqliteHandler {
     /// if the backend reports an error.
     pub async fn read_query(
         &self,
-        ReadQueryRequest { query, cursor }: ReadQueryRequest,
+        ReadQueryRequest { query, cursor, timeout }: ReadQueryRequest,
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
+        let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
 
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.fetch_json(wrapped.as_str(), None).await
+                    self.connection.fetch_json(wrapped.as_str(), None, timeout).await
                 })
                 .await?
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.fetch_json(query.as_str(), None).await?;
+                let rows = self.connection.fetch_json(query.as_str(), None, timeout).await?;
                 (rows, None)
             }
         };

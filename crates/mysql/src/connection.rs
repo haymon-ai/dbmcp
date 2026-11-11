@@ -131,13 +131,10 @@ impl Connection for MysqlConnection {
         Ok(Some(id))
     }
 
-    async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection) -> Result<(), sqlx::Error> {
+    async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection, secs: u64) -> Result<(), sqlx::Error> {
         let (sql, value) = match self.config.backend {
-            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", self.config.query_timeout),
-            _ => (
-                "SET SESSION max_execution_time = ?",
-                self.config.query_timeout.saturating_mul(1000),
-            ),
+            DatabaseBackend::Mariadb => ("SET SESSION max_statement_time = ?", secs),
+            _ => ("SET SESSION max_execution_time = ?", secs.saturating_mul(1000)),
         };
         sqlx::query(sql).bind(value).execute(conn).await.map(|_| ())
     }

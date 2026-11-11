@@ -73,6 +73,7 @@ async fn test_write_query_insert_and_verify() {
     let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'write@test.com'".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let arr = &rows.rows;
@@ -103,6 +104,7 @@ async fn test_write_query_update() {
     let select = ReadQueryRequest {
         query: "SELECT name FROM users WHERE email = 'update@test.com'".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let arr = &rows.rows;
@@ -132,6 +134,7 @@ async fn test_write_query_delete() {
     let select = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let arr = &rows.rows;
@@ -159,6 +162,7 @@ async fn test_executes_sql() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -171,6 +175,7 @@ async fn test_blocks_writes_in_read_only_mode() {
     let request = ReadQueryRequest {
         query: "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -195,10 +200,38 @@ async fn test_query_timeout_fast_query_succeeds() {
     let request = ReadQueryRequest {
         query: "SELECT 1 AS value".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
     assert!(response.is_ok(), "Fast query should succeed within timeout");
+}
+
+#[tokio::test]
+async fn test_read_query_timeout_argument() {
+    let config = DatabaseConfig {
+        query_timeout: 5,
+        max_query_timeout: 10,
+        ..base_db_config(false)
+    };
+    let handler = SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: config,
+        http: None,
+        pii: None,
+        ssh: None,
+    })
+    .expect("handler builds");
+    let request = |timeout| ReadQueryRequest {
+        query: "SELECT 1 AS value".into(),
+        cursor: None,
+        timeout: Some(timeout),
+    };
+
+    let response = handler.read_query(request(1)).await;
+    assert!(response.is_ok(), "fast query succeeds with a 1s timeout");
+    let err = handler.read_query(request(11)).await.expect_err("above the cap");
+    assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
 }
 
 #[tokio::test]
@@ -218,6 +251,7 @@ async fn test_query_timeout_disabled_with_zero() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -317,6 +351,7 @@ async fn test_explain_query_multi_statement_blocked() {
         query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'readonly_probe_explain'"
             .into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows[0]["n"], 0, "Second statement must not have executed");
@@ -337,6 +372,7 @@ async fn test_read_query_empty_query() {
     let request = ReadQueryRequest {
         query: String::new(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -349,6 +385,7 @@ async fn test_read_query_whitespace_only_query() {
     let request = ReadQueryRequest {
         query: "   \t\n  ".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -361,6 +398,7 @@ async fn test_read_query_multi_statement_blocked() {
     let request = ReadQueryRequest {
         query: "SELECT 1; DROP TABLE users".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -373,6 +411,7 @@ async fn test_read_query_into_outfile_blocked() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await;
@@ -389,6 +428,7 @@ async fn test_read_query_explain_write_blocked() {
         let request = ReadQueryRequest {
             query: sql.into(),
             cursor: None,
+            timeout: None,
         };
         let err_msg = format!(
             "{:?}",
@@ -406,6 +446,7 @@ async fn test_read_query_explain_write_blocked() {
     let request = ReadQueryRequest {
         query: "EXPLAIN QUERY PLAN SELECT * FROM users".into(),
         cursor: None,
+        timeout: None,
     };
     assert!(
         handler.read_query(request).await.is_ok(),
@@ -423,6 +464,7 @@ async fn test_read_query_dangerous_functions_blocked() {
         let request = ReadQueryRequest {
             query: sql.into(),
             cursor: None,
+            timeout: None,
         };
         let err_msg = format!(
             "{:?}",
@@ -444,6 +486,7 @@ async fn test_read_query_with_join() {
     let request = ReadQueryRequest {
         query: "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -483,6 +526,7 @@ async fn test_read_query_empty_result_set() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -496,6 +540,7 @@ async fn test_read_query_aggregate() {
     let request = ReadQueryRequest {
         query: "SELECT COUNT(*) AS total FROM users".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -510,6 +555,7 @@ async fn test_read_query_group_by() {
     let request = ReadQueryRequest {
         query: "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -523,6 +569,7 @@ async fn test_read_query_with_comments() {
     let request = ReadQueryRequest {
         query: "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -536,6 +583,7 @@ async fn test_read_query_subquery() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -560,6 +608,7 @@ async fn test_read_query_with_limit() {
     let request = ReadQueryRequest {
         query: "SELECT * FROM users ORDER BY id LIMIT 2".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -573,6 +622,7 @@ async fn test_read_query_with_line_comment() {
     let request = ReadQueryRequest {
         query: "-- get users\nSELECT * FROM users ORDER BY id".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -586,6 +636,7 @@ async fn test_read_query_null_values() {
     let request = ReadQueryRequest {
         query: "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
         cursor: None,
+        timeout: None,
     };
 
     let response = handler.read_query(request).await.unwrap();
@@ -609,6 +660,7 @@ async fn test_list_tables_returns_empty_for_no_match() {
     let request = ReadQueryRequest {
         query: "SELECT name FROM sqlite_master WHERE type='table' AND name='nonexistent_xyz'".into(),
         cursor: None,
+        timeout: None,
     };
     let result = handler.read_query(request).await.unwrap();
     let rows = &result.rows;
@@ -802,6 +854,7 @@ async fn collect_all_paged_read_query(handler: &SqliteHandler, query: &str) -> V
         let request = ReadQueryRequest {
             query: query.into(),
             cursor,
+            timeout: None,
         };
         let response = handler.read_query(request).await.expect("read_query page");
         all.extend(response.rows);
@@ -825,6 +878,7 @@ async fn test_read_query_pagination_traverses_pages() {
         .read_query(ReadQueryRequest {
             query: query.into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("single page");
@@ -846,6 +900,7 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE id = 1".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .unwrap();
@@ -863,6 +918,7 @@ async fn test_read_query_pagination_empty_result_no_next_cursor() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE id = -1".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .unwrap();
@@ -878,6 +934,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .unwrap();
@@ -899,6 +956,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users ORDER BY id".into(),
             cursor: Some(Cursor { offset: 10_000 }),
+            timeout: None,
         })
         .await
         .unwrap();
@@ -916,6 +974,7 @@ async fn test_read_query_pagination_survives_trailing_line_comment() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users ORDER BY id -- fetch users".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("trailing comment must not break the subquery wrap");
@@ -935,6 +994,7 @@ async fn test_read_query_pagination_strips_trailing_semicolon() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE id = 1;".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .unwrap();
@@ -971,6 +1031,7 @@ async fn test_read_query_cursor_does_not_bypass_read_only() {
         .read_query(ReadQueryRequest {
             query: "DELETE FROM users WHERE id = 1".into(),
             cursor: Some(Cursor { offset: 0 }),
+            timeout: None,
         })
         .await;
     assert!(
@@ -990,6 +1051,7 @@ async fn test_read_query_non_select_single_page_with_cursor_ignored() {
         .read_query(ReadQueryRequest {
             query: "EXPLAIN SELECT 1".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("EXPLAIN without cursor should succeed");
@@ -998,6 +1060,7 @@ async fn test_read_query_non_select_single_page_with_cursor_ignored() {
         .read_query(ReadQueryRequest {
             query: "EXPLAIN SELECT 1".into(),
             cursor: Some(Cursor { offset: 100 }),
+            timeout: None,
         })
         .await
         .expect("EXPLAIN with cursor should succeed — cursor must be ignored");
@@ -1021,6 +1084,7 @@ async fn test_read_query_temporal_columns_preserved() {
         .read_query(ReadQueryRequest {
             query: "SELECT date, time, timestamp FROM temporal WHERE id = 1".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("temporal SELECT should succeed");
@@ -1958,6 +2022,7 @@ async fn read_query_redacts_email_when_enabled() {
     let select = ReadQueryRequest {
         query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows.len(), 1);
@@ -1970,6 +2035,7 @@ async fn read_query_unchanged_when_disabled() {
     let select = ReadQueryRequest {
         query: "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
@@ -1981,6 +2047,7 @@ async fn read_query_does_not_redact_non_string_values() {
     let select = ReadQueryRequest {
         query: "SELECT 42 AS n, 1 AS flag, NULL AS missing".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows[0]["n"], 42);
@@ -1994,6 +2061,7 @@ async fn read_query_does_not_redact_column_names() {
     let select = ReadQueryRequest {
         query: "SELECT 1 AS \"user@example.com\"".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let obj = rows.rows[0].as_object().expect("row object");
@@ -2014,6 +2082,7 @@ async fn write_query_redacts_when_enabled() {
     let select = ReadQueryRequest {
         query: "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
@@ -2046,6 +2115,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let out = rows.rows[0]["msg"].as_str().unwrap();
@@ -2059,6 +2129,7 @@ async fn read_query_redact_operator_returns_empty_span() {
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     assert_eq!(rows.rows[0]["msg"], "");
@@ -2070,6 +2141,7 @@ async fn read_query_hash_operator_emits_stable_digest() {
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
         cursor: None,
+        timeout: None,
     };
     let rows = handler.read_query(select).await.unwrap();
     let a = rows.rows[0]["a"].as_str().unwrap();
@@ -2337,6 +2409,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
         .read_query(ReadQueryRequest {
             query: "SELECT id FROM users WHERE email = 'counter1@test.com'".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .unwrap()
@@ -2406,6 +2479,7 @@ async fn read_query_cuts_long_cells_and_reports_truncation() {
         .read_query(ReadQueryRequest {
             query: "SELECT 'abcdefghij' AS s".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("read_query");
@@ -2424,6 +2498,7 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
         .read_query(ReadQueryRequest {
             query: query.into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("read_query");
@@ -2444,6 +2519,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
         .read_query(ReadQueryRequest {
             query: "EXPLAIN SELECT * FROM users".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("read_query");
@@ -2475,6 +2551,7 @@ async fn read_query_redacts_before_cutting() {
         .read_query(ReadQueryRequest {
             query: "SELECT 'contact jane.doe@example.com now' AS msg".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("read_query");
@@ -2489,6 +2566,7 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
         .read_query(ReadQueryRequest {
             query: "SELECT 'abc' AS s".into(),
             cursor: None,
+            timeout: None,
         })
         .await
         .expect("read_query");

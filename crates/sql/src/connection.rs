@@ -106,14 +106,18 @@ where
     async fn session_id(&self, conn: &mut <Self::DB as sqlx::Database>::Connection)
     -> Result<Option<u64>, sqlx::Error>;
 
-    /// Sets the server statement timeout on `conn` from the query timeout.
+    /// Sets the server statement timeout on `conn` to `secs` seconds.
     ///
     /// Called only when [`session_id`](Connection::session_id) returned an id.
     ///
     /// # Errors
     ///
     /// Returns the driver error if the server rejects the timeout.
-    async fn set_timeout(&self, conn: &mut <Self::DB as sqlx::Database>::Connection) -> Result<(), sqlx::Error>;
+    async fn set_timeout(
+        &self,
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+        secs: u64,
+    ) -> Result<(), sqlx::Error>;
 
     /// Cancels the statement running on session `id`, sent over a one-off `conn`.
     ///
@@ -152,22 +156,25 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             Ok(conn.execute(query).await?.rows_affected())
         })
         .await
     }
 
-    /// Runs a statement and collects every result row as JSON.
+    /// Runs a statement under `timeout_secs` and collects every result row as JSON.
+    ///
+    /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
+    /// for this call (`0` = disabled).
     ///
     /// # Errors
     ///
     /// See trait-level documentation.
-    async fn fetch_json<Q>(&self, query: Q, database: Option<&str>) -> Result<Vec<Value>, SqlError>
+    async fn fetch_json<Q>(&self, query: Q, database: Option<&str>, timeout_secs: u64) -> Result<Vec<Value>, SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
             let rows = conn.fetch_all(query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
@@ -191,7 +198,7 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let sql = query.0.clone();
             let mut stream = conn.fetch_many(query);
             let mut rows = Vec::new();
@@ -230,15 +237,23 @@ where
     /// Requires `START TRANSACTION READ ONLY` support (`MySQL`, `MariaDB`,
     /// `PostgreSQL`); `SQLite` rejects it.
     ///
+    /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
+    /// for this call (`0` = disabled).
+    ///
     /// # Errors
     ///
     /// See trait-level documentation. Writes attempted by the statement
     /// surface as [`SqlError::Query`].
-    async fn fetch_json_read_only<Q>(&self, query: Q, database: Option<&str>) -> Result<Vec<Value>, SqlError>
+    async fn fetch_json_read_only<Q>(
+        &self,
+        query: Q,
+        database: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<Vec<Value>, SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
             let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
             let rows = (&mut *tx).fetch_all(query).await?;
             tx.rollback().await?;
@@ -260,7 +275,7 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let row = conn.fetch_optional(query).await?;
             Ok(row.and_then(|r| r.try_get(0usize).ok()))
         })
@@ -277,7 +292,7 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> Decode<'r, Self::DB> + Type<Self::DB> + Send + Unpin,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let rows = conn.fetch_all(query).await?;
             rows.iter().map(|r| r.try_get(0usize)).collect()
         })
@@ -296,7 +311,7 @@ where
         Q: IntoSafeQuery<Self::DB>,
         T: for<'r> FromRow<'r, <Self::DB as sqlx::Database>::Row> + Send + Unpin,
     {
-        execute_with_timeout(self, database, query, async |conn, query| {
+        execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let rows = conn.fetch_all(query).await?;
             rows.iter().map(T::from_row).collect()
         })

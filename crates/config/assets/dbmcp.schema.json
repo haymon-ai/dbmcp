@@ -185,6 +185,15 @@
           "minimum": 0,
           "default": 30
         },
+        "max_query_timeout": {
+          "description": "Largest per-call readQuery timeout in seconds; 0 means no cap. Defaults to query_timeout.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0
+        },
         "page_size": {
           "description": "Maximum items per paginated tool response.",
           "type": [

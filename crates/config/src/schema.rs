@@ -385,7 +385,7 @@ pub(crate) mod tests {
             [
                 "f.yaml:2:3: database.hots: unknown field; expected one of backend, host, port, user, password, \
                  name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, \
-                 connection_timeout, query_timeout, page_size, max_cell_chars, max_response_chars",
+                 connection_timeout, query_timeout, max_query_timeout, page_size, max_cell_chars, max_response_chars",
                 "f.yaml:3:1: extra: unknown field; expected one of transport, log_level, database, http, pii, ssh",
             ]
         );
