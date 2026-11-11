@@ -92,13 +92,12 @@ where
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
 
-    /// Returns whether `error` is this backend's server-side statement timeout.
+    /// Returns whether `error` is this backend's own statement timeout.
     fn is_timeout(error: &sqlx::Error) -> bool;
 
-    /// Reads the server session id of `conn`; `None` means no server.
+    /// Reads the server session id of `conn`; `None` means no session to kill.
     ///
-    /// Without a session id, no server statement timeout is set and a
-    /// timed-out statement is not killed.
+    /// Without a session id, a timed-out statement is not killed.
     ///
     /// # Errors
     ///
@@ -106,17 +105,15 @@ where
     async fn session_id(&self, conn: &mut <Self::DB as sqlx::Database>::Connection)
     -> Result<Option<u64>, sqlx::Error>;
 
-    /// Sets the server statement timeout on `conn` to `secs` seconds.
-    ///
-    /// Called only when [`session_id`](Connection::session_id) returned an id.
+    /// Arms the backend's own statement timeout on `conn`, stopping statements after `limit`.
     ///
     /// # Errors
     ///
-    /// Returns the driver error if the server rejects the timeout.
+    /// Returns the driver error if arming the timeout fails.
     async fn set_timeout(
         &self,
         conn: &mut <Self::DB as sqlx::Database>::Connection,
-        secs: u64,
+        limit: std::time::Duration,
     ) -> Result<(), sqlx::Error>;
 
     /// Cancels the statement running on session `id`, sent over a one-off `conn`.

@@ -78,16 +78,21 @@ async fn assert_statement_gone(marker: &str) {
     }
 }
 
-/// Reads the session `statement_timeout`.
-async fn session_timeout(handler: &PostgresHandler) -> String {
+/// Reads the session `statement_timeout` in milliseconds.
+async fn session_timeout(handler: &PostgresHandler) -> u64 {
     let response = handler
-        .read_query("SHOW statement_timeout".into(), None, None, None)
+        .read_query(
+            "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'".into(),
+            None,
+            None,
+            None,
+        )
         .await
-        .expect("SHOW statement_timeout");
-    response.rows[0]["statement_timeout"]
+        .expect("statement_timeout setting");
+    response.rows[0]["setting"]
         .as_str()
-        .expect("statement_timeout is text")
-        .to_owned()
+        .and_then(|v| v.parse().ok())
+        .expect("statement_timeout is a millisecond count")
 }
 
 /// Returns a size-1 pool config with the given query timeout.
@@ -484,7 +489,9 @@ async fn test_session_timeout_set_from_query_timeout() {
         query_timeout: 3,
         ..base_db_config(true)
     });
-    assert_eq!(session_timeout(&handler).await, "3s");
+    // The time left of the 3 s query timeout when the statement starts.
+    let millis = session_timeout(&handler).await;
+    assert!((2900..=3000).contains(&millis), "statement_timeout {millis} ms");
 }
 
 #[tokio::test]
@@ -495,10 +502,20 @@ async fn test_read_query_timeout_sets_session_timeout() {
         ..base_db_config(true)
     });
     let response = handler
-        .read_query("SHOW statement_timeout".into(), None, None, Some(7))
+        .read_query(
+            "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'".into(),
+            None,
+            None,
+            Some(7),
+        )
         .await
-        .expect("SHOW statement_timeout");
-    assert_eq!(response.rows[0]["statement_timeout"], "7s");
+        .expect("statement_timeout setting");
+    // The time left of the 7 s call timeout when the statement starts.
+    let millis: u64 = response.rows[0]["setting"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("statement_timeout is a millisecond count");
+    assert!((6900..=7000).contains(&millis), "statement_timeout {millis} ms");
 }
 
 #[tokio::test]
@@ -521,7 +538,7 @@ async fn test_query_timeout_zero_leaves_server_defaults() {
         query_timeout: 0,
         ..base_db_config(true)
     });
-    assert_eq!(session_timeout(&handler).await, "0");
+    assert_eq!(session_timeout(&handler).await, 0);
 
     let response = handler.read_query("SELECT 1 AS value".into(), None, None, None).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");

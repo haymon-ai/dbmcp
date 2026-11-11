@@ -259,6 +259,51 @@ async fn test_query_timeout_disabled_with_zero() {
 }
 
 #[tokio::test]
+async fn test_query_timeout_stops_long_statement() {
+    let config = DatabaseConfig {
+        query_timeout: 1,
+        ..base_db_config(true)
+    };
+    let handler = SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: config,
+        http: None,
+        pii: None,
+        ssh: None,
+    })
+    .expect("handler builds");
+    // Counting an endless recursive CTE yields no row until the statement ends.
+    let endless = ReadQueryRequest {
+        query: "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) AS n FROM c".into(),
+        cursor: None,
+        timeout: None,
+    };
+    let fast = ReadQueryRequest {
+        query: "SELECT 1 AS value".into(),
+        cursor: None,
+        timeout: None,
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let error = handler
+            .read_query(endless)
+            .await
+            .expect_err("endless query must time out");
+        assert!(
+            error.message.contains("Query timed out"),
+            "unexpected error: {}",
+            error.message
+        );
+        handler
+            .read_query(fast)
+            .await
+            .expect("connection is usable after the timeout");
+    })
+    .await
+    .expect("timed-out statement must stop and free the connection");
+}
+
+#[tokio::test]
 async fn test_drop_table_success() {
     let handler = handler(false);
 
