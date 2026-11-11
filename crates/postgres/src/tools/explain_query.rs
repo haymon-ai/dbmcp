@@ -154,7 +154,7 @@ impl PostgresHandler {
         Ok(QueryResponse {
             rows: fitted.rows,
             truncated: fitted.truncated,
-            hint: fitted.truncated.then(|| truncate::HINT.into()),
+            hint: fitted.hint,
         })
     }
 }

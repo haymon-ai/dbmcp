@@ -128,7 +128,7 @@ impl MysqlHandler {
             rows_affected,
             last_insert_id,
             truncated: fitted.truncated,
-            hint: fitted.truncated.then(|| truncate::HINT.into()),
+            hint: fitted.hint,
         })
     }
 }

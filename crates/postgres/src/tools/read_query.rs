@@ -153,7 +153,7 @@ impl PostgresHandler {
             rows: fitted.rows,
             next_cursor: fitted.next_cursor,
             truncated: fitted.truncated,
-            hint: fitted.truncated.then(|| truncate::HINT.into()),
+            hint: fitted.hint,
         })
     }
 }

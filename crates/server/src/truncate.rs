@@ -13,13 +13,16 @@
 //! A cap of `0` disables it. Run [`fit`] after PII redaction, so a span cut
 //! by a cap is still seen whole by the redactor.
 
+use std::fmt::Write as _;
+use std::io;
+
 use serde_json::Value;
 
 use crate::listing::Cursor;
 
 /// Hint returned beside `truncated: true` when a cap cut the output.
 pub const HINT: &str = "Output exceeded size caps. Select fewer or narrower columns or narrow the query; \
-                        fetch remaining rows via nextCursor when present.";
+                    fetch remaining rows via nextCursor when present.";
 
 /// Rows after [`fit`] applied the caps.
 #[derive(Debug)]
@@ -30,6 +33,8 @@ pub struct Fitted {
     pub next_cursor: Option<Cursor>,
     /// Whether any value was cut or any row dropped.
     pub truncated: bool,
+    /// How to fetch less data; `Some` only when `truncated` is `true`.
+    pub hint: Option<String>,
 }
 
 /// Cuts long string values and drops rows past the response budget.
@@ -37,6 +42,11 @@ pub struct Fitted {
 /// `page` is the start offset of a paged `SELECT` (`None` when the call
 /// does not page); `next_cursor` is the cursor pagination derived for the
 /// full page. `max_cell` and `max_response` are character caps, `0` = off.
+///
+/// # Panics
+///
+/// Never in practice: serializing a JSON value into the in-memory char
+/// counter cannot fail.
 #[must_use]
 pub fn fit(
     mut rows: Vec<Value>,
@@ -45,43 +55,43 @@ pub fn fit(
     max_cell: u64,
     max_response: u64,
 ) -> Fitted {
+    let max_cell = usize::try_from(max_cell).unwrap_or(usize::MAX);
+    let max_response = usize::try_from(max_response).unwrap_or(usize::MAX);
     let mut truncated = false;
 
-    if let Ok(max_cell) = usize::try_from(max_cell)
-        && max_cell > 0
-    {
-        let mut stack: Vec<&mut Value> = rows.iter_mut().collect();
-        while let Some(value) = stack.pop() {
-            match value {
-                Value::String(text) => truncated |= cut(text, max_cell),
-                Value::Array(items) => stack.extend(items.iter_mut()),
-                Value::Object(map) => stack.extend(map.values_mut()),
-                Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    // `[` and `]` around the rows, plus a `,` before every row but the first.
+    let mut total = 2;
+    let mut kept = rows.len();
+    for (index, row) in rows.iter_mut().enumerate() {
+        if max_cell > 0 {
+            let mut stack = vec![&mut *row];
+            while let Some(value) = stack.pop() {
+                match value {
+                    Value::String(text) => truncated |= cut(text, max_cell),
+                    Value::Array(items) => stack.extend(items.iter_mut()),
+                    Value::Object(map) => stack.extend(map.values_mut()),
+                    Value::Null | Value::Bool(_) | Value::Number(_) => {}
+                }
+            }
+        }
+        if max_response > 0 {
+            let mut chars = CharCount(0);
+            serde_json::to_writer(&mut chars, row).expect("a JSON value serializes into a char counter");
+            total += chars.0 + usize::from(index > 0);
+            if index > 0 && total > max_response {
+                kept = index;
+                break;
             }
         }
     }
 
-    if let Ok(max_response) = usize::try_from(max_response)
-        && max_response > 0
-    {
-        // `[` and `]` around the rows, then each row plus its separator.
-        let mut total = 2;
-        let mut kept = 0;
-        for row in &rows {
-            total += row.to_string().chars().count() + usize::from(kept > 0);
-            if kept > 0 && total > max_response {
-                break;
-            }
-            kept += 1;
-        }
-        if kept < rows.len() {
-            rows.truncate(kept);
-            truncated = true;
-            if let Some(start) = page {
-                next_cursor = Some(Cursor {
-                    offset: start.saturating_add(kept as u64),
-                });
-            }
+    if kept < rows.len() {
+        rows.truncate(kept);
+        truncated = true;
+        if let Some(start) = page {
+            next_cursor = Some(Cursor {
+                offset: start.saturating_add(kept as u64),
+            });
         }
     }
 
@@ -89,20 +99,38 @@ pub fn fit(
         rows,
         next_cursor,
         truncated,
+        hint: truncated.then(|| HINT.into()),
     }
 }
 
 /// Cuts `text` to `max` chars plus a marker; returns whether it was cut.
 fn cut(text: &mut String, max: usize) -> bool {
+    if text.len() <= max {
+        return false;
+    }
     let Some((end, _)) = text.char_indices().nth(max) else {
         return false;
     };
-    let total = text.chars().count();
+    let total = max + text[end..].chars().count();
     text.truncate(end);
-    text.push_str("…[truncated, ");
-    text.push_str(&total.to_string());
-    text.push_str(" chars total]");
+    write!(text, "…[truncated, {total} chars total]").expect("writing to a String cannot fail");
+    text.shrink_to_fit();
     true
+}
+
+/// Counts the chars of serialized JSON without buffering it.
+struct CharCount(usize);
+
+impl io::Write for CharCount {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Every UTF-8 char has exactly one byte that is not a continuation byte.
+        self.0 += buf.iter().filter(|&&byte| byte & 0xC0 != 0x80).count();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
