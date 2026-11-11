@@ -507,7 +507,9 @@ async fn test_session_timeout_set_from_query_timeout() {
         DatabaseBackend::Mariadb => 3.0,
         _ => 3000.0,
     };
-    assert!((session_timeout(&handler).await - expected).abs() < f64::EPSILON);
+    // The time left of the 3 s query timeout when the statement starts.
+    let value = session_timeout(&handler).await;
+    assert!((expected * 0.97..=expected).contains(&value), "session timeout {value}");
 }
 
 #[tokio::test]
@@ -534,7 +536,8 @@ async fn test_read_query_timeout_sets_session_timeout() {
         DatabaseBackend::Mariadb => 7.0,
         _ => 7000.0,
     };
-    assert!((value - expected).abs() < f64::EPSILON, "{variable} = {value}");
+    // The time left of the 7 s call timeout when the statement starts.
+    assert!((expected * 0.97..=expected).contains(&value), "{variable} = {value}");
 }
 
 #[tokio::test]

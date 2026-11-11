@@ -142,7 +142,7 @@ The page size applies uniformly to every paginated tool; see the [Cursor Paginat
 
 Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
 
-1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout equal to `query_timeout`, so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
+1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout to what is left of `query_timeout` (time spent waiting for a pooled connection counts), so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
 2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
 
 Either way the agent sees `Query timed out after …`, followed by a hint to check the plan with `explainQuery`, filter on indexed columns, or limit inner result sets before joining or aggregating. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
@@ -152,6 +152,8 @@ Either way the agent sees `Query timed out after …`, followed by a hint to che
 | MySQL | `max_execution_time` (ms) | Top-level `SELECT` only. Writes, DDL, and `CALL` rely on the backstop kill. |
 | MariaDB | `max_statement_time` (s) | Every top-level statement, including `CALL` |
 | PostgreSQL | `statement_timeout` (ms) | Every statement. A timeout aborts the surrounding transaction. |
+
+On SQLite there is no server. Before each statement, dbmcp installs a progress handler that checks the deadline every 1,000 virtual machine instructions and interrupts the statement once `query_timeout` has passed. The connection stays usable, so the next tool call runs right away. Only the interrupted statement is rolled back: earlier statements of a multi-statement `writeQuery` stay committed. The client backstop still applies, but there is no session to kill.
 
 On MySQL, a `SLEEP()` interrupted by the server timeout returns `1` instead of an error, so the call succeeds early rather than timing out.
 
