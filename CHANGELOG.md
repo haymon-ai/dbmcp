@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.18.1](https://github.com/haymon-ai/dbmcp/compare/0c18eb5d7426d13fe0f6642e18b918a43baa8de8..v0.18.1) - 2026-11-11
+#### 🐛 Bug Fixes
+- (**release**) pin cosign-installer to an existing tag (#319) - ([0c18eb5](https://github.com/haymon-ai/dbmcp/commit/0c18eb5d7426d13fe0f6642e18b918a43baa8de8)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.18.0](https://github.com/haymon-ai/dbmcp/compare/1290287c73a1c30a9389178549ca8d900f05d284..v0.18.0) - 2026-11-11
 #### 🚀 Features
 - (**docker**) build image from source on distroless debian13 (#293) - ([3128e75](https://github.com/haymon-ai/dbmcp/commit/3128e75bdf52db4af21e89fd569157d8bf3df239)) - [@athopen](https://github.com/athopen)
