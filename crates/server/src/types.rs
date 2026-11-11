@@ -197,6 +197,32 @@ pub struct ReadQueryRequest {
     /// Database to run the query against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
+    /// Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub timeout: Option<u64>,
+}
+
+/// Resolves a `readQuery` call's `timeout` argument to the seconds it runs under.
+///
+/// `None` keeps `default`; `max` caps the request (`0` = no cap).
+///
+/// # Errors
+///
+/// Returns an invalid-params error when `requested` is `0` or exceeds `max`.
+pub fn resolve_timeout(requested: Option<u64>, default: u64, max: u64) -> Result<u64, rmcp::ErrorData> {
+    match requested {
+        None => Ok(default),
+        Some(0) => Err(rmcp::ErrorData::invalid_params(
+            "timeout must be at least 1 second",
+            None,
+        )),
+        Some(secs) if max > 0 && secs > max => Err(rmcp::ErrorData::invalid_params(
+            format!("timeout {secs}s exceeds the maximum of {max}s"),
+            None,
+        )),
+        Some(secs) => Ok(secs),
+    }
 }
 
 /// Response for the `explainQuery` tool.
@@ -262,7 +288,7 @@ pub struct ExplainQueryRequest {
 mod tests {
     use super::{
         IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, ReadQueryResponse, Truncation,
-        WriteQueryResponse,
+        WriteQueryResponse, resolve_timeout,
     };
     use serde_json::{Value, json};
 
@@ -432,6 +458,19 @@ mod tests {
         };
         let value: Value = serde_json::to_value(response).expect("serialize");
         assert_eq!(value, json!({"rows": [], "rowsAffected": 0}));
+    }
+
+    #[test]
+    fn resolve_timeout_defaults_and_enforces_the_cap() {
+        assert_eq!(resolve_timeout(None, 30, 120).expect("default"), 30);
+        assert_eq!(resolve_timeout(Some(5), 30, 120).expect("shorter"), 5);
+        assert_eq!(resolve_timeout(Some(120), 30, 120).expect("at cap"), 120);
+        assert_eq!(resolve_timeout(Some(9999), 0, 0).expect("no cap"), 9999);
+
+        let zero = resolve_timeout(Some(0), 30, 120).expect_err("zero");
+        assert_eq!(zero.message, "timeout must be at least 1 second");
+        let over = resolve_timeout(Some(121), 30, 120).expect_err("over cap");
+        assert_eq!(over.message, "timeout 121s exceeds the maximum of 120s");
     }
 
     #[test]

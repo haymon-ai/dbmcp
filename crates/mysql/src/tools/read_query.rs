@@ -3,7 +3,7 @@
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::{self, Cursor};
 use dbmcp_server::truncate;
-use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
+use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, resolve_timeout};
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
 use dbmcp_sql::validation::validate_read;
@@ -58,7 +58,9 @@ impl ToolBase for PinnedReadQueryTool {
 
 impl AsyncTool<MysqlHandler> for PinnedReadQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.read_query(params.query, None, params.cursor).await
+        handler
+            .read_query(params.query, None, params.cursor, params.timeout)
+            .await
     }
 }
 
@@ -97,7 +99,9 @@ impl ToolBase for UnpinnedReadQueryTool {
 
 impl AsyncTool<MysqlHandler> for UnpinnedReadQueryTool {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.read_query(params.query, params.database, params.cursor).await
+        handler
+            .read_query(params.query, params.database, params.cursor, params.timeout)
+            .await
     }
 }
 
@@ -123,21 +127,28 @@ impl MysqlHandler {
         query: String,
         database: Option<String>,
         cursor: Option<Cursor>,
+        timeout: Option<u64>,
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read(&query, &sqlparser::dialect::MySqlDialect {})?;
 
+        let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.fetch_json_read_only(wrapped.as_str(), database).await
+                    self.connection
+                        .fetch_json_read_only(wrapped.as_str(), database, timeout)
+                        .await
                 })
                 .await?
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.fetch_json_read_only(query.as_str(), database).await?;
+                let rows = self
+                    .connection
+                    .fetch_json_read_only(query.as_str(), database, timeout)
+                    .await?;
                 (rows, None)
             }
         };

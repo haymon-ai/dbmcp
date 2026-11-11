@@ -128,6 +128,7 @@ When `database.ssl` is enabled, the server validates that any provided certifica
 | `database.max_pool_size` | `DBMCP_DB_MAX_POOL_SIZE` | integer | `5` | Maximum database connection pool size (at least 1) |
 | `database.connection_timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | seconds | — | Connection timeout (at least 1; unset uses the driver default) |
 | `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query timeout (`0` disables it; see [Query Timeout](#query-timeout)) |
+| `database.max_query_timeout` | `DBMCP_DB_MAX_QUERY_TIMEOUT` | seconds | `query_timeout` | Largest `timeout` a `readQuery` call may request (`0` = no cap; see [Per-Call Timeout](#per-call-timeout)) |
 | `database.page_size` | `DBMCP_DB_PAGE_SIZE` | integer | `100` | Max items per paginated tool response (range 1–500) |
 | `database.max_cell_chars` | `DBMCP_DB_MAX_CELL_CHARS` | integer | `4096` | Max characters per string value in query tool rows; longer values are cut and marked (`0` disables; see [Output Size Caps](/docs/features#output-size-caps)) |
 | `database.max_response_chars` | `DBMCP_DB_MAX_RESPONSE_CHARS` | integer | `32000` | Max characters of one query tool text result; trailing rows are dropped, resumed via `nextCursor` on a paged `SELECT` and counted in `rowsOmitted` otherwise (`0` disables) |
@@ -144,7 +145,7 @@ Each tool call is limited to `query_timeout` seconds, enforced in two layers on 
 1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout equal to `query_timeout`, so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
 2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
 
-Either way the agent sees `Query timed out after …`. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
+Either way the agent sees `Query timed out after …`, followed by a hint to check the plan with `explainQuery`, filter on indexed columns, or limit inner result sets before joining or aggregating. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
 
 | Backend | Server variable | Covers |
 |---|---|---|
@@ -155,6 +156,20 @@ Either way the agent sees `Query timed out after …`. Setting `0` disables both
 On MySQL, a `SLEEP()` interrupted by the server timeout returns `1` instead of an error, so the call succeeds early rather than timing out.
 
 With `read_only: false`, writes and DDL are also subject to the timeout. A long migration or bulk `UPDATE` run through dbmcp is stopped. Raise `query_timeout` or set it to `0` for such work.
+
+#### Per-Call Timeout
+
+`readQuery` takes an optional `timeout` argument in seconds. It replaces `query_timeout` for that call, on every layer above. It must be at least `1` and at most `max_query_timeout`; any other value is rejected with an error naming the limit. Paging a `SELECT` with `cursor` applies `timeout` per call, so pass it again with each cursor.
+
+`max_query_timeout` defaults to `query_timeout`, so an agent can only shorten the limit until you raise the cap:
+
+```yaml
+database:
+  query_timeout: 30       # every call
+  max_query_timeout: 300  # readQuery may ask for up to 5 minutes
+```
+
+`0` removes the cap. It is rejected when `query_timeout` is `0`, and so is a cap below `query_timeout`. Other tools always use `query_timeout`.
 
 #### Connection Poolers and Proxies
 

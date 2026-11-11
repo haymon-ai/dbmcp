@@ -86,6 +86,10 @@ pub struct ReadQueryRequest {
     /// Ignored for `EXPLAIN` statements.
     #[serde(default)]
     pub cursor: Option<Cursor>,
+    /// Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub timeout: Option<u64>,
 }
 
 /// Request for the `explainQuery` tool.

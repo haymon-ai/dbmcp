@@ -30,3 +30,7 @@ Long string values are cut and end in `…[truncated, N chars total]`; read the 
 <pagination>
 `SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.
 </pagination>
+
+<timeout>
+Each call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time; values above the server maximum are rejected.
+</timeout>

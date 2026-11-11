@@ -604,7 +604,7 @@ expression: tools
   {
     "name": "readQuery",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n- Switching database context (USE is rejected) → pass the `database` argument\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n- Switching database context (USE is rejected) → pass the `database` argument\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time; values above the server maximum are rejected.\n</timeout>",
     "inputSchema": {
       "properties": {
         "cursor": {
@@ -626,6 +626,16 @@ expression: tools
         "query": {
           "description": "The SQL query to execute.",
           "type": "string"
+        },
+        "timeout": {
+          "default": null,
+          "description": "Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

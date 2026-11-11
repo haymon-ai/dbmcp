@@ -97,7 +97,7 @@ impl Connection for SqliteConnection {
         Ok(None)
     }
 
-    async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+    async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection, _secs: u64) -> Result<(), sqlx::Error> {
         // Unreachable: `session_id` returns no id, so no server timeout is set.
         Ok(())
     }
