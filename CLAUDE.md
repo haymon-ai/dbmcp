@@ -72,7 +72,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and d
 - **Parameterized queries**: **NEVER** interpolate user values into SQL strings. Use parameterized queries exclusively.
 - **Identifier validation**: **ALWAYS** validate database/table names (alphanumeric and underscore). Never use string interpolation for identifiers — use proper quoting per backend.
 - **PII redaction**: opt-in defense-in-depth applied to query tool output payloads (`readQuery` and any future query tools that route through the redactor) and to tool error messages (regex only, no NER). **MUST NOT** be removed or bypassed without an explicit user request. Off by default; operators enable via `pii.enabled` / `DBMCP_PII_ENABLE`. The redactor walks every string leaf at any depth inside `json`/`jsonb` columns; JSON object keys are preserved verbatim (only values are inspected).
-- **Untrusted-data envelope**: row-returning tools (`readQuery`, `explainQuery`, `writeQuery`) register via `ToolSpec::untrusted_tool`, which wraps their text content in random per-call `<untrusted-data-{uuid}>` boundaries (`structuredContent` unchanged). **MUST NOT** be removed or bypassed without an explicit user request.
+- **Untrusted-data envelope**: row-returning tools (`readQuery`, `explainQuery`, `writeQuery`) register via `ToolSpec::untrusted`, which wraps their text content in random per-call `<untrusted-data-{uuid}>` boundaries (`structuredContent` unchanged). **MUST NOT** be removed or bypassed without an explicit user request.
 
 ## Never Do
 

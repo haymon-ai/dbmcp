@@ -154,6 +154,38 @@ async fn test_call_tool_error_is_redacted_when_pii_enabled() {
 }
 
 #[tokio::test]
+async fn test_read_query_text_is_marked_untrusted() {
+    common::run_with_client(server(true), |peer| async move {
+        let result = call_tool(&peer, "readQuery", Some(object(json!({"query": "SELECT 1 AS one"}))))
+            .await
+            .expect("readQuery succeeds");
+        assert_ne!(result.is_error, Some(true), "got: {}", text(&result));
+        assert_eq!(result.structured_content, Some(json!({"rows": [{"one": 1}]})));
+
+        let text = text(&result);
+        let (_, rest) = text.split_once("<untrusted-data-").expect("opening tag");
+        let id = rest.split_once('>').expect("tag end").0;
+        assert!(
+            text.contains(&format!(
+                "<untrusted-data-{id}>\n{{\"rows\":[{{\"one\":1}}]}}\n</untrusted-data-{id}>"
+            )),
+            "got: {text}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_list_tool_text_is_plain_json() {
+    common::run_with_client(server(true), |peer| async move {
+        let result = call_tool(&peer, "listViews", None).await.expect("listViews succeeds");
+        let structured = result.structured_content.as_ref().expect("structured content");
+        assert_eq!(text(&result), structured.to_string());
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_call_tool_without_arguments() {
     common::run_with_client(server(true), |peer| async move {
         let result = call_tool(&peer, "listViews", None).await.expect("listViews succeeds");

@@ -33,13 +33,13 @@ const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-o
 /// its file path is always pinned, so every tool is `pinned = true` and
 /// the handler builds the router with `pinned = true`.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
-    ToolSpec::async_tool::<ListTablesTool>(true, false),
-    ToolSpec::async_tool::<ListViewsTool>(true, false),
-    ToolSpec::async_tool::<ListTriggersTool>(true, false),
-    ToolSpec::untrusted_tool::<ReadQueryTool>(true, false),
-    ToolSpec::untrusted_tool::<ExplainQueryTool>(true, false),
-    ToolSpec::untrusted_tool::<WriteQueryTool>(true, true),
-    ToolSpec::async_tool::<DropTableTool>(true, true),
+    ToolSpec::trusted::<ListTablesTool>(true, false),
+    ToolSpec::trusted::<ListViewsTool>(true, false),
+    ToolSpec::trusted::<ListTriggersTool>(true, false),
+    ToolSpec::untrusted::<ReadQueryTool>(true, false),
+    ToolSpec::untrusted::<ExplainQueryTool>(true, false),
+    ToolSpec::untrusted::<WriteQueryTool>(true, true),
+    ToolSpec::trusted::<DropTableTool>(true, true),
 ];
 
 /// `SQLite` file-based database handler.
