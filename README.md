@@ -297,7 +297,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 ## Security 🔒
 
 - **Read-only mode** (default) — write tools hidden from AI assistant; `readQuery` enforces AST-based SQL validation
-- **Single-statement enforcement** — multi-statement injection blocked at parse level
+- **Single-statement enforcement** — `readQuery` / `explainQuery` reject multi-statement SQL at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings
 - **HTTP bearer authentication** — `DBMCP_HTTP_AUTH_TOKEN` enforces `Authorization: Bearer <token>` (constant-time compare, 401 on failure); non-loopback binds refuse to start without a token
