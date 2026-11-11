@@ -239,7 +239,7 @@
     },
     {
       "name": "DBMCP_PII_NER_ENABLE",
-      "description": "Enable the optional ML/NER pass (person & location detection)",
+      "description": "Enable the optional ML/NER pass (person, location, organization, NRP & facility detection)",
       "format": "boolean",
       "default": "false"
     },
