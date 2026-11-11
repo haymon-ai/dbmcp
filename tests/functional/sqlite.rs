@@ -2380,3 +2380,87 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert_eq!(delete.rows_affected, 1);
     assert_eq!(delete.last_insert_id, None);
 }
+
+fn handler_with_caps(max_cell_chars: u64, max_response_chars: u64, redact_pii: bool) -> SqliteHandler {
+    SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            max_cell_chars,
+            max_response_chars,
+            ..base_db_config(false)
+        },
+        http: None,
+        pii: redact_pii.then(|| PiiConfig {
+            operator: PiiOperator::Replace,
+            ..PiiConfig::default()
+        }),
+        ssh: None,
+    })
+    .expect("handler builds")
+}
+
+#[tokio::test]
+async fn read_query_cuts_long_cells_and_reports_truncation() {
+    let handler = handler_with_caps(4, 0, false);
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT 'abcdefghij' AS s".into(),
+            cursor: None,
+        })
+        .await
+        .expect("read_query");
+    assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
+    assert!(response.truncated);
+    assert_eq!(response.hint.as_deref(), Some(dbmcp_server::truncate::HINT));
+}
+
+#[tokio::test]
+async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
+    // `{"id":N}` is 8 chars, so a 12-char budget fits one row per page.
+    let handler = handler_with_caps(0, 12, false);
+    let query = "SELECT id FROM users ORDER BY id";
+
+    let first = handler
+        .read_query(ReadQueryRequest {
+            query: query.into(),
+            cursor: None,
+        })
+        .await
+        .expect("read_query");
+    assert_eq!(first.rows.len(), 1);
+    assert!(first.truncated);
+    assert!(first.next_cursor.is_some());
+
+    let collected = collect_all_paged_read_query(&handler, query).await;
+    let ids: Vec<i64> = collected.iter().map(|row| row["id"].as_i64().expect("id")).collect();
+    assert_eq!(ids, vec![1, 2, 3], "capped pages must not lose rows");
+}
+
+#[tokio::test]
+async fn read_query_redacts_before_cutting() {
+    let handler = handler_with_caps(14, 0, true);
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT 'contact jane.doe@example.com now' AS msg".into(),
+            cursor: None,
+        })
+        .await
+        .expect("read_query");
+    let msg = response.rows[0]["msg"].as_str().expect("msg is text");
+    assert_eq!(msg, "contact <EMAIL…[truncated, 27 chars total]");
+}
+
+#[tokio::test]
+async fn read_query_default_caps_leave_small_results_unchanged() {
+    let handler = handler(true);
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT 'abc' AS s".into(),
+            cursor: None,
+        })
+        .await
+        .expect("read_query");
+    assert_eq!(response.rows[0]["s"], "abc");
+    assert!(!response.truncated);
+    assert!(response.hint.is_none());
+}

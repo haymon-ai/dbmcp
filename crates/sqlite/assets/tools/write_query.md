@@ -26,4 +26,6 @@ An object with:
 - `lastInsertId`: the rowid of the last row inserted by an `INSERT`/`REPLACE`. Absent after other statements; use `RETURNING` for `WITHOUT ROWID` tables and upserts.
 
 No follow-up `SELECT` is needed to confirm a write.
+
+Long string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped; when either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>

@@ -195,6 +195,26 @@
           "minimum": 1,
           "maximum": 500,
           "default": 100
+        },
+        "max_cell_chars": {
+          "description": "Maximum characters per string value in query tool rows; longer values are cut and marked (0 disables).",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "default": 4096
+        },
+        "max_response_chars": {
+          "description": "Maximum characters of serialized rows per query tool response; trailing rows are dropped (0 disables).",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "default": 50000
         }
       }
     },

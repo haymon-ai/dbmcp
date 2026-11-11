@@ -2,6 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing;
+use dbmcp_server::truncate;
 use dbmcp_server::types::ReadQueryResponse;
 
 use dbmcp_sql::StatementKind;
@@ -82,6 +83,7 @@ impl SqliteHandler {
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
+        let page = matches!(kind, StatementKind::Select).then(|| cursor.map_or(0, |c| c.offset));
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
@@ -96,6 +98,18 @@ impl SqliteHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        Ok(ReadQueryResponse { rows, next_cursor })
+        let fitted = truncate::fit(
+            rows,
+            page,
+            next_cursor,
+            self.config.max_cell_chars,
+            self.config.max_response_chars,
+        );
+        Ok(ReadQueryResponse {
+            rows: fitted.rows,
+            next_cursor: fitted.next_cursor,
+            truncated: fitted.truncated,
+            hint: fitted.truncated.then(|| truncate::HINT.into()),
+        })
     }
 }

@@ -328,7 +328,8 @@ mod tests {
                 format!(
                     "{yaml}:4:3: database.pasword: unknown field; expected one of backend, host, port, user, \
                      password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, \
-                     max_pool_size, connection_timeout, query_timeout, page_size"
+                     max_pool_size, connection_timeout, query_timeout, page_size, \
+                     max_cell_chars, max_response_chars"
                 ),
                 format!("{yaml}:5:12: database.backend: expected one of mysql, mariadb, postgres, sqlite"),
                 format!(

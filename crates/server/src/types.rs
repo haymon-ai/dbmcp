@@ -204,6 +204,14 @@ pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
     #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
+    /// Present and `true` when a character cap cut a value or dropped rows.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[schemars(default)]
+    pub truncated: bool,
+    /// How to fetch less data; present only when `truncated` is `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub hint: Option<String>,
 }
 
 /// Response for the `writeQuery` tool.
@@ -219,6 +227,14 @@ pub struct WriteQueryResponse {
     #[serde(rename = "lastInsertId", skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub last_insert_id: Option<u64>,
+    /// Present and `true` when a character cap cut a value or dropped rows.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[schemars(default)]
+    pub truncated: bool,
+    /// How to fetch less data; present only when `truncated` is `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub hint: Option<String>,
 }
 
 /// Response for the `readQuery` tool.
@@ -233,6 +249,14 @@ pub struct ReadQueryResponse {
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
+    /// Present and `true` when a character cap cut a value or dropped rows.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[schemars(default)]
+    pub truncated: bool,
+    /// How to fetch less data; present only when `truncated` is `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub hint: Option<String>,
 }
 
 /// Request for the `explainQuery` tool.
@@ -250,7 +274,9 @@ pub struct ExplainQueryRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, WriteQueryResponse};
+    use super::{
+        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, ReadQueryResponse, WriteQueryResponse,
+    };
     use serde_json::{Value, json};
 
     #[test]
@@ -400,6 +426,8 @@ mod tests {
             rows: vec![json!({"id": 1})],
             rows_affected: 2,
             last_insert_id: Some(1),
+            truncated: false,
+            hint: None,
         };
         let value = serde_json::to_value(response).expect("serialize");
         assert_eq!(
@@ -414,8 +442,35 @@ mod tests {
             rows: Vec::new(),
             rows_affected: 0,
             last_insert_id: None,
+            truncated: false,
+            hint: None,
         };
         let value: Value = serde_json::to_value(response).expect("serialize");
         assert_eq!(value, json!({"rows": [], "rowsAffected": 0}));
+    }
+
+    #[test]
+    fn read_query_response_reports_truncation_only_when_set() {
+        let plain = ReadQueryResponse {
+            rows: vec![json!({"one": 1})],
+            next_cursor: None,
+            truncated: false,
+            hint: None,
+        };
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize"),
+            json!({"rows": [{"one": 1}]})
+        );
+
+        let cut = ReadQueryResponse {
+            rows: Vec::new(),
+            next_cursor: None,
+            truncated: true,
+            hint: Some("narrow it".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(cut).expect("serialize"),
+            json!({"rows": [], "truncated": true, "hint": "narrow it"})
+        );
     }
 }

@@ -20,4 +20,6 @@ Use when:
 
 <what_it_returns>
 A JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.
+
+Long string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped; when either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>

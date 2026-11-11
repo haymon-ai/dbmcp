@@ -2,6 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::truncate;
 use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse};
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::with_limit_offset;
@@ -126,6 +127,7 @@ impl PostgresHandler {
         let kind = validate_read(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
+        let page = matches!(kind, StatementKind::Select).then(|| cursor.map_or(0, |c| c.offset));
         let (rows, next_cursor) = match kind {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
@@ -140,6 +142,18 @@ impl PostgresHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        Ok(ReadQueryResponse { rows, next_cursor })
+        let fitted = truncate::fit(
+            rows,
+            page,
+            next_cursor,
+            self.config.max_cell_chars,
+            self.config.max_response_chars,
+        );
+        Ok(ReadQueryResponse {
+            rows: fitted.rows,
+            next_cursor: fitted.next_cursor,
+            truncated: fitted.truncated,
+            hint: fitted.truncated.then(|| truncate::HINT.into()),
+        })
     }
 }

@@ -1,6 +1,7 @@
 //! MCP tool: `explainQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
+use dbmcp_server::truncate;
 use dbmcp_server::types::QueryResponse;
 use dbmcp_sql::validation::validate_single_statement;
 
@@ -77,7 +78,18 @@ impl SqliteHandler {
 
         let rows = self.connection.fetch_json(explain_sql.as_str(), None).await?;
         let rows = self.redactor.redact_rows(rows).await?;
+        let fitted = truncate::fit(
+            rows,
+            None,
+            None,
+            self.config.max_cell_chars,
+            self.config.max_response_chars,
+        );
 
-        Ok(QueryResponse { rows })
+        Ok(QueryResponse {
+            rows: fitted.rows,
+            truncated: fitted.truncated,
+            hint: fitted.truncated.then(|| truncate::HINT.into()),
+        })
     }
 }

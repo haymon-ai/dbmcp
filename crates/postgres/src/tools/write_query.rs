@@ -1,6 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
+use dbmcp_server::truncate;
 use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 
 use super::prelude::*;
@@ -106,11 +107,20 @@ impl PostgresHandler {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
+        let fitted = truncate::fit(
+            rows,
+            None,
+            None,
+            self.config.max_cell_chars,
+            self.config.max_response_chars,
+        );
 
         Ok(WriteQueryResponse {
-            rows,
+            rows: fitted.rows,
             rows_affected,
             last_insert_id,
+            truncated: fitted.truncated,
+            hint: fitted.truncated.then(|| truncate::HINT.into()),
         })
     }
 }
