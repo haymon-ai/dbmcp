@@ -33,9 +33,9 @@ const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-o
 /// its file path is always pinned, so every tool is `pinned = true` and
 /// the handler builds the router with `pinned = true`.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
-    ToolSpec::trusted::<ListTablesTool>(true, false),
-    ToolSpec::trusted::<ListViewsTool>(true, false),
-    ToolSpec::trusted::<ListTriggersTool>(true, false),
+    ToolSpec::untrusted::<ListTablesTool>(true, false),
+    ToolSpec::untrusted::<ListViewsTool>(true, false),
+    ToolSpec::untrusted::<ListTriggersTool>(true, false),
     ToolSpec::untrusted::<ReadQueryTool>(true, false),
     ToolSpec::untrusted::<ExplainQueryTool>(true, false),
     ToolSpec::untrusted::<WriteQueryTool>(true, true),

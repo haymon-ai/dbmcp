@@ -226,10 +226,19 @@ async fn query_error_text(command: tokio::process::Command) -> String {
     text
 }
 
-/// Asserts `result` is a tool error and returns its text.
+/// Asserts `result` is a tool error and returns its message from inside the untrusted-data envelope.
 fn tool_error_text(result: &CallToolResult) -> String {
     assert_eq!(result.is_error, Some(true), "query must fail: {result:?}");
-    result.content[0].as_text().expect("text content").text.clone()
+    let text = &result.content[0].as_text().expect("text content").text;
+    let (_, rest) = text.split_once("<untrusted-data-").expect("boundary tag");
+    let id = rest.split_once('>').expect("tag end").0;
+    let (_, rest) = text
+        .split_once(&format!("<untrusted-data-{id}>\n"))
+        .expect("opening tag");
+    let (message, _) = rest
+        .split_once(&format!("\n</untrusted-data-{id}>"))
+        .expect("closing tag");
+    message.to_owned()
 }
 
 /// Records the sshd host key of `key_type` in `known_hosts` via `ssh-keyscan`.
