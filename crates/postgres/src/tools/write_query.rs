@@ -107,7 +107,7 @@ impl PostgresHandler {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, 0);
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
 
         Ok(WriteQueryResponse {
             rows: fitted.rows,
@@ -115,6 +115,7 @@ impl PostgresHandler {
             last_insert_id,
             truncated: fitted.truncated,
             hint: fitted.truncated.then_some(truncate::HINT),
+            rows_omitted: (fitted.omitted > 0).then_some(fitted.omitted),
         })
     }
 }

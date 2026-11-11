@@ -229,9 +229,9 @@
     },
     {
       "name": "DBMCP_DB_MAX_RESPONSE_CHARS",
-      "description": "Maximum characters of serialized rows per paginated readQuery SELECT page (0 disables)",
+      "description": "Maximum characters of one query tool text result (0 disables)",
       "format": "number",
-      "default": "50000"
+      "default": "32000"
     },
     {
       "name": "DBMCP_PII_ENABLE",

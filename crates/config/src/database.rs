@@ -127,10 +127,10 @@ pub struct DatabaseConfig {
     /// Longer values are cut and marked. `0` disables the cap.
     pub max_cell_chars: u64,
 
-    /// Maximum characters of serialized rows in one paged `SELECT` response.
+    /// Maximum characters of one query tool text result.
     ///
-    /// The page ends early and its cursor resumes at the first row left
-    /// out. Unpaged query tools ignore it. `0` disables the cap.
+    /// Trailing rows past the budget are dropped: a paged `SELECT` resumes
+    /// them via its cursor, other calls count them. `0` disables the cap.
     pub max_response_chars: u64,
 }
 
@@ -162,7 +162,7 @@ impl DatabaseConfig {
     /// Default per-cell character cap for query tool rows.
     pub const DEFAULT_MAX_CELL_CHARS: u64 = 4096;
     /// Default per-response character cap for query tool rows.
-    pub const DEFAULT_MAX_RESPONSE_CHARS: u64 = 50_000;
+    pub const DEFAULT_MAX_RESPONSE_CHARS: u64 = 32_000;
 
     /// Validates this configuration, accumulating every rule violation.
     ///
@@ -319,10 +319,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn character_caps_default_to_4096_and_50000() {
+    fn character_caps_default_to_4096_and_32000() {
         let config = DatabaseConfig::default();
         assert_eq!(config.max_cell_chars, 4096);
-        assert_eq!(config.max_response_chars, 50_000);
+        assert_eq!(config.max_response_chars, 32_000);
     }
 
     #[test]

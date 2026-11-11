@@ -143,15 +143,18 @@ impl MysqlHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        // Only a paged `SELECT` can resume rows the response cap drops.
-        let max_response = resume.map_or(0, |_| self.config.max_response_chars);
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, max_response);
-        let next_cursor = resume.and_then(|resume| resume.next_cursor(fitted.rows.len()));
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        // A paged `SELECT` resumes dropped rows; other statements count them.
+        let (next_cursor, rows_omitted) = match resume {
+            Some(resume) => (resume.next_cursor(fitted.rows.len()), None),
+            None => (None, (fitted.omitted > 0).then_some(fitted.omitted)),
+        };
         Ok(ReadQueryResponse {
             rows: fitted.rows,
             next_cursor,
             truncated: fitted.truncated,
             hint: fitted.truncated.then_some(truncate::HINT),
+            rows_omitted,
         })
     }
 }

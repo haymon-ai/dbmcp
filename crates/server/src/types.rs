@@ -212,6 +212,10 @@ pub struct QueryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub hint: Option<&'static str>,
+    /// Rows the response cap dropped that no cursor can fetch again.
+    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub rows_omitted: Option<u64>,
 }
 
 /// Response for the `writeQuery` tool.
@@ -235,6 +239,10 @@ pub struct WriteQueryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub hint: Option<&'static str>,
+    /// Rows the response cap dropped that no cursor can fetch again.
+    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub rows_omitted: Option<u64>,
 }
 
 /// Response for the `readQuery` tool.
@@ -257,6 +265,10 @@ pub struct ReadQueryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub hint: Option<&'static str>,
+    /// Rows the response cap dropped that no cursor can fetch again.
+    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub rows_omitted: Option<u64>,
 }
 
 /// Request for the `explainQuery` tool.
@@ -428,6 +440,7 @@ mod tests {
             last_insert_id: Some(1),
             truncated: false,
             hint: None,
+            rows_omitted: None,
         };
         let value = serde_json::to_value(response).expect("serialize");
         assert_eq!(
@@ -444,6 +457,7 @@ mod tests {
             last_insert_id: None,
             truncated: false,
             hint: None,
+            rows_omitted: None,
         };
         let value: Value = serde_json::to_value(response).expect("serialize");
         assert_eq!(value, json!({"rows": [], "rowsAffected": 0}));
@@ -456,6 +470,7 @@ mod tests {
             next_cursor: None,
             truncated: false,
             hint: None,
+            rows_omitted: None,
         };
         assert_eq!(
             serde_json::to_value(plain).expect("serialize"),
@@ -467,6 +482,7 @@ mod tests {
             next_cursor: None,
             truncated: true,
             hint: Some("narrow it"),
+            rows_omitted: None,
         };
         assert_eq!(
             serde_json::to_value(cut).expect("serialize"),

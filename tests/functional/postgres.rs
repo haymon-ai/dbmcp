@@ -4359,16 +4359,33 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
 }
 
 #[tokio::test]
-async fn read_query_response_cap_keeps_every_unpaged_row() {
-    // Rows a non-`SELECT` drops cannot be resumed, so the budget skips them.
+async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
+    // A non-`SELECT` cannot resume, so dropped rows are counted instead.
     let handler = handler_with_caps(0, 12, false);
     let response = handler
         .read_query("SHOW ALL".into(), Some("app".into()), None)
         .await
         .expect("read_query");
-    assert!(response.rows.len() > 1, "SHOW ALL should return several rows");
-    assert!(!response.truncated);
+    assert_eq!(response.rows.len(), 1);
+    assert!(response.truncated);
     assert!(response.next_cursor.is_none());
+    assert!(response.rows_omitted.is_some_and(|omitted| omitted > 0));
+}
+
+#[tokio::test]
+async fn write_query_response_cap_counts_returned_rows_it_drops() {
+    let handler = handler_with_caps(0, 12, false);
+    let response = handler
+        .write_query(
+            "UPDATE users SET name = name WHERE id IN (1, 2, 3) RETURNING id".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("write_query");
+    assert_eq!(response.rows.len(), 1);
+    assert_eq!(response.rows_affected, 3);
+    assert!(response.truncated);
+    assert_eq!(response.rows_omitted, Some(2));
 }
 
 #[tokio::test]

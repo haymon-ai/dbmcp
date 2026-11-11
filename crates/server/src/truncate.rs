@@ -5,15 +5,17 @@
 //! - **per cell**: every string value at any depth (text, base64 bytes,
 //!   string leaves inside JSON columns) longer than the cap is cut and
 //!   ends in `…[truncated, N chars total]`; object keys are kept verbatim;
-//! - **per response**: trailing rows are dropped once the serialized rows
-//!   exceed the budget. At least one row is always kept, so paging moves
-//!   forward. A paged `SELECT` passes the kept row count to
+//! - **per response**: the cap bounds the whole text result a client
+//!   receives. [`RESERVED_CHARS`] of it go to the untrusted-data envelope
+//!   and the fields beside `rows`; trailing rows are dropped once the
+//!   serialized rows exceed the rest. At least one row is always kept, so
+//!   paging moves forward. A paged `SELECT` passes the kept row count to
 //!   [`Resume::next_cursor`](crate::listing::Resume::next_cursor), which
-//!   resumes at the first dropped row, so no row is lost.
+//!   resumes at the first dropped row; other calls report
+//!   [`Fitted::omitted`] as `rowsOmitted`.
 //!
-//! A cap of `0` disables it. Callers pass a response cap only when the
-//! dropped rows can be resumed, i.e. on a paged `SELECT`. Run [`fit`] after PII redaction, so a span cut
-//! by a cap is still seen whole by the redactor.
+//! A cap of `0` disables it. Run [`fit`] after PII redaction, so a span
+//! cut by a cap is still seen whole by the redactor.
 
 use std::fmt::Write as _;
 use std::io;
@@ -22,7 +24,14 @@ use serde_json::Value;
 
 /// Hint returned beside `truncated: true` when a cap cut the output.
 pub const HINT: &str = "Output exceeded size caps. Select fewer or narrower columns or narrow the query; \
-                    fetch remaining rows via nextCursor when present.";
+                        read a cut value in parts with SUBSTRING/SUBSTR. Fetch dropped rows via nextCursor \
+                        when present; otherwise rowsOmitted counts them.";
+
+/// Characters of the response cap kept for everything but the rows.
+///
+/// Covers the untrusted-data envelope around the text result plus the
+/// fields beside `rows` (`nextCursor`, `truncated`, `hint`, counts).
+pub const RESERVED_CHARS: usize = 1_500;
 
 /// Rows after [`fit`] applied the caps.
 #[derive(Debug)]
@@ -31,13 +40,16 @@ pub struct Fitted {
     pub rows: Vec<Value>,
     /// Whether any value was cut or any row dropped.
     pub truncated: bool,
+    /// Number of trailing rows dropped by the response cap.
+    pub omitted: u64,
 }
 
 /// Cuts long string values and drops rows past the response budget.
 ///
-/// `max_cell` and `max_response` are character caps, `0` = off. Dropped
-/// rows are always trailing, so `rows.len()` of the result is the count
-/// of leading rows kept.
+/// `max_cell` and `max_response` are character caps, `0` = off;
+/// `max_response` bounds the whole text result, of which the rows get all
+/// but [`RESERVED_CHARS`]. Dropped rows are always trailing, so
+/// `rows.len()` of the result is the count of leading rows kept.
 ///
 /// # Panics
 ///
@@ -47,6 +59,7 @@ pub struct Fitted {
 pub fn fit(mut rows: Vec<Value>, max_cell: u64, max_response: u64) -> Fitted {
     let max_cell = usize::try_from(max_cell).unwrap_or(usize::MAX);
     let max_response = usize::try_from(max_response).unwrap_or(usize::MAX);
+    let budget = max_response.saturating_sub(RESERVED_CHARS);
     let mut truncated = false;
 
     // `[` and `]` around the rows, plus a `,` before every row but the first.
@@ -68,19 +81,24 @@ pub fn fit(mut rows: Vec<Value>, max_cell: u64, max_response: u64) -> Fitted {
             let mut chars = CharCount(0);
             serde_json::to_writer(&mut chars, row).expect("a JSON value serializes into a char counter");
             total += chars.0 + usize::from(index > 0);
-            if index > 0 && total > max_response {
+            if index > 0 && total > budget {
                 kept = index;
                 break;
             }
         }
     }
 
-    if kept < rows.len() {
+    let omitted = (rows.len() - kept) as u64;
+    if omitted > 0 {
         rows.truncate(kept);
         truncated = true;
     }
 
-    Fitted { rows, truncated }
+    Fitted {
+        rows,
+        truncated,
+        omitted,
+    }
 }
 
 /// Cuts `text` to `max` chars plus a marker; returns whether it was cut.
@@ -155,8 +173,9 @@ mod tests {
     fn trailing_rows_past_the_budget_are_dropped() {
         // Each row `{"i":N}` is 7 chars; `[` + 2 rows + `,` + `]` = 17.
         let rows: Vec<Value> = (0..5).map(|i| json!({"i": i})).collect();
-        let fitted = fit(rows, 0, 17);
+        let fitted = fit(rows, 0, RESERVED_CHARS as u64 + 17);
         assert_eq!(fitted.rows, vec![json!({"i": 0}), json!({"i": 1})]);
+        assert_eq!(fitted.omitted, 3);
         assert!(fitted.truncated);
     }
 
@@ -165,6 +184,7 @@ mod tests {
         let rows = vec![json!({"v": "z".repeat(50)}), json!({"v": 1})];
         let fitted = fit(rows, 0, 10);
         assert_eq!(fitted.rows.len(), 1);
+        assert_eq!(fitted.omitted, 1);
         assert!(fitted.truncated);
     }
 }

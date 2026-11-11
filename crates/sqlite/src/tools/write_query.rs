@@ -65,7 +65,7 @@ impl SqliteHandler {
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), None).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, 0);
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
 
         Ok(WriteQueryResponse {
             rows: fitted.rows,
@@ -73,6 +73,7 @@ impl SqliteHandler {
             last_insert_id,
             truncated: fitted.truncated,
             hint: fitted.truncated.then_some(truncate::HINT),
+            rows_omitted: (fitted.omitted > 0).then_some(fitted.omitted),
         })
     }
 }

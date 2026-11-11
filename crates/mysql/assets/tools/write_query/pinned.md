@@ -28,5 +28,5 @@ An object with:
 
 No follow-up `SELECT` is needed to confirm a write.
 
-Long string values are cut and end in `…[truncated, N chars total]`; when that happens the response carries `truncated: true` and a `hint`.
+Long string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>
