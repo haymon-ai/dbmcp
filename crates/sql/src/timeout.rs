@@ -22,10 +22,10 @@ pub(crate) const GRACE: Duration = Duration::from_secs(5);
 ///
 /// Resolves `connection`'s pool for `database`, acquires a connection, reads
 /// its [`session_id`](Connection::session_id), and, given one, calls
-/// [`set_timeout`](Connection::set_timeout) before `op` runs `query`'s SQL
-/// text and arguments on it. A failed `set_timeout` is logged and the query
-/// runs on the client timeout alone. The backstop waits
-/// [`query_timeout`](Connection::query_timeout) + [`GRACE`] (no [`GRACE`]
+/// [`set_timeout`](Connection::set_timeout) with `timeout_secs` before `op`
+/// runs `query`'s SQL text and arguments on it. A failed `set_timeout` is
+/// logged and the query runs on the client timeout alone. The backstop waits
+/// `timeout_secs` + [`GRACE`] (no [`GRACE`]
 /// without a session id or after a failed `set_timeout`); on expiry it drops
 /// the query future, spawns a kill of the session (if it has an id) from a
 /// one-off connection capped at [`GRACE`], and returns
@@ -44,6 +44,7 @@ pub(crate) const GRACE: Duration = Duration::from_secs(5);
 pub(crate) async fn execute_with_timeout<C, Q, T>(
     connection: &C,
     database: Option<&str>,
+    timeout_secs: u64,
     query: Q,
     op: impl AsyncFnOnce(
         &mut <C::DB as sqlx::Database>::Connection,
@@ -60,7 +61,6 @@ where
 {
     let (sql, arguments) = query.into_sql_and_args()?;
     let pool = connection.pool(database).await?;
-    let timeout_secs = connection.query_timeout();
     let start = Instant::now();
     let err_sql = sql.clone();
     let timed_out = || SqlError::QueryTimeout {
@@ -98,7 +98,7 @@ where
             return Ok::<_, sqlx::Error>((None, false));
         };
         // A failed SET keeps the statement: only the client timeout applies.
-        if let Err(error) = connection.set_timeout(&mut conn).await {
+        if let Err(error) = connection.set_timeout(&mut conn, timeout_secs).await {
             warn!(%error, session_id = id, "session statement timeout not set; relying on the client timeout");
             return Ok((Some(id), false));
         }
@@ -229,7 +229,7 @@ mod tests {
             }
         }
 
-        async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+        async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection, _secs: u64) -> Result<(), sqlx::Error> {
             self.set_called.store(true, Ordering::SeqCst);
             match self.mode {
                 Mode::Unarmed => Err(sqlx::Error::Configuration("unknown variable".into())),
@@ -309,6 +309,7 @@ mod tests {
             let result: Result<i32, SqlError> = execute_with_timeout(
                 &Stub::new(&pool, Mode::Server, timeout_secs),
                 None,
+                timeout_secs,
                 "SELECT slow",
                 async |_, _| Err(server_timeout()),
             )
@@ -323,7 +324,7 @@ mod tests {
         // `0` disables the limit; `u64::MAX` overflows an `Instant` and runs without a timer.
         for timeout_secs in [0, 5, u64::MAX] {
             let stub = Stub::new(&pool, Mode::Server, timeout_secs);
-            let result = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(42)).await;
+            let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT 1", async |_, _| Ok(42)).await;
             assert_eq!(result.expect("should succeed"), 42, "timeout {timeout_secs}");
         }
     }
@@ -332,10 +333,11 @@ mod tests {
     async fn query_error_propagates_as_app_error() {
         let pool = pool().await;
         let stub = Stub::new(&pool, Mode::Server, 5);
-        let result: Result<i32, SqlError> = execute_with_timeout(&stub, None, "BAD SQL", async |_, _| {
-            Err(sqlx::Error::Configuration("syntax error".into()))
-        })
-        .await;
+        let result: Result<i32, SqlError> =
+            execute_with_timeout(&stub, None, stub.timeout_secs, "BAD SQL", async |_, _| {
+                Err(sqlx::Error::Configuration("syntax error".into()))
+            })
+            .await;
         let err = result.expect_err("should fail");
         assert!(
             matches!(err, SqlError::Query(ref msg) if msg.contains("syntax error")),
@@ -356,7 +358,7 @@ mod tests {
         ] {
             let message = error.to_string();
             let result: Result<i32, SqlError> =
-                execute_with_timeout(&Stub::new(&pool, Mode::Server, 0), None, "SELECT 1", async |_, _| {
+                execute_with_timeout(&Stub::new(&pool, Mode::Server, 0), None, 0, "SELECT 1", async |_, _| {
                     Err(error)
                 })
                 .await;
@@ -370,7 +372,7 @@ mod tests {
     async fn backstop_fires_after_grace_and_kills_session() {
         let pool = paused_pool().await;
         let stub = Stub::new(&pool, Mode::Server, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
         assert_killed(SESSION).await;
     }
@@ -379,7 +381,7 @@ mod tests {
     async fn unarmed_deadline_has_no_grace_and_kills_session() {
         let pool = paused_pool().await;
         let stub = Stub::new(&pool, Mode::Unarmed, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 1.0, 1.5);
         assert_killed(UNARMED_SESSION).await;
     }
@@ -388,7 +390,7 @@ mod tests {
     async fn no_server_skips_set_and_has_no_grace() {
         let pool = paused_pool().await;
         let stub = Stub::new(&pool, Mode::NoServer, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 1.0, 1.5);
         assert!(!stub.set_called(), "set_timeout called without a session id");
     }
@@ -397,7 +399,8 @@ mod tests {
     async fn failed_lookup_fails_query_without_set() {
         let pool = pool().await;
         let stub = Stub::new(&pool, Mode::FailedLookup, 5);
-        let result: Result<i32, SqlError> = execute_with_timeout(&stub, None, "SELECT 1", async |_, _| Ok(42)).await;
+        let result: Result<i32, SqlError> =
+            execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT 1", async |_, _| Ok(42)).await;
         let err = result.expect_err("should fail");
         assert!(
             matches!(err, SqlError::Query(ref msg) if msg.contains("lookup failed")),
@@ -410,7 +413,7 @@ mod tests {
     async fn lookup_expiry_times_out() {
         let pool = paused_pool().await;
         let stub = Stub::new(&pool, Mode::SlowLookup, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
     }
 
@@ -418,7 +421,7 @@ mod tests {
     async fn set_expiry_times_out() {
         let pool = paused_pool().await;
         let stub = Stub::new(&pool, Mode::SlowSet, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
     }
 
@@ -427,7 +430,7 @@ mod tests {
         let pool = paused_pool().await;
         let _busy = pool.acquire().await.expect("hold the only connection");
         let stub = Stub::new(&pool, Mode::Server, 1);
-        let result = execute_with_timeout(&stub, None, "SELECT slow", never).await;
+        let result = execute_with_timeout(&stub, None, stub.timeout_secs, "SELECT slow", never).await;
         assert_timed_out(result, 6.0, 6.5);
     }
 }

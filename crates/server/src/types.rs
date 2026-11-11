@@ -197,6 +197,56 @@ pub struct ReadQueryRequest {
     /// Database to run the query against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
+    /// Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub timeout: Option<u64>,
+}
+
+/// Largest per-call timeout in seconds: `PostgreSQL`'s `statement_timeout` limit.
+///
+/// `statement_timeout` takes at most `i32::MAX` milliseconds; a larger value
+/// would fail the session `SET` and leave the previous call's limit in place.
+pub const MAX_TIMEOUT_SECS: u64 = i32::MAX as u64 / 1000;
+
+/// Resolves a `readQuery` call's `timeout` argument to the seconds it runs under.
+///
+/// `None` keeps `default`; `max` caps the request (`0` = only
+/// [`MAX_TIMEOUT_SECS`]). A request is rejected while `default` is `0`: the
+/// timeout is then disabled, and a later call would not reset the session
+/// limit this one sets on the pooled connection.
+///
+/// # Errors
+///
+/// Returns an invalid-params error when `requested` is `0`, exceeds the cap,
+/// or is set while `default` is `0`.
+pub fn resolve_timeout(requested: Option<u64>, default: u64, max: u64) -> Result<u64, rmcp::ErrorData> {
+    let Some(secs) = requested else {
+        return Ok(default);
+    };
+    let max = if max == 0 {
+        MAX_TIMEOUT_SECS
+    } else {
+        max.min(MAX_TIMEOUT_SECS)
+    };
+    if secs == 0 {
+        Err(rmcp::ErrorData::invalid_params(
+            "timeout must be at least 1 second",
+            None,
+        ))
+    } else if default == 0 {
+        Err(rmcp::ErrorData::invalid_params(
+            "timeout is unavailable: the server's query timeout is disabled",
+            None,
+        ))
+    } else if secs > max {
+        Err(rmcp::ErrorData::invalid_params(
+            format!("timeout {secs}s exceeds the maximum of {max}s"),
+            None,
+        ))
+    } else {
+        Ok(secs)
+    }
 }
 
 /// Response for the `explainQuery` tool.
@@ -261,8 +311,8 @@ pub struct ExplainQueryRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, ReadQueryResponse, Truncation,
-        WriteQueryResponse,
+        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, MAX_TIMEOUT_SECS, ReadQueryResponse,
+        Truncation, WriteQueryResponse, resolve_timeout,
     };
     use serde_json::{Value, json};
 
@@ -432,6 +482,38 @@ mod tests {
         };
         let value: Value = serde_json::to_value(response).expect("serialize");
         assert_eq!(value, json!({"rows": [], "rowsAffected": 0}));
+    }
+
+    #[test]
+    fn resolve_timeout_defaults_and_enforces_the_cap() {
+        assert_eq!(resolve_timeout(None, 30, 120).expect("default"), 30);
+        assert_eq!(resolve_timeout(Some(5), 30, 120).expect("shorter"), 5);
+        assert_eq!(resolve_timeout(Some(120), 30, 120).expect("at cap"), 120);
+        assert_eq!(resolve_timeout(Some(9999), 30, 0).expect("no cap"), 9999);
+        assert_eq!(resolve_timeout(None, 0, 0).expect("disabled default"), 0);
+
+        let zero = resolve_timeout(Some(0), 30, 120).expect_err("zero");
+        assert_eq!(zero.message, "timeout must be at least 1 second");
+        let over = resolve_timeout(Some(121), 30, 120).expect_err("over cap");
+        assert_eq!(over.message, "timeout 121s exceeds the maximum of 120s");
+
+        for (secs, max) in [(u64::MAX, 0), (MAX_TIMEOUT_SECS + 1, u64::MAX)] {
+            let err = resolve_timeout(Some(secs), 30, max).expect_err("above the server limit");
+            assert_eq!(
+                err.message,
+                format!("timeout {secs}s exceeds the maximum of {MAX_TIMEOUT_SECS}s")
+            );
+        }
+        assert_eq!(
+            resolve_timeout(Some(MAX_TIMEOUT_SECS), 30, 0).expect("at the server limit"),
+            MAX_TIMEOUT_SECS
+        );
+
+        let disabled = resolve_timeout(Some(5), 0, 0).expect_err("timeout disabled");
+        assert_eq!(
+            disabled.message,
+            "timeout is unavailable: the server's query timeout is disabled"
+        );
     }
 
     #[test]

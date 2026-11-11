@@ -76,7 +76,10 @@ impl SqliteHandler {
 
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
 
-        let rows = self.connection.fetch_json(explain_sql.as_str(), None).await?;
+        let rows = self
+            .connection
+            .fetch_json(explain_sql.as_str(), None, self.config.query_timeout)
+            .await?;
         let rows = self.redactor.redact_rows(rows).await?;
         let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
 

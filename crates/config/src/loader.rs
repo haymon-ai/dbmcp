@@ -261,6 +261,9 @@ impl Resolver<'_> {
                 _ => name,
             });
         let path_string = |setting| self.path(setting).map(|p| p.display().to_string());
+        let query_timeout = self
+            .int(env::DB_QUERY_TIMEOUT)
+            .unwrap_or(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS);
         DatabaseConfig {
             backend,
             host: self
@@ -287,9 +290,8 @@ impl Resolver<'_> {
                 .int(env::DB_MAX_POOL_SIZE)
                 .unwrap_or(DatabaseConfig::DEFAULT_MAX_POOL_SIZE),
             connection_timeout: self.int(env::DB_CONNECTION_TIMEOUT),
-            query_timeout: self
-                .int(env::DB_QUERY_TIMEOUT)
-                .unwrap_or(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS),
+            query_timeout,
+            max_query_timeout: self.int(env::DB_MAX_QUERY_TIMEOUT).unwrap_or(query_timeout),
             page_size: self.int(env::DB_PAGE_SIZE).unwrap_or(DatabaseConfig::DEFAULT_PAGE_SIZE),
             max_cell_chars: self
                 .int(env::DB_MAX_CELL_CHARS)
@@ -510,6 +512,17 @@ mod tests {
             compared += 1;
         }
         assert_eq!(compared, 23);
+    }
+
+    #[test]
+    fn max_query_timeout_defaults_to_query_timeout() {
+        let loaded = Fixture::new().env("DBMCP_DB_QUERY_TIMEOUT", "45").ok();
+        assert_eq!(loaded.config.database.max_query_timeout, 45);
+        let loaded = Fixture::new()
+            .env("DBMCP_DB_QUERY_TIMEOUT", "45")
+            .env("DBMCP_DB_MAX_QUERY_TIMEOUT", "300")
+            .ok();
+        assert_eq!(loaded.config.database.max_query_timeout, 300);
     }
 
     #[test]

@@ -22,6 +22,14 @@ pub enum ConfigError {
     #[error("database.name (file path) is required for sqlite")]
     MissingSqliteDbName,
 
+    /// `database.max_query_timeout` caps a disabled `database.query_timeout`.
+    #[error("database.max_query_timeout requires database.query_timeout to be set above 0")]
+    MaxQueryTimeoutWithoutTimeout,
+
+    /// `database.max_query_timeout` is below `database.query_timeout`.
+    #[error("database.max_query_timeout ({0}) must not be below database.query_timeout ({1})")]
+    MaxQueryTimeoutBelowTimeout(u64, u64),
+
     /// A configured file (SSL certificate, SSH key) was not found.
     #[error("{0}: file not found: {1}")]
     FileNotFound(&'static str, String),

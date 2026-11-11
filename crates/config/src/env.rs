@@ -351,6 +351,12 @@ pub const DB_CONNECTION_TIMEOUT: Setting = setting(
 );
 /// `database.query_timeout` / `DBMCP_DB_QUERY_TIMEOUT`.
 pub const DB_QUERY_TIMEOUT: Setting = setting("database.query_timeout", "DBMCP_DB_QUERY_TIMEOUT", int(0, u64::MAX));
+/// `database.max_query_timeout` / `DBMCP_DB_MAX_QUERY_TIMEOUT`.
+pub const DB_MAX_QUERY_TIMEOUT: Setting = setting(
+    "database.max_query_timeout",
+    "DBMCP_DB_MAX_QUERY_TIMEOUT",
+    int(0, u64::MAX),
+);
 /// `database.page_size` / `DBMCP_DB_PAGE_SIZE`.
 pub const DB_PAGE_SIZE: Setting = setting(
     "database.page_size",
@@ -450,6 +456,7 @@ pub const SETTINGS: &[Setting] = &[
     DB_MAX_POOL_SIZE,
     DB_CONNECTION_TIMEOUT,
     DB_QUERY_TIMEOUT,
+    DB_MAX_QUERY_TIMEOUT,
     DB_PAGE_SIZE,
     DB_MAX_CELL_CHARS,
     DB_MAX_RESPONSE_CHARS,
@@ -663,7 +670,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 42);
+        assert_eq!(SETTINGS.len(), 43);
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {

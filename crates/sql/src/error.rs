@@ -37,7 +37,10 @@ pub enum SqlError {
     InvalidIdentifier(String),
 
     /// Query exceeded the configured timeout.
-    #[error("Query timed out after {elapsed_secs:.1}s: {sql}")]
+    #[error(
+        "Query timed out after {elapsed_secs:.1}s: {sql}. Check the plan with explainQuery, filter on indexed \
+         columns, or limit inner result sets before joining or aggregating."
+    )]
     QueryTimeout {
         /// Wall-clock seconds elapsed before cancellation.
         elapsed_secs: f64,
@@ -81,6 +84,20 @@ pub fn is_connection_error(error: &ErrorData) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_error_points_at_explain_query() {
+        let error = SqlError::QueryTimeout {
+            elapsed_secs: 30.0,
+            sql: "SELECT 1".into(),
+        };
+        let message = error.to_string();
+        assert!(
+            message.starts_with("Query timed out after 30.0s: SELECT 1. "),
+            "{message}"
+        );
+        assert!(message.contains("explainQuery"), "{message}");
+    }
 
     #[test]
     fn only_connection_errors_are_marked() {

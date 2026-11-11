@@ -73,7 +73,7 @@ async fn assert_statement_gone(marker: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let response = observer
-            .read_query(sql.clone(), None, None)
+            .read_query(sql.clone(), None, None, None)
             .await
             .expect("processlist query");
         if response.rows[0]["n"].as_i64() == Some(0) {
@@ -94,7 +94,7 @@ async fn session_timeout(handler: &MysqlHandler) -> f64 {
         _ => "max_execution_time",
     };
     let response = handler
-        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None)
+        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None, None)
         .await
         .expect("session variable query");
     let value = &response.rows[0]["v"];
@@ -128,7 +128,7 @@ async fn assert_timed_out<T>(handler: &MysqlHandler, result: Result<T, rmcp::Err
     );
     assert_statement_gone(marker).await;
     handler
-        .read_query("SELECT 1 AS one".into(), None, None)
+        .read_query("SELECT 1 AS one".into(), None, None, None)
         .await
         .expect("pool slot freed after timeout");
 }
@@ -157,6 +157,7 @@ async fn test_write_query_insert_and_verify() {
         .read_query(
             "SELECT name FROM users WHERE email = 'write@test.com'".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -203,6 +204,7 @@ async fn test_write_query_update() {
             "SELECT name FROM users WHERE email = 'update@test.com'".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -243,6 +245,7 @@ async fn test_write_query_delete() {
         .read_query(
             "SELECT * FROM users WHERE email = 'delete@test.com'".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -286,7 +289,7 @@ async fn test_executes_sql() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT * FROM users ORDER BY id".into(), Some("app".into()), None)
+        .read_query("SELECT * FROM users ORDER BY id".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     assert_eq!(response.rows.len(), 3, "Expected 3 users, got {}", response.rows.len());
@@ -300,6 +303,7 @@ async fn test_blocks_writes_in_read_only_mode() {
         .read_query(
             "INSERT INTO users (name, email) VALUES ('Hacker', 'hack@evil.com')".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await;
@@ -420,6 +424,7 @@ async fn test_executes_sql_cross_database() {
             "SELECT * FROM events ORDER BY id".into(),
             Some("analytics".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -447,6 +452,7 @@ async fn test_blocks_writes_cross_database_in_read_only_mode() {
         .read_query(
             "INSERT INTO events (name) VALUES ('hack')".into(),
             Some("analytics".into()),
+            None,
             None,
         )
         .await;
@@ -487,7 +493,7 @@ async fn test_server_timeout_mapped_under_zero() {
         .await
         .expect("session timeout set");
 
-    let result = handler.read_query(slow_sql("qt_mapped_zero"), None, None).await;
+    let result = handler.read_query(slow_sql("qt_mapped_zero"), None, None, None).await;
     assert_timed_out(&handler, result, "qt_mapped_zero").await;
 }
 
@@ -505,6 +511,52 @@ async fn test_session_timeout_set_from_query_timeout() {
 }
 
 #[tokio::test]
+async fn test_read_query_timeout_sets_session_timeout() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 3,
+        max_query_timeout: 10,
+        ..base_db_config(true)
+    });
+    let variable = match backend() {
+        DatabaseBackend::Mariadb => "max_statement_time",
+        _ => "max_execution_time",
+    };
+    let response = handler
+        .read_query(format!("SELECT @@SESSION.{variable} AS v"), None, None, Some(7))
+        .await
+        .expect("session variable query");
+    let value = &response.rows[0]["v"];
+    let value = value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .expect("numeric session timeout");
+    let expected = match backend() {
+        DatabaseBackend::Mariadb => 7.0,
+        _ => 7000.0,
+    };
+    assert!((value - expected).abs() < f64::EPSILON, "{variable} = {value}");
+}
+
+#[tokio::test]
+async fn test_read_query_timeout_above_cap_is_rejected() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 3,
+        max_query_timeout: 10,
+        ..base_db_config(true)
+    });
+    let err = handler
+        .read_query("SELECT 1".into(), None, None, Some(11))
+        .await
+        .expect_err("above the cap");
+    assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
+    let err = handler
+        .read_query("SELECT 1".into(), None, None, Some(0))
+        .await
+        .expect_err("zero");
+    assert_eq!(err.message, "timeout must be at least 1 second");
+}
+
+#[tokio::test]
 async fn test_query_timeout_zero_leaves_server_defaults() {
     let handler = handler_with(DatabaseConfig {
         query_timeout: 0,
@@ -512,7 +564,7 @@ async fn test_query_timeout_zero_leaves_server_defaults() {
     });
     assert!(session_timeout(&handler).await.abs() < f64::EPSILON);
 
-    let response = handler.read_query("SELECT 1 AS value".into(), None, None).await;
+    let response = handler.read_query("SELECT 1 AS value".into(), None, None, None).await;
     assert!(response.is_ok(), "Fast query should succeed without timeout");
 }
 
@@ -520,7 +572,7 @@ async fn test_query_timeout_zero_leaves_server_defaults() {
 async fn test_server_timeout_stops_slow_read() {
     let handler = single_connection_handler(1);
     let start = std::time::Instant::now();
-    let result = handler.read_query(slow_sql("qt_server_read"), None, None).await;
+    let result = handler.read_query(slow_sql("qt_server_read"), None, None, None).await;
     let elapsed = start.elapsed();
     assert!(elapsed.as_secs_f64() < 6.0, "server timeout took {elapsed:?}");
     assert_timed_out(&handler, result, "qt_server_read").await;
@@ -575,7 +627,9 @@ async fn test_backstop_kills_statement_when_session_set_fails() {
         ..single_connection_config(1)
     });
     let start = std::time::Instant::now();
-    let result = handler.read_query(slow_sql("qt_backstop_mismatch"), None, None).await;
+    let result = handler
+        .read_query(slow_sql("qt_backstop_mismatch"), None, None, None)
+        .await;
     let secs = start.elapsed().as_secs_f64();
     assert!((1.0..3.0).contains(&secs), "backstop fired after {secs:.1}s");
     assert_timed_out(&handler, result, "qt_backstop_mismatch").await;
@@ -823,6 +877,7 @@ async fn test_explain_query_multi_statement_blocked_read_only() {
                 .into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -843,7 +898,7 @@ async fn test_explain_query_invalid_query() {
 async fn test_read_query_empty_query() {
     let handler = handler(false);
 
-    let response = handler.read_query(String::new(), Some("app".into()), None).await;
+    let response = handler.read_query(String::new(), Some("app".into()), None, None).await;
     assert!(response.is_err(), "Expected error for empty query");
 }
 
@@ -851,7 +906,9 @@ async fn test_read_query_empty_query() {
 async fn test_read_query_whitespace_only_query() {
     let handler = handler(false);
 
-    let response = handler.read_query("   \t\n  ".into(), Some("app".into()), None).await;
+    let response = handler
+        .read_query("   \t\n  ".into(), Some("app".into()), None, None)
+        .await;
     assert!(response.is_err(), "Expected error for whitespace-only query");
 }
 
@@ -860,7 +917,7 @@ async fn test_read_query_multi_statement_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT 1; DROP TABLE users".into(), Some("app".into()), None)
+        .read_query("SELECT 1; DROP TABLE users".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "Expected error for multi-statement query");
 }
@@ -870,7 +927,7 @@ async fn test_read_query_load_file_blocked() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT LOAD_FILE('/etc/passwd')".into(), Some("app".into()), None)
+        .read_query("SELECT LOAD_FILE('/etc/passwd')".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "Expected error for LOAD_FILE");
 }
@@ -882,7 +939,7 @@ async fn test_read_query_explain_analyze_write_blocked() {
         "EXPLAIN ANALYZE DELETE FROM users WHERE id < 0",
         "EXPLAIN DELETE FROM users WHERE id < 0",
     ] {
-        let response = handler.read_query(sql.into(), Some("app".into()), None).await;
+        let response = handler.read_query(sql.into(), Some("app".into()), None, None).await;
         let err_msg = format!(
             "{:?}",
             response.expect_err("Expected EXPLAIN ANALYZE write to be blocked")
@@ -899,7 +956,7 @@ async fn test_read_query_explain_select_allowed() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("EXPLAIN SELECT * FROM users".into(), Some("app".into()), None)
+        .read_query("EXPLAIN SELECT * FROM users".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     assert!(!response.rows.is_empty(), "Expected a query plan");
@@ -914,6 +971,7 @@ async fn test_read_query_into_outfile_blocked() {
             "SELECT * FROM users INTO OUTFILE '/tmp/out'".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await;
     assert!(response.is_err(), "Expected error for INTO OUTFILE");
@@ -924,7 +982,7 @@ async fn test_read_query_show_tables() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SHOW TABLES".into(), Some("app".into()), None)
+        .read_query("SHOW TABLES".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -936,7 +994,7 @@ async fn test_read_query_describe_table() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -991,6 +1049,7 @@ async fn test_write_query_cross_database() {
             "SELECT name FROM events WHERE name = 'cross_test'".into(),
             Some("analytics".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1016,6 +1075,7 @@ async fn test_read_query_empty_result_set() {
             "SELECT * FROM users WHERE email = 'nobody@nowhere.com'".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1033,6 +1093,7 @@ async fn test_read_query_null_values() {
             "SELECT title, body FROM posts WHERE title = 'My First Post'".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1047,7 +1108,12 @@ async fn test_read_query_aggregate() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SELECT COUNT(*) AS total FROM users".into(), Some("app".into()), None)
+        .read_query(
+            "SELECT COUNT(*) AS total FROM users".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1064,6 +1130,7 @@ async fn test_read_query_group_by() {
             "SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY user_id".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1077,7 +1144,7 @@ async fn test_read_query_use_statement_rejected() {
     let handler = single_connection_handler(0);
 
     let error = handler
-        .read_query("USE analytics".into(), Some("app".into()), None)
+        .read_query("USE analytics".into(), Some("app".into()), None, None)
         .await
         .expect_err("USE must be rejected by readQuery");
     assert!(
@@ -1087,7 +1154,7 @@ async fn test_read_query_use_statement_rejected() {
     );
 
     let response = handler
-        .read_query("SELECT DATABASE() AS db".into(), None, None)
+        .read_query("SELECT DATABASE() AS db".into(), None, None, None)
         .await
         .expect("SELECT DATABASE() runs");
     assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
@@ -1109,7 +1176,7 @@ async fn test_write_query_use_statement_rejected() {
     );
 
     let response = handler
-        .read_query("SELECT DATABASE() AS db".into(), None, None)
+        .read_query("SELECT DATABASE() AS db".into(), None, None, None)
         .await
         .expect("SELECT DATABASE() runs");
     assert_eq!(response.rows[0]["db"], "app", "default database must stay `app`");
@@ -1120,7 +1187,7 @@ async fn test_read_query_show_databases() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("SHOW DATABASES".into(), Some("app".into()), None)
+        .read_query("SHOW DATABASES".into(), Some("app".into()), None, None)
         .await
         .unwrap();
     let rows = &response.rows;
@@ -1148,6 +1215,7 @@ async fn test_read_query_with_comments() {
             "/* fetch users */ SELECT * FROM users ORDER BY id".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1164,6 +1232,7 @@ async fn test_read_query_subquery() {
             "SELECT * FROM users WHERE id IN (SELECT user_id FROM posts WHERE published = 1)".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1179,6 +1248,7 @@ async fn test_read_query_with_join() {
         .read_query(
             "SELECT p.title, u.name FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.id".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -1235,6 +1305,7 @@ async fn test_read_query_with_limit() {
             "SELECT * FROM users ORDER BY id LIMIT 2".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1270,6 +1341,7 @@ async fn test_read_query_with_line_comment() {
             "-- get users\nSELECT * FROM users ORDER BY id".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1285,6 +1357,7 @@ async fn test_read_query_into_dumpfile_blocked() {
         .read_query(
             "SELECT * FROM users INTO DUMPFILE '/tmp/out'".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await;
@@ -1577,7 +1650,7 @@ async fn collect_all_paged_read_query(handler: &MysqlHandler, query: &str) -> Ve
     let mut cursor: Option<dbmcp_server::listing::Cursor> = None;
     loop {
         let response = handler
-            .read_query(query.into(), Some("app".into()), cursor.take())
+            .read_query(query.into(), Some("app".into()), cursor.take(), None)
             .await
             .expect("read_query page");
         all.extend(response.rows);
@@ -1598,7 +1671,7 @@ async fn test_read_query_pagination_traverses_pages() {
     let collected = collect_all_paged_read_query(&handler_paged, query).await;
 
     let single = handler_full
-        .read_query(query.into(), Some("app".into()), None)
+        .read_query(query.into(), Some("app".into()), None, None)
         .await
         .expect("single page");
     assert_eq!(
@@ -1616,7 +1689,12 @@ async fn test_read_query_pagination_traverses_pages() {
 async fn test_read_query_pagination_small_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query("SELECT id FROM users WHERE id = 1".into(), Some("app".into()), None)
+        .read_query(
+            "SELECT id FROM users WHERE id = 1".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert!(
@@ -1630,7 +1708,12 @@ async fn test_read_query_pagination_small_result_no_next_cursor() {
 async fn test_read_query_pagination_empty_result_no_next_cursor() {
     let handler = handler_with_page_size(2);
     let response = handler
-        .read_query("SELECT id FROM users WHERE id = -1".into(), Some("app".into()), None)
+        .read_query(
+            "SELECT id FROM users WHERE id = -1".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert!(&response.rows.is_empty());
@@ -1644,6 +1727,7 @@ async fn test_read_query_pagination_preserves_inner_limit() {
         .read_query(
             "SELECT id FROM users ORDER BY id LIMIT 1 OFFSET 1".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -1667,6 +1751,7 @@ async fn test_read_query_pagination_off_the_end_cursor_returns_empty() {
             "SELECT id FROM users ORDER BY id".into(),
             Some("app".into()),
             Some(Cursor { offset: 10_000 }),
+            None,
         )
         .await
         .unwrap();
@@ -1703,12 +1788,17 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let handler = handler_with_page_size(2);
 
     let without_cursor = handler
-        .read_query("SHOW TABLES".into(), Some("app".into()), None)
+        .read_query("SHOW TABLES".into(), Some("app".into()), None, None)
         .await
         .expect("SHOW TABLES without cursor should succeed");
 
     let with_cursor = handler
-        .read_query("SHOW TABLES".into(), Some("app".into()), Some(Cursor { offset: 100 }))
+        .read_query(
+            "SHOW TABLES".into(),
+            Some("app".into()),
+            Some(Cursor { offset: 100 }),
+            None,
+        )
         .await
         .expect("SHOW TABLES with cursor should succeed — cursor must be ignored");
 
@@ -1741,7 +1831,7 @@ async fn test_read_query_non_select_describe_users_single_page() {
     let handler = handler_with_page_size(2);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("DESCRIBE users should succeed");
 
@@ -1768,6 +1858,7 @@ async fn test_read_query_returns_non_null_temporal_columns() {
             "SELECT `date`, `time`, `datetime`, `timestamp` FROM temporal WHERE id = 1".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .expect("temporal SELECT should succeed");
@@ -1793,6 +1884,7 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
             "SELECT `blob`, `varbinary`, `text_bin` FROM binary_samples WHERE id = 1".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .expect("binary SELECT should succeed");
@@ -1810,7 +1902,7 @@ async fn test_read_query_describe_types_are_text() {
     let handler = handler(false);
 
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("DESCRIBE users should succeed");
 
@@ -4288,7 +4380,12 @@ fn handler_with_operator(operator: PiiOperator) -> MysqlHandler {
 async fn read_query_redacts_email_when_enabled() {
     let handler = handler_with_redaction(true);
     let rows = handler
-        .read_query("SELECT 'ping me at jane.doe@example.com' AS msg".into(), None, None)
+        .read_query(
+            "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(rows.rows.len(), 1);
@@ -4299,7 +4396,12 @@ async fn read_query_redacts_email_when_enabled() {
 async fn read_query_unchanged_when_disabled() {
     let handler = handler_with_redaction(false);
     let rows = handler
-        .read_query("SELECT 'ping me at jane.doe@example.com' AS msg".into(), None, None)
+        .read_query(
+            "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(rows.rows[0]["msg"], "ping me at jane.doe@example.com");
@@ -4317,7 +4419,12 @@ async fn write_query_redacts_when_enabled() {
         .unwrap();
 
     let rows = handler
-        .read_query("SELECT email FROM users WHERE name = 'PIIWrite'".into(), None, None)
+        .read_query(
+            "SELECT email FROM users WHERE name = 'PIIWrite'".into(),
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(rows.rows[0]["email"], "<EMAIL_ADDRESS>");
@@ -4346,7 +4453,7 @@ async fn explain_query_redacts_when_enabled() {
 async fn read_query_mask_operator_replaces_with_asterisks() {
     let handler = handler_with_operator(PiiOperator::Mask);
     let rows = handler
-        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None)
+        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
         .unwrap();
     let out = rows.rows[0]["msg"].as_str().unwrap();
@@ -4358,7 +4465,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 async fn read_query_redact_operator_returns_empty_span() {
     let handler = handler_with_operator(PiiOperator::Redact);
     let rows = handler
-        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None)
+        .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
         .unwrap();
     assert_eq!(rows.rows[0]["msg"], "");
@@ -4370,6 +4477,7 @@ async fn read_query_hash_operator_emits_stable_digest() {
     let rows = handler
         .read_query(
             "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
+            None,
             None,
             None,
         )
@@ -4393,6 +4501,7 @@ async fn test_read_numeric_columns_round_trip() {
         .read_query(
             "SELECT label, d_small, d_int, d_overflow, f, dbl FROM numeric_samples ORDER BY id".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -4453,6 +4562,7 @@ async fn test_read_decimal_aggregation_exact_precision() {
                 .into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4472,6 +4582,7 @@ async fn test_read_decimal_avg_preserves_precision() {
                 WHERE label IN ('basic', 'trailing_zero')"
                 .into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -4494,6 +4605,7 @@ async fn test_read_float_invalid_math_emits_null() {
                 .into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4513,6 +4625,7 @@ async fn test_read_float_column_full_range() {
         .read_query(
             "SELECT label, f FROM numeric_samples ORDER BY id".into(),
             Some("app".into()),
+            None,
             None,
         )
         .await
@@ -4548,7 +4661,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
 
     let handler = handler(true);
     let response = handler
-        .read_query("SELECT ro_probe_writer()".into(), Some("app".into()), None)
+        .read_query("SELECT ro_probe_writer()".into(), Some("app".into()), None, None)
         .await;
     assert!(response.is_err(), "readQuery must reject a writing function");
 
@@ -4562,7 +4675,12 @@ async fn test_read_only_rejects_side_effecting_functions() {
         .await;
 
     let rows = handler
-        .read_query("SELECT COUNT(*) AS n FROM ro_probe".into(), Some("app".into()), None)
+        .read_query(
+            "SELECT COUNT(*) AS n FROM ro_probe".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
         .await
         .expect("count ro_probe");
     assert_eq!(rows.rows[0]["n"], 0, "no row may be written");
@@ -4604,6 +4722,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
         .read_query(
             "SELECT MIN(id) AS id FROM users WHERE email LIKE 'counter_@test.com'".into(),
             db.clone(),
+            None,
             None,
         )
         .await
@@ -4667,7 +4786,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pi
 async fn read_query_cuts_long_cells_and_reports_truncation() {
     let handler = handler_with_caps(4, 0, false);
     let response = handler
-        .read_query("SELECT 'abcdefghij' AS s".into(), Some("app".into()), None)
+        .read_query("SELECT 'abcdefghij' AS s".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
@@ -4682,7 +4801,7 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
     let query = "SELECT id FROM users ORDER BY id";
 
     let first = handler
-        .read_query(query.into(), Some("app".into()), None)
+        .read_query(query.into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(first.rows.len(), 1);
@@ -4699,7 +4818,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
     // A non-`SELECT` cannot resume, so dropped rows are counted instead.
     let handler = handler_with_caps(0, 12, false);
     let response = handler
-        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .read_query("DESCRIBE users".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows.len(), 1);
@@ -4716,6 +4835,7 @@ async fn read_query_redacts_before_cutting() {
             "SELECT 'contact jane.doe@example.com now' AS msg".into(),
             Some("app".into()),
             None,
+            None,
         )
         .await
         .expect("read_query");
@@ -4727,7 +4847,7 @@ async fn read_query_redacts_before_cutting() {
 async fn read_query_default_caps_leave_small_results_unchanged() {
     let handler = handler(true);
     let response = handler
-        .read_query("SELECT 'abc' AS s".into(), Some("app".into()), None)
+        .read_query("SELECT 'abc' AS s".into(), Some("app".into()), None, None)
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abc");

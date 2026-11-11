@@ -116,6 +116,11 @@ pub struct DatabaseConfig {
     /// server and client timeouts; server defaults apply.
     pub query_timeout: u64,
 
+    /// Largest per-call `readQuery` timeout in seconds (`0` = no cap).
+    ///
+    /// Defaults to [`Self::query_timeout`], so callers can only shorten it.
+    pub max_query_timeout: u64,
+
     /// Maximum items returned in a single paginated tool response.
     ///
     /// Applies uniformly to every paginated tool (currently `list_tables`).
@@ -184,6 +189,21 @@ impl DatabaseConfig {
             );
         }
 
+        if self.max_query_timeout > 0 {
+            let involving = &[env::DB_QUERY_TIMEOUT, env::DB_MAX_QUERY_TIMEOUT];
+            if self.query_timeout == 0 {
+                errors.push(Diagnostic::new(ConfigError::MaxQueryTimeoutWithoutTimeout).involving(involving));
+            } else if self.max_query_timeout < self.query_timeout {
+                errors.push(
+                    Diagnostic::new(ConfigError::MaxQueryTimeoutBelowTimeout(
+                        self.max_query_timeout,
+                        self.query_timeout,
+                    ))
+                    .involving(involving),
+                );
+            }
+        }
+
         if self.ssl {
             for (setting, path) in [
                 (env::DB_SSL_CA, &self.ssl_ca),
@@ -223,6 +243,7 @@ impl Default for DatabaseConfig {
             max_pool_size: Self::DEFAULT_MAX_POOL_SIZE,
             connection_timeout: None,
             query_timeout: Self::DEFAULT_QUERY_TIMEOUT_SECS,
+            max_query_timeout: Self::DEFAULT_QUERY_TIMEOUT_SECS,
             page_size: Self::DEFAULT_PAGE_SIZE,
             max_cell_chars: Self::DEFAULT_MAX_CELL_CHARS,
             max_response_chars: Self::DEFAULT_MAX_RESPONSE_CHARS,
@@ -336,6 +357,26 @@ pub(crate) mod tests {
             debug.contains("page_size: 250"),
             "expected page_size in debug output: {debug}"
         );
+    }
+
+    #[test]
+    fn validate_checks_max_query_timeout_against_query_timeout() {
+        let config = |query_timeout, max_query_timeout| DatabaseConfig {
+            query_timeout,
+            max_query_timeout,
+            ..DatabaseConfig::default()
+        };
+        for (timeout, max) in [(30, 30), (30, 120), (30, 0), (0, 0)] {
+            assert!(config(timeout, max).validate().is_ok(), "{timeout}/{max}");
+        }
+
+        let errors = config(0, 60).validate().expect_err("cap without a timeout");
+        assert!(matches!(errors[0].error, ConfigError::MaxQueryTimeoutWithoutTimeout));
+        let errors = config(30, 10).validate().expect_err("cap below the timeout");
+        assert!(matches!(
+            errors[0].error,
+            ConfigError::MaxQueryTimeoutBelowTimeout(10, 30)
+        ));
     }
 
     #[test]

@@ -134,8 +134,8 @@ impl Connection for PostgresConnection {
         Ok(Some(pid))
     }
 
-    async fn set_timeout(&self, conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
-        let millis = self.config.query_timeout.saturating_mul(1000).to_string();
+    async fn set_timeout(&self, conn: &mut sqlx::PgConnection, secs: u64) -> Result<(), sqlx::Error> {
+        let millis = secs.saturating_mul(1000).to_string();
         sqlx::query("SELECT set_config('statement_timeout', $1, false)")
             .bind(millis)
             .execute(conn)
