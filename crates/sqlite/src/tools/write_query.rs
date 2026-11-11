@@ -1,6 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
+use dbmcp_server::truncate;
 use dbmcp_server::types::WriteQueryResponse;
 
 use super::prelude::*;
@@ -64,10 +65,13 @@ impl SqliteHandler {
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), None).await?;
         let rows = self.redactor.redact_rows(rows).await?;
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+
         Ok(WriteQueryResponse {
-            rows,
+            rows: fitted.rows,
             rows_affected,
             last_insert_id,
+            truncation: fitted.truncation,
         })
     }
 }

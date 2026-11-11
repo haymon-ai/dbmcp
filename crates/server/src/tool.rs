@@ -515,4 +515,39 @@ mod tests {
 
         assert_eq!(ours.get("failing"), rmcp.get("failing"));
     }
+
+    #[test]
+    fn reserved_chars_cover_the_envelope_and_every_field_beside_rows() {
+        use crate::listing::Cursor;
+        use crate::truncate::{HINT, RESERVED_CHARS, Truncation};
+        use crate::types::{ReadQueryResponse, WriteQueryResponse};
+
+        let read = serde_json::to_value(ReadQueryResponse {
+            rows: Vec::new(),
+            next_cursor: Some(Cursor { offset: u64::MAX }),
+            truncation: Truncation {
+                truncated: true,
+                hint: Some(HINT),
+                rows_omitted: Some(u64::MAX),
+            },
+        })
+        .expect("serialize");
+        let write = serde_json::to_value(WriteQueryResponse {
+            rows: Vec::new(),
+            rows_affected: u64::MAX,
+            last_insert_id: Some(u64::MAX),
+            truncation: Truncation {
+                truncated: true,
+                hint: Some(HINT),
+                rows_omitted: Some(u64::MAX),
+            },
+        })
+        .expect("serialize");
+
+        for response in [read, write] {
+            // Everything but the `[]` of the empty rows is overhead.
+            let overhead = envelope(&response.to_string()).chars().count() - 2;
+            assert!(overhead <= RESERVED_CHARS, "{overhead} > {RESERVED_CHARS}");
+        }
+    }
 }

@@ -28,4 +28,6 @@ Only a single SQL statement is accepted.
 
 <what_it_returns>
 A JSON array of execution plan rows showing access methods, join types, row estimates, and costs.
+
+Long string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>

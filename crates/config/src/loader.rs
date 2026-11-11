@@ -291,6 +291,12 @@ impl Resolver<'_> {
                 .int(env::DB_QUERY_TIMEOUT)
                 .unwrap_or(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS),
             page_size: self.int(env::DB_PAGE_SIZE).unwrap_or(DatabaseConfig::DEFAULT_PAGE_SIZE),
+            max_cell_chars: self
+                .int(env::DB_MAX_CELL_CHARS)
+                .unwrap_or(DatabaseConfig::DEFAULT_MAX_CELL_CHARS),
+            max_response_chars: self
+                .int(env::DB_MAX_RESPONSE_CHARS)
+                .unwrap_or(DatabaseConfig::DEFAULT_MAX_RESPONSE_CHARS),
         }
     }
 
@@ -485,6 +491,8 @@ mod tests {
                 "database.max_pool_size" => db.max_pool_size.into(),
                 "database.query_timeout" => db.query_timeout.into(),
                 "database.page_size" => db.page_size.into(),
+                "database.max_cell_chars" => db.max_cell_chars.into(),
+                "database.max_response_chars" => db.max_response_chars.into(),
                 "http.host" => http.host.clone().into(),
                 "http.port" => http.port.into(),
                 "http.allowed_origins" => http.allowed_origins.clone().into(),
@@ -501,7 +509,7 @@ mod tests {
             assert_eq!(default, &resolved, "{}", setting.path);
             compared += 1;
         }
-        assert_eq!(compared, 21);
+        assert_eq!(compared, 23);
     }
 
     #[test]

@@ -121,6 +121,17 @@ pub struct DatabaseConfig {
     /// Applies uniformly to every paginated tool (currently `list_tables`).
     /// Range `1..=500`, enforced by the loader.
     pub page_size: u16,
+
+    /// Maximum characters per string value in query tool rows.
+    ///
+    /// Longer values are cut and marked. `0` disables the cap.
+    pub max_cell_chars: usize,
+
+    /// Maximum characters of one query tool text result.
+    ///
+    /// Trailing rows past the budget are dropped: a paged `SELECT` resumes
+    /// them via its cursor, other calls count them. `0` disables the cap.
+    pub max_response_chars: usize,
 }
 
 impl DatabaseConfig {
@@ -148,6 +159,10 @@ impl DatabaseConfig {
     pub const DEFAULT_PAGE_SIZE: u16 = 100;
     /// Maximum accepted value for `page_size`.
     pub const MAX_PAGE_SIZE: u16 = 500;
+    /// Default per-cell character cap for query tool rows.
+    pub const DEFAULT_MAX_CELL_CHARS: usize = 4096;
+    /// Default per-response character cap for query tool rows.
+    pub const DEFAULT_MAX_RESPONSE_CHARS: usize = 32_000;
 
     /// Validates this configuration, accumulating every rule violation.
     ///
@@ -209,6 +224,8 @@ impl Default for DatabaseConfig {
             connection_timeout: None,
             query_timeout: Self::DEFAULT_QUERY_TIMEOUT_SECS,
             page_size: Self::DEFAULT_PAGE_SIZE,
+            max_cell_chars: Self::DEFAULT_MAX_CELL_CHARS,
+            max_response_chars: Self::DEFAULT_MAX_RESPONSE_CHARS,
         }
     }
 }
@@ -299,6 +316,13 @@ pub(crate) mod tests {
     fn page_size_default_is_100() {
         let config = DatabaseConfig::default();
         assert_eq!(config.page_size, 100);
+    }
+
+    #[test]
+    fn character_caps_default_to_4096_and_32000() {
+        let config = DatabaseConfig::default();
+        assert_eq!(config.max_cell_chars, 4096);
+        assert_eq!(config.max_response_chars, 32_000);
     }
 
     #[test]

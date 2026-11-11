@@ -54,6 +54,21 @@ Cursors are opaque tokens. Treat them as black-box strings — do not parse, mod
 
 Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
+A `readQuery` page can hold fewer rows than the page size when the [response size cap](#output-size-caps) ends it early; its `nextCursor` then resumes at the first row left out.
+
+### Output Size Caps
+
+Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`readQuery`, `writeQuery`, `explainQuery`) cap their `rows` in Unicode characters:
+
+- **Per cell** ([`DBMCP_DB_MAX_CELL_CHARS`](/docs/configuration#server-behavior), default `4096`): every string value longer than the cap, at any depth inside JSON columns, keeps its first characters and ends in `…[truncated, N chars total]`. Binary values count by their base64 text. Object keys are never cut.
+- **Per response** ([`DBMCP_DB_MAX_RESPONSE_CHARS`](/docs/configuration#server-behavior), default `32000`): bounds the whole text result, including the untrusted-data envelope, so it stays under client limits such as Claude Code's 50,000-character and Gemini CLI's 40,000-character thresholds. About 1,500 characters are reserved for the envelope and the fields beside `rows`; trailing rows past the rest are dropped, keeping at least one. A paginated `readQuery` `SELECT` resumes them via `nextCursor`, so no row is lost when the query orders by a unique key. Other statements (`SHOW`, `DESCRIBE`, `EXPLAIN`, `explainQuery`, `writeQuery`) cannot resume, so the response reports the dropped count as `rowsOmitted`; for `writeQuery`, `rowsAffected` still counts every row.
+
+When either cap cuts the output, the response carries `truncated: true` and a `hint` to select fewer or narrower columns, narrow the query, or read a cut value in parts with `SUBSTRING`/`SUBSTR`. Both fields are absent otherwise. Set a cap to `0` to disable it. With [PII redaction](/docs/security) on, values are redacted before they are cut.
+
+```json
+{ "rows": [{ "id": 1, "body": "Lorem ipsum…[truncated, 18234 chars total]" }], "nextCursor": "eyJvZmZzZXQiOjF9", "truncated": true, "hint": "Output exceeded size caps. …" }
+```
+
 ### `listDatabases`
 
 Discover accessible databases on the connected server. This is typically the first tool an assistant calls to understand what data is available. Results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. Not available for SQLite.
@@ -346,13 +361,13 @@ Detailed mode deliberately omits column metadata, `tablespace`, storage paramete
 
 ### `readQuery`
 
-Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation. `SELECT` results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. `SHOW`, `DESCRIBE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
+Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/docs/security) for details on query validation. `SELECT` results are paginated — see [Cursor Pagination](#cursor-pagination) for the protocol. `SHOW`, `DESCRIBE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument. Large values and responses are capped; see [Output Size Caps](#output-size-caps).
 
 ### `writeQuery`
 
 Execute a write SQL query (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`) against a specific database. This tool is only available when read-only mode is disabled. No SQL type validation is performed — the tool boundary is the access control.
 
-Returns `rows` (rows from a `RETURNING` clause, otherwise empty), `rowsAffected` (rows inserted, updated, or deleted; `0` for schema changes), and, on MySQL/MariaDB and SQLite, `lastInsertId` for an `INSERT` that generated one:
+Returns `rows` (rows from a `RETURNING` clause, otherwise empty), `rowsAffected` (rows inserted, updated, or deleted; `0` for schema changes), and, on MySQL/MariaDB and SQLite, `lastInsertId` for an `INSERT` that generated one. `rows` is capped like `readQuery` output (see [Output Size Caps](#output-size-caps)):
 
 ```json
 { "rows": [], "rowsAffected": 1, "lastInsertId": 42 }
