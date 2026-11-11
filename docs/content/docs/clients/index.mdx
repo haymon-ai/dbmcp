@@ -1,0 +1,75 @@
+---
+title: Clients
+description: Add dbmcp to Claude, Codex, VS Code, Cursor, and other MCP clients
+---
+
+Every MCP client keeps its server list in a different file under a different key. Each client below has its own page with a ready-to-paste entry.
+
+Each example has two tabs: **bin** runs the `dbmcp` binary from your `PATH` (see [Installation](/installation)), and **npx** runs `npx -y @haymon-ai/dbmcp`, which needs [Node.js](https://nodejs.org/) 18 or newer and no separate install (see [npm](/installation/package-managers#npm)). To run the Docker image instead, see [Docker or installed binary](#docker-or-installed-binary).
+
+The examples connect to MySQL with `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`. Replace the values with your own; every setting is listed in [Configuration](/configuration). An empty `DBMCP_*` value counts as unset, so a blank value falls back to the default.
+
+## Clients
+
+- [Claude Desktop](/clients/claude-desktop)
+- [Claude Code](/clients/claude-code)
+- [Codex](/clients/codex)
+- [VS Code](/clients/vs-code)
+- [Cursor](/clients/cursor)
+- [Windsurf (Devin Desktop)](/clients/windsurf)
+- [Zed](/clients/zed)
+- [Gemini CLI](/clients/gemini-cli)
+- [Goose](/clients/goose)
+- [JetBrains AI Assistant](/clients/jetbrains)
+- [LM Studio](/clients/lm-studio)
+
+## Docker or installed binary
+
+Every client example works with another launcher: change only `command` and `args`, and keep `env`.
+
+With the binary from the [install script](/installation#quick-install-recommended) on your `PATH`:
+
+```json
+{
+  "command": "dbmcp",
+  "args": []
+}
+```
+
+With [Docker](/installation/docker), pass each variable through with `-e NAME` (no value: Docker copies it from the `env` block). Use `host.docker.internal` to reach a database on your machine:
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "-i", "--rm",
+    "-e", "DBMCP_DB_BACKEND",
+    "-e", "DBMCP_DB_HOST",
+    "-e", "DBMCP_DB_USER",
+    "-e", "DBMCP_DB_PASSWORD",
+    "-e", "DBMCP_DB_NAME",
+    "ghcr.io/haymon-ai/dbmcp"
+  ],
+  "env": {
+    "DBMCP_DB_BACKEND": "mysql",
+    "DBMCP_DB_HOST": "host.docker.internal",
+    "DBMCP_DB_USER": "root",
+    "DBMCP_DB_PASSWORD": "secret",
+    "DBMCP_DB_NAME": "mydb"
+  }
+}
+```
+
+Docker also needs `-i`: without it the container gets no stdin and the client cannot talk to the server.
+
+## Environment Variables vs. `envFile`
+
+| Feature | Claude Code | Claude Desktop | Cursor | Windsurf |
+|---------|-------------|----------------|--------|----------|
+| `env` object | Yes | Yes | Yes | Yes |
+| `envFile` | No | No | Yes | No |
+| Variable interpolation | `${VAR}` | No | `${env:VAR}` | `${env:VAR}` |
+| HTTP transport in config | Yes | No | Yes | Yes |
+| Project-scoped config | Yes | No | Yes | No |
+
+Clients without `envFile` or variable interpolation can still keep secrets out of the JSON config: pass `"args": ["--config-file", "/abs/path/dbmcp.yaml"]` or `"args": ["--env-file", "/abs/path/dbmcp.env"]`. See [Config files](/configuration/config-files).

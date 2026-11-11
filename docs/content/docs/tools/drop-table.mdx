@@ -1,0 +1,6 @@
+---
+title: dropTable
+description: Reference for the dropTable tool
+---
+
+Drop a table from a database. If the table has foreign key dependents, the database error is surfaced directly — no silent failures. On PostgreSQL, a `cascade` parameter is available to force the drop using `CASCADE`, which also removes dependent foreign key constraints. Only available when read-only mode is disabled.

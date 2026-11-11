@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Simulation script for VHS demo GIF.
 # Runs as an interactive session that looks like Claude Code.
-# Usage: ./demo-sim.sh (interactive mode, no arguments)
+# Usage: ./demo.sh (interactive mode, no arguments)
 
 set -euo pipefail
 
-ORANGE='\033[38;2;255;72;0m'
-GREEN='\033[38;2;22;163;74m'
-BLACK='\033[38;2;26;26;26m'
+ACCENT='\033[38;2;143;138;251m'
+GREEN='\033[38;2;66;190;101m'
+FG='\033[38;2;230;233;239m'
 BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
@@ -22,11 +22,11 @@ think() {
 
   for _ in $(seq 1 "$steps"); do
     local idx=$(( i % ${#flowers[@]} ))
-    printf "\r${BLACK}${flowers[$idx]}${RESET} ${DIM}Thinking...${RESET} "
+    printf "\r${FG}${flowers[$idx]}${RESET} ${DIM}Thinking...${RESET} "
     sleep 0.15
     i=$((i + 1))
   done
-  printf "\r${BLACK}✻${RESET} ${DIM}Crunched in ${duration}${RESET}   \n"
+  printf "\r${FG}✻${RESET} ${DIM}Crunched in ${duration}${RESET}   \n"
   sleep 0.2
 }
 
@@ -36,11 +36,11 @@ respond() {
   case "$query" in
     *"how many users"*|*"How many users"*)
       think "1.8s" 1.8
-      printf "\n● ${BOLD}${ORANGE}847${RESET} users are registered in the database.\n"
+      printf "\n● ${BOLD}${ACCENT}847${RESET} users are registered in the database.\n"
       ;;
     *"most posts"*|*"wrote the most"*)
       think "3.2s" 3.2
-      printf "\n● ${BOLD}${ORANGE}Sarah Chen${RESET} with ${GREEN}142${RESET} posts.\n"
+      printf "\n● ${BOLD}${ACCENT}Sarah Chen${RESET} with ${GREEN}142${RESET} posts.\n"
       ;;
     *"recent"*|*"latest"*)
       think "2.4s" 2.4
@@ -62,7 +62,7 @@ clear
 
 # Interactive loop with Claude Code-style prompt
 while true; do
-  printf "${BOLD}${BLACK}>${RESET} "
+  printf "${BOLD}${FG}>${RESET} "
   read -r line || break
   if [[ -z "$line" ]]; then
     continue

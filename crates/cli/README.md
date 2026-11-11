@@ -16,4 +16,4 @@ This crate is an internal component of `dbmcp` and is not intended for direct us
 - Tracing setup and server bootstrap for every supported backend
 - `run()` entry point used by the `dbmcp` binary
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

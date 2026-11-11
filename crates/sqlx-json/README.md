@@ -17,4 +17,4 @@ One trait, three backends. Turn any [`sqlx`](https://crates.io/crates/sqlx) row 
 - `QueryResult` trait exposes `.rows_affected()` generically across backends
 - Tiny surface — one trait, two methods, no macros
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

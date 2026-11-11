@@ -1,0 +1,52 @@
+---
+title: Query timeouts
+description: Limit how long each tool call may run, per server and per call
+---
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query timeout (`0` disables it) |
+| `database.max_query_timeout` | `DBMCP_DB_MAX_QUERY_TIMEOUT` | seconds | `query_timeout` | Largest `timeout` a `readQuery` call may request (`0` = no cap; see [Per-Call Timeout](#per-call-timeout)) |
+
+Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
+
+1. **Server timeout.** Before each statement, dbmcp sets a session statement timeout to what is left of `query_timeout` (time spent waiting for a pooled connection counts), so a `SET` sent through `writeQuery` can't lift it. The database stops the statement itself, and the connection stays usable. On MySQL and MariaDB this costs one extra round trip per query; PostgreSQL sets it in the same round trip as the session id lookup.
+2. **Client backstop.** If no answer arrives within `query_timeout` + 5 s (network stall, proxy, or a statement the server timeout doesn't cover), dbmcp returns the timeout error and kills the statement from a separate connection (`KILL QUERY` / `pg_cancel_backend`), using the same credentials.
+
+Either way the agent sees `Query timed out after …`, followed by a hint to check the plan with `explainQuery`, filter on indexed columns, or limit inner result sets before joining or aggregating. Setting `0` disables both layers. Server defaults and any limit a DBA set then apply, and a server-side timeout still reports as `Query timed out`.
+
+| Backend | Server variable | Covers |
+|---|---|---|
+| MySQL | `max_execution_time` (ms) | Top-level `SELECT` only. Writes, DDL, and `CALL` rely on the backstop kill. |
+| MariaDB | `max_statement_time` (s) | Every top-level statement, including `CALL` |
+| PostgreSQL | `statement_timeout` (ms) | Every statement. A timeout aborts the surrounding transaction. |
+
+On SQLite there is no server. Before each statement, dbmcp installs a progress handler that checks the deadline every 1,000 virtual machine instructions and interrupts the statement once `query_timeout` has passed. The connection stays usable, so the next tool call runs right away. Only the interrupted statement is rolled back: earlier statements of a multi-statement `writeQuery` stay committed. The client backstop still applies, but there is no session to kill.
+
+On MySQL, a `SLEEP()` interrupted by the server timeout returns `1` instead of an error, so the call succeeds early rather than timing out.
+
+With `read_only: false`, writes and DDL are also subject to the timeout. A long migration or bulk `UPDATE` run through dbmcp is stopped. Raise `query_timeout` or set it to `0` for such work.
+
+## Per-Call Timeout
+
+`readQuery` takes an optional `timeout` argument in seconds. It replaces `query_timeout` for that call, on every layer above. It must be at least `1` and at most `max_query_timeout`; any other value is rejected with an error naming the limit. Paging a `SELECT` with `cursor` applies `timeout` per call, so pass it again with each cursor.
+
+`max_query_timeout` defaults to `query_timeout`, so an agent can only shorten the limit until you raise the cap:
+
+```yaml
+database:
+  query_timeout: 30       # every call
+  max_query_timeout: 300  # readQuery may ask for up to 5 minutes
+```
+
+Setting `max_query_timeout: 0` removes the cap, up to the hard limit of 2,147,483 seconds (PostgreSQL's `statement_timeout` maximum). Startup fails if you set a positive `max_query_timeout` below `query_timeout`, or any positive `max_query_timeout` while `query_timeout` is `0`. While `query_timeout` is `0`, `readQuery` rejects the `timeout` argument. Other tools always use `query_timeout`.
+
+## Connection Poolers and Proxies
+
+- **PgBouncer transaction mode: not supported for timeouts.** The session timeout can leak to other clients, and the backstop kill can hit another client's statement. Use session mode, or skip dbmcp's timeout (`query_timeout: 0`) and set one on the role: `ALTER ROLE dbmcp SET statement_timeout = '30s'`.
+- **RDS Proxy:** the session `SET` pins each connection to one backend, so proxy multiplexing is lost. Timeouts still work. To avoid pinning, use `query_timeout: 0` plus a role- or parameter-group-level timeout.
+- **ProxySQL:** supported. It answers `CONNECTION_ID()` and routes `KILL` itself.
+
+## Troubleshooting
+
+If the session `SET` fails (wrong `backend`, value out of range), dbmcp logs a `warn` on every query and relies on the backstop, which then fires at `query_timeout` without the extra 5 s.

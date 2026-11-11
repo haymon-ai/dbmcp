@@ -1,0 +1,83 @@
+---
+title: Docker
+description: Run dbmcp from the multi-arch Docker image
+---
+
+No Rust toolchain or compilation needed.
+
+```bash
+docker pull ghcr.io/haymon-ai/dbmcp:latest
+```
+
+**stdio mode** (for Claude Desktop, Cursor, and other MCP clients):
+
+```bash
+docker run -i --rm \
+  -e DBMCP_DB_BACKEND=postgres \
+  -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+**HTTP mode** (for web clients and remote access):
+
+```bash
+docker run --rm \
+  -e DBMCP_DB_BACKEND=postgres \
+  -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres \
+  -e DBMCP_TRANSPORT=http \
+  -e DBMCP_HTTP_HOST=0.0.0.0 \
+  -e DBMCP_HTTP_AUTH_TOKEN=change-me \
+  -p 9001:9001 \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+Binding `0.0.0.0` requires `DBMCP_HTTP_AUTH_TOKEN`; clients must send `Authorization: Bearer <token>`. Use a long random value (e.g. `openssl rand -hex 32`). The image has no shell or `curl`, so check health from the orchestrator with HTTP probes against [`/healthz` and `/readyz`](/features/health-probes) rather than a Docker `HEALTHCHECK`.
+
+**SQLite with a mounted volume**:
+
+```bash
+docker run -i --rm \
+  -e DBMCP_DB_BACKEND=sqlite \
+  -e DBMCP_DB_NAME=/data/my.db \
+  -v /path/to/local/db:/data \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+To redact personal data in query results, add `-e DBMCP_PII_ENABLE=true` to any of these commands (see [Data Privacy](/privacy)).
+
+Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/dbmcp:<version>`.
+
+To run the image on Kubernetes, use the [Helm chart](/kubernetes).
+
+## Configuration in the container
+
+The image has no built-in config file and sets no `DBMCP_CONFIG_FILE`. Choose one of:
+
+**Environment variables** — pass `DBMCP_*` with `-e`:
+
+```bash
+docker run -i --rm \
+  -e DBMCP_DB_BACKEND=postgres -e DBMCP_DB_HOST=host.docker.internal \
+  -e DBMCP_DB_USER=postgres -e DBMCP_DB_PASSWORD -e DBMCP_DB_NAME=myapp \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+**Docker's env file** — Docker's own `--env-file`, given before the image name, loads the variables into the container's environment; it is not dbmcp's `--env-file`. Docker parses this file itself: it has no quoting or `${}` expansion, so keep values plain.
+
+```bash
+docker run -i --rm --env-file ./dbmcp.env ghcr.io/haymon-ai/dbmcp
+```
+
+**Mounted config file** — mount the directory read-only and name the file with `DBMCP_CONFIG_FILE` (or pass `--config-file` after the image name). Relative paths inside the file resolve against the mounted directory, so keep certificates and keys beside it. To use a [dbmcp env file](/configuration/env-files), mount the env file too and set `DBMCP_ENV_FILE`.
+
+```bash
+docker run -i --rm \
+  -v "$PWD/config:/config:ro" \
+  -e DBMCP_CONFIG_FILE=/config/dbmcp.yaml \
+  -e DB_PASSWORD \
+  ghcr.io/haymon-ai/dbmcp
+```
+
+All paths in `DBMCP_CONFIG_FILE`, `DBMCP_ENV_FILE`, and the files themselves are container paths.

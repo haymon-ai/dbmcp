@@ -23,4 +23,4 @@ Supported platforms: Linux x64 and arm64 (glibc 2.34+ and libstdc++ from GCC 12+
 }
 ```
 
-See the [documentation](https://dbmcp.haymon.ai/docs) for every setting and the [repository](https://github.com/haymon-ai/dbmcp) for source and issues.
+See the [documentation](https://dbmcp.haymon.ai/) for every setting and the [repository](https://github.com/haymon-ai/dbmcp) for source and issues.

@@ -1,0 +1,48 @@
+---
+title: listMaterializedViews
+description: Reference for the listMaterializedViews tool
+---
+
+List materialized views in the `public` schema of a PostgreSQL database. Unlike regular views, materialized views store their results physically and must be refreshed explicitly. Regular views and system-schema matviews are excluded. Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. PostgreSQL only — not available for MySQL, MariaDB, or SQLite.
+
+The tool accepts these optional parameters:
+
+- `cursor` — opaque pagination token; pass back the prior response's `nextCursor` to fetch the next page.
+- `search` — a case-insensitive substring filter on materialized view name: `orders` matches `orders`, `mv_orders`, and `orders_daily`. The value is wrapped as `%orders%` in a `LIKE`/`ILIKE` pattern, so `%` and `_` inside it still act as wildcards (`_` matches any single character). SQL meta-characters (`'`, `;`, `--`) are bound as parameter values and never interpolated. The `search` value must remain identical across paginated calls for cursor continuity.
+- `detailed` — when `true`, the response includes per-matview metadata (`schema`, `owner`, `description`, `definition`, `populated`, `indexed`) so a single call enumerates matviews and inspects them. Defaults to `false`.
+
+In **brief mode** (default) the response is a sorted JSON array of matview-name strings. Matview names are unique per schema, so no duplicates appear:
+
+```json
+{
+  "entries": ["mv_archived_orders", "mv_orders_by_region", "mv_recent_orders"]
+}
+```
+
+In **detailed mode** the response is keyed by **bare matview name** — matviews cannot overload, so no signature suffix is needed. The matview name is the map key only; it is **not** repeated inside the value. Brief and detailed pages share the same `matviewname` row order, so a client can switch `detailed` mid-pagination without losing position:
+
+```json
+{
+  "entries": {
+    "mv_orders_by_region": {
+      "schema": "public",
+      "owner": "app_user",
+      "description": "Orders rolled up by region for the BI dashboard.",
+      "definition": " WITH paid_orders AS (\n         SELECT orders.id, orders.customer_id, orders.total\n           FROM orders\n          WHERE orders.status = 'paid'\n        )\n SELECT customer_id AS region, count(*) AS order_count, sum(total) AS gross\n   FROM paid_orders\n  GROUP BY customer_id;",
+      "populated": true,
+      "indexed": true
+    }
+  }
+}
+```
+
+Per-entry fields (sourced from `pg_matviews` joined to `pg_class` for the OID needed by `obj_description`):
+
+- `schema` — schema name (always `"public"` in this build).
+- `owner` — owning role's name from `pg_matviews.matviewowner`.
+- `description` — `COMMENT ON MATERIALIZED VIEW` text, or `null` when no comment.
+- `definition` — the SELECT body verbatim from `pg_matviews.definition`, with no `CREATE MATERIALIZED VIEW` wrapper.
+- `populated` — `true` once the matview has been refreshed at least once. `false` for matviews created `WITH NO DATA` and never refreshed; querying such a matview returns zero rows until `REFRESH MATERIALIZED VIEW` runs.
+- `indexed` — `true` when at least one index exists on the matview. `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index; this tool reports the broader has-any-index signal.
+
+Detailed mode deliberately omits column metadata, `tablespace`, storage parameters, and unique-index detection. Column shape is recoverable from the `definition` text or via `listTables(detailed=true)` since Postgres exposes matviews in `pg_class`. Unique-index detection requires a `pg_index` join — advanced callers can `readQuery` `pg_indexes` for that.

@@ -7,15 +7,15 @@ Set Width 900
 Set Height 500
 Set Padding 20
 Set Margin 0
-Set MarginFill "#ffffff"
-Set BorderRadius 2
+Set MarginFill "#01112c"
+Set BorderRadius 0
 Set WindowBar Colorful
 Set WindowBarSize 40
 Set TypingSpeed 80ms
 Set Framerate 24
 Set CursorBlink false
 
-Set Theme {"name":"dbmcp","black":"#1a1a1a","red":"#ff4800","green":"#16a34a","yellow":"#d97706","blue":"#2563eb","magenta":"#9333ea","cyan":"#0891b2","white":"#374151","brightBlack":"#6b7280","brightRed":"#ff6b35","brightGreen":"#22c55e","brightYellow":"#f59e0b","brightBlue":"#3b82f6","brightMagenta":"#a855f7","brightCyan":"#06b6d4","brightWhite":"#111827","background":"#ffffff","foreground":"#1a1a1a","selection":"#ff480020","cursor":"#ff4800"}
+Set Theme {"name":"dbmcp","black":"#01112c","red":"#ff8389","green":"#42be65","yellow":"#f1c21b","blue":"#78a9ff","magenta":"#8f8afb","cyan":"#3ddbd9","white":"#c9d1e0","brightBlack":"#9aa6bc","brightRed":"#ffb3b8","brightGreen":"#6fdc8c","brightYellow":"#fddc69","brightBlue":"#a6c8ff","brightMagenta":"#b9b5ff","brightCyan":"#9ef0f0","brightWhite":"#e6e9ef","background":"#01112c","foreground":"#e6e9ef","selection":"#625bf840","cursor":"#8f8afb"}
 
 # Hidden setup: launch interactive simulation
 Hide

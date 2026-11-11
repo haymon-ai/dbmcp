@@ -1,0 +1,55 @@
+---
+title: Read-only mode
+description: How read-only mode limits the tools and SQL an assistant can use
+---
+
+By default, Database MCP runs in **read-only mode**. This controls which tools the AI assistant can see and use.
+
+## Setting
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.read_only` | `DBMCP_DB_READ_ONLY` | boolean | `true` | Enable read-only mode |
+
+> **Security note**: Read-only mode is **enabled by default**. In this mode, write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`) are hidden from the AI assistant. Only read tools are available, and `readQuery` enforces SQL validation (`SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN` only). Set `DBMCP_DB_READ_ONLY=false` (or `read_only: false` under `database` in the config file) to enable write tools.
+
+## Tool-Level Access Control
+
+In read-only mode, write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`) are not registered with the MCP client. The AI assistant never sees them in the tool list, which prevents it from attempting write operations entirely.
+
+When read-only mode is disabled, the full tool set becomes available. See [Tools](/tools#tool-availability) for the complete tool availability matrix.
+
+## SQL Validation in `readQuery`
+
+The `readQuery` tool enforces AST-based SQL validation as defence-in-depth. Only the following SQL operations are permitted:
+
+- `SELECT` — read data from tables
+- `SHOW` — view database and table metadata
+- `DESCRIBE` / `DESC` — inspect table structure
+- `EXPLAIN` — view query execution plans
+
+`USE` is rejected, in `readQuery` and in `writeQuery`: it would change the database of a pooled connection for later queries. Pass the `database` argument to target another database.
+
+> **Limitation**: `writeQuery` only detects `USE` in SQL the parser can read. On MySQL and MariaDB, a `USE` that follows a statement the parser does not support (for example `DO 1; USE other`) still runs, because database connections accept multi-statement queries (see [Multi-Statement Blocking](/security#multi-statement-blocking)).
+
+This validation is always enforced, even when read-only mode is disabled, preventing write statements from being smuggled through the read tool.
+
+## Read-Only Transactions
+
+On MySQL, MariaDB, and PostgreSQL, `readQuery` runs every statement inside a `START TRANSACTION READ ONLY` transaction, and so does `explainQuery` in read-only mode. The database itself rejects writes to data, including writes made by functions that pass validation, such as sequence functions (`nextval`), large-object functions, and user-defined functions. The transaction is always rolled back; on PostgreSQL this also keeps session settings changed by a query from carrying over to later queries.
+
+SQLite has no read-only transactions. Instead, in read-only mode the database file is opened read-only (`SQLITE_OPEN_READONLY`), so SQLite itself rejects every write, including writes to attached databases.
+
+## Blocked Operations
+
+The following are always blocked regardless of mode:
+
+- `LOAD_FILE()` — prevents reading files from the server filesystem
+- `SELECT INTO OUTFILE` / `SELECT INTO DUMPFILE` — prevents writing files to the server filesystem
+- Session locks (`GET_LOCK`, `pg_advisory_*`), backend signalling (`pg_cancel_backend`, `pg_terminate_backend`), and PostgreSQL server administration functions (`pg_reload_conf`, `pg_switch_wal`, replication slots, restore points, statistics resets) — read-only transactions do not stop these
+
+SQL comments and string contents are stripped before validation to prevent bypass attempts.
+
+## Disabling Read-Only Mode
+
+Read-only mode can be explicitly disabled if you need write access. Set the `DBMCP_DB_READ_ONLY` environment variable to `false`, or `database.read_only: false` in the config file. This makes `writeQuery`, `createDatabase`, `dropDatabase`, and `dropTable` (where supported) available to the AI assistant. Only disable read-only mode in environments where you trust the AI assistant to make changes to your data.

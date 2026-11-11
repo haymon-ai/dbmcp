@@ -16,4 +16,4 @@ Typed configuration for [dbmcp](https://dbmcp.haymon.ai) — the single-binary M
 - Kebab-case setting values for `DatabaseBackend` (`mysql`, `mariadb`, `postgres`, `sqlite`)
 - `thiserror`-based error types
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

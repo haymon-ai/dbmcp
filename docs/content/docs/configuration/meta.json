@@ -1,0 +1,11 @@
+{
+  "pages": [
+    "index",
+    "precedence",
+    "config-files",
+    "yaml-format",
+    "env-files",
+    "interpolation",
+    "errors"
+  ]
+}

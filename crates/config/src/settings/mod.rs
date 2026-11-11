@@ -397,11 +397,19 @@ mod tests {
         let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/content/docs");
         let dir = tempfile::tempdir().expect("tempdir");
         let mut checked = 0;
-        for entry in std::fs::read_dir(&docs).expect("docs directory") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().is_none_or(|ext| ext != "mdx") {
-                continue;
+        let mut dirs = vec![docs];
+        let mut pages = Vec::new();
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).expect("docs directory") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "mdx") {
+                    pages.push(path);
+                }
             }
+        }
+        for path in pages {
             let text = std::fs::read_to_string(&path).expect("readable doc");
             let mut lines = text.lines().enumerate();
             while let Some((start, line)) = lines.next() {

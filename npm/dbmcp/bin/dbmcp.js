@@ -12,7 +12,7 @@ const pkg = `@haymon-ai/dbmcp-${process.platform}-${process.arch}`;
 if (!(pkg in optionalDependencies)) {
   console.error(
     `dbmcp: no prebuilt binary for ${process.platform}-${process.arch}. ` +
-      "Install from source with `cargo install dbmcp`: https://dbmcp.haymon.ai/docs/installation",
+      "Install from source with `cargo install dbmcp`: https://dbmcp.haymon.ai/installation",
   );
   process.exit(1);
 }

@@ -17,4 +17,4 @@ SQLite backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP se
 - Optional PII redaction on every `readQuery` payload
 - Zero server — perfect for local AI tools, demos, and CI
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

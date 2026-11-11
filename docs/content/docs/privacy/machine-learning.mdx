@@ -1,0 +1,98 @@
+---
+title: Machine Learning
+description: Detect names of people, places, and organizations with an optional machine-learning (NER) model
+---
+
+The regex/checksum recognisers cannot catch free-form **person names**, **place names**, **organizations**, **nationality/religious/political groups**, or **facilities** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection on top of the regex layer. Which entities a given model can produce depends on its label set: a CoNLL model (e.g. `dslim/bert-base-NER`) yields person/location/organization, while an OntoNotes-class model additionally yields NRP and facility.
+
+It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `pii.enabled` and `pii.ner_enabled` are true and a model directory is supplied.
+
+Inference uses **ONNX Runtime** — there is **no external runtime library** to install: you need only the `dbmcp` binary and a model directory. The directory must contain:
+
+- `config.json` (with an `id2label` map exposing at least one supported NER label: `PER`/`PERSON`, `LOC`/`GPE`, `ORG`/`ORGANIZATION`, `NORP`/`NRP`, or `FAC`)
+- `tokenizer.json`
+- `model.onnx`
+
+Any other files in the directory are ignored — `dbmcp` reads only these three.
+
+## Set up a model locally
+
+The quickest path is to download a model that has already been exported to ONNX. The steps below use the recommended English model, [`optimum/bert-base-NER`](https://huggingface.co/optimum/bert-base-NER) — an ONNX export of `dslim/bert-base-NER` (MIT licensed). It uses CoNLL labels, so it detects `PERSON`, `LOCATION`, and `ORGANIZATION`; [`protectai/bert-base-NER-onnx`](https://huggingface.co/protectai/bert-base-NER-onnx) is an equivalent alternative. NRP and facility detection require an OntoNotes-class model. The pipeline is model-agnostic — any directory with the three files above works, including multilingual models (see [Multilingual and int8 models](#multilingual-and-int8-models)).
+
+> **Note:** These pre-exported models are full-precision (fp32, ~430 MB). They need no Python toolchain to obtain, but an int8-quantized export is smaller and faster at inference (see [Multilingual and int8 models](#multilingual-and-int8-models)).
+
+**1. Download the model into a local directory** — either with the Hugging Face CLI (`pip install huggingface_hub`):
+
+```bash
+hf download optimum/bert-base-NER \
+  --include config.json tokenizer.json model.onnx \
+  --local-dir ./models/bert-ner
+```
+
+`--include` fetches only the three required files and skips the rest.
+
+or with `git` + Git LFS (the `model.onnx` weights are LFS-tracked):
+
+```bash
+git lfs install
+git clone https://huggingface.co/optimum/bert-base-NER ./models/bert-ner
+```
+
+or manually from the browser — open the model's [**Files and versions**](https://huggingface.co/optimum/bert-base-NER/tree/main) tab on Hugging Face and download `config.json`, `tokenizer.json`, and `model.onnx` with the download icon next to each, saving all three into one directory (e.g. `./models/bert-ner`).
+
+**2. Confirm the required files are present:**
+
+```bash
+ls ./models/bert-ner
+# config.json  model.onnx  tokenizer.json  (plus vocab.txt, tokenizer_config.json, … — ignored)
+```
+
+**3. Start `dbmcp` with the NER pass enabled, pointing at the directory:**
+
+```bash
+DBMCP_DB_BACKEND=sqlite DBMCP_DB_NAME=app.db \
+DBMCP_PII_ENABLE=true DBMCP_PII_NER_ENABLE=true DBMCP_PII_NER_MODEL=./models/bert-ner \
+  dbmcp
+```
+
+or, in a config file (relative paths resolve against the file's directory):
+
+```yaml
+database:
+  backend: sqlite
+  name: app.db
+pii:
+  enabled: true
+  ner_enabled: true
+  ner_model: ./models/bert-ner
+```
+
+**4. Verify it loaded.** Loading is **fail-closed**: a missing file or an unusable model makes the server refuse to start, so a clean startup means the model loaded. To confirm the pass is rewriting output, run a `readQuery` over a column holding a person or place name and check the value comes back as `<PERSON>` / `<LOCATION>` (with the default `replace` operator).
+
+Behaviour notes:
+
+- **Fail-closed.** If `pii.ner_enabled` is true but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
+- **Category-aware.** The NER pass respects `pii.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
+
+## Multilingual and int8 models
+
+Any token-classification model exported to ONNX works, in any language. For non-English data, a multilingual model such as [`Davlan/bert-base-multilingual-cased-ner-hrl`](https://huggingface.co/Davlan/bert-base-multilingual-cased-ner-hrl) (ten languages, CoNLL-style `PER` / `LOC` / `ORG` labels) detects `PERSON`, `LOCATION`, and `ORGANIZATION`. It has no pre-exported ONNX build, so export it with [Hugging Face Optimum](https://huggingface.co/docs/optimum-onnx/index) (`pip install "optimum[onnxruntime]"`):
+
+```bash
+optimum-cli export onnx \
+  --model Davlan/bert-base-multilingual-cased-ner-hrl \
+  --task token-classification \
+  ./models/bert-ner-multi
+```
+
+The output directory holds `config.json`, `tokenizer.json`, and `model.onnx`, ready for `pii.ner_model`.
+
+An int8-quantized export runs much faster on CPU: about 3.5× in our test (12 s vs 42 s for ~2k cells). Quantize an exported directory, then rename the result to `model.onnx` and copy the tokenizer across:
+
+```bash
+optimum-cli onnxruntime quantize --onnx_model ./models/bert-ner-multi --avx2 -o ./models/bert-ner-multi-int8
+mv ./models/bert-ner-multi-int8/model_quantized.onnx ./models/bert-ner-multi-int8/model.onnx
+cp ./models/bert-ner-multi/config.json ./models/bert-ner-multi/tokenizer.json ./models/bert-ner-multi-int8/
+```
+
+Use `--arm64` instead of `--avx2` on ARM CPUs. Quantization can cost a little accuracy; check a sample of your data before relying on it.
