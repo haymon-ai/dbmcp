@@ -1,10 +1,11 @@
 //! Optional ML/NER recognizer pass: ONNX BERT token-classification.
 //!
 //! Loads a user-provided model directory
-//! (`tokenizer.json`, `config.json`, `model.onnx`) and detects person and
-//! location spans via `ort` + `tokenizers`. Emitted [`RecognizerResult`]s
-//! carry byte offsets, so they merge with the regex recognizers through
-//! `crate::overlap::resolve` exactly like any pattern hit.
+//! (`tokenizer.json`, `config.json`, `model.onnx`) and detects person,
+//! location, organization, NRP, and facility spans via `ort` + `tokenizers`.
+//! Emitted [`RecognizerResult`]s carry byte offsets, so they merge with the
+//! regex recognizers through `crate::overlap::resolve` exactly like any
+//! pattern hit.
 //!
 //! This module owns the decode glue (softmax, BIO decoding, subword
 //! aggregation, scoring, label mapping); the engine wiring lives alongside.
