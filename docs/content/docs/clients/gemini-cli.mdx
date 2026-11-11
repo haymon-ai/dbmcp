@@ -1,0 +1,71 @@
+---
+title: Gemini CLI
+description: Add dbmcp to Gemini CLI
+---
+
+Add the server to `~/.gemini/settings.json` (all projects) or `.gemini/settings.json` (this project):
+
+```json tab="bin" title="~/.gemini/settings.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "$DBMCP_DB_PASSWORD",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title="~/.gemini/settings.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "$DBMCP_DB_PASSWORD",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+<Callout type="warn">
+Gemini CLI removes inherited environment variables whose names contain `PASSWORD`, `TOKEN`, `SECRET`, `KEY`, `AUTH`, or `CREDENTIAL` before it starts a server. Set `DBMCP_DB_PASSWORD` in the server's `env`, as above: an exported `DBMCP_DB_PASSWORD` alone never reaches dbmcp.
+</Callout>
+
+Or add the server from the command line (`-s user` for all projects):
+
+```bash tab="bin"
+gemini mcp add -s user -e DBMCP_DB_BACKEND=mysql -e DBMCP_DB_USER=root \
+  -e DBMCP_DB_PASSWORD=secret -e DBMCP_DB_NAME=mydb dbmcp dbmcp
+```
+
+```bash tab="npx"
+gemini mcp add -s user -e DBMCP_DB_BACKEND=mysql -e DBMCP_DB_USER=root \
+  -e DBMCP_DB_PASSWORD=secret -e DBMCP_DB_NAME=mydb dbmcp npx -y @haymon-ai/dbmcp
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`, use `httpUrl` (`url` means SSE in Gemini CLI):
+
+```json title="~/.gemini/settings.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "httpUrl": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```

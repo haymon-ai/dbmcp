@@ -1,0 +1,14 @@
+---
+title: writeQuery
+description: Reference for the writeQuery tool
+---
+
+Execute a write SQL query (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`) against a specific database. This tool is only available when read-only mode is disabled. No SQL type validation is performed — the tool boundary is the access control.
+
+Returns `rows` (rows from a `RETURNING` clause, otherwise empty), `rowsAffected` (rows inserted, updated, or deleted; `0` for schema changes), and, on MySQL/MariaDB and SQLite, `lastInsertId` for an `INSERT` that generated one. `rows` is capped like `readQuery` output (see [Output Size Caps](/features/pagination#output-size-caps)):
+
+```json
+{ "rows": [], "rowsAffected": 1, "lastInsertId": 42 }
+```
+
+On MySQL/MariaDB, `UPDATE` counts matched rows, even when values did not change, and `lastInsertId` is the first id of a multi-row insert. PostgreSQL has no `lastInsertId`; use `RETURNING id`. On SQLite, `lastInsertId` appears only after `INSERT`/`REPLACE`; use `RETURNING` for `WITHOUT ROWID` tables and upserts.

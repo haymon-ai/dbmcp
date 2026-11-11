@@ -16,7 +16,7 @@ const AFTER_HELP: &str = "\
 Settings come from DBMCP_* environment variables, the env files (--env-file),
 or the YAML config files (--config-file), ranked process env > env files >
 config files > defaults.
-Every setting is listed at https://dbmcp.haymon.ai/docs/configuration";
+Every setting is listed at https://dbmcp.haymon.ai/configuration";
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
@@ -132,6 +132,6 @@ mod tests {
             help.contains("--env-file <PATH>") && help.contains("[env: DBMCP_ENV_FILE]"),
             "{help}"
         );
-        assert!(help.contains("https://dbmcp.haymon.ai/docs/configuration"), "{help}");
+        assert!(help.contains("https://dbmcp.haymon.ai/configuration"), "{help}");
     }
 }

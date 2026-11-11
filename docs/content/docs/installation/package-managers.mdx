@@ -1,0 +1,47 @@
+---
+title: Package Managers
+description: Install dbmcp with npm or Cargo
+---
+
+## Cargo
+
+If you have the [Rust toolchain](https://rustup.rs/) installed:
+
+```bash
+cargo install dbmcp
+```
+
+This builds from source and installs the binary to `~/.cargo/bin/`.
+
+Verify the installation:
+
+```bash
+dbmcp --help
+```
+
+## npm
+
+With [Node.js](https://nodejs.org/) 18 or newer, MCP clients can launch dbmcp through `npx` without a separate install step:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_USER": "root"
+      }
+    }
+  }
+}
+```
+
+Pin a version with `@haymon-ai/dbmcp@<version>`. To install globally instead:
+
+```bash
+npm install -g @haymon-ai/dbmcp
+```
+
+The package is a small launcher. npm installs the native binary for your platform as an optional dependency, so don't install with `--omit=optional`. Prebuilt packages exist for Linux x64 and arm64 (glibc 2.34 and libstdc++ from GCC 12 or newer; musl/Alpine is not supported), macOS arm64, and Windows x64.

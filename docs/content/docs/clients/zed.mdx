@@ -1,0 +1,55 @@
+---
+title: Zed
+description: Add dbmcp to Zed
+---
+
+Open your settings with **zed: open settings file** and add the server under `context_servers`:
+
+```json tab="bin" title="settings.json"
+{
+  "context_servers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title="settings.json"
+{
+  "context_servers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`, set `url` and `headers` instead of `command`. Without an `Authorization` header, Zed starts an OAuth flow.
+
+```json title="settings.json"
+{
+  "context_servers": {
+    "dbmcp": {
+      "url": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```

@@ -1,0 +1,65 @@
+---
+title: Binaries
+description: Download a prebuilt dbmcp binary for Linux, macOS, or Windows
+---
+
+Download the latest release from GitHub.
+
+## Linux
+
+**x86_64 (Intel/AMD)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-unknown-linux-gnu.tar.gz
+tar xzf dbmcp-x86_64-unknown-linux-gnu.tar.gz
+sudo mv dbmcp /usr/local/bin/
+```
+
+**aarch64 (ARM)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-aarch64-unknown-linux-gnu.tar.gz
+tar xzf dbmcp-aarch64-unknown-linux-gnu.tar.gz
+sudo mv dbmcp /usr/local/bin/
+```
+
+## macOS
+
+**Apple Silicon (M1/M2/M3/M4)**:
+
+```bash
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-aarch64-apple-darwin.tar.gz
+tar xzf dbmcp-aarch64-apple-darwin.tar.gz
+sudo mv dbmcp /usr/local/bin/
+```
+
+**Intel**: not supported. ONNX Runtime, used for NER-based PII detection, ships no x86_64 macOS build. Use the [Docker](/installation/docker) image instead.
+
+## Windows
+
+**x86_64**:
+
+Download the latest release:
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-pc-windows-msvc.zip -OutFile dbmcp.zip
+Expand-Archive dbmcp.zip -DestinationPath .
+```
+
+Move `dbmcp.exe` to a directory on your PATH, or run it directly from the extracted location.
+
+Verify the installation:
+
+```powershell
+dbmcp.exe --help
+```
+
+---
+
+For older versions or other assets, see the [GitHub Releases](https://github.com/haymon-ai/dbmcp/releases) page.
+
+Verify the installation (Linux/macOS):
+
+```bash
+dbmcp --help
+```

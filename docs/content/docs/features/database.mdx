@@ -1,0 +1,51 @@
+---
+title: Database connection
+description: Connect dbmcp to MySQL, MariaDB, PostgreSQL, or SQLite
+---
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.backend` | `DBMCP_DB_BACKEND` | enum | `mysql` | Database backend: `mysql`, `mariadb`, `postgres`, `sqlite` |
+| `database.host` | `DBMCP_DB_HOST` | string | `localhost` | Database host (as seen from the SSH server when tunnelling) |
+| `database.port` | `DBMCP_DB_PORT` | integer | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
+| `database.user` | `DBMCP_DB_USER` | string | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
+| `database.password` | `DBMCP_DB_PASSWORD` | string | — | Database password |
+| `database.name` | `DBMCP_DB_NAME` | string / path | — | Database name, or file path for SQLite. Pinning a name hides `listDatabases`, `createDatabase`, and `dropDatabase` on MySQL/PostgreSQL. |
+
+## Character Set
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.charset` | `DBMCP_DB_CHARSET` | string | — | Character set (**MySQL/MariaDB only**) |
+
+## Backend Defaults
+
+Default values for `database.port` and `database.user` depend on the selected backend:
+
+| Backend | Default Port | Default User |
+|---------|-------------|-------------|
+| MySQL | `3306` | `root` |
+| MariaDB | `3306` | `root` |
+| PostgreSQL | `5432` | `postgres` |
+| SQLite | N/A | N/A |
+
+SQLite does not use host, port, or user — only `database.name` (the file path) is required. In a YAML or env file, a relative SQLite path resolves against that file's directory; `:memory:` is passed through unchanged.
+
+## SSL / TLS
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.ssl` | `DBMCP_DB_SSL` | boolean | `false` | Enable SSL for the database connection |
+| `database.ssl_ca` | `DBMCP_DB_SSL_CA` | path | — | Path to CA certificate |
+| `database.ssl_cert` | `DBMCP_DB_SSL_CERT` | path | — | Path to client certificate |
+| `database.ssl_key` | `DBMCP_DB_SSL_KEY` | path | — | Path to client key |
+| `database.ssl_verify_cert` | `DBMCP_DB_SSL_VERIFY_CERT` | boolean | `true` | Verify the server certificate |
+
+When `database.ssl` is enabled, the server validates that any provided certificate paths exist before connecting.
+
+## Connection pool
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.max_pool_size` | `DBMCP_DB_MAX_POOL_SIZE` | integer | `5` | Maximum database connection pool size (at least 1) |
+| `database.connection_timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | seconds | — | Connection timeout (at least 1; unset uses the driver default) |

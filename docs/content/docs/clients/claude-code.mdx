@@ -1,0 +1,62 @@
+---
+title: Claude Code
+description: Add dbmcp to Claude Code
+---
+
+Add the server with `claude mcp add`. Options go before the server name, and the launch command follows `--`:
+
+```bash tab="bin"
+claude mcp add --env DBMCP_DB_BACKEND=mysql --env DBMCP_DB_HOST=127.0.0.1 \
+  --env DBMCP_DB_USER=root --env DBMCP_DB_PASSWORD=secret --env DBMCP_DB_NAME=mydb \
+  --transport stdio --scope user dbmcp -- dbmcp
+```
+
+```bash tab="npx"
+claude mcp add --env DBMCP_DB_BACKEND=mysql --env DBMCP_DB_HOST=127.0.0.1 \
+  --env DBMCP_DB_USER=root --env DBMCP_DB_PASSWORD=secret --env DBMCP_DB_NAME=mydb \
+  --transport stdio --scope user dbmcp -- npx -y @haymon-ai/dbmcp
+```
+
+Keep another option, such as `--transport stdio`, between the last `--env` and the name: otherwise `--env` reads the name as another `KEY=value` pair. `--scope` is `local` (default, this project only), `project` (writes `.mcp.json`), or `user` (all projects).
+
+To share the server with your team, commit a `.mcp.json` and let each developer supply the password from their own environment with `${VAR}` expansion:
+
+```json tab="bin" title=".mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title=".mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`:
+
+```bash
+claude mcp add --transport http dbmcp http://127.0.0.1:9001/mcp --header "Authorization: Bearer $DBMCP_TOKEN"
+```

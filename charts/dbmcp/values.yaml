@@ -1,6 +1,6 @@
 # Default values for the dbmcp chart.
 # The chart always runs dbmcp with the `http` transport.
-# See https://dbmcp.haymon.ai/docs/kubernetes
+# See https://dbmcp.haymon.ai/kubernetes
 
 image:
   repository: ghcr.io/haymon-ai/dbmcp
@@ -16,7 +16,7 @@ fullnameOverride: ""
 replicaCount: 1
 
 # dbmcp YAML config, rendered verbatim into a ConfigMap as dbmcp.yaml.
-# Every key from https://dbmcp.haymon.ai/docs/configuration works here.
+# Every key from https://dbmcp.haymon.ai/configuration works here.
 # The chart sets transport, http.host, http.port, and http.allowed_hosts through
 # environment variables, which win over this file; entries in http.allowed_hosts
 # are added to the Service DNS names, localhost, and the Ingress hosts.

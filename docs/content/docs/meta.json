@@ -1,3 +1,23 @@
 {
-  "pages": ["index", "installation", "kubernetes", "clients", "configuration", "config-file", "features", "security", "license"]
+  "pages": [
+    "!index",
+    "---Get started---",
+    "...installation",
+    "kubernetes",
+    "installation/from-source",
+    "---Clients---",
+    "...clients",
+    "---Configuration---",
+    "...configuration",
+    "---Features---",
+    "...features",
+    "---Data Privacy---",
+    "...privacy",
+    "---Tools---",
+    "...tools",
+    "---Security---",
+    "...security",
+    "---About---",
+    "license"
+  ]
 }

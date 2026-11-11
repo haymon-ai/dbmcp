@@ -44,7 +44,7 @@ Pin a chart version with `--version <version>`. The chart version always matches
 
 ## Configuration
 
-`config` holds a regular [config file](/docs/config-file). The chart renders it into a ConfigMap and points `DBMCP_CONFIG_FILE` at it, so every [setting](/docs/configuration) works there. The chart sets these settings itself through environment variables, which take precedence over the file:
+`config` holds a regular [config file](/configuration/config-files). The chart renders it into a ConfigMap and points `DBMCP_CONFIG_FILE` at it, so every [setting](/configuration) works there. The chart sets these settings itself through environment variables, which take precedence over the file:
 
 | Setting | Value |
 |---------|-------|
@@ -68,7 +68,7 @@ existingSecret:
   passwordKey: db-password   # optional
 ```
 
-The chart refuses to render without a token, because dbmcp will not serve a non-loopback address without one (see [HTTP Transport Authentication](/docs/security#http-transport-authentication)). `auth.dangerouslyAllowUnauthenticated: true` removes that check.
+The chart refuses to render without a token, because dbmcp will not serve a non-loopback address without one (see [HTTP Transport Authentication](/features/transports#authentication)). `auth.dangerouslyAllowUnauthenticated: true` removes that check.
 
 For other secret settings, such as an SSH key passphrase, add `extraEnv` entries with `secretKeyRef`. Mount key and certificate files with `extraVolumes` and `extraVolumeMounts`, and reference their paths in `config`.
 
@@ -93,7 +93,7 @@ The Ingress hosts are added to the allowed hosts automatically. Wildcard hosts s
 
 ## Probes
 
-The liveness and startup probes call `/healthz`, and the readiness probe calls `/readyz`, which checks the database (see [Health Probes](/docs/configuration#health-probes)). A pod becomes Ready only once its database answers, and leaves the Service when the database stops answering. Override the timings with `livenessProbe`, `readinessProbe`, and `startupProbe`.
+The liveness and startup probes call `/healthz`, and the readiness probe calls `/readyz`, which checks the database (see [Health Probes](/features/health-probes)). A pod becomes Ready only once its database answers, and leaves the Service when the database stops answering. Override the timings with `livenessProbe`, `readinessProbe`, and `startupProbe`.
 
 ## Security
 
@@ -105,10 +105,10 @@ By default the pod:
 - uses the `RuntimeDefault` seccomp profile
 - does not mount a service account token
 
-dbmcp needs no writable paths. For SSH tunnelling, mount a pre-filled `known_hosts` file beside the key (see [Secrets](#secrets)). Avoid `accept-new` (see [SSH Host-Key Verification](/docs/security#ssh-host-key-verification)): every new pod would trust the first key it sees.
+dbmcp needs no writable paths. For SSH tunnelling, mount a pre-filled `known_hosts` file beside the key (see [Secrets](#secrets)). Avoid `accept-new` (see [SSH Host-Key Verification](/features/ssh-tunnel#host-key-verification)): every new pod would trust the first key it sees.
 
 ## Verify the Chart
 
-Each chart carries a keyless cosign signature and a build provenance attestation, verified like the image (see [Verify Downloads](/docs/installation#verify-downloads)).
+Each chart carries a keyless cosign signature and a build provenance attestation, verified like the image (see [Verify downloads](/installation#verify-downloads)).
 
 See [`values.yaml`](https://github.com/haymon-ai/dbmcp/blob/master/charts/dbmcp/values.yaml) for every value.

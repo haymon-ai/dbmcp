@@ -3,11 +3,11 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/haymon-ai/dbmcp)](https://github.com/haymon-ai/dbmcp/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-dbmcp.haymon.ai-black)](https://dbmcp.haymon.ai/docs/)
+[![Docs](https://img.shields.io/badge/docs-dbmcp.haymon.ai-black)](https://dbmcp.haymon.ai/)
 
 A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases. Connect your AI assistant to MySQL/MariaDB, PostgreSQL, or SQLite with zero runtime dependencies.
 
-**[Website](https://dbmcp.haymon.ai)** · **[Documentation](https://dbmcp.haymon.ai/docs/)** · **[Releases](https://github.com/haymon-ai/dbmcp/releases)**
+**[Website](https://dbmcp.haymon.ai)** · **[Releases](https://github.com/haymon-ai/dbmcp/releases)**
 
 ![demo](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/docs/public/demo.gif)
 
@@ -46,7 +46,7 @@ curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && 
 npm install -g @haymon-ai/dbmcp
 ```
 
-See the [installation docs](https://dbmcp.haymon.ai/docs/installation) for Docker, Cargo, and other methods.
+See the [installation docs](https://dbmcp.haymon.ai/installation) for Docker, Cargo, and other methods.
 
 MCP Registry name: `mcp-name: ai.haymon/dbmcp`
 
@@ -54,7 +54,7 @@ MCP Registry name: `mcp-name: ai.haymon/dbmcp`
 
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522dbmcp%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540haymon-ai%252Fdbmcp%2522%255D%252C%2522env%2522%253A%257B%2522DBMCP_DB_BACKEND%2522%253A%2522%2524%257Binput%253Adb-backend%257D%2522%252C%2522DBMCP_DB_HOST%2522%253A%2522%2524%257Binput%253Adb-host%257D%2522%252C%2522DBMCP_DB_USER%2522%253A%2522%2524%257Binput%253Adb-user%257D%2522%252C%2522DBMCP_DB_PASSWORD%2522%253A%2522%2524%257Binput%253Adb-password%257D%2522%252C%2522DBMCP_DB_NAME%2522%253A%2522%2524%257Binput%253Adb-name%257D%2522%257D%252C%2522inputs%2522%253A%255B%257B%2522type%2522%253A%2522pickString%2522%252C%2522id%2522%253A%2522db-backend%2522%252C%2522description%2522%253A%2522Database%2520backend%2522%252C%2522options%2522%253A%255B%2522mysql%2522%252C%2522mariadb%2522%252C%2522postgres%2522%252C%2522sqlite%2522%255D%252C%2522default%2522%253A%2522mysql%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-host%2522%252C%2522description%2522%253A%2522Database%2520host%2520%2528blank%2520for%2520default%2529%2522%252C%2522default%2522%253A%2522127.0.0.1%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-user%2522%252C%2522description%2522%253A%2522Database%2520user%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-password%2522%252C%2522description%2522%253A%2522Database%2520password%2522%252C%2522password%2522%253Atrue%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-name%2522%252C%2522description%2522%253A%2522Database%2520name%2520%2528SQLite%253A%2520file%2520path%2529%2522%257D%255D%257D) [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522dbmcp%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540haymon-ai%252Fdbmcp%2522%255D%252C%2522env%2522%253A%257B%2522DBMCP_DB_BACKEND%2522%253A%2522%2524%257Binput%253Adb-backend%257D%2522%252C%2522DBMCP_DB_HOST%2522%253A%2522%2524%257Binput%253Adb-host%257D%2522%252C%2522DBMCP_DB_USER%2522%253A%2522%2524%257Binput%253Adb-user%257D%2522%252C%2522DBMCP_DB_PASSWORD%2522%253A%2522%2524%257Binput%253Adb-password%257D%2522%252C%2522DBMCP_DB_NAME%2522%253A%2522%2524%257Binput%253Adb-name%257D%2522%257D%252C%2522inputs%2522%253A%255B%257B%2522type%2522%253A%2522pickString%2522%252C%2522id%2522%253A%2522db-backend%2522%252C%2522description%2522%253A%2522Database%2520backend%2522%252C%2522options%2522%253A%255B%2522mysql%2522%252C%2522mariadb%2522%252C%2522postgres%2522%252C%2522sqlite%2522%255D%252C%2522default%2522%253A%2522mysql%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-host%2522%252C%2522description%2522%253A%2522Database%2520host%2520%2528blank%2520for%2520default%2529%2522%252C%2522default%2522%253A%2522127.0.0.1%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-user%2522%252C%2522description%2522%253A%2522Database%2520user%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-password%2522%252C%2522description%2522%253A%2522Database%2520password%2522%252C%2522password%2522%253Atrue%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-name%2522%252C%2522description%2522%253A%2522Database%2520name%2520%2528SQLite%253A%2520file%2520path%2529%2522%257D%255D%257D) [![Add to Cursor](https://img.shields.io/badge/Cursor-Install_Server-000000?style=flat-square&logo=cursor&logoColor=white)](https://cursor.com/install-mcp?name=dbmcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBoYXltb24tYWkvZGJtY3AiXSwiZW52Ijp7IkRCTUNQX0RCX0JBQ0tFTkQiOiJteXNxbCIsIkRCTUNQX0RCX0hPU1QiOiIxMjcuMC4wLjEiLCJEQk1DUF9EQl9VU0VSIjoicm9vdCIsIkRCTUNQX0RCX1BBU1NXT1JEIjoiY2hhbmdlLW1lIiwiREJNQ1BfREJfTkFNRSI6Im15ZGIifX0%3D)
 
-The buttons launch dbmcp with `npx` (Node.js 18+). VS Code prompts for the connection settings; Cursor installs placeholders to edit afterwards. For Claude Desktop, Claude Code, Codex, Windsurf, Zed, Gemini CLI, Goose, JetBrains, and LM Studio, see [MCP Clients](https://dbmcp.haymon.ai/docs/clients).
+The buttons launch dbmcp with `npx` (Node.js 18+). VS Code prompts for the connection settings; Cursor installs placeholders to edit afterwards. For Claude Desktop, Claude Code, Codex, Windsurf, Zed, Gemini CLI, Goose, JetBrains, and LM Studio, see [MCP Clients](https://dbmcp.haymon.ai/clients).
 
 ### Using `.mcp.json` (recommended)
 
@@ -160,7 +160,7 @@ database:
 DB_PASSWORD=secret dbmcp --config-file /path/to/dbmcp.yaml
 ```
 
-From an MCP client, pass `"args": ["--config-file", "~/path/to/dbmcp.yaml"]` or an absolute path; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/docs/config-file).
+From an MCP client, pass `"args": ["--config-file", "~/path/to/dbmcp.yaml"]` or an absolute path; relative paths resolve against the process working directory, which the client controls. See [Config File](https://dbmcp.haymon.ai/configuration/config-files).
 
 ## Configuration ⚙️
 
@@ -179,26 +179,26 @@ Layer files by repeating a flag, e.g. a shared base plus local overrides: `dbmcp
 
 There are no per-setting flags. Booleans accept `true`/`false`, `1`/`0`, `t`/`f` (not `yes`/`no`); lists are comma-separated in env vars.
 
-- **[Configuration reference](https://dbmcp.haymon.ai/docs/configuration)** — every setting with its YAML key, env var, type, and default, plus [Migrating from CLI flags](https://dbmcp.haymon.ai/docs/configuration#migrating-from-cli-flags)
-- **[Config File](https://dbmcp.haymon.ai/docs/config-file)** — file schema, `${}` interpolation, env file format, path resolution, Docker, and error output
+- **[Configuration reference](https://dbmcp.haymon.ai/configuration)** — every setting with its YAML key, env var, type, and default, plus [Migrating from CLI flags](https://dbmcp.haymon.ai/configuration#migrating-from-cli-flags)
+- **[Config File](https://dbmcp.haymon.ai/configuration/config-files)** — file schema, `${}` interpolation, env file format, path resolution, Docker, and error output
 
 > **Security note**: Read-only mode is on by default (`DBMCP_DB_READ_ONLY=true`). The default HTTP `Origin` allowlist accepts browser pages from **any port** on `localhost`/`127.0.0.1`/`[::1]`; on shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `DBMCP_HTTP_ALLOWED_ORIGINS` to the explicit origins you trust (e.g. `http://localhost:5173`).
 
-The SSH tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client (no `ssh` binary). `DBMCP_DB_HOST`/`DBMCP_DB_PORT` are resolved **by the SSH server**. With both a key and a password set, the key is tried first. See [SSH Tunnel](https://dbmcp.haymon.ai/docs/configuration#ssh-tunnel) for host-key policies, limitations, and troubleshooting.
+The SSH tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client (no `ssh` binary). `DBMCP_DB_HOST`/`DBMCP_DB_PORT` are resolved **by the SSH server**. With both a key and a password set, the key is tried first. See [SSH Tunnel](https://dbmcp.haymon.ai/features/ssh-tunnel) for host-key policies, limitations, and troubleshooting.
 
 ## MCP Tools 🧩
 
 ### listDatabases
 
-Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details. Not available for SQLite.
+Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details. Not available for SQLite.
 
 ### listTables
 
-Lists tables in a database, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Lists tables in a database, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`.
 
-`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards — pass `users%` to match names beginning with `users`, or `%order%` for substring matching. A bare word with no wildcards matches only an exact table name.
+`search` is an optional case-insensitive substring filter — `users` matches `users`, `users_audit`, and `old_users`. The value is wrapped as `%users%` in a `LIKE`/`ILIKE` pattern, so `%` and `_` inside it still act as wildcards.
 
 `detailed` (default `false`) switches the response shape:
 
@@ -214,9 +214,9 @@ Lists views in a database, paginated via `cursor` / `nextCursor`. Available on M
 `detailed` (default `false`) switches the response shape:
 
 - **Brief** (default) — `views` is a sorted JSON array of bare view-name strings. View names are unique per schema, so no duplicates appear.
-- **Detailed** (`detailed: true`) — `views` is a JSON object keyed by bare view name; each value carries the per-backend metadata payload. PostgreSQL exposes `schema`, `owner`, `description`, `definition`. MySQL/MariaDB exposes `schema`, `definer`, `security`, `checkOption`, `updatable`, `characterSetClient`, `collationConnection`, `definition`. See the [`listViews` reference](https://dbmcp.haymon.ai/docs/features#listviews) for source columns, enumerated value sets, and intentional omissions per backend.
+- **Detailed** (`detailed: true`) — `views` is a JSON object keyed by bare view name; each value carries the per-backend metadata payload. PostgreSQL exposes `schema`, `owner`, `description`, `definition`. MySQL/MariaDB exposes `schema`, `definer`, `security`, `checkOption`, `updatable`, `characterSetClient`, `collationConnection`, `definition`. See the [`listViews` reference](https://dbmcp.haymon.ai/tools/list-views) for source columns, enumerated value sets, and intentional omissions per backend.
 
-See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### listTriggers
 
@@ -227,9 +227,9 @@ Lists user-defined triggers on tables, paginated via `cursor` / `nextCursor`. In
 `detailed` (default `false`) switches the response shape:
 
 - **Brief** (default) — `triggers` is a sorted JSON array of bare trigger-name strings.
-- **Detailed** (`detailed: true`) — `triggers` is a JSON object keyed by trigger name; each value carries the per-backend metadata payload (timing, events, definition, and backend-specific extras like PostgreSQL `status`/`functionName` or MySQL/MariaDB session-context fields). See the [`listTriggers` reference](https://dbmcp.haymon.ai/docs/features#listtriggers) for the full per-backend field list.
+- **Detailed** (`detailed: true`) — `triggers` is a JSON object keyed by trigger name; each value carries the per-backend metadata payload (timing, events, definition, and backend-specific extras like PostgreSQL `status`/`functionName` or MySQL/MariaDB session-context fields). See the [`listTriggers` reference](https://dbmcp.haymon.ai/tools/list-triggers) for the full per-backend field list.
 
-See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### listFunctions
 
@@ -240,9 +240,9 @@ Lists user-defined SQL functions, paginated via `cursor` / `nextCursor`. Postgre
 `detailed` (default `false`) switches the response shape:
 
 - **Brief** (default) — `functions` is a sorted JSON array of bare function-name strings. PostgreSQL overloads appear once per overload (duplicate name strings are expected).
-- **Detailed** (`detailed: true`) — `functions` is a JSON object keyed by function signature; each value carries the per-backend metadata payload (language, arguments, return type, definition, and backend-specific extras such as PostgreSQL `volatility`/`strict`/`parallelSafety` or MySQL/MariaDB session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate); MySQL/MariaDB keys are bare names (no overloading). See the [`listFunctions` reference](https://dbmcp.haymon.ai/docs/features#listfunctions) for the full per-backend field list.
+- **Detailed** (`detailed: true`) — `functions` is a JSON object keyed by function signature; each value carries the per-backend metadata payload (language, arguments, return type, definition, and backend-specific extras such as PostgreSQL `volatility`/`strict`/`parallelSafety` or MySQL/MariaDB session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate); MySQL/MariaDB keys are bare names (no overloading). See the [`listFunctions` reference](https://dbmcp.haymon.ai/tools/list-functions) for the full per-backend field list.
 
-See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### listProcedures
 
@@ -253,9 +253,9 @@ Lists user-defined stored procedures, paginated via `cursor` / `nextCursor`. Ava
 `detailed` (default `false`) switches the response shape:
 
 - **Brief** (default) — `procedures` is a sorted JSON array of bare procedure-name strings. PostgreSQL overloads appear once per overload (duplicate name strings are expected).
-- **Detailed** (`detailed: true`) — `procedures` is a JSON object keyed by procedure signature; each value carries the per-backend metadata payload (language, arguments, security, definition, and backend-specific extras such as PostgreSQL `owner` or MySQL/MariaDB `deterministic`/`sqlDataAccess`/session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate; zero-arg procedures key as `name()`); MySQL/MariaDB keys are bare names (no overloading). See the [`listProcedures` reference](https://dbmcp.haymon.ai/docs/features#listprocedures) for the full per-backend field list.
+- **Detailed** (`detailed: true`) — `procedures` is a JSON object keyed by procedure signature; each value carries the per-backend metadata payload (language, arguments, security, definition, and backend-specific extras such as PostgreSQL `owner` or MySQL/MariaDB `deterministic`/`sqlDataAccess`/session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate; zero-arg procedures key as `name()`); MySQL/MariaDB keys are bare names (no overloading). See the [`listProcedures` reference](https://dbmcp.haymon.ai/tools/list-procedures) for the full per-backend field list.
 
-See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### listMaterializedViews
 
@@ -266,13 +266,13 @@ Lists materialized views in the `public` schema, paginated via `cursor` / `nextC
 `detailed` (default `false`) switches the response shape:
 
 - **Brief** (default) — `materializedViews` is a sorted JSON array of bare matview-name strings. Matview names are unique per schema, so no duplicates appear.
-- **Detailed** (`detailed: true`) — `materializedViews` is a JSON object keyed by bare matview name; each value carries `schema`, `owner`, `description` (or `null` when no `COMMENT ON MATERIALIZED VIEW`), `definition` (the SELECT body verbatim from `pg_matviews.definition`), `populated` (`false` for matviews created `WITH NO DATA` and never refreshed), and `indexed` (`true` when at least one index exists; `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index). Detailed mode deliberately omits column metadata, `tablespace`, storage parameters, and unique-index detection — recoverable via `definition`, `listTables(detailed=true)`, or `readQuery` against `pg_indexes`. See the [`listMaterializedViews` reference](https://dbmcp.haymon.ai/docs/features#listmaterializedviews) for source columns and operational semantics.
+- **Detailed** (`detailed: true`) — `materializedViews` is a JSON object keyed by bare matview name; each value carries `schema`, `owner`, `description` (or `null` when no `COMMENT ON MATERIALIZED VIEW`), `definition` (the SELECT body verbatim from `pg_matviews.definition`), `populated` (`false` for matviews created `WITH NO DATA` and never refreshed), and `indexed` (`true` when at least one index exists; `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index). Detailed mode deliberately omits column metadata, `tablespace`, storage parameters, and unique-index detection — recoverable via `definition`, `listTables(detailed=true)`, or `readQuery` against `pg_indexes`. See the [`listMaterializedViews` reference](https://dbmcp.haymon.ai/tools/list-materialized-views) for source columns and operational semantics.
 
-See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### readQuery
 
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/docs/features#cursor-pagination) for iteration details.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
 ### writeQuery
 
@@ -304,7 +304,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport. Defends against browser DNS rebinding — not a substitute for authentication
 - **SSL/TLS** — configured via individual `DBMCP_DB_SSL_*` variables
 - **SSH host-key verification** — the SSH tunnel checks the server key against `known_hosts` (`yes` by default); SSH passwords and passphrases are never logged
-- **PII redaction** *(opt-in, off by default)* — when enabled, query tool output passes through a regex-based redactor that rewrites detected PII spans across **46 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, UK/German postcodes), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Toggle: `DBMCP_PII_ENABLE` (`pii.enabled`). Operator: `DBMCP_PII_OPERATOR` (`pii.operator`) — one of `replace` (default, entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop), `hash` (SHA-256 hex). Optional subset via `DBMCP_PII_CATEGORIES` (`pii.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: query tool output payloads only. See [PII configuration](https://dbmcp.haymon.ai/docs/configuration#pii) for the full surface.
+- **PII redaction** *(opt-in, off by default)* — when enabled, query tool output passes through a regex-based redactor that rewrites detected PII spans across **46 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, UK/German postcodes), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Toggle: `DBMCP_PII_ENABLE` (`pii.enabled`). Operator: `DBMCP_PII_OPERATOR` (`pii.operator`) — one of `replace` (default, entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop), `hash` (SHA-256 hex). Optional subset via `DBMCP_PII_CATEGORIES` (`pii.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: rows returned by `readQuery`, `writeQuery`, and `explainQuery`, plus tool error messages (regex recognizers only). See [Data Privacy](https://dbmcp.haymon.ai/privacy) for the full surface.
 - **ML/NER redaction** *(opt-in at runtime, off by default)* — adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection that regex cannot catch, enabled via the `DBMCP_PII_NER_ENABLE` (`pii.ner_enabled`) toggle plus a user-supplied model directory. Which entities are produced depends on the model's labels (CoNLL models give person/location/organization; OntoNotes-class models add NRP and facility). Inference uses **ONNX Runtime** (model directory holds `config.json`, `tokenizer.json`, `model.onnx`; recommended: the MIT-licensed [`optimum/bert-base-NER`](https://huggingface.co/optimum/bert-base-NER), an ONNX export of `dslim/bert-base-NER`; an int8-quantized export runs about 3.5× faster). Fail-closed: a model that cannot load aborts startup and an inference error fails the request — never a silent fallback. Respects `pii.categories`. Model-agnostic: multilingual models such as `Davlan/bert-base-multilingual-cased-ner-hrl` work once exported to ONNX.
 - **Credential redaction** — database password is never shown in logs or debug output
 

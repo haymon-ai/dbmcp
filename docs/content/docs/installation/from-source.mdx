@@ -1,0 +1,29 @@
+---
+title: Build from source
+description: Build dbmcp from source with the Rust toolchain
+---
+
+## Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Rust toolchain](https://rustup.rs/) (edition 2024, requires Rust 1.88+)
+
+## Build
+
+```bash
+git clone https://github.com/haymon-ai/dbmcp.git
+cd dbmcp
+cargo build --release
+```
+
+Copy the binary to a directory on your PATH:
+
+```bash
+sudo cp target/release/dbmcp /usr/local/bin/
+```
+
+Verify the installation:
+
+```bash
+dbmcp --help
+```

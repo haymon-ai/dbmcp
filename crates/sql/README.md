@@ -16,4 +16,4 @@ SQL validation, identifier quoting, pagination, and timeout helpers powering [db
 - Server-controlled `LIMIT` / `OFFSET` rewriting for paginated `SELECT`s
 - Query-level timeout wrapper shared across backends
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

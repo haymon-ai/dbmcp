@@ -17,4 +17,4 @@ MySQL / MariaDB backend for [dbmcp](https://dbmcp.haymon.ai) — the single-bina
 - Optional PII redaction on every `readQuery` payload
 - MariaDB compatible — same handler
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

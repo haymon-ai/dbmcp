@@ -1,49 +1,43 @@
-import { source } from '@/lib/source';
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-} from 'fumadocs-ui/layouts/notebook/page';
-import { notFound } from 'next/navigation';
-import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
-import { createRelativeLink } from 'fumadocs-ui/mdx';
+import { notFound } from 'next/navigation';
+import { basePath } from '@/lib/shared';
+import { source } from '@/lib/source';
 
-export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
-  const params = await props.params;
-  const page = source.getPage(params.slug);
-  if (!page) notFound();
+// The docs used to live under /docs. Static export has no server redirects, so every old
+// URL gets a small page that forwards to its new address (meta refresh plus a plain link).
 
-  const MDX = page.data.body;
+/** Old /docs paths whose page moved somewhere other than the same path at the root. */
+const moved: Record<string, string> = {
+  'config-file': '/configuration/config-files',
+};
 
+function target(slug: string[] = []): string | undefined {
+  const path = slug.join('/');
+  if (path in moved) return moved[path];
+  return source.getPage(slug) ? `/${path}` : undefined;
+}
+
+export default async function Redirect(props: PageProps<'/docs/[[...slug]]'>) {
+  const { slug } = await props.params;
+  const to = target(slug);
+  if (!to) notFound();
+  const href = `${basePath}${to === '/' ? '/' : `${to}/`}`;
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full} className="md:max-w-[860px] mx-auto">
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
-      <DocsBody>
-        <MDX
-          components={getMDXComponents({
-            // this allows you to link to other pages with relative file paths
-            a: createRelativeLink(source, page),
-          })}
-        />
-      </DocsBody>
-    </DocsPage>
+    <>
+      <meta httpEquiv="refresh" content={`0; url=${href}`} />
+      <link rel="canonical" href={href} />
+      <p className="p-6">
+        This page moved to <a href={href}>{href}</a>.
+      </p>
+    </>
   );
 }
 
-export async function generateStaticParams() {
-  return source.generateParams();
+// Only the listed old URLs exist; anything else under /docs is a 404.
+export const dynamicParams = false;
+
+export function generateStaticParams() {
+  return [...source.getPages().map((page) => ({ slug: page.slugs })), ...Object.keys(moved).map((path) => ({ slug: path.split('/') }))];
 }
 
-export async function generateMetadata(props: PageProps<'/docs/[[...slug]]'>): Promise<Metadata> {
-  const params = await props.params;
-  const page = source.getPage(params.slug);
-  if (!page) notFound();
-
-  return {
-    title: page.data.title,
-    description: page.data.description,
-  };
-}
+export const metadata: Metadata = { title: 'Moved', robots: { index: false } };

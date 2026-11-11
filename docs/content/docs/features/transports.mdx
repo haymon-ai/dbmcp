@@ -1,0 +1,54 @@
+---
+title: Transports
+description: Run dbmcp over stdio or Streamable HTTP, and secure the HTTP endpoint
+---
+
+Database MCP supports two transport modes for communicating with MCP clients.
+
+## Stdio
+
+The server communicates over standard input/output. This mode works with local MCP clients like Claude Desktop, Claude Code, and Cursor. No network configuration is needed — the client launches the server as a subprocess; stdio is the default transport.
+
+**Best for**: Local development, single-user setups, desktop MCP clients.
+
+## HTTP
+
+The server runs as an HTTP service with Streamable HTTP transport, CORS preflight, and server-side `Origin`/`Host` header allowlists. This mode is useful for remote access or shared environments where multiple clients connect to the same server.
+
+**Best for**: Remote servers, shared team databases, environments where the MCP client cannot launch local processes.
+
+## Settings
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `transport` | `DBMCP_TRANSPORT` | enum | `stdio` | MCP transport: `stdio` or `http` |
+
+`transport` defaults to `stdio`, which requires no additional configuration beyond the [database settings](/features/database).
+
+## HTTP settings
+
+These settings are only used when `transport` is `http`; the whole `http` section is ignored under stdio:
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `http.host` | `DBMCP_HTTP_HOST` | string | `127.0.0.1` | Bind host for the HTTP server |
+| `http.port` | `DBMCP_HTTP_PORT` | integer | `9001` | Bind port for the HTTP server |
+| `http.allowed_origins` | `DBMCP_HTTP_ALLOWED_ORIGINS` | list | `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`, `https://localhost:*`, `https://127.0.0.1:*`, `https://[::1]:*` | Allowed browser origins. Drives both CORS preflight and server-side `Origin` header rejection. Use `:*` to match any port or an explicit port (`https://app.example:443`); entries without a port are deprecated. Malformed entries are rejected at startup. An empty YAML list (`allowed_origins: []`) disables `Origin` validation for non-browser deployments; this is only expressible in YAML. |
+| `http.allowed_hosts` | `DBMCP_HTTP_ALLOWED_HOSTS` | list | `localhost`, `127.0.0.1`, `::1` | Allowed host names. Enforced server-side; HTTP/2 `:authority` is honored. An empty list is rejected. |
+| `http.auth_token` | `DBMCP_HTTP_AUTH_TOKEN` | string | *(unset)* | Bearer token required on every `/mcp` request (`Authorization: Bearer <token>`). Health probes stay open. Required for non-loopback binds. |
+| `http.allow_unauthenticated` | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | boolean | `false` | Allow a non-loopback bind without a token. Only behind a reverse proxy that authenticates callers. |
+
+> **Security note**: Binding a non-loopback host (e.g. `DBMCP_HTTP_HOST=0.0.0.0`) without `DBMCP_HTTP_AUTH_TOKEN` is refused at startup. The `Origin`/`Host` allowlists defend against browser DNS rebinding only — they do not authenticate callers.
+
+> **Security note**: The default `http.allowed_origins` accept browser pages served from **any port** on `localhost`/`127.0.0.1`/`[::1]`, so any local web app can call the server. On shared or development machines, set `DBMCP_HTTP_AUTH_TOKEN` or narrow `DBMCP_HTTP_ALLOWED_ORIGINS` to the explicit origins you trust (e.g. `http://localhost:5173`).
+
+## Authentication
+
+The `http` transport serves the database to any caller that can reach the port, using the server's own database credentials. Set `DBMCP_HTTP_AUTH_TOKEN` (or `http.auth_token` in the config file) to require `Authorization: Bearer <token>` on every request. Missing or wrong tokens get `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dbmcp"`; tokens are compared in constant time and never logged.
+
+- **Loopback binds** (the default `127.0.0.1`, `::1`, `localhost`) work without a token.
+- **Non-loopback binds** (e.g. `DBMCP_HTTP_HOST=0.0.0.0`) refuse to start without a token. `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED=true` (`http.allow_unauthenticated`) overrides this — use it only behind a reverse proxy that authenticates callers.
+
+The `Origin` and `Host` allowlists remain enforced alongside the token. They stop browser-driven DNS-rebinding attacks, but a direct HTTP client can send any header value, so they are **not** authentication.
+
+The [health probes](/features/health-probes) `/healthz` and `/readyz` answer without a token and ignore the allowlists. They reveal only whether the server and its database are up.

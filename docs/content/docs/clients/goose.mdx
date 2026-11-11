@@ -1,0 +1,40 @@
+---
+title: Goose
+description: Add dbmcp to Goose
+---
+
+Run `goose configure` and choose **Add Extension → Command-line Extension**, with `dbmcp` (or `npx -y @haymon-ai/dbmcp`) as the command. Or edit `~/.config/goose/config.yaml` (Windows: `%APPDATA%\Block\goose\config\config.yaml`):
+
+```yaml tab="bin" title="~/.config/goose/config.yaml"
+extensions:
+  dbmcp:
+    type: stdio
+    name: dbmcp
+    enabled: true
+    cmd: dbmcp
+    args: []
+    envs:
+      DBMCP_DB_BACKEND: mysql
+      DBMCP_DB_HOST: 127.0.0.1
+      DBMCP_DB_USER: root
+      DBMCP_DB_PASSWORD: secret
+      DBMCP_DB_NAME: mydb
+    timeout: 300
+```
+
+```yaml tab="npx" title="~/.config/goose/config.yaml"
+extensions:
+  dbmcp:
+    type: stdio
+    name: dbmcp
+    enabled: true
+    cmd: npx
+    args: ["-y", "@haymon-ai/dbmcp"]
+    envs:
+      DBMCP_DB_BACKEND: mysql
+      DBMCP_DB_HOST: 127.0.0.1
+      DBMCP_DB_USER: root
+      DBMCP_DB_PASSWORD: secret
+      DBMCP_DB_NAME: mydb
+    timeout: 300
+```

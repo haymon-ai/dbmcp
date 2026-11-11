@@ -1,0 +1,15 @@
+---
+title: Health probes
+description: Liveness and readiness endpoints of the HTTP transport
+---
+
+The `http` transport serves two `GET` endpoints for Kubernetes probes, load balancers, and gateways. The MCP spec defines no health method, so they live outside the protocol:
+
+| Path | Checks | Response |
+|------|--------|----------|
+| `/healthz` | The process serves HTTP requests (liveness) | `200 ok` |
+| `/readyz` | The default database answers `SELECT 1` within 2 seconds (readiness) | `200 ok`, or `503 unavailable` |
+
+Both skip the bearer token and the `Origin`/`Host` allowlists, so probes need no credentials. Bodies never carry error details. Under stdio neither endpoint exists.
+
+`/readyz` caps its database load: concurrent probes share one check, and its result answers every probe for one second. It returns `503` once shutdown starts. The default database is `database.name`; on PostgreSQL without a name it is the database named after `database.user`, so set `database.name` if that database does not exist. While every pooled connection is busy serving queries, the database counts as ready. Point Kubernetes `livenessProbe` and `readinessProbe` `httpGet` checks at these paths on the HTTP port.

@@ -1,0 +1,8 @@
+{
+  "pages": [
+    "index",
+    "binaries",
+    "docker",
+    "package-managers"
+  ]
+}

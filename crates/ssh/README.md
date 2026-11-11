@@ -16,4 +16,4 @@ Embedded SSH tunnel for [dbmcp](https://dbmcp.haymon.ai) — the single-binary M
 - Lazy, single-flight reconnect after session loss, with keepalive and a 10s connect deadline
 - `last_error()` for surfacing tunnel failures in tool errors; messages never contain secrets
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

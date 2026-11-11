@@ -1,0 +1,25 @@
+---
+title: Features
+description: Database support, transports, timeouts, pagination, SSH tunnel, and PII redaction
+---
+
+Database MCP gives AI assistants structured access to your databases through the Model Context Protocol. The pages in this section cover each feature and its settings.
+
+## Database Support
+
+Database MCP connects to four database backends with a single binary:
+
+| Backend | Versions | Notes |
+|---------|----------|-------|
+| MySQL | 8.0+ | Full support including character set configuration |
+| MariaDB | 10.5+ | Its own backend value (`mariadb`), with the same defaults as MySQL |
+| PostgreSQL | 12+ | Pure-Rust driver, no libpq needed |
+| SQLite | 3.x | File-based — requires only a path, no server needed |
+
+Each backend has sensible defaults for host, port, and user. See [Backend defaults](/features/database#backend-defaults) for the full default table.
+
+MySQL, MariaDB, and PostgreSQL can also be reached through an SSH bastion using the built-in [SSH tunnel](/features/ssh-tunnel) — no `ssh` binary needed, with password or key authentication, `known_hosts` host-key verification, keepalive, and automatic reconnect.
+
+## Single Binary
+
+Database MCP ships as a single compiled binary with no runtime dependencies. There is no language runtime to install, no package manager to configure, and no dependency tree to manage. Download the binary for your platform and it is ready to use.

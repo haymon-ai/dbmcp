@@ -17,4 +17,4 @@ Fast PII detection and anonymisation for Rust. A zero-dependency regex/checksum 
 - Pure-Rust regex + checksum core — zero runtime dependencies, fully auditable
 - **Optional** ML/NER pass — detects free-form `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` spans that regex can't; off by default, local ONNX inference, no network
 
-See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai) · [Docs](https://dbmcp.haymon.ai/docs/)
+See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)
