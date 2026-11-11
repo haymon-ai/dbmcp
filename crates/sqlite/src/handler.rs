@@ -36,9 +36,9 @@ const TOOLS: &[ToolSpec<SqliteHandler>] = &[
     ToolSpec::async_tool::<ListTablesTool>(true, false),
     ToolSpec::async_tool::<ListViewsTool>(true, false),
     ToolSpec::async_tool::<ListTriggersTool>(true, false),
-    ToolSpec::async_tool::<ReadQueryTool>(true, false),
-    ToolSpec::async_tool::<ExplainQueryTool>(true, false),
-    ToolSpec::async_tool::<WriteQueryTool>(true, true),
+    ToolSpec::untrusted_tool::<ReadQueryTool>(true, false),
+    ToolSpec::untrusted_tool::<ExplainQueryTool>(true, false),
+    ToolSpec::untrusted_tool::<WriteQueryTool>(true, true),
     ToolSpec::async_tool::<DropTableTool>(true, true),
 ];
 

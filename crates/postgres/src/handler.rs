@@ -60,16 +60,16 @@ const TOOLS: &[ToolSpec<PostgresHandler>] = &[
     ToolSpec::async_tool::<UnpinnedListProceduresTool>(false, false),
     ToolSpec::async_tool::<PinnedListMaterializedViewsTool>(true, false),
     ToolSpec::async_tool::<UnpinnedListMaterializedViewsTool>(false, false),
-    ToolSpec::async_tool::<PinnedReadQueryTool>(true, false),
-    ToolSpec::async_tool::<UnpinnedReadQueryTool>(false, false),
-    ToolSpec::async_tool::<PinnedExplainQueryTool>(true, false),
-    ToolSpec::async_tool::<UnpinnedExplainQueryTool>(false, false),
+    ToolSpec::untrusted_tool::<PinnedReadQueryTool>(true, false),
+    ToolSpec::untrusted_tool::<UnpinnedReadQueryTool>(false, false),
+    ToolSpec::untrusted_tool::<PinnedExplainQueryTool>(true, false),
+    ToolSpec::untrusted_tool::<UnpinnedExplainQueryTool>(false, false),
     ToolSpec::async_tool::<CreateDatabaseTool>(false, true),
     ToolSpec::async_tool::<DropDatabaseTool>(false, true),
     ToolSpec::async_tool::<PinnedDropTableTool>(true, true),
     ToolSpec::async_tool::<UnpinnedDropTableTool>(false, true),
-    ToolSpec::async_tool::<PinnedWriteQueryTool>(true, true),
-    ToolSpec::async_tool::<UnpinnedWriteQueryTool>(false, true),
+    ToolSpec::untrusted_tool::<PinnedWriteQueryTool>(true, true),
+    ToolSpec::untrusted_tool::<UnpinnedWriteQueryTool>(false, true),
 ];
 
 /// `PostgreSQL` database handler.
