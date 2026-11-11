@@ -128,14 +128,14 @@ impl MysqlHandler {
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let page = matches!(kind, StatementKind::Select).then(|| cursor.map_or(0, |c| c.offset));
-        let (rows, next_cursor) = match kind {
+        let (rows, resume) = match kind {
             StatementKind::Select => {
-                listing::paginate(cursor, self.config.page_size, async |page| {
+                let (rows, resume) = listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
                     self.connection.fetch_json_read_only(wrapped.as_str(), database).await
                 })
-                .await?
+                .await?;
+                (rows, Some(resume))
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json_read_only(query.as_str(), database).await?;
@@ -143,18 +143,15 @@ impl MysqlHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(
-            rows,
-            page,
-            next_cursor,
-            self.config.max_cell_chars,
-            self.config.max_response_chars,
-        );
+        // Only a paged `SELECT` can resume rows the response cap drops.
+        let max_response = resume.map_or(0, |_| self.config.max_response_chars);
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, max_response);
+        let next_cursor = resume.and_then(|resume| resume.next_cursor(fitted.rows.len()));
         Ok(ReadQueryResponse {
             rows: fitted.rows,
-            next_cursor: fitted.next_cursor,
+            next_cursor,
             truncated: fitted.truncated,
-            hint: fitted.hint,
+            hint: fitted.truncated.then_some(truncate::HINT),
         })
     }
 }

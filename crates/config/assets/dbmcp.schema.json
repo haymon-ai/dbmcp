@@ -207,7 +207,7 @@
           "default": 4096
         },
         "max_response_chars": {
-          "description": "Maximum characters of serialized rows per query tool response; trailing rows are dropped (0 disables).",
+          "description": "Maximum characters of serialized rows per paginated readQuery SELECT page; the page ends early and nextCursor resumes (0 disables).",
           "type": [
             "integer",
             "string",

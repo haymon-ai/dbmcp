@@ -4672,7 +4672,7 @@ async fn read_query_cuts_long_cells_and_reports_truncation() {
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
     assert!(response.truncated);
-    assert_eq!(response.hint.as_deref(), Some(dbmcp_server::truncate::HINT));
+    assert_eq!(response.hint, Some(dbmcp_server::truncate::HINT));
 }
 
 #[tokio::test]
@@ -4692,6 +4692,19 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
     let collected = collect_all_paged_read_query(&handler, query).await;
     let ids: Vec<i64> = collected.iter().map(|row| row["id"].as_i64().expect("id")).collect();
     assert_eq!(ids, vec![1, 2, 3], "capped pages must not lose rows");
+}
+
+#[tokio::test]
+async fn read_query_response_cap_keeps_every_unpaged_row() {
+    // Rows a non-`SELECT` drops cannot be resumed, so the budget skips them.
+    let handler = handler_with_caps(0, 12, false);
+    let response = handler
+        .read_query("DESCRIBE users".into(), Some("app".into()), None)
+        .await
+        .expect("read_query");
+    assert!(response.rows.len() > 1, "DESCRIBE should return several rows");
+    assert!(!response.truncated);
+    assert!(response.next_cursor.is_none());
 }
 
 #[tokio::test]

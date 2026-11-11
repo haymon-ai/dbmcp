@@ -211,7 +211,7 @@ pub struct QueryResponse {
     /// How to fetch less data; present only when `truncated` is `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
-    pub hint: Option<String>,
+    pub hint: Option<&'static str>,
 }
 
 /// Response for the `writeQuery` tool.
@@ -234,7 +234,7 @@ pub struct WriteQueryResponse {
     /// How to fetch less data; present only when `truncated` is `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
-    pub hint: Option<String>,
+    pub hint: Option<&'static str>,
 }
 
 /// Response for the `readQuery` tool.
@@ -256,7 +256,7 @@ pub struct ReadQueryResponse {
     /// How to fetch less data; present only when `truncated` is `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
-    pub hint: Option<String>,
+    pub hint: Option<&'static str>,
 }
 
 /// Request for the `explainQuery` tool.
@@ -466,7 +466,7 @@ mod tests {
             rows: Vec::new(),
             next_cursor: None,
             truncated: true,
-            hint: Some("narrow it".into()),
+            hint: Some("narrow it"),
         };
         assert_eq!(
             serde_json::to_value(cut).expect("serialize"),

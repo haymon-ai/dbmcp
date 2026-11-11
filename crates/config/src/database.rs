@@ -127,9 +127,10 @@ pub struct DatabaseConfig {
     /// Longer values are cut and marked. `0` disables the cap.
     pub max_cell_chars: u64,
 
-    /// Maximum characters of serialized rows in one query tool response.
+    /// Maximum characters of serialized rows in one paged `SELECT` response.
     ///
-    /// Trailing rows past the budget are dropped. `0` disables the cap.
+    /// The page ends early and its cursor resumes at the first row left
+    /// out. Unpaged query tools ignore it. `0` disables the cap.
     pub max_response_chars: u64,
 }
 

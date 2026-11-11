@@ -73,12 +73,13 @@ impl SqliteHandler {
         &self,
         ListViewsRequest { cursor }: ListViewsRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
-        let (views, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
+        let (views, resume) = listing::paginate(cursor, self.config.page_size, async |page| {
             self.connection
                 .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
                 .await
         })
         .await?;
+        let next_cursor = resume.next_cursor(views.len());
 
         Ok(ListEntriesResponse::brief(views, next_cursor))
     }

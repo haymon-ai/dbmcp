@@ -143,18 +143,12 @@ impl PostgresHandler {
             self.connection.fetch_json(explain_sql.as_str(), database).await?
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(
-            rows,
-            None,
-            None,
-            self.config.max_cell_chars,
-            self.config.max_response_chars,
-        );
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, 0);
 
         Ok(QueryResponse {
             rows: fitted.rows,
             truncated: fitted.truncated,
-            hint: fitted.hint,
+            hint: fitted.truncated.then_some(truncate::HINT),
         })
     }
 }

@@ -58,10 +58,10 @@ A `readQuery` page can hold fewer rows than the page size when the [response siz
 
 ### Output Size Caps
 
-Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`readQuery`, `writeQuery`, `explainQuery`) apply two character caps to their `rows`, counted in Unicode characters:
+Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`readQuery`, `writeQuery`, `explainQuery`) cap their `rows` in Unicode characters:
 
 - **Per cell** ([`DBMCP_DB_MAX_CELL_CHARS`](/docs/configuration#server-behavior), default `4096`): every string value longer than the cap, at any depth inside JSON columns, keeps its first characters and ends in `…[truncated, N chars total]`. Binary values count by their base64 text. Object keys are never cut.
-- **Per response** ([`DBMCP_DB_MAX_RESPONSE_CHARS`](/docs/configuration#server-behavior), default `50000`): once the serialized rows pass the budget, the trailing rows are dropped. The first row is always kept. For a paginated `SELECT`, `nextCursor` resumes at the first dropped row, so no row is lost; for other statements the dropped rows are gone.
+- **Per response** ([`DBMCP_DB_MAX_RESPONSE_CHARS`](/docs/configuration#server-behavior), default `50000`): a paginated `readQuery` `SELECT` page ends once its serialized rows pass the budget, keeping at least one row; `nextCursor` resumes at the first row left out, so no row is lost. Other statements (`SHOW`, `DESCRIBE`, `EXPLAIN`, `explainQuery`, `writeQuery`) cannot resume, so this cap never drops their rows; only the per-cell cap applies.
 
 When either cap cuts the output, the response carries `truncated: true` and a `hint` to select fewer or narrower columns or narrow the query. Both fields are absent otherwise. Set a cap to `0` to disable it. With [PII redaction](/docs/security) on, values are redacted before they are cut.
 

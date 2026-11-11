@@ -115,20 +115,14 @@ impl MysqlHandler {
 
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(
-            rows,
-            None,
-            None,
-            self.config.max_cell_chars,
-            self.config.max_response_chars,
-        );
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, 0);
 
         Ok(WriteQueryResponse {
             rows: fitted.rows,
             rows_affected,
             last_insert_id,
             truncated: fitted.truncated,
-            hint: fitted.hint,
+            hint: fitted.truncated.then_some(truncate::HINT),
         })
     }
 }
