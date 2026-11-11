@@ -400,13 +400,15 @@ Database MCP ships an optional PII redactor that rewrites detected sensitive spa
 
 ### What gets detected
 
-Twenty-four built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PII_CATEGORIES` / `pii.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
+Forty-six built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PII_CATEGORIES` / `pii.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, NPI Luhn, DEA check digit, ICAO 9303 check digit, ISO 7064, KVNR / LANR / RVNR checksums, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
 
 **personal**
+- `DATE_OF_BIRTH` — dates of birth (weak date pattern, keyword-gated)
 - `EMAIL_ADDRESS` — email addresses
 
 **financial**
 - `BANK_ACCOUNT_UK` — UK bank account numbers (8–10 digits, keyword-gated)
+- `BANK_ACCOUNT_US` — US bank account numbers (8–17 digits, keyword-gated)
 - `CREDIT_CARD` — credit card numbers (Luhn-validated)
 - `CVV` — card verification values (3–4 digits, keyword-gated)
 - `IBAN_CODE` — International Bank Account Numbers
@@ -414,18 +416,37 @@ Twenty-four built-in regex recognisers ship by default, grouped into seven categ
 - `SORT_CODE_UK` — UK sort codes (keyword-gated)
 
 **government**
+- `COMMERCIAL_REGISTER_DE` — German commercial register numbers (Handelsregister, HRA / HRB)
+- `DRIVER_LICENSE_US` — US driver licence numbers (per-state formats, keyword-gated)
+- `DRIVING_LICENCE_DE` — German driving licence numbers (EU-harmonised 11-character Führerschein)
+- `DRIVING_LICENCE_UK` — UK DVLA driving licence numbers (16 characters)
+- `HEALTH_INSURANCE_DE` — German health insurance numbers (KVNR, checksum-validated)
+- `ID_CARD_DE` — German identity card numbers (Personalausweis, check-digit validated)
 - `ITIN` — US Individual Taxpayer Identification Numbers (IRS range-validated)
+- `LICENSE_PLATE_DE` — German vehicle registration plates (KFZ-Kennzeichen)
+- `LIFETIME_PHYSICIAN_NUMBER_DE` — German lifetime physician numbers (LANR, checksum-validated)
+- `MBI_US` — US Medicare Beneficiary Identifiers
+- `MEDICAL_LICENSE_US` — US DEA certificate numbers (check-digit validated)
+- `MEDICAL_PRACTICE_ID_DE` — German medical practice IDs (BSNR, 9 digits)
 - `NHS_NUMBER` — UK NHS patient identifiers (mod-11 checksum)
 - `NINO_UK` — UK National Insurance Numbers (HMRC prefix blocklist)
+- `NPI_US` — US National Provider Identifiers (Luhn-validated)
+- `PASSPORT_DE` — German passport numbers (ICAO 9303 check digit)
 - `PASSPORT_UK` — UK passport numbers (9 digits, keyword-gated)
 - `PASSPORT_US` — US passport numbers (keyword-gated)
 - `SIN_CA` — Canadian Social Insurance Numbers (Luhn-validated)
+- `SOCIAL_SECURITY_DE` — German pension insurance numbers (RVNR, checksum-validated)
+- `TAX_ID_DE` — German tax identification numbers (Steuer-ID, ISO 7064 Mod 11, 10)
 - `TAX_ID_EIN` — US Employer Identification Numbers (IRS prefix-validated)
+- `TAX_NUMBER_DE` — German tax numbers (Steuernummer, ELSTER and state formats)
 - `US_SSN` — United States Social Security Numbers
 - `VAT_NUMBER` — EU / UK / NI VAT identifiers (per-country length validation)
+- `VEHICLE_REGISTRATION_UK` — UK vehicle registration plates (current, prefix, and suffix formats)
 
 **contact**
 - `PHONE_NUMBER` — international phone numbers
+- `POSTCODE_DE` — German postal codes (PLZ, keyword-gated)
+- `POSTCODE_UK` — UK postcodes (keyword-gated)
 
 **network**
 - `IP_ADDRESS` — IPv4 and IPv6 addresses
@@ -435,22 +456,35 @@ Twenty-four built-in regex recognisers ship by default, grouped into seven categ
 **digital-identity**
 - `API_KEY` — five named provider tokens (AWS access, GitHub PAT, Stripe live, Google API, OpenAI) plus keyword-gated AWS secret access keys
 - `JWT_TOKEN` — JSON Web Tokens (header `alg` field validated; signature **not** verified)
+- `PASSWORD_HASH` — modular-crypt / PHC password hashes (bcrypt, sha-crypt, argon2)
 - `PRIVATE_KEY` — PEM-fenced private key blocks (BEGIN / END type must match)
 
 **crypto**
 - `CRYPTO` — Bitcoin and similar wallet addresses
 
+**NER (optional)**
+
+The optional [ML/NER pass](/docs/configuration#mlner-pass-person-location-organization-nrp--facility) adds five entity types that have no fixed pattern. Which ones a model emits depends on its label set.
+
+- `PERSON` — person names (`personal`)
+- `LOCATION` — place and city names (`contact`)
+- `ORGANIZATION` — company and institution names (`personal`)
+- `NATIONALITY_RELIGION_POLITICS` — nationalities, religious and political groups (`personal`)
+- `FACILITY` — buildings, airports, and similar named facilities (`contact`)
+
 ### Categories
 
 Each built-in recogniser belongs to one category. Operators can scope the analyzer registry to a subset by listing categories in `DBMCP_PII_CATEGORIES` / `pii.categories`; leaving the setting unset enables every built-in.
 
-- `personal` — `EMAIL_ADDRESS`
-- `financial` — `BANK_ACCOUNT_UK`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
-- `government` — `ITIN`, `NHS_NUMBER`, `NINO_UK`, `PASSPORT_UK`, `PASSPORT_US`, `SIN_CA`, `TAX_ID_EIN`, `US_SSN`, `VAT_NUMBER`
-- `contact` — `PHONE_NUMBER`
+- `personal` — `DATE_OF_BIRTH`, `EMAIL_ADDRESS`
+- `financial` — `BANK_ACCOUNT_UK`, `BANK_ACCOUNT_US`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
+- `government` — `COMMERCIAL_REGISTER_DE`, `DRIVER_LICENSE_US`, `DRIVING_LICENCE_DE`, `DRIVING_LICENCE_UK`, `HEALTH_INSURANCE_DE`, `ID_CARD_DE`, `ITIN`, `LICENSE_PLATE_DE`, `LIFETIME_PHYSICIAN_NUMBER_DE`, `MBI_US`, `MEDICAL_LICENSE_US`, `MEDICAL_PRACTICE_ID_DE`, `NHS_NUMBER`, `NINO_UK`, `NPI_US`, `PASSPORT_DE`, `PASSPORT_UK`, `PASSPORT_US`, `SIN_CA`, `SOCIAL_SECURITY_DE`, `TAX_ID_DE`, `TAX_ID_EIN`, `TAX_NUMBER_DE`, `US_SSN`, `VAT_NUMBER`, `VEHICLE_REGISTRATION_UK`
+- `contact` — `PHONE_NUMBER`, `POSTCODE_DE`, `POSTCODE_UK`
 - `network` — `IP_ADDRESS`, `MAC_ADDRESS`, `URL`
-- `digital-identity` — `API_KEY`, `JWT_TOKEN`, `PRIVATE_KEY`
+- `digital-identity` — `API_KEY`, `JWT_TOKEN`, `PASSWORD_HASH`, `PRIVATE_KEY`
 - `crypto` — `CRYPTO`
+
+The NER entities follow the same filter: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` under `personal`; `LOCATION` and `FACILITY` under `contact`.
 
 See [PII configuration](/docs/configuration#pii) for the flag, env var, and the empty-registry fallback rules.
 

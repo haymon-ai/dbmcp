@@ -100,7 +100,7 @@ pub struct PiiConfig {
     /// Optional explicit category set; routes the analyzer through
     /// `dbmcp_pii::Analyzer::builder().categories(...)`.
     pub categories: Option<Vec<PiiCategory>>,
-    /// Whether the optional ML/NER pass (person & location) runs.
+    /// Whether the optional ML/NER pass (person, location, organization, NRP, facility) runs.
     ///
     /// Requires a model path; ignored otherwise. Off by default.
     pub ner_enabled: bool,
