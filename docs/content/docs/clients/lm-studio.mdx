@@ -3,7 +3,31 @@ title: LM Studio
 description: Add dbmcp to LM Studio
 ---
 
-Use the [one-click button](/clients#one-click-install), or open the **Program** tab, choose **Install → Edit mcp.json**, and add:
+## One-click install
+
+The button installs placeholder values; edit them in `mcp.json` afterwards.
+
+<a href="lmstudio://add_mcp?name=dbmcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBoYXltb24tYWkvZGJtY3AiXSwiZW52Ijp7IkRCTUNQX0RCX0JBQ0tFTkQiOiJteXNxbCIsIkRCTUNQX0RCX0hPU1QiOiIxMjcuMC4wLjEiLCJEQk1DUF9EQl9VU0VSIjoicm9vdCIsIkRCTUNQX0RCX1BBU1NXT1JEIjoiY2hhbmdlLW1lIiwiREJNQ1BfREJfTkFNRSI6Im15ZGIifX0%3D"><img src="https://img.shields.io/badge/LM_Studio-Install_Server-4338CA?style=flat-square&logo=lmstudio&logoColor=white" alt="Add to LM Studio" /></a>
+
+It adds this server:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@haymon-ai/dbmcp"],
+  "env": {
+    "DBMCP_DB_BACKEND": "mysql",
+    "DBMCP_DB_HOST": "127.0.0.1",
+    "DBMCP_DB_USER": "root",
+    "DBMCP_DB_PASSWORD": "change-me",
+    "DBMCP_DB_NAME": "mydb"
+  }
+}
+```
+
+## Manual setup
+
+Open the **Program** tab, choose **Install → Edit mcp.json**, and add:
 
 ```json tab="bin" title="mcp.json"
 {

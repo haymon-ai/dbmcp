@@ -23,34 +23,6 @@ The examples connect to MySQL with `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_D
 - [JetBrains AI Assistant](/clients/jetbrains)
 - [LM Studio](/clients/lm-studio)
 
-## One-click install
-
-**VS Code** asks for the backend, host, user, password, and database name when you install. The password prompt hides its input.
-
-<a href="https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522dbmcp%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540haymon-ai%252Fdbmcp%2522%255D%252C%2522env%2522%253A%257B%2522DBMCP_DB_BACKEND%2522%253A%2522%2524%257Binput%253Adb-backend%257D%2522%252C%2522DBMCP_DB_HOST%2522%253A%2522%2524%257Binput%253Adb-host%257D%2522%252C%2522DBMCP_DB_USER%2522%253A%2522%2524%257Binput%253Adb-user%257D%2522%252C%2522DBMCP_DB_PASSWORD%2522%253A%2522%2524%257Binput%253Adb-password%257D%2522%252C%2522DBMCP_DB_NAME%2522%253A%2522%2524%257Binput%253Adb-name%257D%2522%257D%252C%2522inputs%2522%253A%255B%257B%2522type%2522%253A%2522pickString%2522%252C%2522id%2522%253A%2522db-backend%2522%252C%2522description%2522%253A%2522Database%2520backend%2522%252C%2522options%2522%253A%255B%2522mysql%2522%252C%2522mariadb%2522%252C%2522postgres%2522%252C%2522sqlite%2522%255D%252C%2522default%2522%253A%2522mysql%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-host%2522%252C%2522description%2522%253A%2522Database%2520host%2520%2528blank%2520for%2520default%2529%2522%252C%2522default%2522%253A%2522127.0.0.1%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-user%2522%252C%2522description%2522%253A%2522Database%2520user%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-password%2522%252C%2522description%2522%253A%2522Database%2520password%2522%252C%2522password%2522%253Atrue%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-name%2522%252C%2522description%2522%253A%2522Database%2520name%2520%2528SQLite%253A%2520file%2520path%2529%2522%257D%255D%257D" target="_blank" rel="noreferrer noopener"><img src="https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white" alt="Install in VS Code" /></a> <a href="https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522dbmcp%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540haymon-ai%252Fdbmcp%2522%255D%252C%2522env%2522%253A%257B%2522DBMCP_DB_BACKEND%2522%253A%2522%2524%257Binput%253Adb-backend%257D%2522%252C%2522DBMCP_DB_HOST%2522%253A%2522%2524%257Binput%253Adb-host%257D%2522%252C%2522DBMCP_DB_USER%2522%253A%2522%2524%257Binput%253Adb-user%257D%2522%252C%2522DBMCP_DB_PASSWORD%2522%253A%2522%2524%257Binput%253Adb-password%257D%2522%252C%2522DBMCP_DB_NAME%2522%253A%2522%2524%257Binput%253Adb-name%257D%2522%257D%252C%2522inputs%2522%253A%255B%257B%2522type%2522%253A%2522pickString%2522%252C%2522id%2522%253A%2522db-backend%2522%252C%2522description%2522%253A%2522Database%2520backend%2522%252C%2522options%2522%253A%255B%2522mysql%2522%252C%2522mariadb%2522%252C%2522postgres%2522%252C%2522sqlite%2522%255D%252C%2522default%2522%253A%2522mysql%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-host%2522%252C%2522description%2522%253A%2522Database%2520host%2520%2528blank%2520for%2520default%2529%2522%252C%2522default%2522%253A%2522127.0.0.1%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-user%2522%252C%2522description%2522%253A%2522Database%2520user%2522%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-password%2522%252C%2522description%2522%253A%2522Database%2520password%2522%252C%2522password%2522%253Atrue%257D%252C%257B%2522type%2522%253A%2522promptString%2522%252C%2522id%2522%253A%2522db-name%2522%252C%2522description%2522%253A%2522Database%2520name%2520%2528SQLite%253A%2520file%2520path%2529%2522%257D%255D%257D" target="_blank" rel="noreferrer noopener"><img src="https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white" alt="Install in VS Code Insiders" /></a>
-
-**Cursor** and **LM Studio** install placeholder values. Edit them in the client's `mcp.json` afterwards.
-
-<a href="https://cursor.com/install-mcp?name=dbmcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBoYXltb24tYWkvZGJtY3AiXSwiZW52Ijp7IkRCTUNQX0RCX0JBQ0tFTkQiOiJteXNxbCIsIkRCTUNQX0RCX0hPU1QiOiIxMjcuMC4wLjEiLCJEQk1DUF9EQl9VU0VSIjoicm9vdCIsIkRCTUNQX0RCX1BBU1NXT1JEIjoiY2hhbmdlLW1lIiwiREJNQ1BfREJfTkFNRSI6Im15ZGIifX0%3D" target="_blank" rel="noreferrer noopener"><img src="https://img.shields.io/badge/Cursor-Install_Server-000000?style=flat-square&logo=cursor&logoColor=white" alt="Add to Cursor" /></a> <a href="lmstudio://add_mcp?name=dbmcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBoYXltb24tYWkvZGJtY3AiXSwiZW52Ijp7IkRCTUNQX0RCX0JBQ0tFTkQiOiJteXNxbCIsIkRCTUNQX0RCX0hPU1QiOiIxMjcuMC4wLjEiLCJEQk1DUF9EQl9VU0VSIjoicm9vdCIsIkRCTUNQX0RCX1BBU1NXT1JEIjoiY2hhbmdlLW1lIiwiREJNQ1BfREJfTkFNRSI6Im15ZGIifX0%3D"><img src="https://img.shields.io/badge/LM_Studio-Install_Server-4338CA?style=flat-square&logo=lmstudio&logoColor=white" alt="Add to LM Studio" /></a>
-
-The Cursor and LM Studio buttons add this server:
-
-```json
-{
-  "command": "npx",
-  "args": ["-y", "@haymon-ai/dbmcp"],
-  "env": {
-    "DBMCP_DB_BACKEND": "mysql",
-    "DBMCP_DB_HOST": "127.0.0.1",
-    "DBMCP_DB_USER": "root",
-    "DBMCP_DB_PASSWORD": "change-me",
-    "DBMCP_DB_NAME": "mydb"
-  }
-}
-```
-
-The VS Code buttons add the [VS Code](/clients/vs-code) entry, with an input for each `DBMCP_DB_*` value.
-
 ## Docker or installed binary
 
 Every client example works with another launcher: change only `command` and `args`, and keep `env`.

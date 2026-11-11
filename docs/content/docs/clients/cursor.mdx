@@ -3,6 +3,30 @@ title: Cursor
 description: Add dbmcp to Cursor
 ---
 
+## One-click install
+
+The button installs placeholder values; edit them in `mcp.json` afterwards.
+
+<a href="https://cursor.com/install-mcp?name=dbmcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBoYXltb24tYWkvZGJtY3AiXSwiZW52Ijp7IkRCTUNQX0RCX0JBQ0tFTkQiOiJteXNxbCIsIkRCTUNQX0RCX0hPU1QiOiIxMjcuMC4wLjEiLCJEQk1DUF9EQl9VU0VSIjoicm9vdCIsIkRCTUNQX0RCX1BBU1NXT1JEIjoiY2hhbmdlLW1lIiwiREJNQ1BfREJfTkFNRSI6Im15ZGIifX0%3D" target="_blank" rel="noreferrer noopener"><img src="https://img.shields.io/badge/Cursor-Install_Server-000000?style=flat-square&logo=cursor&logoColor=white" alt="Add to Cursor" /></a>
+
+It adds this server:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@haymon-ai/dbmcp"],
+  "env": {
+    "DBMCP_DB_BACKEND": "mysql",
+    "DBMCP_DB_HOST": "127.0.0.1",
+    "DBMCP_DB_USER": "root",
+    "DBMCP_DB_PASSWORD": "change-me",
+    "DBMCP_DB_NAME": "mydb"
+  }
+}
+```
+
+## Manual setup
+
 Add the server to `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (this project). `${env:NAME}` reads a value from Cursor's environment:
 
 ```json tab="bin" title="~/.cursor/mcp.json"
