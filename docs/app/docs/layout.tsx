@@ -1,16 +1,5 @@
-import { source } from '@/lib/source';
-import { DocsLayout } from 'fumadocs-ui/layouts/notebook';
-import { baseOptions } from '@/lib/layout.shared';
+import { DocsShell } from '@/components/layout/docs-shell';
 
 export default function Layout({ children }: LayoutProps<'/docs'>) {
-  return (
-    <DocsLayout
-      tree={source.getPageTree()}
-      {...baseOptions()}
-      nav={{ ...baseOptions().nav, mode: 'top' }}
-      sidebar={{ collapsible: false }}
-    >
-      {children}
-    </DocsLayout>
-  );
+  return <DocsShell>{children}</DocsShell>;
 }

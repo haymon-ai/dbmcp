@@ -2,64 +2,47 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
+/* Design tokens: IBM Plex, square corners, cool greys, #625bf8 accent. */
+@theme {
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #161616;
+  --color-fd-muted: #f5f7f9;
+  --color-fd-muted-foreground: #525252;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #161616;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #161616;
+  --color-fd-border: #edf0f3;
+  --color-fd-primary: #625bf8;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f5f7f9;
+  --color-fd-secondary-foreground: #161616;
+  --color-fd-accent: #edf0f3;
+  --color-fd-accent-foreground: #161616;
+  --color-fd-ring: #625bf8;
+
+  /* Secondary text, and the navy code panel. */
+  --color-subtle: #6f6f6f;
+  --color-code: #01112c;
+  --color-code-hover: #0b2048;
+  --color-code-border: #1c2c4a;
+  --color-code-muted: #9aa6bc;
+  --color-code-fg: #e6e9ef;
+}
+
 :root {
   --fd-layout-width: 100%;
-  --color-fd-background: #ffffff;
-}
-
-/* Code blocks: dark background with tighter radius */
-@layer utilities {
-  figure.shiki {
-    background-color: #0a0a0a;
-    border-color: #1a1a1a;
-    border-radius: 0.5rem;
-    box-shadow: none;
-  }
-}
-
-figure.shiki pre {
-  color: #e4e4e7 !important;
-}
-
-figure.shiki span[style] {
-  color: var(--shiki-dark) !important;
-}
-
-/* Tables: dark background to match code blocks */
-.prose table {
-  background-color: #0a0a0a !important;
-  border-radius: 0.5rem !important;
-  overflow: hidden;
-}
-
-.prose table th {
-  background-color: #141414 !important;
-  color: #e4e4e7 !important;
-  border-bottom-color: #2a2a2a !important;
-}
-
-.prose table td {
-  color: #d4d4d8 !important;
-  border-bottom-color: #1a1a1a !important;
-}
-
-.prose table tr:last-child td {
-  border-bottom: none !important;
-}
-
-.prose table code {
-  background-color: #1a1a1a !important;
-  color: #d4d4d8 !important;
-  border-color: #2a2a2a !important;
-}
-
-/* Search: less rounded to match a rectangular style */
-[data-search-full] {
-  border-radius: 0.375rem !important; /* rounded-md (6px) */
-}
-
-[data-search-full] kbd {
-  border-radius: 0.25rem !important; /* rounded (4px) */
 }
 
 html {
@@ -68,4 +51,228 @@ html {
 
 html:has(body[data-scroll-locked]) {
   scrollbar-gutter: auto;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tailwind 4 resets buttons to the default cursor; restore the pointer (utilities still win). */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* Layout sizes: 48px header, 240px sidebar, 256px TOC. Phones get a second 48px header row
+   (menu toggle + breadcrumb) in place of the TOC popover. */
+@media (max-width: 767px) {
+  #nd-notebook-layout#nd-notebook-layout {
+    --fd-header-height: 97px !important;
+    --fd-toc-popover-height: 0px !important;
+  }
+
+  [data-toc-popover] {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  #nd-notebook-layout#nd-notebook-layout {
+    --fd-header-height: 48px !important;
+    --fd-sidebar-width: 240px !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  #nd-notebook-layout#nd-notebook-layout {
+    --fd-toc-width: 256px !important;
+  }
+}
+
+/* Sidebar: group labels and flat 32px items with a 3px accent bar. */
+#nd-sidebar [data-radix-scroll-area-viewport] {
+  padding: 8px 0 24px;
+}
+
+#nd-sidebar p {
+  margin: 0;
+  padding: 24px 16px 8px !important;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.32px;
+  color: var(--color-fd-foreground);
+}
+
+#nd-sidebar a[data-active] {
+  height: 32px;
+  padding: 0 16px 0 13px !important;
+  border-left: 3px solid transparent;
+  color: var(--color-fd-muted-foreground);
+  font-size: 14px;
+  line-height: 18px;
+}
+
+#nd-sidebar a[data-active]:hover {
+  background: var(--color-fd-accent);
+  color: var(--color-fd-foreground);
+}
+
+#nd-sidebar a[data-active='true'] {
+  border-left-color: var(--color-fd-primary);
+  background: var(--color-fd-accent);
+  color: var(--color-fd-foreground);
+  font-weight: 600;
+}
+
+/* TOC: "On this page" heading without its icon. */
+#toc-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+  margin-bottom: 12px;
+}
+
+#toc-title svg {
+  display: none;
+}
+
+#nd-toc {
+  padding-top: 40px;
+}
+
+#nd-toc a {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Article typography. */
+#nd-page .prose {
+  --tw-prose-body: var(--color-fd-foreground);
+  --tw-prose-headings: var(--color-fd-foreground);
+  --tw-prose-links: var(--color-fd-primary);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+#nd-page .prose h2 {
+  margin: 48px 0 16px;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 400;
+}
+
+#nd-page .prose h3 {
+  margin: 32px 0 8px;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+#nd-page .prose a:not([data-card]) {
+  color: var(--color-fd-primary);
+  text-decoration: none;
+  font-weight: inherit;
+}
+
+#nd-page .prose a:not([data-card]):hover {
+  color: #4c44e6;
+  text-decoration: underline;
+}
+
+#nd-page .prose :not(pre) > code:not(.not-prose *) {
+  padding: 0 4px;
+  border: 0;
+  background: var(--color-fd-muted);
+  font-size: 14px;
+}
+
+#nd-page .prose table {
+  border: 1px solid var(--color-fd-border);
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+#nd-page .prose th {
+  background: var(--color-fd-muted);
+  font-weight: 600;
+  text-align: left;
+}
+
+#nd-page .prose th,
+#nd-page .prose td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-fd-border);
+}
+
+#nd-page .prose table td code:not(.not-prose *) {
+  font-size: 13px;
+}
+
+/* Code blocks: navy panel (colours set in DocsCodeBlock), mono 14/20, file-name title bar. */
+figure.shiki > div:first-child:not([role='region'], .absolute) {
+  height: 32px;
+  border-bottom: 1px solid var(--color-code-border);
+  color: var(--color-code-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+figure.shiki > div[role='region'] {
+  padding: 16px 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Title-less code blocks: the copy icon floats over the code on a solid panel-coloured chip. */
+figure.shiki > div.absolute {
+  background: var(--color-code);
+  backdrop-filter: none;
+}
+
+/* Code tabs (`code-tabs` is set in mdx.tsx): 40px tab row, 2px accent underline. */
+.code-tabs {
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-code);
+}
+
+.code-tabs > [role='tablist'] {
+  height: 41px;
+  padding: 0;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--color-code-border);
+}
+
+.code-tabs [role='tab'] {
+  height: 40px;
+  padding: 0 16px;
+  color: var(--color-code-muted);
+  font-size: 14px;
+  /* Same weight active and inactive, so switching tabs does not shift the labels. */
+  font-weight: 600;
+
+  &:hover {
+    color: var(--color-code-fg);
+  }
+
+  &[data-state='active'] {
+    color: var(--color-code-fg);
+  }
+
+  & > div {
+    inset-inline: 0;
+    height: 2px;
+  }
+}
+
+.code-tabs figure.shiki {
+  margin: 0;
+  border-radius: 0;
 }

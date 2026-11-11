@@ -1,14 +1,22 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { Provider } from "@/components/provider";
+import { siteUrl } from "@/lib/shared";
 import "./global.css";
 
-const inter = Inter({
+const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
+  variable: "--font-plex-sans",
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-plex-mono",
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://dbmcp.haymon.ai"),
+  metadataBase: new URL(siteUrl),
   title: {
     default: "Haymon Database MCP — AI access to your SQL databases",
     template: "%s | Haymon Database MCP",
@@ -19,7 +27,7 @@ export const metadata: Metadata = {
     title: "Haymon Database MCP — AI access to your SQL databases",
     description:
       "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite. Zero runtime dependencies, read-only by default.",
-    url: "https://dbmcp.haymon.ai",
+    url: siteUrl,
     siteName: "Haymon Database MCP",
     type: "website",
   },
@@ -33,7 +41,7 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={inter.className} suppressHydrationWarning>
+    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
         <Provider>{children}</Provider>
       </body>

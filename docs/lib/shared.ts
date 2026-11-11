@@ -1,5 +1,7 @@
 export const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
+export const siteUrl = 'https://dbmcp.haymon.ai';
+
 export const appName = 'Database MCP';
 export const docsRoute = '/docs';
 
