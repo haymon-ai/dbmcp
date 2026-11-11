@@ -4,6 +4,7 @@
 //! `SQLite` is a single-file, single-writer backend; the pool is fixed
 //! at one connection. In read-only mode the file is opened with
 //! `SQLITE_OPEN_READONLY`, so `SQLite` itself rejects every write.
+//! A progress handler interrupts statements that outlive the query timeout.
 
 use std::time::Duration;
 
@@ -15,6 +16,9 @@ use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqliteQueryResult};
 use tracing::info;
+
+/// Virtual machine instructions `SQLite` runs between deadline checks.
+const PROGRESS_OPS: i32 = 1000;
 
 /// Owns the lazy `SQLite` pool and the logic that builds it.
 #[derive(Clone)]
@@ -68,8 +72,12 @@ impl Connection for SqliteConnection {
         self.config.query_timeout
     }
 
-    fn is_timeout(_error: &sqlx::Error) -> bool {
-        false
+    fn is_timeout(error: &sqlx::Error) -> bool {
+        // Only the progress handler set by `set_timeout` interrupts statements.
+        error
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .is_some_and(|code| code == "9") // SQLITE_INTERRUPT
     }
 
     /// Counts only the statements that set the change count and rowid.
@@ -97,8 +105,17 @@ impl Connection for SqliteConnection {
         Ok(None)
     }
 
-    async fn set_timeout(&self, _conn: &mut sqlx::SqliteConnection, _secs: u64) -> Result<(), sqlx::Error> {
-        // Unreachable: `session_id` returns no id, so no server timeout is set.
+    /// Installs a progress handler that interrupts statements after `limit`.
+    ///
+    /// Reinstalled before every statement, replacing the previous deadline.
+    /// The handler stays on the connection afterwards, so every statement
+    /// must run through the timeout wrapper. It runs on the driver's worker
+    /// thread, so it reads the system clock rather than tokio time.
+    async fn set_timeout(&self, conn: &mut sqlx::SqliteConnection, limit: Duration) -> Result<(), sqlx::Error> {
+        let start = std::time::Instant::now();
+        conn.lock_handle()
+            .await?
+            .set_progress_handler(PROGRESS_OPS, move || start.elapsed() < limit);
         Ok(())
     }
 
@@ -235,6 +252,44 @@ mod tests {
             .execute("CREATE TABLE t (id INTEGER)", None)
             .await
             .expect("read-write connection accepts writes");
+    }
+
+    /// Counts an endless recursive CTE, asserting `SQLite` stops it at the 1 s timeout.
+    async fn assert_endless_times_out(connection: &SqliteConnection) {
+        let endless = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c";
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            connection.fetch_json(endless, None, connection.query_timeout()),
+        )
+        .await
+        .expect("statement must stop before the test deadline");
+        match result.expect_err("endless statement must time out") {
+            // At least 1 s: no stale deadline. Well under the 6 s backstop: SQLite stopped it.
+            SqlError::QueryTimeout { elapsed_secs, .. } => {
+                assert!((0.9..3.0).contains(&elapsed_secs), "elapsed {elapsed_secs}");
+            }
+            other => panic!("expected QueryTimeout, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn timed_out_statement_stops_and_frees_connection() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            query_timeout: 1,
+            ..base_config()
+        });
+        assert_endless_times_out(&connection).await;
+        // Each statement gets a fresh deadline.
+        assert_endless_times_out(&connection).await;
+        let rows = tokio::time::timeout(
+            Duration::from_secs(1),
+            connection.fetch_json("SELECT 1 AS v", None, connection.query_timeout()),
+        )
+        .await
+        .expect("connection must be free right after the timeout")
+        .expect("fast query succeeds");
+        assert_eq!(rows, vec![serde_json::json!({"v": 1})]);
     }
 
     #[tokio::test]
