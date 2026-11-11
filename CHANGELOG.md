@@ -2,6 +2,31 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.18.0](https://github.com/haymon-ai/dbmcp/compare/1290287c73a1c30a9389178549ca8d900f05d284..v0.18.0) - 2026-11-11
+#### 🚀 Features
+- (**docker**) build image from source on distroless debian13 (#293) - ([3128e75](https://github.com/haymon-ai/dbmcp/commit/3128e75bdf52db4af21e89fd569157d8bf3df239)) - [@athopen](https://github.com/athopen)
+- (**helm**) publish a Helm chart as OCI to GHCR (#291) - ([b71294e](https://github.com/haymon-ai/dbmcp/commit/b71294e9948771ce7df2b0bf3136c27dd4d4d3c8)) - [@athopen](https://github.com/athopen)
+- (**http**) add /healthz and /readyz health probes (#289) - ([71291da](https://github.com/haymon-ai/dbmcp/commit/71291da2535eb2f450e1c63bc5f7d2ab59d3cd8e)) - [@athopen](https://github.com/athopen)
+- (**release**) list the crates.io package in the MCP Registry (#288) - ([ee36c58](https://github.com/haymon-ai/dbmcp/commit/ee36c580cc09bf8cf5379c0de1c2b979a5a2628a)) - [@athopen](https://github.com/athopen)
+- (**release**) publish checksums, attestations and image signatures (#287) - ([ee81918](https://github.com/haymon-ai/dbmcp/commit/ee819183954c1f6d727a98bf2ddf22ed613e0379)) - [@athopen](https://github.com/athopen)
+- (**server**) add per-call readQuery timeout and explainQuery hint (#316) - ([b57b792](https://github.com/haymon-ai/dbmcp/commit/b57b792fcf79e9716e7c95b16fde24b0272df3bb)) - [@athopen](https://github.com/athopen)
+- (**server**) cap query output per cell and per response (#314) - ([b19eef8](https://github.com/haymon-ai/dbmcp/commit/b19eef89924d67a9449ef50074d5fb8c5622abf7)) - [@athopen](https://github.com/athopen)
+- (**server**) mark database content as untrusted data (#312) - ([8a9df3b](https://github.com/haymon-ai/dbmcp/commit/8a9df3bd24c6c9ed63c83b3f6ff69cee300271b4)) - [@athopen](https://github.com/athopen)
+- (**server**) return rowsAffected and lastInsertId from writeQuery (#311) - ([a206404](https://github.com/haymon-ai/dbmcp/commit/a206404df9a657cd40676bc96b9990b6845c700c)) - [@athopen](https://github.com/athopen)
+#### 🐛 Bug Fixes
+- (**release**) wait for npm before publishing to the MCP Registry (#286) - ([1290287](https://github.com/haymon-ai/dbmcp/commit/1290287c73a1c30a9389178549ca8d900f05d284)) - [@athopen](https://github.com/athopen)
+- (**server**) clear MCP Inspector schema and definition findings (#292) - ([3e7cbd5](https://github.com/haymon-ai/dbmcp/commit/3e7cbd5d6052e706ec37a450a073b9e0610e373b)) - [@athopen](https://github.com/athopen)
+- (**sql**) reject USE in readQuery and writeQuery (#309) - ([2fc61d0](https://github.com/haymon-ai/dbmcp/commit/2fc61d0abfc9014658ddb08f7a6e2215fe476f22)) - [@athopen](https://github.com/athopen)
+- (**sql**) cancel timed-out queries on the database server (#308) - ([1d5accc](https://github.com/haymon-ai/dbmcp/commit/1d5acccdc9e2df12574abb2d16a7b02d116ced03)) - [@athopen](https://github.com/athopen)
+- (**sqlite**) interrupt statements that exceed the query timeout (#315) - ([16330a3](https://github.com/haymon-ai/dbmcp/commit/16330a38fa4ec9bc3d5ad0b06f1d285eda88e380)) - [@athopen](https://github.com/athopen)
+- (**sqlite**) open database read-only in read-only mode (#310) - ([fc6102e](https://github.com/haymon-ai/dbmcp/commit/fc6102e242a9350bd23d1c0ee6948f87d80f4dc6)) - [@athopen](https://github.com/athopen)
+#### 📚 Documentation
+- (**clients**) add one-click install buttons and per-client setup (#290) - ([0d0cceb](https://github.com/haymon-ai/dbmcp/commit/0d0cceb294b1fe26e69b59432b79c12930bc992e)) - [@athopen](https://github.com/athopen)
+- (**pii**) list all 46 regex and 5 NER entities (#313) - ([e265331](https://github.com/haymon-ai/dbmcp/commit/e2653319aa19c7541680f49225fbcec41dbf2923)) - [@athopen](https://github.com/athopen)
+- (**security**) document parse-level multi-statement blocking (#318) - ([ec36e25](https://github.com/haymon-ai/dbmcp/commit/ec36e253019863cb5ea5d665e4670cb4f06435ae)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.17.0](https://github.com/haymon-ai/dbmcp/compare/3cf71276757e3c41e59971487cb898134ed075de..v0.17.0) - 2026-11-07
 #### 🚀 Features
 - (**release**) publish npm launcher for npx installs (#285) - ([3cf7127](https://github.com/haymon-ai/dbmcp/commit/3cf71276757e3c41e59971487cb898134ed075de)) - [@athopen](https://github.com/athopen)
