@@ -2,6 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing;
+use dbmcp_server::truncate;
 use dbmcp_server::types::ReadQueryResponse;
 
 use dbmcp_sql::StatementKind;
@@ -96,6 +97,16 @@ impl SqliteHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        Ok(ReadQueryResponse { rows, next_cursor })
+        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        // A paged `SELECT` resumes dropped rows; other statements count them.
+        let next_cursor = match kind {
+            StatementKind::Select => fitted.resume(cursor, next_cursor),
+            StatementKind::NonSelect => next_cursor,
+        };
+        Ok(ReadQueryResponse {
+            rows: fitted.rows,
+            next_cursor,
+            truncation: fitted.truncation,
+        })
     }
 }

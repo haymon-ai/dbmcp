@@ -1,6 +1,7 @@
 //! MCP tool: `explainQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
+use dbmcp_server::truncate;
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 
@@ -142,7 +143,11 @@ impl PostgresHandler {
             self.connection.fetch_json(explain_sql.as_str(), database).await?
         };
         let rows = self.redactor.redact_rows(rows).await?;
+        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
 
-        Ok(QueryResponse { rows })
+        Ok(QueryResponse {
+            rows: fitted.rows,
+            truncation: fitted.truncation,
+        })
     }
 }

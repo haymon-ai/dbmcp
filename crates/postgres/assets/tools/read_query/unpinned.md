@@ -23,8 +23,10 @@ Use when:
 
 <what_it_returns>
 A JSON array of row objects, each keyed by column name.
+
+Long string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>
 
 <pagination>
-`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.
+`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.
 </pagination>

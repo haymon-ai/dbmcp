@@ -41,7 +41,7 @@ expression: tools
   {
     "name": "explainQuery",
     "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables(detailed=true)\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n</what_it_returns>",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables(detailed=true)\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN FORMAT=JSON output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
     "inputSchema": {
       "properties": {
         "analyze": {
@@ -61,6 +61,13 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
+        "hint": {
+          "description": "How to fetch less data; present only when `truncated` is `true`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "rows": {
           "description": "Result rows, each a JSON object keyed by a column name.",
           "items": {
@@ -68,6 +75,19 @@ expression: tools
             "type": "object"
           },
           "type": "array"
+        },
+        "rowsOmitted": {
+          "description": "Rows the response cap dropped that no cursor can fetch again.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -415,7 +435,7 @@ expression: tools
   {
     "name": "readQuery",
     "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n- Switching database context (USE is rejected) → the database is fixed by configuration\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, DESCRIBE, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server variables or status (SHOW)\n- Viewing table structure (DESCRIBE)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)\n- Switching database context (USE is rejected) → the database is fixed by configuration\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW TABLES\" or \"DESCRIBE users\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>",
     "inputSchema": {
       "properties": {
         "cursor": {
@@ -438,6 +458,13 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
+        "hint": {
+          "description": "How to fetch less data; present only when `truncated` is `true`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
           "type": "string"
@@ -449,6 +476,19 @@ expression: tools
             "type": "object"
           },
           "type": "array"
+        },
+        "rowsOmitted": {
+          "description": "Rows the response cap dropped that no cursor can fetch again.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -466,7 +506,7 @@ expression: tools
   {
     "name": "writeQuery",
     "title": "Write Query",
-    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT, SHOW) → use readQuery\n- Query performance analysis → use explainQuery\n- Switching database context (USE is rejected) → the database is fixed by configuration\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use readQuery\n</examples>\n\n<what_it_returns>\nAn object with:\n- `rows`: rows returned by the statement (e.g. `INSERT ... RETURNING` on MariaDB), each keyed by column name; empty for most writes.\n- `rowsAffected`: rows inserted, updated, or deleted. `UPDATE` counts matched rows, even when values did not change. `0` for schema changes.\n- `lastInsertId`: the `AUTO_INCREMENT` id generated by an `INSERT` (the first one for a multi-row insert). Absent when none was generated.\n\nNo follow-up `SELECT` is needed to confirm a write.\n</what_it_returns>",
+    "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT, SHOW) → use readQuery\n- Query performance analysis → use explainQuery\n- Switching database context (USE is rejected) → the database is fixed by configuration\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use readQuery\n</examples>\n\n<what_it_returns>\nAn object with:\n- `rows`: rows returned by the statement (e.g. `INSERT ... RETURNING` on MariaDB), each keyed by column name; empty for most writes.\n- `rowsAffected`: rows inserted, updated, or deleted. `UPDATE` counts matched rows, even when values did not change. `0` for schema changes.\n- `lastInsertId`: the `AUTO_INCREMENT` id generated by an `INSERT` (the first one for a multi-row insert). Absent when none was generated.\n\nNo follow-up `SELECT` is needed to confirm a write.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
     "inputSchema": {
       "properties": {
         "query": {
@@ -481,6 +521,13 @@ expression: tools
     },
     "outputSchema": {
       "properties": {
+        "hint": {
+          "description": "How to fetch less data; present only when `truncated` is `true`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "lastInsertId": {
           "description": "Id generated by an `INSERT`; absent when none was generated.",
           "format": "uint64",
@@ -503,6 +550,19 @@ expression: tools
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "rowsOmitted": {
+          "description": "Rows the response cap dropped that no cursor can fetch again.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
         }
       },
       "required": [

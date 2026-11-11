@@ -357,6 +357,18 @@ pub const DB_PAGE_SIZE: Setting = setting(
     "DBMCP_DB_PAGE_SIZE",
     int(1, DatabaseConfig::MAX_PAGE_SIZE as u64),
 );
+/// `database.max_cell_chars` / `DBMCP_DB_MAX_CELL_CHARS`.
+pub const DB_MAX_CELL_CHARS: Setting = setting(
+    "database.max_cell_chars",
+    "DBMCP_DB_MAX_CELL_CHARS",
+    int(0, usize::MAX as u64),
+);
+/// `database.max_response_chars` / `DBMCP_DB_MAX_RESPONSE_CHARS`.
+pub const DB_MAX_RESPONSE_CHARS: Setting = setting(
+    "database.max_response_chars",
+    "DBMCP_DB_MAX_RESPONSE_CHARS",
+    int(0, usize::MAX as u64),
+);
 /// `http.host` / `DBMCP_HTTP_HOST`.
 pub const HTTP_HOST: Setting = setting("http.host", "DBMCP_HTTP_HOST", Kind::Text);
 /// `http.port` / `DBMCP_HTTP_PORT`.
@@ -439,6 +451,8 @@ pub const SETTINGS: &[Setting] = &[
     DB_CONNECTION_TIMEOUT,
     DB_QUERY_TIMEOUT,
     DB_PAGE_SIZE,
+    DB_MAX_CELL_CHARS,
+    DB_MAX_RESPONSE_CHARS,
     HTTP_HOST,
     HTTP_PORT,
     HTTP_ALLOWED_ORIGINS,
@@ -649,7 +663,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 40);
+        assert_eq!(SETTINGS.len(), 42);
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {
