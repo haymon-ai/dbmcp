@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.haymon/dbmcp",
   "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "websiteUrl": "https://dbmcp.haymon.ai",
   "repository": {
     "url": "https://github.com/haymon-ai/dbmcp",
@@ -11,7 +11,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/dbmcp:0.17.0",
+      "identifier": "ghcr.io/haymon-ai/dbmcp:0.18.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
@@ -19,7 +19,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/haymon-ai/dbmcp:0.17.0",
+      "identifier": "ghcr.io/haymon-ai/dbmcp:0.18.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "streamable-http",
@@ -67,7 +67,7 @@
     {
       "registryType": "npm",
       "identifier": "@haymon-ai/dbmcp",
-      "version": "0.17.0",
+      "version": "0.18.0",
       "transport": {
         "type": "stdio"
       }
@@ -76,7 +76,7 @@
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "dbmcp",
-      "version": "0.17.0",
+      "version": "0.18.0",
       "transport": {
         "type": "stdio"
       }
