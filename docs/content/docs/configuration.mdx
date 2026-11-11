@@ -169,7 +169,7 @@ database:
   max_query_timeout: 300  # readQuery may ask for up to 5 minutes
 ```
 
-`0` removes the cap. It is rejected when `query_timeout` is `0`, and so is a cap below `query_timeout`. Other tools always use `query_timeout`.
+Setting `max_query_timeout: 0` removes the cap, up to the hard limit of 2,147,483 seconds (PostgreSQL's `statement_timeout` maximum). Startup fails if you set a positive `max_query_timeout` below `query_timeout`, or any positive `max_query_timeout` while `query_timeout` is `0`. While `query_timeout` is `0`, `readQuery` rejects the `timeout` argument. Other tools always use `query_timeout`.
 
 #### Connection Poolers and Proxies
 

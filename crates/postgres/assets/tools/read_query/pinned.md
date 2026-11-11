@@ -32,5 +32,5 @@ Long string values are cut and end in `…[truncated, N chars total]`; read the 
 </pagination>
 
 <timeout>
-Each call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time; values above the server maximum are rejected.
+Each call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.
 </timeout>
