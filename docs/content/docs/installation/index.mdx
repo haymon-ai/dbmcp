@@ -1,0 +1,99 @@
+---
+title: Installation
+description: Install dbmcp with the install script, then pick another method if you need one
+---
+
+Database MCP is distributed as a single binary with no runtime dependencies. Choose the installation method that works best for your setup.
+
+## Quick Install (recommended)
+
+```bash tab="macOS / Linux / WSL"
+curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
+```
+
+```powershell tab="PowerShell"
+irm https://dbmcp.haymon.ai/install.ps1 | iex
+```
+
+```batch tab="CMD"
+curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+On macOS, Linux, or WSL without `curl`, use `wget`:
+
+```bash
+wget -qO- https://dbmcp.haymon.ai/install.sh | bash
+```
+
+This detects your platform, downloads the correct binary, and installs it. Re-run the same command to upgrade to the latest version.
+
+To install to a custom directory:
+
+```bash
+INSTALL_DIR=/opt/bin curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
+```
+
+```powershell
+$env:INSTALL_DIR = "C:\tools\dbmcp"; irm https://dbmcp.haymon.ai/install.ps1 | iex
+```
+
+```batch
+set INSTALL_DIR=C:\tools\dbmcp && curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+For other ways to install, see [Binaries](/docs/installation/binaries), [Docker](/docs/installation/docker), [Package Managers](/docs/installation/package-managers), and [Build from source](/docs/installation/from-source). To check a download, see [Verify downloads](#verify-downloads).
+
+## Comparison
+
+| Method | Ease of Install | Auto Updates | Version Flexibility | Prerequisites | Platform Coverage |
+|--------|----------------|--------------|--------------------|--------------|--------------------|
+| Quick Install | Single command | Re-run to upgrade | Latest release | curl/wget or PowerShell | macOS, Linux, WSL, Windows |
+| Docker | `docker pull` | Pull latest tag | Any release tag | Docker | Linux, macOS, Windows |
+| Prebuilt Binary | Simple download | None | Any release | None | Linux, macOS, Windows |
+| npm / npx | No install step with `npx` | Unpinned `npx` fetches the latest | Any published version | Node.js 18+ | Linux (glibc), macOS arm64, Windows x64 |
+| Cargo Install | One command | `cargo install` to update | Any published version | Rust toolchain | All platforms Rust supports |
+| Build from Source | Multiple steps | Manual (git pull + rebuild) | Any commit/branch | Git + Rust toolchain | All platforms Rust supports |
+
+## Verify downloads
+
+Each release publishes a SHA-256 checksum for every release asset, signed build provenance attestations for the binaries, the Docker image, and the [Helm chart](/docs/kubernetes), and a keyless [cosign](https://docs.sigstore.dev/cosign/) signature for the image and the chart.
+
+### Checksums
+
+Each archive has a matching `.sha256` file:
+
+```bash
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c dbmcp-x86_64-unknown-linux-gnu.tar.gz.sha256
+```
+
+On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`. On Windows (PowerShell), download the checksum next to the `dbmcp.zip` from the [Windows](/docs/installation/binaries#windows) steps and compare:
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/haymon-ai/dbmcp/releases/latest/download/dbmcp-x86_64-pc-windows-msvc.zip.sha256 -OutFile dbmcp.zip.sha256
+$expected = (Get-Content dbmcp.zip.sha256).Split(' ')[0]
+(Get-FileHash dbmcp.zip -Algorithm SHA256).Hash -eq $expected
+```
+
+This prints `True` when the hashes match. PowerShell's `-eq` ignores case, so the uppercase hash from `Get-FileHash` matches the lowercase one in the file.
+
+### Build Provenance
+
+Attestations prove an asset was built by this repository's release workflow. Verify them with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify dbmcp-x86_64-unknown-linux-gnu.tar.gz --repo haymon-ai/dbmcp
+gh attestation verify oci://ghcr.io/haymon-ai/dbmcp:<version> --repo haymon-ai/dbmcp
+gh attestation verify oci://ghcr.io/haymon-ai/charts/dbmcp:<version> --repo haymon-ai/dbmcp
+```
+
+### Image Signature
+
+```bash
+cosign verify ghcr.io/haymon-ai/dbmcp:<version> \
+  --certificate-identity-regexp '^https://github.com/haymon-ai/dbmcp/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+To verify the Helm chart, use `ghcr.io/haymon-ai/charts/dbmcp:<version>` in the same command.

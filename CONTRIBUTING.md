@@ -67,7 +67,7 @@ Settings have no CLI flag. Each one has a YAML key path and an env var, both dec
 
 - **YAML key**: the Rust field name in its section (`database.read_only`, `pii.ner_enabled`).
 - **Env var**: hand-picked, not derived from the key path: `DBMCP_` + section prefix (`DB_`, `HTTP_`, `PII_`, `SSH_`; none for top-level settings) + a SCREAMING_SNAKE concept name. Deliberate exceptions are fine (`DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Never rename or alias an existing name.
-- Document the new row in `docs/content/docs/configuration.mdx`.
+- Add the new row to the all-settings table in `docs/content/docs/configuration/index.mdx`, and document it on the page that explains its feature.
 
 ### Dependencies
 

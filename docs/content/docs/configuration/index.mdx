@@ -1,0 +1,183 @@
+---
+title: Configuration
+description: Every dbmcp setting with its YAML key, environment variable, type, and default
+---
+
+Database MCP reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. The table below lists every setting; each key links to the page that explains it, with its type and full description. For the file formats, `${}` interpolation, and path rules, see [Config files](/docs/configuration/config-files).
+
+The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json) for editor completion and validation. Editors backed by the YAML language server (VS Code's YAML extension, JetBrains IDEs, Neovim, Zed) pick it up from this modeline on the first line of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json
+```
+
+The `master` URL tracks the latest schema; replace `master` with a release tag such as `vX.Y.Z` to match an older binary. At startup `dbmcp` checks the file's keys and sections against the same schema and every value by its setting's type, so every value in the file must be valid even when a `DBMCP_*` variable overrides it.
+
+## All settings
+
+| YAML key | Env var | Default |
+|----------|---------|---------|
+| [`transport`](/docs/features/transports) | `DBMCP_TRANSPORT` | `stdio` |
+| [`http.host`](/docs/features/transports) | `DBMCP_HTTP_HOST` | `127.0.0.1` |
+| [`http.port`](/docs/features/transports) | `DBMCP_HTTP_PORT` | `9001` |
+| [`http.allowed_origins`](/docs/features/transports) | `DBMCP_HTTP_ALLOWED_ORIGINS` | Loopback origins, any port |
+| [`http.allowed_hosts`](/docs/features/transports) | `DBMCP_HTTP_ALLOWED_HOSTS` | `localhost`, `127.0.0.1`, `::1` |
+| [`http.auth_token`](/docs/features/transports) | `DBMCP_HTTP_AUTH_TOKEN` | *(unset)* |
+| [`http.allow_unauthenticated`](/docs/features/transports) | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | `false` |
+| [`database.backend`](/docs/features/database) | `DBMCP_DB_BACKEND` | `mysql` |
+| [`database.host`](/docs/features/database) | `DBMCP_DB_HOST` | `localhost` |
+| [`database.port`](/docs/features/database) | `DBMCP_DB_PORT` | Backend-dependent |
+| [`database.user`](/docs/features/database) | `DBMCP_DB_USER` | Backend-dependent |
+| [`database.password`](/docs/features/database) | `DBMCP_DB_PASSWORD` | — |
+| [`database.name`](/docs/features/database) | `DBMCP_DB_NAME` | — |
+| [`database.charset`](/docs/features/database) | `DBMCP_DB_CHARSET` | — |
+| [`database.ssl`](/docs/features/database) | `DBMCP_DB_SSL` | `false` |
+| [`database.ssl_ca`](/docs/features/database) | `DBMCP_DB_SSL_CA` | — |
+| [`database.ssl_cert`](/docs/features/database) | `DBMCP_DB_SSL_CERT` | — |
+| [`database.ssl_key`](/docs/features/database) | `DBMCP_DB_SSL_KEY` | — |
+| [`database.ssl_verify_cert`](/docs/features/database) | `DBMCP_DB_SSL_VERIFY_CERT` | `true` |
+| [`database.read_only`](/docs/security/read-only) | `DBMCP_DB_READ_ONLY` | `true` |
+| [`database.max_pool_size`](/docs/features/database) | `DBMCP_DB_MAX_POOL_SIZE` | `5` |
+| [`database.connection_timeout`](/docs/features/database) | `DBMCP_DB_CONNECTION_TIMEOUT` | — |
+| [`database.query_timeout`](/docs/features/query-timeouts) | `DBMCP_DB_QUERY_TIMEOUT` | `30` |
+| [`database.max_query_timeout`](/docs/features/query-timeouts) | `DBMCP_DB_MAX_QUERY_TIMEOUT` | `query_timeout` |
+| [`database.page_size`](/docs/features/pagination) | `DBMCP_DB_PAGE_SIZE` | `100` |
+| [`database.max_cell_chars`](/docs/features/pagination) | `DBMCP_DB_MAX_CELL_CHARS` | `4096` |
+| [`database.max_response_chars`](/docs/features/pagination) | `DBMCP_DB_MAX_RESPONSE_CHARS` | `32000` |
+| [`log_level`](#logging) | `DBMCP_LOG_LEVEL` | `info` |
+| [`pii.enabled`](/docs/privacy/redaction) | `DBMCP_PII_ENABLE` | `false` |
+| [`pii.operator`](/docs/privacy/redaction) | `DBMCP_PII_OPERATOR` | `replace` |
+| [`pii.categories`](/docs/privacy/redaction) | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* |
+| [`pii.ner_enabled`](/docs/privacy/machine-learning) | `DBMCP_PII_NER_ENABLE` | `false` |
+| [`pii.ner_model`](/docs/privacy/machine-learning) | `DBMCP_PII_NER_MODEL` | *unset* |
+| [`ssh.host`](/docs/features/ssh-tunnel) | `DBMCP_SSH_HOST` | — |
+| [`ssh.port`](/docs/features/ssh-tunnel) | `DBMCP_SSH_PORT` | `22` |
+| [`ssh.user`](/docs/features/ssh-tunnel) | `DBMCP_SSH_USER` | — |
+| [`ssh.password`](/docs/features/ssh-tunnel) | `DBMCP_SSH_PASSWORD` | — |
+| [`ssh.key`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEY` | — |
+| [`ssh.key_passphrase`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEY_PASSPHRASE` | — |
+| [`ssh.known_hosts`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` |
+| [`ssh.strict_host_key_checking`](/docs/features/ssh-tunnel) | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `yes` |
+| [`ssh.keepalive_interval`](/docs/features/ssh-tunnel) | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `30` |
+| [`ssh.local_port`](/docs/features/ssh-tunnel) | `DBMCP_SSH_LOCAL_PORT` | ephemeral |
+
+For where these values come from and which source wins, see [Precedence](/docs/configuration/precedence).
+
+## Value Formats
+
+The **Type** column in the settings tables determines how a value is written:
+
+| Type | Environment variable / env file | YAML |
+|------|---------------------------------|------|
+| string | Text as-is | Any scalar; quote values YAML would read as another type (`password: "12345"`) |
+| integer | Decimal digits | Integer (quoted digits also work) |
+| seconds | Whole seconds as an integer | Integer |
+| boolean | `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False` | `true` / `false` (or a quoted string from the env set) |
+| enum | One of the listed values, lowercase kebab-case, case-sensitive | Same |
+| list | Comma-separated; items are trimmed, empty items are rejected | YAML sequence (`[a, b]` or one `- item` per line), or a comma-separated string as in the env var; replaces the default wholesale |
+| path | Process env: relative paths resolve against the working directory. Env file: against the env file's directory; leading `~` expands | Relative paths resolve against the YAML file's directory; leading `~` expands |
+
+`yes`/`no`/`on`/`off` are **not** booleans and are rejected. A default of `—` or *unset* means the setting is absent until you set it.
+
+## Logging
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `log_level` | `DBMCP_LOG_LEVEL` | enum | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace`. Logs go to stderr. |
+
+## Migrating from CLI flags
+
+Earlier releases accepted one CLI flag per setting. Those flags are gone: passing one now fails with clap's `error: unexpected argument '--db-backend' found` (exit code 2). The only flags left are `--config-file`, `--env-file`, `-h`/`--help`, and `-V`/`--version`. `--transport` and `--log-level` moved too: use `DBMCP_TRANSPORT` / `transport` and `DBMCP_LOG_LEVEL` / `log_level`.
+
+Every `DBMCP_*` environment variable name is unchanged, so each removed flag maps to the variable that already backed it:
+
+| Removed flag | Env var | YAML key |
+|--------------|---------|----------|
+| `--transport` | `DBMCP_TRANSPORT` | `transport` |
+| `--log-level` | `DBMCP_LOG_LEVEL` | `log_level` |
+| `--host` | `DBMCP_HTTP_HOST` | `http.host` |
+| `--port` | `DBMCP_HTTP_PORT` | `http.port` |
+| `--allowed-origins` | `DBMCP_HTTP_ALLOWED_ORIGINS` | `http.allowed_origins` |
+| `--allowed-hosts` | `DBMCP_HTTP_ALLOWED_HOSTS` | `http.allowed_hosts` |
+| `--auth-token` | `DBMCP_HTTP_AUTH_TOKEN` | `http.auth_token` |
+| `--dangerously-allow-unauthenticated` | `DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED` | `http.allow_unauthenticated` |
+| `--db-backend` | `DBMCP_DB_BACKEND` | `database.backend` |
+| `--db-host` | `DBMCP_DB_HOST` | `database.host` |
+| `--db-port` | `DBMCP_DB_PORT` | `database.port` |
+| `--db-user` | `DBMCP_DB_USER` | `database.user` |
+| `--db-password` | `DBMCP_DB_PASSWORD` | `database.password` |
+| `--db-name` | `DBMCP_DB_NAME` | `database.name` |
+| `--db-charset` | `DBMCP_DB_CHARSET` | `database.charset` |
+| `--db-ssl` | `DBMCP_DB_SSL` | `database.ssl` |
+| `--db-ssl-ca` | `DBMCP_DB_SSL_CA` | `database.ssl_ca` |
+| `--db-ssl-cert` | `DBMCP_DB_SSL_CERT` | `database.ssl_cert` |
+| `--db-ssl-key` | `DBMCP_DB_SSL_KEY` | `database.ssl_key` |
+| `--db-ssl-verify-cert` | `DBMCP_DB_SSL_VERIFY_CERT` | `database.ssl_verify_cert` |
+| `--db-read-only` | `DBMCP_DB_READ_ONLY` | `database.read_only` |
+| `--db-max-pool-size` | `DBMCP_DB_MAX_POOL_SIZE` | `database.max_pool_size` |
+| `--db-connection-timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | `database.connection_timeout` |
+| `--db-query-timeout` | `DBMCP_DB_QUERY_TIMEOUT` | `database.query_timeout` |
+| `--db-page-size` | `DBMCP_DB_PAGE_SIZE` | `database.page_size` |
+| `--pii` | `DBMCP_PII_ENABLE` | `pii.enabled` |
+| `--pii-operator` | `DBMCP_PII_OPERATOR` | `pii.operator` |
+| `--pii-categories` | `DBMCP_PII_CATEGORIES` | `pii.categories` |
+| `--pii-ner` | `DBMCP_PII_NER_ENABLE` | `pii.ner_enabled` |
+| `--pii-ner-model` | `DBMCP_PII_NER_MODEL` | `pii.ner_model` |
+| `--ssh-host` | `DBMCP_SSH_HOST` | `ssh.host` |
+| `--ssh-port` | `DBMCP_SSH_PORT` | `ssh.port` |
+| `--ssh-user` | `DBMCP_SSH_USER` | `ssh.user` |
+| `--ssh-password` | `DBMCP_SSH_PASSWORD` | `ssh.password` |
+| `--ssh-key` | `DBMCP_SSH_KEY` | `ssh.key` |
+| `--ssh-key-passphrase` | `DBMCP_SSH_KEY_PASSPHRASE` | `ssh.key_passphrase` |
+| `--ssh-known-hosts` | `DBMCP_SSH_KNOWN_HOSTS` | `ssh.known_hosts` |
+| `--ssh-strict-host-key-checking` | `DBMCP_SSH_STRICT_HOST_KEY_CHECKING` | `ssh.strict_host_key_checking` |
+| `--ssh-keepalive-interval` | `DBMCP_SSH_KEEPALIVE_INTERVAL` | `ssh.keepalive_interval` |
+| `--ssh-local-port` | `DBMCP_SSH_LOCAL_PORT` | `ssh.local_port` |
+
+Other behaviour changes to check while migrating:
+
+- **Booleans are stricter.** Boolean env vars used to accept `yes`/`no` and `on`/`off` in any case. They now accept only `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, and `True`/`False`; anything else fails startup. A bare boolean flag such as `--pii` becomes `DBMCP_PII_ENABLE=true`.
+- **Empty values mean unset.** An empty `DBMCP_*` value counts as unset and falls through to the next source. In particular, `--allowed-origins ""` used to disable `Origin` validation; that is now only possible with `allowed_origins: []` under `http` in the config file.
+- **Lists** keep the comma-separated env format; in the config file, write them as YAML sequences.
+
+Before — settings passed as arguments in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [
+        "--db-backend", "postgres",
+        "--db-host", "localhost",
+        "--db-user", "postgres",
+        "--db-name", "myapp",
+        "--pii",
+        "--log-level", "debug"
+      ]
+    }
+  }
+}
+```
+
+After — the same settings as environment variables:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "env": {
+        "DBMCP_DB_BACKEND": "postgres",
+        "DBMCP_DB_HOST": "localhost",
+        "DBMCP_DB_USER": "postgres",
+        "DBMCP_DB_NAME": "myapp",
+        "DBMCP_PII_ENABLE": "true",
+        "DBMCP_LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+To keep the settings in a file instead, move them into a YAML file and point at it with `"args": ["--config-file", "/abs/path/dbmcp.yaml"]`; see [Config files](/docs/configuration/config-files).

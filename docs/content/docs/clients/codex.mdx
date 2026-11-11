@@ -1,0 +1,42 @@
+---
+title: Codex
+description: Add dbmcp to Codex
+---
+
+Add the server to `~/.codex/config.toml`, or to `.codex/config.toml` in a trusted project:
+
+```toml tab="bin" title="~/.codex/config.toml"
+[mcp_servers.dbmcp]
+command = "dbmcp"
+args = []
+env = { DBMCP_DB_BACKEND = "mysql", DBMCP_DB_HOST = "127.0.0.1", DBMCP_DB_USER = "root", DBMCP_DB_NAME = "mydb" }
+env_vars = ["DBMCP_DB_PASSWORD"]
+```
+
+```toml tab="npx" title="~/.codex/config.toml"
+[mcp_servers.dbmcp]
+command = "npx"
+args = ["-y", "@haymon-ai/dbmcp"]
+env = { DBMCP_DB_BACKEND = "mysql", DBMCP_DB_HOST = "127.0.0.1", DBMCP_DB_USER = "root", DBMCP_DB_NAME = "mydb" }
+env_vars = ["DBMCP_DB_PASSWORD"]
+```
+
+`env_vars` forwards `DBMCP_DB_PASSWORD` from the environment Codex runs in, so the password stays out of the file. Or add the server from the command line:
+
+```bash tab="bin"
+codex mcp add dbmcp --env DBMCP_DB_BACKEND=mysql --env DBMCP_DB_USER=root \
+  --env DBMCP_DB_PASSWORD=secret --env DBMCP_DB_NAME=mydb -- dbmcp
+```
+
+```bash tab="npx"
+codex mcp add dbmcp --env DBMCP_DB_BACKEND=mysql --env DBMCP_DB_USER=root \
+  --env DBMCP_DB_PASSWORD=secret --env DBMCP_DB_NAME=mydb -- npx -y @haymon-ai/dbmcp
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`, Codex reads the bearer token from the named environment variable:
+
+```toml title="~/.codex/config.toml"
+[mcp_servers.dbmcp]
+url = "http://127.0.0.1:9001/mcp"
+bearer_token_env_var = "DBMCP_TOKEN"
+```

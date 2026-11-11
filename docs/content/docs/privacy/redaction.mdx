@@ -1,0 +1,53 @@
+---
+title: Redaction
+description: Turn on PII redaction, choose the operator, and narrow detection to categories
+---
+
+Turn PII redaction on and choose how detected values are rewritten. For what the feature covers and how it works, see the [Overview](/docs/privacy).
+
+## Settings
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `pii.enabled` | `DBMCP_PII_ENABLE` | boolean | `false` | Enable PII redaction of query tool output |
+| `pii.operator` | `DBMCP_PII_OPERATOR` | enum | `replace` | Operator applied to detected PII spans |
+| `pii.categories` | `DBMCP_PII_CATEGORIES` | list | *unset (all built-ins)* | Category subset for the analyzer registry |
+| `pii.ner_enabled` | `DBMCP_PII_NER_ENABLE` | boolean | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
+| `pii.ner_model` | `DBMCP_PII_NER_MODEL` | path | *unset* | Path to the NER model directory (required with `pii.ner_enabled`) |
+
+The other `pii` settings are ignored unless `pii.enabled` is true.
+
+> **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `pii.enabled: true` in the config file) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` settings alone have no effect.
+
+## How spans are rewritten
+
+The configured operator decides how each detected span is replaced:
+
+- `replace` (default) — entity-aware placeholder. For example, `jane.doe@example.com` becomes `<EMAIL_ADDRESS>`. Plan for this when downstream code parses query output: a column that previously held a plain email now holds the placeholder string for matching rows.
+- `mask` — length-preserving `*` characters.
+- `redact` — span removed (replaced with empty string).
+- `hash` — stable hex digest derived via SHA-256.
+
+## Categories
+
+`pii.categories` / `DBMCP_PII_CATEGORIES` accepts a list of kebab-case category names (a YAML sequence, or comma-separated in the env var). Leaving it unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
+
+- `personal` — `DATE_OF_BIRTH`, `EMAIL_ADDRESS`
+- `financial` — `BANK_ACCOUNT_UK`, `BANK_ACCOUNT_US`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
+- `government` — `COMMERCIAL_REGISTER_DE`, `DRIVER_LICENSE_US`, `DRIVING_LICENCE_DE`, `DRIVING_LICENCE_UK`, `HEALTH_INSURANCE_DE`, `ID_CARD_DE`, `ITIN`, `LICENSE_PLATE_DE`, `LIFETIME_PHYSICIAN_NUMBER_DE`, `MBI_US`, `MEDICAL_LICENSE_US`, `MEDICAL_PRACTICE_ID_DE`, `NHS_NUMBER`, `NINO_UK`, `NPI_US`, `PASSPORT_DE`, `PASSPORT_UK`, `PASSPORT_US`, `SIN_CA`, `SOCIAL_SECURITY_DE`, `TAX_ID_DE`, `TAX_ID_EIN`, `TAX_NUMBER_DE`, `US_SSN`, `VAT_NUMBER`, `VEHICLE_REGISTRATION_UK`
+- `contact` — `PHONE_NUMBER`, `POSTCODE_DE`, `POSTCODE_UK`
+- `network` — `IP_ADDRESS`, `MAC_ADDRESS`, `URL`
+- `digital-identity` — `API_KEY`, `JWT_TOKEN`, `PASSWORD_HASH`, `PRIVATE_KEY`
+- `crypto` — `CRYPTO`
+
+An empty list is rejected at startup. If the selected categories produce an empty registry, the analyzer falls back to the default registry and logs a warning so redaction is never silently disabled.
+
+The NER entities follow the same filter: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` under `personal`; `LOCATION` and `FACILITY` under `contact`.
+
+See [Data types](/docs/privacy/data-types) for every entity type and [Machine Learning](/docs/privacy/machine-learning) for names, places, and organizations.
+
+## Nested JSON values
+
+Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A PII string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (key names, array indexes, container ordering) are preserved.
+
+JSON object **keys** are never inspected or modified — only values are redacted. A row like `{"jane.doe@example.com": "value"}` returns with the key intact. If you need key redaction, please open an issue; today's contract is values-only.

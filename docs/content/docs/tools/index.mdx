@@ -1,0 +1,44 @@
+---
+title: Tools
+description: The MCP tools dbmcp exposes and where each is available
+---
+
+Database MCP exposes tools through the MCP protocol. The available tool set depends on the database backend and read-only setting. AI assistants call these tools to explore and query your database.
+
+## Tool Availability
+
+| Tool | MySQL / MariaDB | PostgreSQL | SQLite | Blocked when read-only |
+|------|-----------------|------------|--------|------------------------|
+| `listDatabases` | Yes | Yes | No | No |
+| `listTables` | Yes | Yes | Yes | No |
+| `listViews` | Yes | Yes | Yes | No |
+| `listTriggers` | Yes | Yes | Yes | No |
+| `listFunctions` | Yes | Yes | No | No |
+| `listProcedures` | Yes | Yes | No | No |
+| `listMaterializedViews` | No | Yes | No | No |
+| `readQuery` | Yes | Yes | Yes | No |
+| `writeQuery` | Yes | Yes | Yes | Yes |
+| `createDatabase` | Yes | Yes | No | Yes |
+| `dropDatabase` | Yes | Yes | No | Yes |
+| `dropTable` | Yes | Yes | Yes | Yes |
+| `explainQuery` | Yes | Yes | Yes | No |
+
+SQLite is file-based with a single database, so `listDatabases`, `createDatabase`, `dropDatabase`, `listFunctions`, `listProcedures`, and `listMaterializedViews` are not applicable. `listMaterializedViews` is PostgreSQL-only — MySQL and MariaDB do not have a materialized-view feature.
+
+Pinning a database with `database.name` / `DBMCP_DB_NAME` hides `listDatabases`, `createDatabase`, and `dropDatabase` on MySQL, MariaDB, and PostgreSQL: the server then works with that one database only.
+
+## All tools
+
+- [`listDatabases`](/docs/tools/list-databases)
+- [`listTables`](/docs/tools/list-tables)
+- [`listViews`](/docs/tools/list-views)
+- [`listTriggers`](/docs/tools/list-triggers)
+- [`listFunctions`](/docs/tools/list-functions)
+- [`listProcedures`](/docs/tools/list-procedures)
+- [`listMaterializedViews`](/docs/tools/list-materialized-views)
+- [`readQuery`](/docs/tools/read-query)
+- [`writeQuery`](/docs/tools/write-query)
+- [`explainQuery`](/docs/tools/explain-query)
+- [`createDatabase`](/docs/tools/create-database)
+- [`dropDatabase`](/docs/tools/drop-database)
+- [`dropTable`](/docs/tools/drop-table)

@@ -1,0 +1,42 @@
+---
+title: LM Studio
+description: Add dbmcp to LM Studio
+---
+
+Use the [one-click button](/docs/clients#one-click-install), or open the **Program** tab, choose **Install → Edit mcp.json**, and add:
+
+```json tab="bin" title="mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title="mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "secret",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```

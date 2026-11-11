@@ -1,0 +1,11 @@
+{
+  "pages": [
+    "index",
+    "transports",
+    "health-probes",
+    "database",
+    "query-timeouts",
+    "pagination",
+    "ssh-tunnel"
+  ]
+}

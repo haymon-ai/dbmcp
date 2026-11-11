@@ -1,0 +1,38 @@
+---
+title: Precedence
+description: How dbmcp picks each setting from the environment, env files, config files, and defaults
+---
+
+Each setting is resolved on its own, highest priority first:
+
+1. **Process environment** — `DBMCP_*` variables, typically set by the MCP client (via `env` or `envFile` in the server config)
+2. **Env files** — `DBMCP_*` keys in the files named by `--env-file` / `DBMCP_ENV_FILE`; a later file wins
+3. **Config files** — keys in the YAML files named by `--config-file` / `DBMCP_CONFIG_FILE`; a later file wins
+4. **Built-in defaults** — backend-aware defaults (see [Backend defaults](/docs/features/database#backend-defaults))
+
+When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored.
+
+**Worked example.** `database.port` set in three layers:
+
+```yaml
+# /srv/dbmcp/dbmcp.yaml
+database:
+  backend: postgres
+  port: 5432
+```
+
+```bash
+# /srv/dbmcp/dbmcp.env
+DBMCP_DB_PORT=6432
+```
+
+```bash
+DBMCP_DB_PORT=7432 dbmcp --config-file /srv/dbmcp/dbmcp.yaml --env-file /srv/dbmcp/dbmcp.env
+```
+
+| Change | Resulting port | Source |
+|--------|---------------|--------|
+| All three layers set | `7432` | process environment |
+| Process variable unset, or `DBMCP_DB_PORT=` (empty) | `6432` | env file |
+| Env file line removed as well | `5432` | config file |
+| `port` removed from the YAML too | `5432` | PostgreSQL backend default |

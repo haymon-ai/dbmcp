@@ -1,0 +1,16 @@
+{
+  "pages": [
+    "index",
+    "claude-desktop",
+    "claude-code",
+    "codex",
+    "vs-code",
+    "cursor",
+    "windsurf",
+    "zed",
+    "gemini-cli",
+    "goose",
+    "jetbrains",
+    "lm-studio"
+  ]
+}

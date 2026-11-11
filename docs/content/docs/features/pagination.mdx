@@ -1,0 +1,37 @@
+---
+title: Pagination and output caps
+description: Page through large results and cap the size of query tool output
+---
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `database.page_size` | `DBMCP_DB_PAGE_SIZE` | integer | `100` | Max items per paginated tool response (range 1–500) |
+| `database.max_cell_chars` | `DBMCP_DB_MAX_CELL_CHARS` | integer | `4096` | Max characters per string value in query tool rows; longer values are cut and marked (`0` disables; see [Output Size Caps](#output-size-caps)) |
+| `database.max_response_chars` | `DBMCP_DB_MAX_RESPONSE_CHARS` | integer | `32000` | Max characters of one query tool text result; trailing rows are dropped, resumed via `nextCursor` on a paged `SELECT` and counted in `rowsOmitted` otherwise (`0` disables) |
+
+The page size applies uniformly to every paginated tool.
+
+## Cursor Pagination
+
+All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`) and `readQuery` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100, set with `DBMCP_DB_PAGE_SIZE`) plus, when more items remain, a `nextCursor` string alongside the result data.
+
+To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
+
+Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a tool result with `isError: true` describing the problem; the server does not silently restart from the beginning.
+
+Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
+
+A `readQuery` page can hold fewer rows than the page size when the [response size cap](#output-size-caps) ends it early; its `nextCursor` then resumes at the first row left out.
+
+## Output Size Caps
+
+Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`readQuery`, `writeQuery`, `explainQuery`) cap their `rows` in Unicode characters:
+
+- **Per cell** (`DBMCP_DB_MAX_CELL_CHARS`, default `4096`): every string value longer than the cap, at any depth inside JSON columns, keeps its first characters and ends in `…[truncated, N chars total]`. Binary values count by their base64 text. Object keys are never cut.
+- **Per response** (`DBMCP_DB_MAX_RESPONSE_CHARS`, default `32000`): bounds the whole text result, including the untrusted-data envelope, so it stays under client limits such as Claude Code's 50,000-character and Gemini CLI's 40,000-character thresholds. About 1,500 characters are reserved for the envelope and the fields beside `rows`; trailing rows past the rest are dropped, keeping at least one. A paginated `readQuery` `SELECT` resumes them via `nextCursor`, so no row is lost when the query orders by a unique key. Other statements (`SHOW`, `DESCRIBE`, `EXPLAIN`, `explainQuery`, `writeQuery`) cannot resume, so the response reports the dropped count as `rowsOmitted`; for `writeQuery`, `rowsAffected` still counts every row.
+
+When either cap cuts the output, the response carries `truncated: true` and a `hint` to select fewer or narrower columns, narrow the query, or read a cut value in parts with `SUBSTRING`/`SUBSTR`. Both fields are absent otherwise. Set a cap to `0` to disable it. With [data privacy redaction](/docs/privacy/redaction) on, values are redacted before they are cut.
+
+```json
+{ "rows": [{ "id": 1, "body": "Lorem ipsum…[truncated, 18234 chars total]" }], "nextCursor": "eyJvZmZzZXQiOjF9", "truncated": true, "hint": "Output exceeded size caps. …" }
+```

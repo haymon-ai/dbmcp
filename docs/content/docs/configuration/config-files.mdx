@@ -1,0 +1,93 @@
+---
+title: Config files
+description: Load settings from YAML config files and env files with --config-file and --env-file
+---
+
+Besides `DBMCP_*` environment variables, Database MCP can read its settings from a YAML **config file** and a dotenv-style **env file**. All three are optional and work together. This page covers how files are named and loaded; the full list of settings lives in [Configuration](/docs/configuration).
+
+## Quick Start
+
+Create a `dbmcp.yaml` (any file name works):
+
+```yaml
+database:
+  backend: postgres
+  host: localhost
+  user: postgres
+  password: ${DB_PASSWORD:?set DB_PASSWORD}
+  name: myapp
+```
+
+Point the server at it with `--config-file`. In an MCP client config such as `.mcp.json`, use an **absolute path** or a path starting with `~/`:
+
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": ["--config-file", "~/projects/myapp/dbmcp.yaml"],
+      "env": {
+        "DB_PASSWORD": "secret"
+      }
+    }
+  }
+}
+```
+
+<Callout type="warn">
+Relative `--config-file` and `--env-file` paths resolve against the working directory of the `dbmcp` process. MCP clients choose that directory themselves and it is often not your project root (Claude Desktop, for one, may start servers in `/`), so pass absolute or `~/` paths from client configs. Paths inside an env or config file resolve next to that file, so a project env file can name everything else relatively.
+</Callout>
+
+## Flags
+
+The command line only names files; every setting comes from the environment or the files.
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--config-file <PATH>` | `DBMCP_CONFIG_FILE` | YAML config file; repeatable |
+| `--env-file <PATH>` | `DBMCP_ENV_FILE` | Env file; repeatable |
+| `-h`, `--help` | — | Print help |
+| `-V`, `--version` | — | Print version |
+
+Both flags may be repeated, and both env vars take a comma-separated list (items are trimmed); command-line order is merge order and a later file wins. See [Multiple config files](#multiple-config-files) and [Multiple env files](/docs/configuration/env-files#multiple-env-files). Each flag value is a single path, and a flag given at least once replaces its env var's list entirely. The config files come from `--config-file`, then the process `DBMCP_CONFIG_FILE`, then a `DBMCP_CONFIG_FILE` key in the env files (the last env file that sets it). A `DBMCP_ENV_FILE` key inside an env file is ignored. An empty flag value or an empty list entry (`a.yaml,,b.yaml`) is an error; an empty env var as a whole is unset. The same file may be listed more than once.
+
+Paths are resolved as follows:
+
+- A leading `~/` (or `~\` on Windows) expands to your home directory, for both flags and both env vars. A bare `~` or `~user` stays literal.
+- Relative paths from a flag or a process env var resolve against the current working directory. A `DBMCP_CONFIG_FILE` read from an env file resolves against that env file's directory.
+- A named file that is missing, is a directory, or cannot be read is a hard error. An empty file is valid and sets nothing.
+
+<Callout title="No auto-discovery">
+`dbmcp` never looks for files on its own: there is no `dbmcp.yaml` lookup and no automatic `.env` pickup, neither in the working directory nor beside the config file. A file is read only when `--config-file`, `--env-file`, `DBMCP_CONFIG_FILE`, or `DBMCP_ENV_FILE` names it.
+</Callout>
+
+## Multiple config files
+
+Repeat `--config-file` (or list several files in `DBMCP_CONFIG_FILE`) to layer config files, for example a shared base plus per-machine settings:
+
+```bash
+dbmcp --config-file base.yaml --config-file local.yaml
+DBMCP_CONFIG_FILE=base.yaml,local.yaml dbmcp
+```
+
+- Files are read in list order. Each file is parsed, `${}`-interpolated, and checked against the schema on its own, so every file must be valid by itself; any file may be partial.
+- Sections merge key by key. Each setting is taken whole from the last file that sets it.
+- Lists (`http.allowed_origins`, `http.allowed_hosts`, `pii.categories`) **replace**, they never append (Docker Compose appends; these lists are allow-lists and filters, so appending could only widen them).
+- A later file overrides only where it sets a value. `key:` / `null` / `~`, and `""` at an integer, boolean, or list key, are no-ops: the earlier file shows through. `[]` and `""` at a string or path key win; a later `http.allowed_origins: []` disables Origin validation.
+- There is no `!reset` / `!override`, so **a later file cannot unset a value an earlier file set** (for example `ssh.host`, a pinned `database.name`, or TLS / SSH paths). Keep such optional values out of the shared file and set them only in the files that need them.
+- Relative paths, and a SQLite `database.name`, resolve against the directory of the file that sets them (Docker Compose uses the first file's directory).
+- `${}` in every file reads the process environment, then the env files. Files cannot reference each other, and YAML anchors and aliases work only within one file.
+- Every value in every file is checked, including values a later file overrides; an error names the file that declares the value.
+- Loading stops at the first file that cannot be read, parsed, or interpolated, or that has unknown keys or malformed sections, reporting all of that file's problems. The env files are read and parsed before any config file, so an env file that cannot be read or parsed stops loading first.
+
+## Path Resolution
+
+Path settings resolve differently depending on where they are set:
+
+| Set in | Relative path resolves against | Leading `~` |
+|--------|-------------------------------|-------------|
+| Config file | The directory of the config file that sets it | Expanded |
+| Env file | The directory of the env file that sets it | Expanded |
+| `DBMCP_*` process variable | The working directory | Expanded only for `DBMCP_SSH_KEY` and `DBMCP_SSH_KNOWN_HOSTS` |
+
+This applies to `database.ssl_ca`, `database.ssl_cert`, `database.ssl_key`, `ssh.key`, `ssh.known_hosts`, `pii.ner_model`, and, for the `sqlite` backend, `database.name`. A SQLite name of `:memory:` is passed through unchanged. Keeping certificates, keys, and SQLite files next to the config or env file and using relative paths makes the whole directory relocatable.

@@ -1,0 +1,49 @@
+---
+title: Env files
+description: Write dotenv-style env files for dbmcp
+---
+
+Each env file named by `--env-file` / `DBMCP_ENV_FILE` uses this format:
+
+```bash
+# Comments start with #
+DBMCP_DB_BACKEND=postgres
+DBMCP_DB_HOST: db.internal            # KEY: VAL also works
+export DBMCP_DB_USER=app              # optional export prefix
+DB_PASSWORD='p@ss #not a comment'     # single quotes are literal
+GREETING="line one\nline two"         # double quotes support escapes
+CERT="-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----"            # quoted values may span lines
+DBMCP_DB_NAME=${APP_DB:-myapp}        # ${} expands from process env, then earlier keys
+DBMCP_CONFIG_FILE=/srv/dbmcp.yaml     # may name the config files
+```
+
+- Unquoted values end at ` #` (space, hash) and are trimmed.
+- Single-quoted values are taken literally; double-quoted values support escapes such as `\n` and `\"`.
+- Unquoted and double-quoted values expand `${}` against the process environment, then keys defined earlier in the same file, then earlier env files.
+- A bare `KEY` with no value takes its value from the process environment, else from an earlier line or an earlier env file; if none sets it, the line is skipped.
+
+Each env file plays two roles at once:
+
+1. Its `DBMCP_*` keys set settings directly, between the process environment and the config files in [precedence](/docs/configuration/precedence). An empty value is unset, as everywhere.
+2. All of its keys, whatever their name, are available to `${}` in the config files, after the process environment.
+
+Errors are reported per line without echoing the file's contents (for example `line 2: key cannot contain a space`).
+
+## Multiple env files
+
+Repeat `--env-file` (or list several files in `DBMCP_ENV_FILE`) to layer env files, the way `docker compose --env-file a --env-file b` does:
+
+```bash
+dbmcp --env-file /srv/dbmcp/base.env --env-file /srv/dbmcp/local.env
+DBMCP_ENV_FILE=/srv/dbmcp/base.env,/srv/dbmcp/local.env dbmcp
+```
+
+- Files are read in list order, and a later file wins over an earlier one.
+- A later file's `${}` sees the keys of earlier files (after the process environment and its own earlier lines).
+- The files fold into one set of keys. A later `KEY=` (empty) overwrites an earlier value with an empty one, so the setting is unset and falls through to the config files or the default, not to the earlier env file.
+- The process environment beats every env file.
+- The last file that sets `DBMCP_CONFIG_FILE` names the config files.
+- Every non-empty `DBMCP_*` value in every file is checked, including values a later file overwrites.
+- Loading stops at the first file that cannot be read or parsed, reporting all of that file's errors. The same file may be listed twice; each problem is reported once.

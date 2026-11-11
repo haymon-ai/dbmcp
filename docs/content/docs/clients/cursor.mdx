@@ -1,0 +1,57 @@
+---
+title: Cursor
+description: Add dbmcp to Cursor
+---
+
+Add the server to `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (this project). `${env:NAME}` reads a value from Cursor's environment:
+
+```json tab="bin" title="~/.cursor/mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title="~/.cursor/mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`:
+
+```json title="~/.cursor/mcp.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "url": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer ${env:DBMCP_TOKEN}" }
+    }
+  }
+}
+```
+
+Cursor also supports `envFile` to load variables from a `.env` file, so sensitive values like `DBMCP_DB_PASSWORD` can stay out of the JSON config.

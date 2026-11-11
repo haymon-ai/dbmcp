@@ -1,0 +1,71 @@
+---
+title: YAML format
+description: Structure of the dbmcp YAML config file, with an annotated example
+---
+
+The config file is a YAML mapping. Top-level keys are `transport` and `log_level`, plus the sections `database`, `http`, `pii`, and `ssh`. Every key is the YAML key listed in [Configuration](/docs/configuration).
+
+- **Keys** are snake_case and strict: an unknown key is an error that names the file, line, and column, plus the keys accepted at that level.
+- **Enum values** are kebab-case and case-sensitive (`backend: postgres`, `strict_host_key_checking: accept-new`).
+- **Durations** are whole seconds as integers (`query_timeout: 30`).
+- **Booleans** are unquoted `true` / `false`. YAML 1.1 words stay strings, so an unquoted `no` is the string `no` (which is why `strict_host_key_checking: no` works). A quoted boolean string accepts the same set as env vars: `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, `True`/`False`.
+- **Strings** that YAML would read as a number or boolean need quotes (`password: "12345"`); a value of the wrong type is an error.
+- **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`). An empty string at an integer, boolean, or list key (`port: ""`, or an unset `${PORT}`) also means unset, just like an empty `DBMCP_*` variable.
+- **Lists** are YAML sequences, or a comma-separated string (useful with `${}`: `allowed_hosts: ${HOSTS}`), and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
+- **Tags** other than the YAML core tags (`!!str`, `!!int`, …) are an error wherever they appear. Docker Compose's `!reset` and `!override` are not supported.
+- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env files.
+
+A full annotated example:
+
+```yaml
+# Top-level settings
+transport: http          # stdio | http (default: stdio)
+log_level: info          # error | warn | info | debug | trace
+
+database:
+  backend: postgres      # mysql | mariadb | postgres | sqlite
+  host: db.internal      # resolved by the SSH server when tunnelling
+  port: 5432             # default depends on backend
+  user: app
+  password: ${DB_PASSWORD:?DB_PASSWORD must be set}
+  name: myapp            # for sqlite: a file path, relative to this file
+  # charset: utf8mb4     # MySQL/MariaDB only
+  ssl: true
+  ssl_ca: certs/ca.pem   # relative to this file's directory
+  ssl_verify_cert: true
+  read_only: true        # default; write tools stay hidden
+  max_pool_size: 5
+  connection_timeout: 10 # seconds
+  query_timeout: 30      # seconds; 0 disables
+  max_query_timeout: 30  # largest readQuery `timeout`; defaults to query_timeout
+  page_size: 100         # 1–500
+  max_cell_chars: 4096   # per string value; 0 disables
+  max_response_chars: 32000 # per response; 0 disables
+
+http:                    # used only with transport: http
+  host: 127.0.0.1
+  port: 9001
+  allowed_origins:
+    - http://localhost:5173
+  allowed_hosts: [localhost, 127.0.0.1, "::1"]
+  auth_token: ${HTTP_TOKEN:?set HTTP_TOKEN}
+  allow_unauthenticated: false
+
+pii:
+  enabled: true          # the other pii keys apply only when true
+  operator: mask         # replace | mask | redact | hash
+  categories: [financial, government]
+  ner_enabled: false
+  # ner_model: ~/models/bert-ner
+
+ssh:
+  host: bastion.example.com   # setting ssh.host enables the tunnel
+  port: 22
+  user: deploy
+  key: ~/.ssh/id_ed25519
+  # key_passphrase: ${SSH_KEY_PASSPHRASE}
+  known_hosts: ~/.ssh/known_hosts
+  strict_host_key_checking: yes  # yes | accept-new | no
+  keepalive_interval: 30         # seconds; 0 disables
+  # local_port: 15432
+```

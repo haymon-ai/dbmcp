@@ -1,0 +1,82 @@
+---
+title: VS Code
+description: Add dbmcp to VS Code
+---
+
+Add the server to `.vscode/mcp.json` in your workspace, or to your user profile with **MCP: Open User Configuration**. VS Code uses `servers`, not `mcpServers`, and prompts for each `${input:...}` value on first start:
+
+```json tab="bin" title=".vscode/mcp.json"
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "db-password",
+      "description": "Database password",
+      "password": true
+    }
+  ],
+  "servers": {
+    "dbmcp": {
+      "type": "stdio",
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${input:db-password}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title=".vscode/mcp.json"
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "db-password",
+      "description": "Database password",
+      "password": true
+    }
+  ],
+  "servers": {
+    "dbmcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${input:db-password}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`:
+
+```json title=".vscode/mcp.json"
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "dbmcp-token",
+      "description": "dbmcp bearer token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "dbmcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer ${input:dbmcp-token}" }
+    }
+  }
+}
+```

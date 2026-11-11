@@ -3,14 +3,20 @@ title: Introduction
 description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite
 ---
 
+<Demo />
+
 Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/docs/clients).
 
 ## Supported Databases
 
-- **MySQL**
-- **MariaDB**
-- **PostgreSQL**
-- **SQLite**
+<DatabaseGrid>
+
+- **MySQL** `8.0+`
+- **MariaDB** `10.5+`
+- **PostgreSQL** `12+`
+- **SQLite** `3.x`
+
+</DatabaseGrid>
 
 ## Key Features
 
@@ -18,8 +24,8 @@ Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MC
 - **Read-only by default** — write operations are blocked unless explicitly enabled
 - **Stdio and HTTP transport** — works as a local stdio server or a remote HTTP server with CORS preflight and server-side Origin/Host allowlists
 - **Multi-database support** — connect to MySQL, MariaDB, PostgreSQL, or SQLite with a single binary
-- **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/docs/configuration#ssh-tunnel))
-- **Optional PII redaction** — opt-in regex-based redactor for query tool output ([details](/docs/features#pii-redaction))
+- **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/docs/features/ssh-tunnel))
+- **Optional data privacy** — opt-in redaction of personal and sensitive values in query tool output ([details](/docs/privacy))
 
 ## How It Works
 

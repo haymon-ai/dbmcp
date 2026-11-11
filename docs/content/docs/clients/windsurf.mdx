@@ -1,0 +1,55 @@
+---
+title: Windsurf (Devin Desktop)
+description: Add dbmcp to Windsurf (Devin Desktop)
+---
+
+Windsurf is now Devin Desktop. Add the server to `~/.config/devin/mcp_config.json` (Windows: `%APPDATA%\devin\mcp_config.json`) or `.devin/mcp_config.json` in a project. Older Windsurf builds read `~/.codeium/windsurf/mcp_config.json` with the same shape.
+
+```json tab="bin" title="~/.config/devin/mcp_config.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "args": [],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+```json tab="npx" title="~/.config/devin/mcp_config.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp"],
+      "env": {
+        "DBMCP_DB_BACKEND": "mysql",
+        "DBMCP_DB_HOST": "127.0.0.1",
+        "DBMCP_DB_USER": "root",
+        "DBMCP_DB_PASSWORD": "${env:DBMCP_DB_PASSWORD}",
+        "DBMCP_DB_NAME": "mydb"
+      }
+    }
+  }
+}
+```
+
+For a server you started with `DBMCP_TRANSPORT=http`:
+
+```json title="~/.config/devin/mcp_config.json"
+{
+  "mcpServers": {
+    "dbmcp": {
+      "url": "http://127.0.0.1:9001/mcp",
+      "headers": { "Authorization": "Bearer ${env:DBMCP_TOKEN}" }
+    }
+  }
+}
+```

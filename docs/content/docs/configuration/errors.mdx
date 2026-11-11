@@ -1,0 +1,44 @@
+---
+title: Startup errors
+description: How dbmcp reports invalid config files and settings at startup
+---
+
+Any configuration problem stops startup with exit code 1 and an error on stderr: a header line, then one bullet per problem. Loading runs in stages — read and parse the env files in order, then read, parse, interpolate, and schema-check the config files in order (stopping at the first broken file), check every setting value from every source, check the rules — and stops at the first stage that fails, reporting every problem in that stage.
+
+| Header | Cause |
+|--------|-------|
+| `DBMCP_CONFIG_FILE: empty entry in file list` | A file list has an empty entry (`a.yaml,,b.yaml`), checked before any file is read. The origin may also be `DBMCP_ENV_FILE` or `DBMCP_CONFIG_FILE in <env file>:<line>`; an empty flag value reports `--config-file: empty path` / `--env-file: empty path` |
+| `failed to read config file <path> (from --config-file): <reason>` | A named file is missing, a directory, or unreadable (the origin is `--config-file`, `--env-file`, `DBMCP_CONFIG_FILE`, `DBMCP_ENV_FILE`, or `DBMCP_CONFIG_FILE in <env file>:<line>`; the env file variant starts with `failed to read env file`) |
+| `failed to load env file <path>:` | Env file syntax errors, one `line N: …` bullet each |
+| `failed to parse config file <path>:` | YAML syntax errors, with `file:line:column` |
+| `failed to interpolate config file <path>:` | Malformed `${` or a failed `${VAR:?…}` |
+| `invalid settings:` | Unknown keys and non-mapping sections in a config file, and values from any source with the wrong type (including strings that do not cast to an integer or boolean), unknown enum values, out-of-range integers, or empty list items. Values that lose to a higher-priority source are checked too |
+| `configuration validation failed:` | Rule violations between valid values |
+
+Under `invalid settings`, each bullet starts with where the value is, then the dotted YAML key: `/abs/dbmcp.yaml:2:14:` for a config file, `DBMCP_DB_PORT in /abs/.env:3:` for an env file, or `DBMCP_DB_PORT:` for the process environment. Bullets list the config files first, then the env files, each in list order, then the process environment. A problem repeated by a file listed twice is reported once. Under `configuration validation failed`, each bullet names the setting by its dotted YAML key and ends with the source of the value: `(from /abs/dbmcp.yaml:2:14)`, `(from DBMCP_DB_PORT in /abs/.env:3)`, or `(from DBMCP_DB_PORT)`.
+
+Sample output:
+
+```text
+$ DBMCP_DB_PORT=abc DBMCP_DB_CONNECTION_TIMEOUT=0 dbmcp --config-file /srv/dbmcp/dbmcp.yaml --env-file /srv/dbmcp/.env
+invalid settings:
+  - /srv/dbmcp/dbmcp.yaml:3:3: database.pasword: unknown field; expected one of backend, host, port, user, password, name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, connection_timeout, query_timeout, max_query_timeout, page_size, max_cell_chars, max_response_chars
+  - /srv/dbmcp/dbmcp.yaml:4:14: database.page_size: must be at least 1
+  - DBMCP_DB_MAX_POOL_SIZE in /srv/dbmcp/.env:2: database.max_pool_size: must be at least 1
+  - DBMCP_DB_CONNECTION_TIMEOUT: database.connection_timeout: must be at least 1
+  - DBMCP_DB_PORT: database.port: expected non-negative integer, found string
+```
+
+```text
+$ DBMCP_DB_BACKEND=sqlite dbmcp --config-file /srv/dbmcp/dbmcp.yaml
+configuration validation failed:
+  - database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file (from DBMCP_DB_BACKEND)
+```
+
+```text
+$ dbmcp --config-file /srv/dbmcp/dbmcp.yaml
+failed to interpolate config file /srv/dbmcp/dbmcp.yaml:
+  - /srv/dbmcp/dbmcp.yaml:2:13: database.password: required variable DB_PASSWORD is missing a value: set DB_PASSWORD
+```
+
+A removed per-setting flag is rejected by the argument parser with exit code 2 (`error: unexpected argument '--db-backend' found`). See [Migrating from CLI flags](/docs/configuration#migrating-from-cli-flags) for the variable that replaces each flag.

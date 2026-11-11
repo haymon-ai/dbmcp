@@ -1,0 +1,42 @@
+---
+title: Data Privacy
+description: Keep personal and sensitive values in your data out of what the AI assistant sees
+---
+
+<Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
+
+The recording runs with the optional [Machine Learning](/docs/privacy/machine-learning) model enabled, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/docs/privacy/data-types).
+
+Query results often contain personal or sensitive data (often called PII, personally identifiable information): email addresses, phone numbers, IBANs, API keys, names. Database MCP can find these values in tool output and rewrite them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
+
+The feature is **opt-in and off by default**. Nothing is rewritten until you turn it on.
+
+## How it works
+
+1. **Detect.** Built-in recognizers scan every string value in the output for patterns such as email addresses, credit card numbers (with checksum validation), IBANs, national IDs, and secrets. They are grouped into categories, so you can limit detection to the kinds of data you care about. An optional machine-learning pass adds free-form names of people, places, and organizations.
+2. **Rewrite.** Each detected span is replaced by the configured operator: a placeholder such as `<EMAIL_ADDRESS>` (the default), `*` masking, removal, or a stable hash.
+3. **Return.** The rewritten result goes to the assistant. Your database is never modified.
+
+## What gets filtered
+
+Redaction applies to the **rows the query tools return** — `readQuery` results, `writeQuery` rows (for example from `RETURNING`), and `explainQuery` output — and to **tool error messages** from every tool. Error messages run through the regex recognizers only; the optional NER pass is skipped so table, column, and schema names in database errors stay intact. Logs, successful schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
+
+## Turn it on
+
+```yaml
+pii:
+  enabled: true
+  operator: mask
+```
+
+Or set `DBMCP_PII_ENABLE=true` (and optionally `DBMCP_PII_OPERATOR=mask`). See [Redaction](/docs/privacy/redaction) for every setting.
+
+## Limits
+
+Treat PII redaction as a layer that reduces what an enabled assistant sees in result rows; it is not a blanket guarantee that no sensitive string ever leaves the server. Pair it with database-level controls (least-privilege roles, column masking views) for sensitive datasets.
+
+## In this section
+
+- [Redaction](/docs/privacy/redaction): settings, operators, categories, and JSON columns.
+- [Machine Learning](/docs/privacy/machine-learning): optional machine-learning model for names of people, places, and organizations.
+- [Data types](/docs/privacy/data-types): every kind of data the built-in recognizers find.
