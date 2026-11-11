@@ -358,12 +358,16 @@ pub const DB_PAGE_SIZE: Setting = setting(
     int(1, DatabaseConfig::MAX_PAGE_SIZE as u64),
 );
 /// `database.max_cell_chars` / `DBMCP_DB_MAX_CELL_CHARS`.
-pub const DB_MAX_CELL_CHARS: Setting = setting("database.max_cell_chars", "DBMCP_DB_MAX_CELL_CHARS", int(0, u64::MAX));
+pub const DB_MAX_CELL_CHARS: Setting = setting(
+    "database.max_cell_chars",
+    "DBMCP_DB_MAX_CELL_CHARS",
+    int(0, usize::MAX as u64),
+);
 /// `database.max_response_chars` / `DBMCP_DB_MAX_RESPONSE_CHARS`.
 pub const DB_MAX_RESPONSE_CHARS: Setting = setting(
     "database.max_response_chars",
     "DBMCP_DB_MAX_RESPONSE_CHARS",
-    int(0, u64::MAX),
+    int(0, usize::MAX as u64),
 );
 /// `http.host` / `DBMCP_HTTP_HOST`.
 pub const HTTP_HOST: Setting = setting("http.host", "DBMCP_HTTP_HOST", Kind::Text);

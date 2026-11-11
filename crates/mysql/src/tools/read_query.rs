@@ -128,14 +128,13 @@ impl MysqlHandler {
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let (rows, resume) = match kind {
+        let (rows, next_cursor) = match kind {
             StatementKind::Select => {
-                let (rows, resume) = listing::paginate(cursor, self.config.page_size, async |page| {
+                listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
                     self.connection.fetch_json_read_only(wrapped.as_str(), database).await
                 })
-                .await?;
-                (rows, Some(resume))
+                .await?
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json_read_only(query.as_str(), database).await?;
@@ -143,18 +142,16 @@ impl MysqlHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         // A paged `SELECT` resumes dropped rows; other statements count them.
-        let (next_cursor, rows_omitted) = match resume {
-            Some(resume) => (resume.next_cursor(fitted.rows.len()), None),
-            None => (None, (fitted.omitted > 0).then_some(fitted.omitted)),
+        let next_cursor = match kind {
+            StatementKind::Select => fitted.resume(cursor, next_cursor),
+            StatementKind::NonSelect => next_cursor,
         };
         Ok(ReadQueryResponse {
             rows: fitted.rows,
             next_cursor,
-            truncated: fitted.truncated,
-            hint: fitted.truncated.then_some(truncate::HINT),
-            rows_omitted,
+            truncation: fitted.truncation,
         })
     }
 }

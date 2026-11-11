@@ -4645,7 +4645,7 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
     assert_eq!(delete.last_insert_id, None);
 }
 
-fn handler_with_caps(max_cell_chars: u64, max_response_chars: u64, redact_pii: bool) -> MysqlHandler {
+fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pii: bool) -> MysqlHandler {
     MysqlHandler::new(&Config {
         transport: Transport::Stdio,
         database: DatabaseConfig {
@@ -4671,8 +4671,8 @@ async fn read_query_cuts_long_cells_and_reports_truncation() {
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
-    assert!(response.truncated);
-    assert_eq!(response.hint, Some(dbmcp_server::truncate::HINT));
+    assert!(response.truncation.truncated);
+    assert_eq!(response.truncation.hint, Some(dbmcp_server::truncate::HINT));
 }
 
 #[tokio::test]
@@ -4686,7 +4686,7 @@ async fn read_query_response_cap_defers_dropped_rows_to_the_next_page() {
         .await
         .expect("read_query");
     assert_eq!(first.rows.len(), 1);
-    assert!(first.truncated);
+    assert!(first.truncation.truncated);
     assert!(first.next_cursor.is_some());
 
     let collected = collect_all_paged_read_query(&handler, query).await;
@@ -4703,9 +4703,9 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
         .await
         .expect("read_query");
     assert_eq!(response.rows.len(), 1);
-    assert!(response.truncated);
+    assert!(response.truncation.truncated);
     assert!(response.next_cursor.is_none());
-    assert!(response.rows_omitted.is_some_and(|omitted| omitted > 0));
+    assert!(response.truncation.rows_omitted.is_some_and(|omitted| omitted > 0));
 }
 
 #[tokio::test]
@@ -4731,6 +4731,6 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
         .await
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abc");
-    assert!(!response.truncated);
-    assert!(response.hint.is_none());
+    assert!(!response.truncation.truncated);
+    assert!(response.truncation.hint.is_none());
 }

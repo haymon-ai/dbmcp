@@ -14,13 +14,7 @@
 //! Handlers page their results through two entry points: [`paginate`]
 //! for any row type, and [`list_entries`] for the brief/detailed `list*`
 //! tools. Both hand the fetch closure a [`Page`] to bind as `LIMIT` /
-//! `OFFSET`, then trim the one-row lookahead.
-//!
-//! [`paginate`] returns the page rows beside a [`Resume`], so a caller may
-//! drop trailing rows (the query tools' response cap) before asking for the
-//! cursor. The rule lives in [`Resume::next_cursor`]: the next page starts
-//! at `start + returned` whenever rows remain, either past the lookahead or
-//! dropped by the caller.
+//! `OFFSET`, then trim the one-row lookahead and derive the next cursor.
 
 use std::borrow::Cow;
 
@@ -114,53 +108,25 @@ impl Page {
         i64::from(self.size) + 1
     }
 
-    /// Trims over-fetched items to `size` and records where the page ends.
-    fn split<T>(&self, mut items: Vec<T>) -> (Vec<T>, Resume) {
+    /// Trims over-fetched items to `size` and derives the next cursor.
+    fn split<T>(&self, mut items: Vec<T>) -> (Vec<T>, Option<Cursor>) {
         let size = usize::from(self.size);
-        let more = items.len() > size;
-        items.truncate(size);
-        let resume = Resume {
-            start: self.offset,
-            fetched: items.len(),
-            more,
-        };
-        (items, resume)
+        if items.len() > size {
+            items.truncate(size);
+            let offset = self.offset.saturating_add(u64::from(self.size));
+            (items, Some(Cursor { offset }))
+        } else {
+            (items, None)
+        }
     }
 }
 
-/// Where a fetched page ends, kept to derive the next cursor.
-///
-/// Returned by [`paginate`] beside the page rows. Pass the number of rows
-/// actually returned to [`Self::next_cursor`]; it may be fewer than the
-/// page held when the caller dropped trailing rows.
-#[derive(Debug, Clone, Copy)]
-pub struct Resume {
-    start: u64,
-    fetched: usize,
-    more: bool,
-}
-
-impl Resume {
-    /// Cursor to the first row not returned, or `None` when none remain.
-    ///
-    /// `returned` is how many leading page rows the response keeps. Rows
-    /// remain when the backend had a row past the page or `returned` is
-    /// below the page's row count; the cursor then points at
-    /// `start + returned`, saturating at [`u64::MAX`].
-    #[must_use]
-    pub fn next_cursor(&self, returned: usize) -> Option<Cursor> {
-        (self.more || returned < self.fetched).then(|| Cursor {
-            offset: self.start.saturating_add(returned as u64),
-        })
-    }
-}
-
-/// Fetches one page of rows starting at `cursor`.
+/// Fetches one page of rows starting at `cursor` and derives the next cursor.
 ///
 /// `fetch` receives the [`Page`] to bind as `LIMIT` / `OFFSET` and must
 /// return every row the backend produced. When it returns more than
-/// `page_size` rows, the extra lookahead row is dropped. The returned
-/// [`Resume`] derives the next cursor via [`Resume::next_cursor`].
+/// `page_size` rows, the extra lookahead row is dropped and a cursor to
+/// the following page is returned; otherwise the cursor is `None`.
 ///
 /// # Errors
 ///
@@ -169,7 +135,7 @@ pub async fn paginate<T, E>(
     cursor: Option<Cursor>,
     page_size: u16,
     fetch: impl AsyncFnOnce(Page) -> Result<Vec<T>, E>,
-) -> Result<(Vec<T>, Resume), E> {
+) -> Result<(Vec<T>, Option<Cursor>), E> {
     let page = Page {
         offset: cursor.map_or(0, |c| c.offset),
         size: page_size,
@@ -200,13 +166,11 @@ pub async fn list_entries<E>(
     let pattern = search.map(str::trim).filter(|s| !s.is_empty());
 
     if detailed {
-        let (rows, resume) = paginate(cursor, page_size, |page| full(page, pattern)).await?;
-        let next_cursor = resume.next_cursor(rows.len());
+        let (rows, next_cursor) = paginate(cursor, page_size, |page| full(page, pattern)).await?;
         return Ok(ListEntriesResponse::detailed(rows.into_iter().collect(), next_cursor));
     }
 
-    let (names, resume) = paginate(cursor, page_size, |page| brief(page, pattern)).await?;
-    let next_cursor = resume.next_cursor(names.len());
+    let (names, next_cursor) = paginate(cursor, page_size, |page| brief(page, pattern)).await?;
     Ok(ListEntriesResponse::brief(names, next_cursor))
 }
 
@@ -235,7 +199,7 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use serde_json::{Value, json};
 
-    use super::{Cursor, Resume, decode_cursor, encode_cursor, list_entries, paginate};
+    use super::{Cursor, decode_cursor, encode_cursor, list_entries, paginate};
 
     #[test]
     fn encode_decode_round_trips_representative_offsets() {
@@ -357,106 +321,60 @@ mod tests {
 
     #[tokio::test]
     async fn paginate_emits_next_cursor_when_over_fetched() {
-        let (items, resume) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a", "b", "c", "d"]))
+        let (items, next) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a", "b", "c", "d"]))
             .await
             .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert_eq!(items, ["a", "b", "c"]);
         assert_eq!(next, Some(Cursor { offset: 3 }));
     }
 
     #[tokio::test]
     async fn paginate_drops_next_cursor_on_exact_fit() {
-        let (items, resume) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a", "b", "c"]))
+        let (items, next) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a", "b", "c"]))
             .await
             .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert_eq!(items, ["a", "b", "c"]);
         assert!(next.is_none());
     }
 
     #[tokio::test]
     async fn paginate_drops_next_cursor_on_short_page() {
-        let (items, resume) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a"]))
+        let (items, next) = paginate(None, 3, async |_| Ok::<_, Infallible>(vec!["a"]))
             .await
             .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert_eq!(items, ["a"]);
         assert!(next.is_none());
     }
 
     #[tokio::test]
     async fn paginate_drops_next_cursor_on_empty_result() {
-        let (items, resume) = paginate(Some(Cursor { offset: 99 }), 3, async |_| {
+        let (items, next) = paginate(Some(Cursor { offset: 99 }), 3, async |_| {
             Ok::<_, Infallible>(Vec::<&str>::new())
         })
         .await
         .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert!(items.is_empty());
         assert!(next.is_none());
     }
 
     #[tokio::test]
     async fn paginate_advances_offset_by_page_size() {
-        let (items, resume) = paginate(Some(Cursor { offset: 100 }), 50, async |_| {
+        let (_, next) = paginate(Some(Cursor { offset: 100 }), 50, async |_| {
             Ok::<_, Infallible>((0..51).collect::<Vec<u32>>())
         })
         .await
         .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert_eq!(next, Some(Cursor { offset: 150 }));
     }
 
     #[tokio::test]
     async fn paginate_saturates_next_cursor_offset() {
-        let (items, resume) = paginate(Some(Cursor { offset: u64::MAX - 1 }), 3, async |_| {
+        let (_, next) = paginate(Some(Cursor { offset: u64::MAX - 1 }), 3, async |_| {
             Ok::<_, Infallible>(vec![1, 2, 3, 4])
         })
         .await
         .expect("infallible");
-        let next = resume.next_cursor(items.len());
         assert_eq!(next, Some(Cursor { offset: u64::MAX }));
-    }
-
-    #[test]
-    fn resume_points_past_the_page_on_a_lookahead_hit() {
-        let resume = Resume {
-            start: 0,
-            fetched: 3,
-            more: true,
-        };
-        assert_eq!(resume.next_cursor(3), Some(Cursor { offset: 3 }));
-    }
-
-    #[test]
-    fn resume_ends_on_a_fully_returned_last_page() {
-        let resume = Resume {
-            start: 0,
-            fetched: 3,
-            more: false,
-        };
-        assert_eq!(resume.next_cursor(3), None);
-    }
-
-    #[test]
-    fn resume_points_at_the_first_dropped_row_on_the_last_page() {
-        let resume = Resume {
-            start: 0,
-            fetched: 5,
-            more: false,
-        };
-        assert_eq!(resume.next_cursor(2), Some(Cursor { offset: 2 }));
-    }
-
-    #[test]
-    fn resume_adds_the_start_offset_on_a_later_page() {
-        let resume = Resume {
-            start: 200,
-            fetched: 5,
-            more: true,
-        };
-        assert_eq!(resume.next_cursor(2), Some(Cursor { offset: 202 }));
     }
 
     #[tokio::test]

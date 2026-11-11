@@ -83,14 +83,13 @@ impl SqliteHandler {
     ) -> Result<ReadQueryResponse, ErrorData> {
         let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
 
-        let (rows, resume) = match kind {
+        let (rows, next_cursor) = match kind {
             StatementKind::Select => {
-                let (rows, resume) = listing::paginate(cursor, self.config.page_size, async |page| {
+                listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
                     self.connection.fetch_json(wrapped.as_str(), None).await
                 })
-                .await?;
-                (rows, Some(resume))
+                .await?
             }
             StatementKind::NonSelect => {
                 let rows = self.connection.fetch_json(query.as_str(), None).await?;
@@ -98,18 +97,16 @@ impl SqliteHandler {
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         // A paged `SELECT` resumes dropped rows; other statements count them.
-        let (next_cursor, rows_omitted) = match resume {
-            Some(resume) => (resume.next_cursor(fitted.rows.len()), None),
-            None => (None, (fitted.omitted > 0).then_some(fitted.omitted)),
+        let next_cursor = match kind {
+            StatementKind::Select => fitted.resume(cursor, next_cursor),
+            StatementKind::NonSelect => next_cursor,
         };
         Ok(ReadQueryResponse {
             rows: fitted.rows,
             next_cursor,
-            truncated: fitted.truncated,
-            hint: fitted.truncated.then_some(truncate::HINT),
-            rows_omitted,
+            truncation: fitted.truncation,
         })
     }
 }

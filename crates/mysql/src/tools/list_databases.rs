@@ -71,13 +71,12 @@ impl MysqlHandler {
         &self,
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
-        let (databases, resume) = listing::paginate(cursor, self.config.page_size, async |page| {
+        let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
             self.connection
                 .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
                 .await
         })
         .await?;
-        let next_cursor = resume.next_cursor(databases.len());
 
         Ok(ListDatabasesResponse { databases, next_cursor })
     }

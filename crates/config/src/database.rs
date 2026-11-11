@@ -125,13 +125,13 @@ pub struct DatabaseConfig {
     /// Maximum characters per string value in query tool rows.
     ///
     /// Longer values are cut and marked. `0` disables the cap.
-    pub max_cell_chars: u64,
+    pub max_cell_chars: usize,
 
     /// Maximum characters of one query tool text result.
     ///
     /// Trailing rows past the budget are dropped: a paged `SELECT` resumes
     /// them via its cursor, other calls count them. `0` disables the cap.
-    pub max_response_chars: u64,
+    pub max_response_chars: usize,
 }
 
 impl DatabaseConfig {
@@ -160,9 +160,9 @@ impl DatabaseConfig {
     /// Maximum accepted value for `page_size`.
     pub const MAX_PAGE_SIZE: u16 = 500;
     /// Default per-cell character cap for query tool rows.
-    pub const DEFAULT_MAX_CELL_CHARS: u64 = 4096;
+    pub const DEFAULT_MAX_CELL_CHARS: usize = 4096;
     /// Default per-response character cap for query tool rows.
-    pub const DEFAULT_MAX_RESPONSE_CHARS: u64 = 32_000;
+    pub const DEFAULT_MAX_RESPONSE_CHARS: usize = 32_000;
 
     /// Validates this configuration, accumulating every rule violation.
     ///

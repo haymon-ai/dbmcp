@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::listing::Cursor;
+use crate::truncate::Truncation;
 
 /// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///
@@ -204,18 +205,9 @@ pub struct QueryResponse {
     /// Result rows, each a JSON object keyed by a column name.
     #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
-    /// Present and `true` when a character cap cut a value or dropped rows.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    #[schemars(default)]
-    pub truncated: bool,
-    /// How to fetch less data; present only when `truncated` is `true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub hint: Option<&'static str>,
-    /// Rows the response cap dropped that no cursor can fetch again.
-    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub rows_omitted: Option<u64>,
+    /// Whether a character cap cut the rows; see [`Truncation`].
+    #[serde(flatten)]
+    pub truncation: Truncation,
 }
 
 /// Response for the `writeQuery` tool.
@@ -231,18 +223,9 @@ pub struct WriteQueryResponse {
     #[serde(rename = "lastInsertId", skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub last_insert_id: Option<u64>,
-    /// Present and `true` when a character cap cut a value or dropped rows.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    #[schemars(default)]
-    pub truncated: bool,
-    /// How to fetch less data; present only when `truncated` is `true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub hint: Option<&'static str>,
-    /// Rows the response cap dropped that no cursor can fetch again.
-    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub rows_omitted: Option<u64>,
+    /// Whether a character cap cut the rows; see [`Truncation`].
+    #[serde(flatten)]
+    pub truncation: Truncation,
 }
 
 /// Response for the `readQuery` tool.
@@ -257,18 +240,9 @@ pub struct ReadQueryResponse {
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
-    /// Present and `true` when a character cap cut a value or dropped rows.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    #[schemars(default)]
-    pub truncated: bool,
-    /// How to fetch less data; present only when `truncated` is `true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub hint: Option<&'static str>,
-    /// Rows the response cap dropped that no cursor can fetch again.
-    #[serde(rename = "rowsOmitted", skip_serializing_if = "Option::is_none")]
-    #[schemars(default)]
-    pub rows_omitted: Option<u64>,
+    /// Whether a character cap cut the rows; see [`Truncation`].
+    #[serde(flatten)]
+    pub truncation: Truncation,
 }
 
 /// Request for the `explainQuery` tool.
@@ -287,7 +261,8 @@ pub struct ExplainQueryRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, ReadQueryResponse, WriteQueryResponse,
+        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, ReadQueryResponse, Truncation,
+        WriteQueryResponse,
     };
     use serde_json::{Value, json};
 
@@ -438,9 +413,7 @@ mod tests {
             rows: vec![json!({"id": 1})],
             rows_affected: 2,
             last_insert_id: Some(1),
-            truncated: false,
-            hint: None,
-            rows_omitted: None,
+            truncation: Truncation::default(),
         };
         let value = serde_json::to_value(response).expect("serialize");
         assert_eq!(
@@ -455,9 +428,7 @@ mod tests {
             rows: Vec::new(),
             rows_affected: 0,
             last_insert_id: None,
-            truncated: false,
-            hint: None,
-            rows_omitted: None,
+            truncation: Truncation::default(),
         };
         let value: Value = serde_json::to_value(response).expect("serialize");
         assert_eq!(value, json!({"rows": [], "rowsAffected": 0}));
@@ -468,9 +439,7 @@ mod tests {
         let plain = ReadQueryResponse {
             rows: vec![json!({"one": 1})],
             next_cursor: None,
-            truncated: false,
-            hint: None,
-            rows_omitted: None,
+            truncation: Truncation::default(),
         };
         assert_eq!(
             serde_json::to_value(plain).expect("serialize"),
@@ -480,9 +449,11 @@ mod tests {
         let cut = ReadQueryResponse {
             rows: Vec::new(),
             next_cursor: None,
-            truncated: true,
-            hint: Some("narrow it"),
-            rows_omitted: None,
+            truncation: Truncation {
+                truncated: true,
+                hint: Some("narrow it"),
+                rows_omitted: None,
+            },
         };
         assert_eq!(
             serde_json::to_value(cut).expect("serialize"),

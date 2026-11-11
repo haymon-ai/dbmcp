@@ -71,9 +71,7 @@ impl SqliteHandler {
             rows: fitted.rows,
             rows_affected,
             last_insert_id,
-            truncated: fitted.truncated,
-            hint: fitted.truncated.then_some(truncate::HINT),
-            rows_omitted: (fitted.omitted > 0).then_some(fitted.omitted),
+            truncation: fitted.truncation,
         })
     }
 }
