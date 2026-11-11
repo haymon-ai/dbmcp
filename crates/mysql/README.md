@@ -12,7 +12,7 @@ MySQL / MariaDB backend for [dbmcp](https://dbmcp.haymon.ai) — the single-bina
 - `MysqlHandler` ready to plug into any `rmcp::ServerHandler`-compatible MCP transport
 - Full MCP tool surface: `listDatabases`, `listTables` (with `detailed: true`), `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `readQuery`, `writeQuery`, `explainQuery`, `createDatabase`, `dropDatabase`, `dropTable`
 - Read-only by default — write tools hidden unless explicitly disabled
-- `MULTI_STATEMENTS` cleared at connect time
+- Single-statement enforcement in `readQuery` / `explainQuery` (parse level)
 - Parameterised queries everywhere — user values never touch SQL strings
 - Optional PII redaction on every `readQuery` payload
 - MariaDB compatible — same handler
