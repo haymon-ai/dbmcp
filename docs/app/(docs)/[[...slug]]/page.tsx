@@ -108,5 +108,16 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: {
+      // metadataBase makes these absolute; trailingSlash adds the slash.
+      canonical: page.url,
+      types: { 'text/markdown': markdownUrl(page) },
+    },
+    // A page's openGraph replaces the layout's whole object, so siteName is repeated here.
+    openGraph: {
+      url: page.url,
+      siteName: 'Haymon Database MCP',
+      type: page.slugs.length === 0 ? 'website' : 'article',
+    },
   };
 }

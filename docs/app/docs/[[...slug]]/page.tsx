@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { basePath } from '@/lib/shared';
+import { basePath, siteUrl } from '@/lib/shared';
 import { source } from '@/lib/source';
 
 // The docs used to live under /docs. Static export has no server redirects, so every old
@@ -25,7 +25,7 @@ export default async function Redirect(props: PageProps<'/docs/[[...slug]]'>) {
   return (
     <>
       <meta httpEquiv="refresh" content={`0; url=${href}`} />
-      <link rel="canonical" href={href} />
+      <link rel="canonical" href={`${siteUrl}${href}`} />
       <p className="p-6">
         This page moved to <a href={href}>{href}</a>.
       </p>
