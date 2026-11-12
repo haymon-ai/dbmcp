@@ -1,6 +1,7 @@
 import Link from 'fumadocs-core/link';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { githubUrl } from '@/lib/layout.shared';
+import { Wordmark } from '@/components/wordmark';
 
 /** A previous/next target: the page's title and URL. */
 export interface FooterLink {
@@ -57,7 +58,7 @@ export function PageFooter({
         </div>
       </div>
       <p className="mt-12 text-xs text-subtle">
-        © Haymon · Database MCP is released under the{' '}
+        © Haymon · <Wordmark /> is released under the{' '}
         <Link href="/license" className="underline">
           MIT License
         </Link>

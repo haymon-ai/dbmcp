@@ -5,7 +5,23 @@ description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLi
 
 <Demo />
 
-Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
+<Dbmcp /> is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
+
+## Quick Install
+
+```bash tab="macOS / Linux / WSL"
+curl -fsSL https://dbmcp.haymon.ai/install.sh | bash
+```
+
+```powershell tab="Windows PowerShell"
+irm https://dbmcp.haymon.ai/install.ps1 | iex
+```
+
+```batch tab="Windows CMD"
+curl -fsSL https://dbmcp.haymon.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+For more installation options, see [Installation](/installation).
 
 ## Supported Databases
 
@@ -29,6 +45,6 @@ Database MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MC
 
 ## How It Works
 
-Database MCP exposes your database schema and data through the MCP protocol. AI assistants can discover tables, inspect schemas, and run read-only SQL queries to answer questions about your data — all without the risk of accidental modifications.
+<Dbmcp /> exposes your database schema and data through the MCP protocol. AI assistants can discover tables, inspect schemas, and run read-only SQL queries to answer questions about your data — all without the risk of accidental modifications.
 
 See the [Installation](/installation) guide to get started.

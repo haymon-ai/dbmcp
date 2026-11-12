@@ -6,6 +6,7 @@
 @theme {
   --font-sans: var(--font-plex-sans), system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+  --font-logo: var(--font-arvo), serif;
 
   --radius-xs: 0;
   --radius-sm: 0;

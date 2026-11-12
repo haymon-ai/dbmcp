@@ -13,8 +13,16 @@ import { PageActions } from '@/components/layout/page-actions';
 import { flattenTree, type Item } from 'fumadocs-core/page-tree';
 import { type FooterLink, PageFooter } from '@/components/layout/page-footer';
 import { githubUrl } from '@/lib/layout.shared';
-import { markdownUrl } from '@/lib/llm';
-import { basePath, gitConfig, siteUrl } from '@/lib/shared';
+import { markdownUrl, ogImageUrl, pageUrl } from '@/lib/llm';
+import { appName, basePath, gitConfig, homeHeading, homeTitle, siteUrl } from '@/lib/shared';
+
+const websiteLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: appName,
+  alternateName: ['Haymon Database MCP', 'Database MCP'],
+  url: `${siteUrl}${basePath}/`,
+};
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -23,8 +31,11 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
 
   const MDX = page.data.body;
   const isIntro = page.slugs.length === 0;
+  const isLicense = page.url === '/license';
   // No Copy Markdown / Open actions on the license text.
-  const showActions = page.url !== '/license';
+  const showActions = !isLicense;
+  // The start page and the license have no "On this page" list.
+  const showToc = !isIntro && !isLicense;
   const editUrl = `${githubUrl}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`;
 
   // Previous/next follow the sidebar order but show page titles, so a section start page
@@ -42,10 +53,9 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
     <DocsPage
       toc={page.data.toc}
       full={page.data.full}
-      // The start page has no "On this page" list.
-      tableOfContent={{ style: 'clerk', enabled: !isIntro }}
+      tableOfContent={{ style: 'clerk', enabled: showToc }}
       tableOfContentPopover={{
-        enabled: !isIntro,
+        enabled: showToc,
         // Solid white bar instead of the translucent blur, with a primary-coloured progress circle.
         container: { className: '[&>header]:bg-fd-background [&>header]:backdrop-blur-none' },
         trigger: { className: '[&_[role=progressbar]]:text-fd-primary' },
@@ -54,20 +64,39 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
       footer={{ enabled: false }}
       className="mx-auto w-full max-w-[884px] gap-0 pb-24 *:max-w-none xl:pt-[26px]"
     >
-      {/* The start page opens with the demo, without a title or description. */}
+      {/* The start page opens with a compact heading and the demo, without a description. */}
+      {isIntro && (
+        <>
+          {/* Google reads the site name from WebSite markup on the home page only. */}
+          <script
+            type="application/ld+json"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON, `<` escaped as Next's JSON-LD guide shows.
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteLd).replace(/</g, '\\u003c') }}
+          />
+          <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeHeading}</DocsTitle>
+        </>
+      )}
       {!isIntro && (
         <>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <DocsTitle className="mb-3 min-w-0 text-[42px] leading-[50px] font-[650]">
-              {page.data.title}
-            </DocsTitle>
-            {showActions && (
-              <PageActions markdownUrl={markdownUrl(page)} pageUrl={`${siteUrl}${basePath}${page.url === '/' ? '/' : `${page.url}/`}`} />
-            )}
+          {/* Actions sit beside the title from 1350px, where the column (with sidebar and TOC)
+              still fits the longest title on one line; below, under the description.
+              Phones get a divider under the header. */}
+          <div className="mb-8 border-b border-fd-border pb-6 md:border-0 md:pb-0">
+            <div className="grid grid-cols-1 min-[1350px]:grid-cols-[minmax(0,1fr)_auto] min-[1350px]:gap-x-6">
+              <DocsTitle className="mb-3 min-w-0 text-[42px] leading-[50px] font-[650]">
+                {page.data.title}
+              </DocsTitle>
+              <DocsDescription className="mb-0 min-w-0 text-xl leading-7 text-fd-muted-foreground min-[1350px]:col-span-2 min-[1350px]:row-start-2">
+                {page.data.description}
+              </DocsDescription>
+              {showActions && (
+                // Stacked, the Copy Markdown label lines up with the text (cancels the button's padding).
+                <div className="-ms-2.5 mt-3 min-[1350px]:col-start-2 min-[1350px]:row-start-1 min-[1350px]:ms-0 min-[1350px]:mt-[11px]">
+                  <PageActions markdownUrl={markdownUrl(page)} pageUrl={pageUrl(page)} />
+                </div>
+              )}
+            </div>
           </div>
-          <DocsDescription className="mb-8 text-xl leading-7 text-fd-muted-foreground">
-            {page.data.description}
-          </DocsDescription>
         </>
       )}
       <DocsBody>
@@ -95,8 +124,22 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const isIntro = page.slugs.length === 0;
   return {
-    title: page.data.title,
+    // The start page names the product, not "Introduction".
+    title: isIntro ? { absolute: homeTitle } : page.data.title,
     description: page.data.description,
+    alternates: {
+      // Absolute, with the base path: metadataBase would drop it.
+      canonical: pageUrl(page),
+      types: { 'text/markdown': markdownUrl(page) },
+    },
+    // A page's openGraph replaces the layout's whole object, so siteName is repeated here.
+    openGraph: {
+      url: pageUrl(page),
+      siteName: appName,
+      type: isIntro ? 'website' : 'article',
+      images: ogImageUrl(page),
+    },
   };
 }

@@ -8,12 +8,7 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       url: '/',
       title: (
-        <>
-          <img src={`${basePath}/logo.svg`} alt="dbmcp" className="block h-[26px] w-auto" />
-          <span className="text-base font-semibold whitespace-nowrap text-fd-foreground">
-            {appName}
-          </span>
-        </>
+        <img src={`${basePath}/logo.svg`} alt={appName} className="block h-[26px] w-auto" />
       ),
     },
     themeSwitch: {

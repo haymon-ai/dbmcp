@@ -3,7 +3,7 @@ title: Configuration
 description: Every dbmcp setting with its YAML key, environment variable, type, and default
 ---
 
-Database MCP reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. The table below lists every setting; each key links to the page that explains it, with its type and full description. For the file formats, `${}` interpolation, and path rules, see [Config files](/configuration/config-files).
+<Dbmcp /> reads its settings from `DBMCP_*` environment variables, optional env files, and optional YAML config files. The command line only names those files (`--config-file`, `--env-file`); there is no per-setting flag. The table below lists every setting; each key links to the page that explains it, with its type and full description. For the file formats, `${}` interpolation, and path rules, see [Config files](/configuration/config-files).
 
 The config file has a [JSON Schema](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json) for editor completion and validation. Editors backed by the YAML language server (VS Code's YAML extension, JetBrains IDEs, Neovim, Zed) pick it up from this modeline on the first line of the file:
 

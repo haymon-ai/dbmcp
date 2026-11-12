@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { DocsCodeBlock } from '@/components/code-block';
 import { DatabaseGrid } from '@/components/database-grid';
 import { Demo } from '@/components/demo';
+import { Wordmark } from '@/components/wordmark';
 
 /** Code tab groups with the same default tab share one remembered choice (e.g. bin / npx). */
 function DocsCodeBlockTabs(props: ComponentProps<typeof CodeBlockTabs>) {
@@ -26,6 +27,7 @@ export function getMDXComponents(components?: MDXComponents) {
     CodeBlockTabs: DocsCodeBlockTabs,
     DatabaseGrid,
     Demo,
+    Dbmcp: Wordmark,
     ...components,
   } satisfies MDXComponents;
 }

@@ -1,6 +1,6 @@
 ---
 title: readQuery
-description: Reference for the readQuery tool
+description: Run a read-only SELECT, SHOW, DESCRIBE, or EXPLAIN query, with pagination and an optional timeout
 ---
 
 Execute a read-only SQL query (`SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`) against a specific database. This tool is always available and enforces SQL validation — write statements are rejected even when read-only mode is disabled. See [Security](/security) for details on query validation. `SELECT` results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. `SHOW`, `DESCRIBE`, and `EXPLAIN` always return a single page and ignore any `cursor` argument. Large values and responses are capped; see [Output Size Caps](/features/pagination#output-size-caps). An optional `timeout` argument (seconds) gives a known-slow query more time, up to the operator's cap; see [Per-Call Timeout](/features/query-timeouts#per-call-timeout).

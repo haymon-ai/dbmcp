@@ -1,6 +1,6 @@
 ---
 title: listFunctions
-description: Reference for the listFunctions tool
+description: List user-defined SQL functions on MySQL, MariaDB, or PostgreSQL, with name search and optional details
 ---
 
 List user-defined SQL functions in a database. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs registered in `mysql.func`. Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. The `database` parameter selects which database to inspect and defaults to the active database. PostgreSQL restricts the listing to the `public` schema. Available on MySQL/MariaDB and PostgreSQL only — not available for SQLite.

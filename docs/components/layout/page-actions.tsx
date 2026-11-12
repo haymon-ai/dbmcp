@@ -68,7 +68,7 @@ export function PageActions({
     'flex w-full items-start gap-3 px-4 py-2.5 text-start text-sm text-fd-foreground hover:bg-fd-muted';
 
   return (
-    <div className="not-prose mt-[11px] flex shrink-0 items-center gap-1">
+    <div className="not-prose flex shrink-0 items-center gap-1">
       <button
         type="button"
         onClick={onCopy}

@@ -3,7 +3,7 @@ title: SSH tunnel
 description: Reach MySQL, MariaDB, or PostgreSQL through an SSH bastion
 ---
 
-Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `ssh.host` / `DBMCP_SSH_HOST` is set.
+<Dbmcp /> can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bastion / jump host) using an embedded, pure-Rust SSH client — no `ssh` binary is needed. The tunnel is enabled when `ssh.host` / `DBMCP_SSH_HOST` is set.
 
 | YAML key | Env var | Type | Default | Description |
 |----------|---------|------|---------|-------------|
@@ -43,7 +43,7 @@ Database MCP can reach MySQL, MariaDB, and PostgreSQL through an SSH server (bas
 
 ## How It Works
 
-- Database MCP listens on `127.0.0.1:<port>` (ephemeral unless `ssh.local_port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
+- <Dbmcp /> listens on `127.0.0.1:<port>` (ephemeral unless `ssh.local_port` is set) and points the database driver at it. Each database connection is forwarded over its own `direct-tcpip` channel on one shared SSH session.
 - **`DBMCP_DB_HOST` and `DBMCP_DB_PORT` are resolved by the SSH server**, not locally — use the name or address the bastion can reach (e.g. `db.internal`, a private IP, or `127.0.0.1` for a database on the bastion itself).
 - The SSH session opens lazily on the first database connection, so an unreachable SSH server does not prevent startup. Connecting, verifying the host key, and authenticating must finish within **10 seconds**.
 - If the session drops, the next database connection reconnects it. Concurrent connections share one reconnect attempt.
@@ -71,7 +71,7 @@ Keys marked `@revoked` are rejected under every policy, as long as `known_hosts`
 
 ## Database TLS Through the Tunnel
 
-All `DBMCP_DB_SSL_*` settings work unchanged, and TLS stays end-to-end between Database MCP and the database. `DBMCP_DB_SSL_VERIFY_CERT=true` validates the certificate chain (against system roots and `DBMCP_DB_SSL_CA`) but not the hostname, so connecting via `127.0.0.1` does not cause a name mismatch.
+All `DBMCP_DB_SSL_*` settings work unchanged, and TLS stays end-to-end between <Dbmcp /> and the database. `DBMCP_DB_SSL_VERIFY_CERT=true` validates the certificate chain (against system roots and `DBMCP_DB_SSL_CA`) but not the hostname, so connecting via `127.0.0.1` does not cause a name mismatch.
 
 **Limitation:** because the driver connects to an IP address, no TLS SNI is sent. Services that route on SNI (for example Neon's proxy) cannot be reached through the tunnel.
 
@@ -108,7 +108,7 @@ Compare the fingerprint with one obtained out-of-band (e.g. from the server's co
 
 **Windows: `os error 10013` with `DBMCP_SSH_LOCAL_PORT`** — the port falls in a range Windows reserves (often for Hyper-V/WSL). List reserved ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`, pick a port outside them, or leave `ssh.local_port` unset to use an ephemeral port.
 
-**Windows: a different `known_hosts` than `ssh` uses** — Database MCP resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `DBMCP_SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
+**Windows: a different `known_hosts` than `ssh` uses** — <Dbmcp /> resolves `~` from `USERPROFILE`. Win32-OpenSSH (`ssh.exe` in `System32`) uses the Windows profile directory even when `USERPROFILE` is overridden, and Git Bash's `ssh` uses `$HOME`, so they may read a different `known_hosts`. Set `DBMCP_SSH_KNOWN_HOSTS` explicitly to share one file. A `known_hosts` created outside your profile inherits that folder's permissions.
 
 ## Host-key verification
 

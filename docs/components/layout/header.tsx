@@ -33,12 +33,10 @@ export function Header(props: ComponentProps<'header'>) {
             type="button"
             onClick={() => setOpenSearch(true)}
             aria-label="Search documentation"
-            className="ms-auto flex h-8 w-8 sm:cursor-text justify-center sm:mx-auto sm:w-full sm:max-w-[820px] sm:justify-start items-center gap-2 border border-transparent hover:bg-fd-accent sm:border-fd-border sm:bg-fd-background sm:hover:bg-fd-background sm:ps-3 sm:pe-2 text-start text-sm text-subtle transition-colors hover:border-[#d5dae1]"
+            className="mx-auto flex h-8 w-full max-w-[820px] cursor-text items-center justify-start gap-2 border border-fd-border bg-fd-background ps-3 pe-2 text-start text-sm text-subtle transition-colors hover:border-[#d5dae1]"
           >
             <Search className="size-4 shrink-0 opacity-60" />
-            <span className="hidden flex-1 truncate sm:block">
-              Search documentation
-            </span>
+            <span className="flex-1 truncate">Search documentation</span>
             <kbd className="hidden h-5 items-center gap-0.5 border border-fd-border bg-fd-muted px-1.5 font-mono text-xs sm:inline-flex">
               {hotKey.map((k, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: fixed hotkey list
