@@ -40,4 +40,6 @@ export function generateStaticParams() {
   return [...source.getPages().map((page) => ({ slug: page.slugs })), ...Object.keys(moved).map((path) => ({ slug: path.split('/') }))];
 }
 
-export const metadata: Metadata = { title: 'Moved', robots: { index: false } };
+// No noindex: Google treats the instant meta refresh as a permanent redirect, and noindex
+// next to rel=canonical sends mixed signals.
+export const metadata: Metadata = { title: 'Moved' };

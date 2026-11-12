@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
+import { ImageResponse } from "next/og";
+import { homeHeading } from "@/lib/shared";
 import { source } from "@/lib/source";
 
 export const dynamic = "force-static";
@@ -30,6 +31,12 @@ export async function GET(
   if (slug.at(-1) !== "image.png") notFound();
   const page = source.getPage(slug.slice(0, -1));
   if (!page) notFound();
+  // The home page is named after the product, as in its title and heading.
+  const isIntro = page.slugs.length === 0;
+  const title = isIntro ? homeHeading : page.data.title;
+  const description = isIntro
+    ? "A single binary with zero runtime dependencies, read-only by default"
+    : page.data.description;
   return new ImageResponse(
     <div
       style={{
@@ -61,9 +68,9 @@ export async function GET(
             color: foreground,
           }}
         >
-          {page.data.title}
+          {title}
         </div>
-        {page.data.description && (
+        {description && (
           <div
             style={{
               marginTop: 24,
@@ -72,7 +79,7 @@ export async function GET(
               color: muted,
             }}
           >
-            {page.data.description}
+            {description}
           </div>
         )}
       </div>

@@ -13,7 +13,7 @@ import { PageActions } from '@/components/layout/page-actions';
 import { flattenTree, type Item } from 'fumadocs-core/page-tree';
 import { type FooterLink, PageFooter } from '@/components/layout/page-footer';
 import { githubUrl } from '@/lib/layout.shared';
-import { markdownUrl, ogImageUrl } from '@/lib/llm';
+import { markdownUrl, ogImageUrl, pageUrl } from '@/lib/llm';
 import { appName, basePath, gitConfig, homeHeading, homeTitle, siteUrl } from '@/lib/shared';
 
 const websiteLd = {
@@ -92,7 +92,7 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
               {showActions && (
                 // Stacked, the Copy Markdown label lines up with the text (cancels the button's padding).
                 <div className="-ms-2.5 mt-3 min-[1350px]:col-start-2 min-[1350px]:row-start-1 min-[1350px]:ms-0 min-[1350px]:mt-[11px]">
-                  <PageActions markdownUrl={markdownUrl(page)} pageUrl={`${siteUrl}${basePath}${page.url === '/' ? '/' : `${page.url}/`}`} />
+                  <PageActions markdownUrl={markdownUrl(page)} pageUrl={pageUrl(page)} />
                 </div>
               )}
             </div>
@@ -130,13 +130,13 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
     title: isIntro ? { absolute: homeTitle } : page.data.title,
     description: page.data.description,
     alternates: {
-      // metadataBase makes these absolute; trailingSlash adds the slash.
-      canonical: page.url,
+      // Absolute, with the base path: metadataBase would drop it.
+      canonical: pageUrl(page),
       types: { 'text/markdown': markdownUrl(page) },
     },
     // A page's openGraph replaces the layout's whole object, so siteName is repeated here.
     openGraph: {
-      url: page.url,
+      url: pageUrl(page),
       siteName: appName,
       type: isIntro ? 'website' : 'article',
       images: ogImageUrl(page),

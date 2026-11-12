@@ -1,6 +1,6 @@
 import { llms } from "fumadocs-core/source";
 import { markdownUrl } from "@/lib/llm";
-import { appName, siteUrl } from "@/lib/shared";
+import { appName, basePath, siteUrl } from "@/lib/shared";
 import { source } from "@/lib/source";
 
 export const dynamic = "force-static";
@@ -13,7 +13,8 @@ export async function GET() {
   const index = await llms(source, {
     renderUrl: (node) => {
       const page = source.getNodePage(node);
-      return page ? md(page) : `${siteUrl}${node.url}`;
+      if (page) return md(page);
+      return node.external ? node.url : `${siteUrl}${basePath}${node.url}`;
     },
   }).index();
   const sections = index
@@ -26,8 +27,8 @@ export async function GET() {
   const intro = source.getPage([]);
   const head = [
     `# ${appName}`,
-    `> ${intro?.data.description ?? ""}. Gives AI assistants read-only access to SQL databases over the Model Context Protocol.`,
-    `All pages in one file: ${siteUrl}/llms-full.txt`,
+    `> ${(intro?.data.description ?? "").replace(/\.$/, "")}. Gives AI assistants access to SQL databases over the Model Context Protocol, read-only by default.`,
+    `All pages in one file: ${siteUrl}${basePath}/llms-full.txt`,
     "## Introduction",
     intro
       ? `- [Introduction](${md(intro)}): Overview, quick install, and supported databases`

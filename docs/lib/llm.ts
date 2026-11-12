@@ -26,11 +26,15 @@ function attrs(text: string): Record<string, string> {
   );
 }
 
+/** Replaces the inline `<Dbmcp />` wordmark component with plain text. */
+export function plainWordmark(text: string): string {
+  return text.replace(/<Dbmcp\s*\/>/g, "dbmcp");
+}
+
 /** Replaces the custom MDX components with plain Markdown. */
 function plainMarkdown(body: string): string {
   return (
-    body
-      .replaceAll("<Dbmcp />", "dbmcp")
+    plainWordmark(body)
       // Demo recordings become images; defaults match components/demo.tsx.
       .replace(/<Demo\b([^>]*)\/>/g, (_, text: string) => {
         const {
