@@ -14,7 +14,7 @@ import { flattenTree, type Item } from 'fumadocs-core/page-tree';
 import { type FooterLink, PageFooter } from '@/components/layout/page-footer';
 import { githubUrl } from '@/lib/layout.shared';
 import { markdownUrl } from '@/lib/llm';
-import { basePath, gitConfig, siteUrl } from '@/lib/shared';
+import { appName, basePath, gitConfig, homeTitle, siteUrl } from '@/lib/shared';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -56,7 +56,8 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
       footer={{ enabled: false }}
       className="mx-auto w-full max-w-[884px] gap-0 pb-24 *:max-w-none xl:pt-[26px]"
     >
-      {/* The start page opens with the demo, without a title or description. */}
+      {/* The start page opens with a compact heading and the demo, without a description. */}
+      {isIntro && <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeTitle}</DocsTitle>}
       {!isIntro && (
         <>
           {/* Actions sit beside the title from 1350px, where the column (with sidebar and TOC)
@@ -105,8 +106,10 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const isIntro = page.slugs.length === 0;
   return {
-    title: page.data.title,
+    // The start page names the product, not "Introduction".
+    title: isIntro ? { absolute: homeTitle } : page.data.title,
     description: page.data.description,
     alternates: {
       // metadataBase makes these absolute; trailingSlash adds the slash.
@@ -116,8 +119,8 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
     // A page's openGraph replaces the layout's whole object, so siteName is repeated here.
     openGraph: {
       url: page.url,
-      siteName: 'Haymon Database MCP',
-      type: page.slugs.length === 0 ? 'website' : 'article',
+      siteName: appName,
+      type: isIntro ? 'website' : 'article',
     },
   };
 }

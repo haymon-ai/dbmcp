@@ -8,13 +8,7 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       url: '/',
       title: (
-        <>
-          <img src={`${basePath}/logo.svg`} alt="dbmcp" className="block h-[26px] w-auto" />
-          {/* Below md the header space goes to the search field instead. */}
-          <span className="hidden text-base font-semibold whitespace-nowrap text-fd-foreground md:inline">
-            {appName}
-          </span>
-        </>
+        <img src={`${basePath}/logo.svg`} alt={appName} className="block h-[26px] w-auto" />
       ),
     },
     themeSwitch: {

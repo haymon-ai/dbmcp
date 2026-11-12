@@ -1,6 +1,6 @@
 ---
 title: listViews
-description: Reference for the listViews tool
+description: List the views in a database, with name search and optional SELECT definitions
 ---
 
 List the views defined in a database. Materialized views are not returned — they are exposed via [`listMaterializedViews`](/tools/list-materialized-views). Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. On MySQL/MariaDB and PostgreSQL the `database` parameter selects which database to inspect (defaults to the active database); SQLite operates on a single file and has no `database` parameter. PostgreSQL restricts the listing to the `public` schema.
