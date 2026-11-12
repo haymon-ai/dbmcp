@@ -9,6 +9,11 @@ export function markdownUrl(page: Page): string {
   return `${basePath}/llms.mdx/${[...page.slugs, "content.md"].join("/")}`;
 }
 
+/** Link-preview image of a page, served under `/og/<slug>/image.png`. */
+export function ogImageUrl(page: Page): string {
+  return `${basePath}/og/${[...page.slugs, "image.png"].join("/")}`;
+}
+
 /** Absolute URL of a page's HTML version, with the trailing slash the site uses. */
 export function pageUrl(page: Page): string {
   return `${siteUrl}${basePath}${page.url === "/" ? "/" : `${page.url}/`}`;

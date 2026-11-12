@@ -37,11 +37,9 @@ export const metadata: Metadata = {
     siteName: appName,
     type: "website",
   },
+  // No title/description here: Twitter then falls back to each page's Open Graph values.
   twitter: {
     card: "summary_large_image",
-    title: homeTitle,
-    description:
-      "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite. Zero runtime dependencies, read-only by default.",
   },
 };
 

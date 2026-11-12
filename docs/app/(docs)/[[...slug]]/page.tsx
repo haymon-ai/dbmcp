@@ -13,7 +13,7 @@ import { PageActions } from '@/components/layout/page-actions';
 import { flattenTree, type Item } from 'fumadocs-core/page-tree';
 import { type FooterLink, PageFooter } from '@/components/layout/page-footer';
 import { githubUrl } from '@/lib/layout.shared';
-import { markdownUrl } from '@/lib/llm';
+import { markdownUrl, ogImageUrl } from '@/lib/llm';
 import { appName, basePath, gitConfig, homeTitle, siteUrl } from '@/lib/shared';
 
 const websiteLd = {
@@ -139,6 +139,7 @@ export async function generateMetadata(props: PageProps<'/[[...slug]]'>): Promis
       url: page.url,
       siteName: appName,
       type: isIntro ? 'website' : 'article',
+      images: ogImageUrl(page),
     },
   };
 }
