@@ -16,6 +16,14 @@ import { githubUrl } from '@/lib/layout.shared';
 import { markdownUrl } from '@/lib/llm';
 import { appName, basePath, gitConfig, homeTitle, siteUrl } from '@/lib/shared';
 
+const websiteLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: appName,
+  alternateName: ['Haymon Database MCP', 'Database MCP'],
+  url: `${siteUrl}${basePath}/`,
+};
+
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
   const page = source.getPage(params.slug);
@@ -57,7 +65,17 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
       className="mx-auto w-full max-w-[884px] gap-0 pb-24 *:max-w-none xl:pt-[26px]"
     >
       {/* The start page opens with a compact heading and the demo, without a description. */}
-      {isIntro && <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeTitle}</DocsTitle>}
+      {isIntro && (
+        <>
+          {/* Google reads the site name from WebSite markup on the home page only. */}
+          <script
+            type="application/ld+json"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON, `<` escaped as Next's JSON-LD guide shows.
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteLd).replace(/</g, '\\u003c') }}
+          />
+          <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeTitle}</DocsTitle>
+        </>
+      )}
       {!isIntro && (
         <>
           {/* Actions sit beside the title from 1350px, where the column (with sidebar and TOC)
