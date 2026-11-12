@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Arvo, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { Provider } from "@/components/provider";
 import { siteUrl } from "@/lib/shared";
 import "./global.css";
@@ -13,6 +13,12 @@ const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],
   weight: ["400", "500"],
   variable: "--font-plex-mono",
+});
+
+const arvo = Arvo({
+  subsets: ["latin"],
+  weight: "700",
+  variable: "--font-arvo",
 });
 
 export const metadata: Metadata = {
@@ -41,7 +47,7 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${plexSans.variable} ${plexMono.variable} ${arvo.variable}`} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
         <Provider>{children}</Provider>
       </body>

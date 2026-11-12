@@ -10,7 +10,8 @@ export function baseOptions(): BaseLayoutProps {
       title: (
         <>
           <img src={`${basePath}/logo.svg`} alt="dbmcp" className="block h-[26px] w-auto" />
-          <span className="text-base font-semibold whitespace-nowrap text-fd-foreground">
+          {/* Below md the header space goes to the search field instead. */}
+          <span className="hidden text-base font-semibold whitespace-nowrap text-fd-foreground md:inline">
             {appName}
           </span>
         </>

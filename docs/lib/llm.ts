@@ -12,6 +12,6 @@ export function markdownUrl(page: Page): string {
 /** A page rendered as plain Markdown for LLMs. */
 export async function getLLMText(page: Page): Promise<string> {
   const raw = await page.data.getText('raw');
-  const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
+  const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '').replaceAll('<Dbmcp />', 'dbmcp').trim();
   return `# ${page.data.title}\n\n${page.data.description ? `${page.data.description}\n\n` : ''}${body}`;
 }
