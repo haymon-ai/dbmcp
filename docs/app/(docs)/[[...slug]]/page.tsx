@@ -14,7 +14,7 @@ import { flattenTree, type Item } from 'fumadocs-core/page-tree';
 import { type FooterLink, PageFooter } from '@/components/layout/page-footer';
 import { githubUrl } from '@/lib/layout.shared';
 import { markdownUrl, ogImageUrl } from '@/lib/llm';
-import { appName, basePath, gitConfig, homeTitle, siteUrl } from '@/lib/shared';
+import { appName, basePath, gitConfig, homeHeading, homeTitle, siteUrl } from '@/lib/shared';
 
 const websiteLd = {
   '@context': 'https://schema.org',
@@ -73,7 +73,7 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
             // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON, `<` escaped as Next's JSON-LD guide shows.
             dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteLd).replace(/</g, '\\u003c') }}
           />
-          <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeTitle}</DocsTitle>
+          <DocsTitle className="mb-6 text-2xl leading-8 font-[650]">{homeHeading}</DocsTitle>
         </>
       )}
       {!isIntro && (
