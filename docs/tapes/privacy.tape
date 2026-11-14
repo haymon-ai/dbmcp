@@ -3,7 +3,7 @@ Output docs/public/privacy.gif
 Set Shell "bash"
 Set FontSize 22
 Set FontFamily "JetBrains Mono"
-Set Width 1200
+Set Width 900
 Set Height 500
 Set Padding 20
 Set Margin 0

@@ -42,14 +42,14 @@ respond() {
       printf "  ${DIM}⎿  3 rows, personal data redacted${RESET}\n"
       sleep 0.4
       printf "\n● Last week's 3 biggest orders:\n\n"
-      printf "  #1042  ${ACCENT}<PERSON_a31fec90098295f4>  <EMAIL_ADDRESS_3f9a1c07b2d4e855>${RESET}  \$4,820.00\n"
-      printf "  #1037  ${ACCENT}<PERSON_7c02e4b19d5a6f38>  <EMAIL_ADDRESS_b84d0e6a2f17c953>${RESET}  \$3,915.50\n"
-      printf "  #1051  ${ACCENT}<PERSON_a31fec90098295f4>  <EMAIL_ADDRESS_3f9a1c07b2d4e855>${RESET}  \$2,640.00\n"
+      printf "  #1042  ${ACCENT}<PERSON_a31fec90098295f4>${RESET}  \$4,820.00\n"
+      printf "  #1037  ${ACCENT}<PERSON_7c02e4b19d5a6f38>${RESET}  \$3,915.50\n"
+      printf "  #1051  ${ACCENT}<PERSON_a31fec90098295f4>${RESET}  \$2,640.00\n"
       ;;
     *"same customer"*)
       think "1.4s" 1.4
-      printf "\n● Yes, both carry the same ${ACCENT}<EMAIL_ADDRESS_3f9a1c07b2d4e855>${RESET} token,\n"
-      printf "  so the same stored email; I still can't see who it is.\n"
+      printf "\n● Yes, both carry the same ${ACCENT}<PERSON_a31fec90098295f4>${RESET} token,\n"
+      printf "  so the same stored name; I still can't see who it is.\n"
       ;;
     *)
       think "1.0s" 1.0
