@@ -116,7 +116,7 @@ impl Connection for SqliteConnection {
         conn: &mut sqlx::SqliteConnection,
         query: (SqlStr, Option<SqliteArguments>),
     ) -> Result<Vec<SqliteRow>, sqlx::Error> {
-        if !self.config.read_only {
+        if !self.read_only() {
             sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
         }
         conn.fetch_all(query).await
@@ -336,6 +336,21 @@ mod tests {
             .await
             .expect("reads still work");
         assert_eq!(rows, vec![serde_json::json!({"v": 1})]);
+    }
+
+    #[tokio::test]
+    async fn read_json_rejects_writes_in_read_only_mode() {
+        // Without `query_only`, only the read-only file stops this write.
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: true,
+            ..base_config()
+        });
+        let error = connection
+            .read_json("CREATE TABLE t (id INTEGER)", None, 0)
+            .await
+            .expect_err("read-only file must reject writes");
+        assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
     }
 
     #[tokio::test]
