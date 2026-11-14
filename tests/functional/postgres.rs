@@ -4551,3 +4551,75 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
 }
+
+/// Collected ids of `query` paged two rows at a time.
+async fn collect_paged_ids(query: &str) -> Vec<i64> {
+    let handler = handler_with_page_size(2);
+    collect_all_paged_read_query(&handler, query)
+        .await
+        .iter()
+        .map(|row| row["id"].as_i64().expect("id is integer"))
+        .collect()
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_merged() {
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_skipped() {
+    // `FETCH FIRST` is a `Skip` shape.
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC FETCH FIRST 100 ROWS ONLY").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+/// Pages through `query`, whose two output columns are both named `id`.
+async fn assert_duplicate_names_page(query: &str) {
+    let handler = handler_with_page_size(2);
+    let rows = collect_all_paged_read_query(&handler, query).await;
+    assert_eq!(rows.len(), 3, "input = {query:?}");
+    for row in &rows {
+        let keys: Vec<&String> = row.as_object().expect("row is an object").keys().collect();
+        assert_eq!(keys, ["id"], "input = {query:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_merged() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id").await;
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_skipped() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id FETCH FIRST 100 ROWS ONLY").await;
+}
+
+/// Five rows that fail at the fourth. `10 / (4 - g)` divides by zero at `g = 4`.
+const LATE_ERROR: &str = "SELECT g, 10 / (4 - g) AS v FROM generate_series(1, 5) AS g";
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_fails_skipped_page() {
+    let handler = handler_with_page_size(2);
+    let result = handler
+        .read_query(
+            format!("{LATE_ERROR} FETCH FIRST 100 ROWS ONLY"),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_err(), "a skipped page reads the whole result: {result:?}");
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_spares_merged_first_page() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(format!("{LATE_ERROR} LIMIT 100"), Some("app".into()), None, None)
+        .await
+        .expect("a merged first page stops before the failing row");
+    assert_eq!(response.rows.len(), 2);
+    assert!(response.next_cursor.is_some());
+}

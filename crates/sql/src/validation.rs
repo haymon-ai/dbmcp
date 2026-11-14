@@ -31,8 +31,8 @@ pub enum StatementKind {
 /// 6. No INTO OUTFILE/DUMPFILE clauses
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
-/// paginate can dispatch `Select` to a subquery-wrapped fetch and route
-/// `NonSelect` through a single-page pass-through.
+/// paginate can dispatch `Select` to a paged fetch and route `NonSelect`
+/// through a single-page pass-through.
 ///
 /// # Errors
 ///

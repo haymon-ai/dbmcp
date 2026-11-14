@@ -21,6 +21,10 @@ Cursors are opaque tokens. Treat them as black-box strings — do not parse, mod
 
 Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
+Each page keeps the statement's `ORDER BY` and column names on every backend.
+
+Every page re-runs the statement; there is no snapshot, so rows inserted or deleted between calls can shift later pages. `readQuery` fits each page into the statement's own top-level `LIMIT`/`OFFSET` (or appends one). Statements it cannot rewrite run unchanged and read the whole result on every page, keeping only the page: `FETCH FIRST`, a `LIMIT` that is not a literal number, `FOR UPDATE`/`FOR SHARE`, and a top-level `VALUES`. Write a literal `LIMIT` to keep large results cheap.
+
 A `readQuery` page can hold fewer rows than the page size when the [response size cap](#output-size-caps) ends it early; its `nextCursor` then resumes at the first row left out.
 
 ## Output Size Caps

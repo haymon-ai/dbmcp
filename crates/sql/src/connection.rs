@@ -135,11 +135,13 @@ where
         id: u64,
     ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
-    /// Fetches every row of `query` on `conn` so the database rejects writes.
+    /// Reads every row of `query` on `conn` into `sink`; the database rejects writes.
     ///
-    /// Hook behind [`read_json`](Connection::read_json). The default runs
-    /// `query` in a `START TRANSACTION READ ONLY` transaction and rolls it
-    /// back. Backends without read-only transactions override it.
+    /// Hook behind [`read_json`](Connection::read_json). Each row reaches
+    /// `sink` as JSON as soon as the driver yields it, and the stream is
+    /// read to the end. The default runs `query` in a
+    /// `START TRANSACTION READ ONLY` transaction and rolls it back.
+    /// Backends without read-only transactions override it.
     ///
     /// # Errors
     ///
@@ -148,11 +150,17 @@ where
         &self,
         conn: &mut <Self::DB as sqlx::Database>::Connection,
         query: (SqlStr, Option<<Self::DB as sqlx::Database>::Arguments>),
-    ) -> Result<Vec<<Self::DB as sqlx::Database>::Row>, sqlx::Error> {
+        mut sink: impl FnMut(Value) + Send,
+    ) -> Result<(), sqlx::Error> {
         let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
-        let rows = (&mut *tx).fetch_all(query).await?;
+        {
+            let mut rows = (&mut *tx).fetch(query);
+            while let Some(row) = rows.try_next().await? {
+                sink(row.to_json());
+            }
+        }
         tx.rollback().await?;
-        Ok(rows)
+        Ok(())
     }
 
     /// Checks that the default database answers `SELECT 1`.
@@ -196,11 +204,13 @@ where
         .await
     }
 
-    /// Runs a statement and returns its rows as JSON, affected rows, and insert id.
+    /// Runs a statement, feeding its rows to `sink`; returns affected rows and insert id.
     ///
     /// One execution yields both the returned rows (e.g. `RETURNING`) and
     /// the counts, which [`counts`](Connection::counts) folds from the
-    /// per-statement results.
+    /// per-statement results. Each row reaches `sink` as JSON as soon as
+    /// the driver yields it; the stream is read to the end, so the counts
+    /// cover every statement. The sink decides which rows to keep.
     ///
     /// # Errors
     ///
@@ -210,7 +220,8 @@ where
         &self,
         query: Q,
         database: Option<&str>,
-    ) -> Result<(Vec<Value>, u64, Option<u64>), SqlError>
+        mut sink: impl FnMut(Value) + Send,
+    ) -> Result<(u64, Option<u64>), SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
@@ -220,16 +231,14 @@ where
         execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let sql = query.0.clone();
             let mut stream = conn.fetch_many(query);
-            let mut rows = Vec::new();
             let mut results = Vec::new();
             while let Some(item) = stream.try_next().await? {
                 match item {
                     Either::Left(result) => results.push(result),
-                    Either::Right(row) => rows.push(row.to_json()),
+                    Either::Right(row) => sink(row.to_json()),
                 }
             }
-            let (rows_affected, last_insert_id) = Self::counts(sql.as_str(), &results);
-            Ok((rows, rows_affected, last_insert_id))
+            Ok(Self::counts(sql.as_str(), &results))
         })
         .await
     }
@@ -245,7 +254,7 @@ where
         (rows_affected, last_insert_id)
     }
 
-    /// Runs a statement the database must not let write; collects rows as JSON.
+    /// Runs a statement the database must not let write, feeding its rows to `sink`.
     ///
     /// Holds in every mode. The database itself rejects writes, so
     /// side-effecting functions that pass read-only validation (sequences,
@@ -256,20 +265,30 @@ where
     /// discards session settings changed by the statement; `MySQL` user
     /// variables persist.
     ///
+    /// Each row reaches `sink` as JSON as soon as the driver yields it, and
+    /// the stream is read to the end inside the timed call. The sink
+    /// decides which rows to keep.
+    ///
     /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
     /// for this call (`0` = disabled).
     ///
     /// # Errors
     ///
     /// See trait-level documentation. Writes attempted by the statement
-    /// surface as [`SqlError::Query`].
-    async fn read_json<Q>(&self, query: Q, database: Option<&str>, timeout_secs: u64) -> Result<Vec<Value>, SqlError>
+    /// surface as [`SqlError::Query`]. An error after some rows reached
+    /// `sink` still fails the call.
+    async fn read_json<Q>(
+        &self,
+        query: Q,
+        database: Option<&str>,
+        timeout_secs: u64,
+        sink: impl FnMut(Value) + Send,
+    ) -> Result<(), SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
         execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
-            let rows = self.fetch_read_only(conn, query).await?;
-            Ok(rows.iter().map(RowExt::to_json).collect())
+            self.fetch_read_only(conn, query, sink).await
         })
         .await
     }
