@@ -108,7 +108,7 @@ impl PostgresHandler {
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
         Ok(Self {
             config: config.database.clone(),
-            connection: PostgresConnection::new(&config.database),
+            connection: PostgresConnection::new(&config.database, config.cache),
             redactor: Redactor::from_config(config.pii.as_ref())?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })

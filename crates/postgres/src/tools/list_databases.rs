@@ -1,6 +1,6 @@
 //! MCP tool: `listDatabases`.
 
-use dbmcp_server::listing;
+use dbmcp_server::listing::{self, Like};
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
@@ -55,7 +55,7 @@ impl AsyncTool<PostgresHandler> for ListDatabasesTool {
 }
 
 /// Lists one page of non-template database names, sorted by name.
-const SQL: &str = r"
+pub(super) const SQL: &str = r"
     SELECT datname
     FROM pg_database
     WHERE datistemplate = false
@@ -76,6 +76,12 @@ impl PostgresHandler {
         &self,
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
+        if let Some(databases) = self.connection.databases().await {
+            let (databases, next_cursor) =
+                listing::paginate_names(&databases?, cursor, self.config.page_size, None, Like::POSTGRES);
+            return Ok(ListDatabasesResponse { databases, next_cursor });
+        }
+
         let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
             self.connection
                 .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)

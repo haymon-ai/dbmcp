@@ -9,9 +9,12 @@
 
 mod probe;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use std::time::Duration;
+
+use dbmcp_config::{CacheConfig, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
-use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_server::listing::Cursor;
+use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest, ListEntriesResponse};
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -4532,4 +4535,457 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert_eq!(response.rows[0]["s"], "abc");
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Catalog cache
+// ---------------------------------------------------------------------------
+
+/// Statements building a catalog parity fixture database.
+///
+/// Names cover `LIKE` wildcards, a backslash, a trailing backslash, mixed
+/// case, and non-ASCII. Tables include a partitioned table, functions and
+/// procedures include overloads, and one trigger name sits on two tables.
+/// Every kind spans at least two pages at page size 2.
+const CATALOG_FIXTURE: &[&str] = &[
+    r#"CREATE TABLE "a_b" (id integer PRIMARY KEY, name text UNIQUE)"#,
+    r#"CREATE TABLE "a%b" (id integer PRIMARY KEY)"#,
+    r#"CREATE TABLE "a\b" (id integer PRIMARY KEY CHECK (id > 0), ab_id integer REFERENCES "a_b" (id))"#,
+    r#"CREATE TABLE "ab\" (id integer)"#,
+    r#"CREATE TABLE "axb" (id integer)"#,
+    r#"CREATE TABLE "Foo" (id integer)"#,
+    r#"CREATE TABLE "foo" (id integer)"#,
+    r#"CREATE TABLE "café" (id integer)"#,
+    r#"CREATE TABLE "CAFÉ_2" (id integer)"#,
+    r#"CREATE TABLE "parted" (id integer) PARTITION BY RANGE (id)"#,
+    r#"CREATE TABLE "parted_1" PARTITION OF "parted" FOR VALUES FROM (0) TO (10)"#,
+    r#"CREATE INDEX "idx_axb" ON "axb" (id)"#,
+    r#"COMMENT ON TABLE "Foo" IS 'mixed case'"#,
+    r#"CREATE VIEW "v_a" AS SELECT 1 AS one"#,
+    r#"CREATE VIEW "v%b" AS SELECT 1 AS one"#,
+    r#"CREATE VIEW "v\" AS SELECT 1 AS one"#,
+    r#"CREATE VIEW "Vé" AS SELECT 1 AS one"#,
+    r#"CREATE VIEW "vb" AS SELECT 1 AS one"#,
+    r#"CREATE MATERIALIZED VIEW "mv_a" AS SELECT 1 AS one"#,
+    r#"CREATE MATERIALIZED VIEW "mv%b" AS SELECT 1 AS one"#,
+    r#"CREATE MATERIALIZED VIEW "mv\" AS SELECT 1 AS one"#,
+    r#"CREATE MATERIALIZED VIEW "MVé" AS SELECT 1 AS one WITH NO DATA"#,
+    r#"CREATE FUNCTION "add"(a integer) RETURNS integer LANGUAGE sql AS 'SELECT a'"#,
+    r#"CREATE FUNCTION "add"(a text) RETURNS text LANGUAGE sql AS 'SELECT a'"#,
+    r#"CREATE FUNCTION "f_b"() RETURNS integer LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE FUNCTION "f%b"() RETURNS integer LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE FUNCTION "f\"() RETURNS integer LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE FUNCTION "Fé"() RETURNS integer LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE FUNCTION "trg"() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$"#,
+    r#"CREATE PROCEDURE "p_a"(a integer) LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE PROCEDURE "p_a"(a text) LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE PROCEDURE "p%b"() LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE PROCEDURE "p\"() LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE PROCEDURE "Pé"() LANGUAGE sql AS 'SELECT 1'"#,
+    r#"CREATE TRIGGER "t_a" BEFORE INSERT ON "axb" FOR EACH ROW EXECUTE FUNCTION "trg"()"#,
+    r#"CREATE TRIGGER "t_a" BEFORE INSERT ON "Foo" FOR EACH ROW EXECUTE FUNCTION "trg"()"#,
+    r#"CREATE TRIGGER "t%b" AFTER UPDATE ON "axb" FOR EACH ROW EXECUTE FUNCTION "trg"()"#,
+    r#"CREATE TRIGGER "t\b" AFTER DELETE ON "foo" FOR EACH STATEMENT EXECUTE FUNCTION "trg"()"#,
+    r#"CREATE TRIGGER "Trig\" BEFORE UPDATE ON "foo" FOR EACH ROW EXECUTE FUNCTION "trg"()"#,
+    r#"CREATE TRIGGER "trigé" BEFORE INSERT ON "café" FOR EACH ROW EXECUTE FUNCTION "trg"()"#,
+];
+
+/// Searches the parity suite runs: wildcards, escapes, case, non-ASCII, blank.
+const CATALOG_SEARCHES: &[Option<&str>] = &[
+    None,
+    Some(""),
+    Some("   "),
+    Some("%"),
+    Some("_"),
+    Some("a_b"),
+    Some("a%b"),
+    Some(r"\"),
+    Some(r"a\"),
+    Some(r"\b"),
+    Some("FOO"),
+    Some("foo"),
+    Some("é"),
+    Some("É"),
+    Some("CAF"),
+    Some(" t_ "),
+    Some("integer"),
+    Some("zzz"),
+];
+
+/// The catalog tools under test.
+#[derive(Debug, Clone, Copy)]
+enum CatalogTool {
+    Tables,
+    Views,
+    MaterializedViews,
+    Functions,
+    Procedures,
+    Triggers,
+}
+
+const CATALOG_TOOLS: [CatalogTool; 6] = [
+    CatalogTool::Tables,
+    CatalogTool::Views,
+    CatalogTool::MaterializedViews,
+    CatalogTool::Functions,
+    CatalogTool::Procedures,
+    CatalogTool::Triggers,
+];
+
+/// Calls one catalog tool on `handler`.
+async fn list_catalog(
+    handler: &PostgresHandler,
+    tool: CatalogTool,
+    database: Option<&str>,
+    cursor: Option<Cursor>,
+    search: Option<&str>,
+    detailed: bool,
+) -> Result<ListEntriesResponse, rmcp::ErrorData> {
+    let database = database.map(str::to_owned);
+    let search = search.map(str::to_owned);
+    match tool {
+        CatalogTool::Tables => handler.list_tables(database, cursor, search, detailed).await,
+        CatalogTool::Views => handler.list_views(database, cursor, search, detailed).await,
+        CatalogTool::MaterializedViews => {
+            handler
+                .list_materialized_views(database, cursor, search, detailed)
+                .await
+        }
+        CatalogTool::Functions => handler.list_functions(database, cursor, search, detailed).await,
+        CatalogTool::Procedures => handler.list_procedures(database, cursor, search, detailed).await,
+        CatalogTool::Triggers => handler.list_triggers(database, cursor, search, detailed).await,
+    }
+}
+
+/// Builds a handler with page size 2, the given pinned name, and cache.
+fn catalog_handler(name: &str, cache: Option<CacheConfig>) -> PostgresHandler {
+    PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            name: Some(name.into()),
+            page_size: 2,
+            ..base_db_config(false)
+        },
+        http: None,
+        pii: None,
+        ssh: None,
+        cache,
+    })
+    .expect("handler builds")
+}
+
+/// Creates `database` afresh and fills it with the parity fixture.
+async fn catalog_fixture(database: &str) {
+    let handler = handler(false);
+    let _ = handler
+        .drop_database(DropDatabaseRequest {
+            database: database.into(),
+        })
+        .await;
+    handler
+        .create_database(CreateDatabaseRequest {
+            database: database.into(),
+        })
+        .await
+        .expect("create fixture database");
+    for sql in CATALOG_FIXTURE {
+        handler
+            .write_query((*sql).into(), Some(database.into()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+}
+
+/// Walks every page from `call`, which returns the serialized page and next cursor.
+async fn walk_pages(mut call: impl AsyncFnMut(Option<Cursor>) -> (String, Option<Cursor>)) -> Vec<String> {
+    let mut pages = Vec::new();
+    let mut cursor = None;
+    loop {
+        let (page, next) = call(cursor).await;
+        pages.push(page);
+        match next {
+            Some(next) => cursor = Some(next),
+            None => return pages,
+        }
+    }
+}
+
+/// Walks every page of one catalog tool for one search and mode.
+async fn walk_tool(
+    handler: &PostgresHandler,
+    tool: CatalogTool,
+    database: Option<&str>,
+    search: Option<&str>,
+    detailed: bool,
+) -> Vec<String> {
+    walk_pages(async |cursor| {
+        let response = list_catalog(handler, tool, database, cursor, search, detailed)
+            .await
+            .unwrap_or_else(|e| panic!("{tool:?}: {e:?}"));
+        let page = serde_json::to_string(&response).expect("serialize response");
+        (page, response.next_cursor)
+    })
+    .await
+}
+
+/// Walks every page of every catalog tool, every search, both modes.
+async fn walk_catalog(handler: &PostgresHandler, database: Option<&str>) -> Vec<String> {
+    let mut pages = Vec::new();
+    for tool in CATALOG_TOOLS {
+        for search in CATALOG_SEARCHES {
+            for detailed in [false, true] {
+                pages.extend(walk_tool(handler, tool, database, *search, detailed).await);
+            }
+        }
+    }
+    pages
+}
+
+/// Walks every `listDatabases` page.
+async fn walk_databases(handler: &PostgresHandler) -> Vec<String> {
+    walk_pages(async |cursor| {
+        let response = handler
+            .list_databases(ListDatabasesRequest { cursor })
+            .await
+            .expect("listDatabases");
+        let page = serde_json::to_string(&response).expect("serialize response");
+        (page, response.next_cursor)
+    })
+    .await
+}
+
+fn assert_pages_equal(cached: &[String], live: &[String]) {
+    assert!(
+        live.iter().any(|page| page.contains("nextCursor")),
+        "fixture must span more than one page"
+    );
+    assert_eq!(cached.len(), live.len(), "page counts differ");
+    for (cached, live) in cached.iter().zip(live) {
+        assert_eq!(cached, live);
+    }
+}
+
+#[tokio::test]
+async fn catalog_cache_matches_live_sql() {
+    const DATABASE: &str = "catalog_parity";
+    catalog_fixture(DATABASE).await;
+    let ttl = Some(CacheConfig {
+        ttl: Duration::from_mins(1),
+    });
+
+    // Pinned: the tools omit `database` and read the configured one.
+    let live = walk_catalog(&catalog_handler(DATABASE, None), None).await;
+    let cached = walk_catalog(&catalog_handler(DATABASE, ttl), None).await;
+    assert_pages_equal(&cached, &live);
+
+    // Unpinned: the tools name the fixture database explicitly.
+    let live = walk_catalog(&catalog_handler("app", None), Some(DATABASE)).await;
+    let cached = walk_catalog(&catalog_handler("app", ttl), Some(DATABASE)).await;
+    assert_pages_equal(&cached, &live);
+}
+
+#[tokio::test]
+async fn catalog_cache_list_databases_matches_live_sql() {
+    // Other tests create and drop databases concurrently: retry until the
+    // live list is stable around the cached walk.
+    let live_handler = catalog_handler("app", None);
+    for _ in 0..10 {
+        let before = walk_databases(&live_handler).await;
+        let cached = walk_databases(&catalog_handler(
+            "app",
+            Some(CacheConfig {
+                ttl: Duration::from_mins(1),
+            }),
+        ))
+        .await;
+        let after = walk_databases(&live_handler).await;
+        if before == after {
+            assert_pages_equal(&cached, &before);
+            return;
+        }
+    }
+    panic!("database list never stable across a cached walk");
+}
+
+/// Returns the brief names and detailed keys of every `listTables` page.
+async fn table_names(handler: &PostgresHandler, database: &str) -> (Vec<String>, Vec<String>) {
+    let mut brief = Vec::new();
+    let mut detailed = Vec::new();
+    for (mode, names) in [(false, &mut brief), (true, &mut detailed)] {
+        for page in walk_tool(handler, CatalogTool::Tables, Some(database), None, mode).await {
+            let page: Value = serde_json::from_str(&page).expect("page json");
+            match &page["entries"] {
+                Value::Array(entries) => names.extend(entries.iter().map(|n| n.as_str().expect("name").to_owned())),
+                Value::Object(entries) => names.extend(entries.keys().cloned()),
+                other => panic!("unexpected entries: {other}"),
+            }
+        }
+    }
+    (brief, detailed)
+}
+
+#[tokio::test]
+async fn catalog_cache_brief_and_detailed_tables_agree() {
+    const DATABASE: &str = "catalog_tables";
+    catalog_fixture(DATABASE).await;
+
+    let (brief, detailed) = table_names(&catalog_handler("app", None), DATABASE).await;
+    assert_eq!(brief, detailed, "live brief and detailed table sets differ");
+    for name in ["parted", "parted_1"] {
+        assert!(brief.iter().any(|n| n == name), "missing {name} in {brief:?}");
+    }
+
+    let (cached_brief, _) = table_names(
+        &catalog_handler(
+            "app",
+            Some(CacheConfig {
+                ttl: Duration::from_mins(1),
+            }),
+        ),
+        DATABASE,
+    )
+    .await;
+    assert_eq!(cached_brief, brief);
+}
+
+#[tokio::test]
+async fn catalog_cache_keeps_overloaded_routines() {
+    const DATABASE: &str = "catalog_overloads";
+    catalog_fixture(DATABASE).await;
+    let live = catalog_handler("app", None);
+    let cached = catalog_handler(
+        "app",
+        Some(CacheConfig {
+            ttl: Duration::from_mins(1),
+        }),
+    );
+
+    for (tool, search, signatures) in [
+        (CatalogTool::Functions, "add", ["add(a integer)", "add(a text)"]),
+        (CatalogTool::Procedures, "p_a", ["p_a(IN a integer)", "p_a(IN a text)"]),
+    ] {
+        let live = walk_tool(&live, tool, Some(DATABASE), Some(search), true).await;
+        let cached = walk_tool(&cached, tool, Some(DATABASE), Some(search), true).await;
+        assert_eq!(cached, live, "{tool:?}");
+        let joined = live.concat();
+        for signature in signatures {
+            assert!(joined.contains(signature), "{tool:?}: missing {signature} in {joined}");
+        }
+    }
+}
+
+/// Returns whether `listTables` brief mode lists `name` in `database`.
+async fn lists_table(handler: &PostgresHandler, database: &str, name: &str) -> bool {
+    walk_tool(handler, CatalogTool::Tables, Some(database), Some(name), false)
+        .await
+        .iter()
+        .any(|page| page.contains(&format!("\"{name}\"")))
+}
+
+/// Returns whether `listDatabases` lists `name`.
+async fn lists_database(handler: &PostgresHandler, name: &str) -> bool {
+    walk_databases(handler)
+        .await
+        .iter()
+        .any(|page| page.contains(&format!("\"{name}\"")))
+}
+
+#[tokio::test]
+async fn catalog_cache_shows_new_table_after_ttl() {
+    const TTL: Duration = Duration::from_secs(2);
+    const DATABASE: &str = "catalog_stale";
+    catalog_fixture(DATABASE).await;
+    let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));
+    let live = catalog_handler("app", None);
+
+    let filled = std::time::Instant::now();
+    assert!(
+        !lists_table(&cached, DATABASE, "late_table").await,
+        "fills the snapshot"
+    );
+    cached
+        .write_query("CREATE TABLE late_table (id integer)".into(), Some(DATABASE.into()))
+        .await
+        .expect("create table");
+    let hidden = !lists_table(&cached, DATABASE, "late_table").await;
+    assert!(
+        filled.elapsed() < TTL,
+        "test ran too slowly to observe the cached snapshot"
+    );
+    assert!(hidden, "cached path hides it until the TTL expires");
+    assert!(
+        lists_table(&live, DATABASE, "late_table").await,
+        "live path sees it at once"
+    );
+
+    tokio::time::sleep(TTL.saturating_sub(filled.elapsed()) + Duration::from_millis(500)).await;
+    assert!(
+        lists_table(&cached, DATABASE, "late_table").await,
+        "refilled after the TTL"
+    );
+}
+
+#[tokio::test]
+async fn catalog_cache_shows_new_database_after_ttl() {
+    const TTL: Duration = Duration::from_secs(2);
+    const DATABASE: &str = "catalog_late_db";
+    let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));
+    let live = catalog_handler("app", None);
+    let _ = live
+        .drop_database(DropDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await;
+
+    let filled = std::time::Instant::now();
+    assert!(!lists_database(&cached, DATABASE).await, "fills the database list");
+    cached
+        .create_database(CreateDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await
+        .expect("create database");
+    let hidden = !lists_database(&cached, DATABASE).await;
+    assert!(filled.elapsed() < TTL, "test ran too slowly to observe the cached list");
+    assert!(hidden, "cached list hides it until the TTL expires");
+    assert!(lists_database(&live, DATABASE).await, "live list sees it at once");
+
+    tokio::time::sleep(TTL.saturating_sub(filled.elapsed()) + Duration::from_millis(500)).await;
+    assert!(lists_database(&cached, DATABASE).await, "refilled after the TTL");
+}
+
+#[tokio::test]
+async fn catalog_cache_failed_fill_caches_nothing() {
+    const DATABASE: &str = "catalog_missing";
+    let admin = handler(false);
+    let _ = admin
+        .drop_database(DropDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await;
+    let cached = catalog_handler(
+        "app",
+        Some(CacheConfig {
+            ttl: Duration::from_mins(1),
+        }),
+    );
+    let live = catalog_handler("app", None);
+
+    let cached_error = list_catalog(&cached, CatalogTool::Tables, Some(DATABASE), None, None, false)
+        .await
+        .expect_err("missing database must fail");
+    let live_error = list_catalog(&live, CatalogTool::Tables, Some(DATABASE), None, None, false)
+        .await
+        .expect_err("missing database must fail");
+    assert_eq!(cached_error.message, live_error.message);
+
+    admin
+        .create_database(CreateDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await
+        .expect("create database");
+    list_catalog(&cached, CatalogTool::Tables, Some(DATABASE), None, None, false)
+        .await
+        .expect("next call retries the fill");
 }

@@ -1,6 +1,6 @@
 //! MCP tool: `listViews`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListViewsRequest};
@@ -123,7 +123,7 @@ const BRIEF_SQL: &str = r"
 /// page's rows — never the full schema. `pg_views.viewowner` is already a role
 /// name, so no `pg_roles` join is needed. View names are unique per schema, so
 /// `viewname` alone is a stable sort key.
-const DETAILED_SQL: &str = r"
+pub(super) const DETAILED_SQL: &str = r"
     SELECT
         v.viewname AS name,
         json_build_object(
@@ -155,6 +155,17 @@ impl PostgresHandler {
         detailed: bool,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.views,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::POSTGRES,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

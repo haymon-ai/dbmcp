@@ -328,7 +328,12 @@ pub fn paginate_names(
 }
 
 /// Filters `items` by name, then slices one page with lookahead.
-fn page_matching<'a, T>(
+///
+/// `items` are in the SQL `ORDER BY` order and `name` returns the text
+/// `search` matches. `search` is trimmed and dropped when blank. Serves
+/// rows whose search name differs from their detailed key.
+#[must_use]
+pub fn page_matching<'a, T>(
     items: &'a [T],
     name: impl Fn(&'a T) -> &'a str,
     cursor: Option<Cursor>,
