@@ -2047,6 +2047,9 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
     .expect("handler builds")
 }
 
+/// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
+const PII_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
+
 fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
@@ -2054,6 +2057,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
         http: None,
         pii: Some(PiiConfig {
             operator,
+            key: (operator == PiiOperator::Hash).then(|| PII_TEST_KEY.into()),
             ..PiiConfig::default()
         }),
         ssh: None,
@@ -2181,7 +2185,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 }
 
 #[tokio::test]
-async fn read_query_hash_operator_emits_stable_digest() {
+async fn read_query_hash_operator_emits_keyed_token() {
     let handler = handler_with_operator(PiiOperator::Hash);
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
@@ -2191,10 +2195,24 @@ async fn read_query_hash_operator_emits_stable_digest() {
     let rows = handler.read_query(select).await.unwrap();
     let a = rows.rows[0]["a"].as_str().unwrap();
     let b = rows.rows[0]["b"].as_str().unwrap();
-    assert_eq!(a, b, "same input must hash to same digest");
-    assert_ne!(a, "jane.doe@example.com");
-    assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
-    assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
+    assert_eq!(a, "<EMAIL_ADDRESS_4e1f0dd69c51e84c>");
+    assert_eq!(b, a, "same text must give the same token");
+}
+
+#[tokio::test]
+async fn hash_operator_error_token_matches_row_token() {
+    use dbmcp_server::ToolHandler;
+
+    let handler = handler_with_operator(PiiOperator::Hash);
+    let select = ReadQueryRequest {
+        query: "SELECT * FROM \"jane.doe@example.com\"".into(),
+        cursor: None,
+        timeout: None,
+    };
+    let error = handler.read_query(select).await.expect_err("table does not exist");
+    let message = handler.redact_error(&error.message);
+    assert!(!message.contains("jane.doe@example.com"), "email leaked: {message}");
+    assert!(message.contains("<EMAIL_ADDRESS_4e1f0dd69c51e84c>"), "got: {message}");
 }
 
 /// Returns a `dbmcp` command pointed at the `SQLite` fixture through env vars.

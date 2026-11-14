@@ -31,8 +31,8 @@ Sleep 500ms
 Enter
 Sleep 7s
 
-# Query 2: the assistant cannot recover who placed the order (think 1.4s + read answer)
-Type "Who placed order #1042?"
+# Query 2: the shared token links the orders without revealing the customer (think 1.4s + read answer)
+Type "Did the same customer place #1042 and #1051?"
 Sleep 500ms
 Enter
 Sleep 6s

@@ -103,8 +103,8 @@ impl PostgresHandler {
     /// tool router. No network I/O happens here.
     /// # Errors
     ///
-    /// Returns [`dbmcp_pii::RedactorInitError`] when PII redaction is enabled
-    /// with a NER model that fails to load (fail-closed startup).
+    /// Returns the [`dbmcp_pii::RedactorInitError`] from
+    /// [`dbmcp_pii::Redactor::from_config`] (fail-closed startup).
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
         Ok(Self {
             config: config.database.clone(),

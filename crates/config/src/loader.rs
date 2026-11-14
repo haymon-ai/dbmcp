@@ -320,10 +320,14 @@ impl Resolver<'_> {
     }
 
     fn pii(&self) -> PiiConfig {
+        let operator = self
+            .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
+            .unwrap_or(PiiConfig::DEFAULT_OPERATOR);
         PiiConfig {
-            operator: self
-                .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
-                .unwrap_or(PiiConfig::DEFAULT_OPERATOR),
+            operator,
+            key: (operator == PiiOperator::Hash)
+                .then(|| self.string(env::PII_KEY).map(Into::into))
+                .flatten(),
             categories: self.enum_list(env::PII_CATEGORIES, PiiCategory::CHOICES),
             ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
             ner_model: self.path(env::PII_NER_MODEL),
@@ -1158,6 +1162,77 @@ mod tests {
             .config("dbmcp.yaml", "http:\n  host: \"\"\n  allowed_hosts: []\n")
             .ok();
         assert!(loaded.config.http.is_none());
+    }
+
+    const PII_KEY_32: &str = "0123456789abcdef0123456789abcdef";
+
+    /// A fixture with PII on under `operator`.
+    fn pii_fixture(operator: &str) -> Fixture {
+        Fixture::new()
+            .env("DBMCP_PII_ENABLE", "true")
+            .env("DBMCP_PII_OPERATOR", operator)
+    }
+
+    #[test]
+    fn pii_key_is_kept_only_for_the_hash_operator() {
+        let pii = pii_fixture("hash")
+            .env("DBMCP_PII_KEY", PII_KEY_32)
+            .ok()
+            .config
+            .pii
+            .expect("pii");
+        assert_eq!(pii.key.as_ref().map(ExposeSecret::expose_secret), Some(PII_KEY_32));
+
+        let pii = pii_fixture("replace")
+            .env("DBMCP_PII_KEY", "short")
+            .ok()
+            .config
+            .pii
+            .expect("pii");
+        assert!(pii.key.is_none());
+
+        let loaded = Fixture::new().env("DBMCP_PII_KEY", "short").ok();
+        assert!(loaded.config.pii.is_none());
+    }
+
+    #[test]
+    fn pii_defaults_to_hash_and_keeps_an_unset_key_unset() {
+        let loaded = Fixture::new().config("dbmcp.yaml", "pii:\n  enabled: true\n").ok();
+        let pii = loaded.config.pii.expect("pii");
+        assert_eq!(pii.operator, PiiOperator::Hash);
+        assert!(pii.key.is_none());
+
+        let loaded = Fixture::new()
+            .config("dbmcp.yaml", &format!("pii:\n  enabled: true\n  key: {PII_KEY_32}\n"))
+            .ok();
+        assert!(loaded.config.pii.expect("pii").key.is_some());
+    }
+
+    #[test]
+    fn pii_key_rules() {
+        let error = pii_fixture("hash").env("DBMCP_PII_KEY", "s3krt").err();
+        assert!(error.contains("pii.key must be at least 32 bytes, got 5"), "{error}");
+        assert!(error.contains("DBMCP_PII_KEY"), "{error}");
+        assert!(!error.contains("s3krt"), "key leaked: {error}");
+
+        let error = pii_fixture("hash").env("DBMCP_PII_KEY", &" ".repeat(32)).err();
+        assert!(error.contains("pii.key must not be empty when set"), "{error}");
+    }
+
+    #[test]
+    fn pii_key_env_overrides_yaml() {
+        let env_key = "e".repeat(32);
+        let loaded = pii_fixture("hash")
+            .config("dbmcp.yaml", &format!("pii:\n  key: {}\n", "y".repeat(32)))
+            .env("DBMCP_PII_KEY", &env_key)
+            .ok();
+        let pii = loaded.config.pii.expect("pii");
+        assert_eq!(
+            pii.key.as_ref().map(ExposeSecret::expose_secret),
+            Some(env_key.as_str())
+        );
+        let debug = format!("{pii:?}");
+        assert!(!debug.contains(&env_key), "key leaked: {debug}");
     }
 
     #[test]

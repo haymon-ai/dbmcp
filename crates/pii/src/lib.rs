@@ -2,7 +2,8 @@
 //!
 //! Library-only crate. Regex/pattern recognition with optional checksum
 //! validation, plus four built-in operators (`Replace`, `Mask`, `Redact`,
-//! `Hash`). An optional ML/NER pass detects person, location, organization,
+//! `Hash`). `Hash` emits a keyed token `<{TYPE}_{16 hex}>` (HMAC-SHA-256),
+//! and is what [`Redactor::from_config`] uses by default. An optional ML/NER pass detects person, location, organization,
 //! NRP, and facility spans (which entities depend on the model's labels); it
 //! is always compiled and enabled at runtime via `PiiConfig`. Inference runs
 //! locally via ONNX Runtime with no network. Wired into the MCP server's
@@ -11,12 +12,12 @@
 //! # Quickstart
 //!
 //! ```
-//! use dbmcp_pii::{AnalyzeOptions, Analyzer, OperatorConfig, anonymize};
+//! use dbmcp_pii::{AnalyzeOptions, Analyzer, Operator, anonymize};
 //!
 //! let analyzer = Analyzer::with_defaults();
 //! let text = "ping me at jane.doe@example.com";
 //! let results = analyzer.analyze(text, &AnalyzeOptions::default());
-//! let out = anonymize(text, results, &OperatorConfig::default());
+//! let out = anonymize(text, results, &Operator::Replace);
 //! assert_eq!(out.text, "ping me at <EMAIL_ADDRESS>");
 //! ```
 
@@ -41,12 +42,12 @@ pub mod validators;
 mod words;
 
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
-pub use crate::anonymizer::{OperatorConfig, anonymize};
+pub use crate::anonymizer::anonymize;
 pub use crate::category::{Category, ParseCategoryError};
 pub use crate::context::ContextSettings;
 pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::ner::{NerEngine, NerError};
-pub use crate::operators::{ChunkCount, HashAlgorithm, Operator};
+pub use crate::operators::{ChunkCount, Operator};
 pub use crate::redact::{MaybeRedact, RedactionError, RedactionStats, Redactor, RedactorInitError};
 pub use crate::result::{AnalysisExplanation, RecognizerResult};
 pub use crate::score::{MAX_SCORE, Score};

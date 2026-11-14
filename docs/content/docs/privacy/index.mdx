@@ -14,7 +14,7 @@ The feature is **opt-in and off by default**. Nothing is rewritten until you tur
 ## How it works
 
 1. **Detect.** Built-in recognizers scan every string value in the output for patterns such as email addresses, credit card numbers (with checksum validation), IBANs, national IDs, and secrets. They are grouped into categories, so you can limit detection to the kinds of data you care about. An optional machine-learning pass adds free-form names of people, places, and organizations.
-2. **Rewrite.** Each detected span is replaced by the configured operator: a placeholder such as `<EMAIL_ADDRESS>` (the default), `*` masking, removal, or a stable hash.
+2. **Rewrite.** Each detected span is replaced by the configured operator: a keyed hash token such as `<EMAIL_ADDRESS_3f9a1c07b2d4e855>` (`hash`, the default), a plain placeholder such as `<EMAIL_ADDRESS>` (`replace`), `*` masking (`mask`), or removal (`redact`).
 3. **Return.** The rewritten result goes to the assistant. Your database is never modified.
 
 ## What gets filtered

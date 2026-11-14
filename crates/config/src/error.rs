@@ -61,6 +61,14 @@ pub enum ConfigError {
     )]
     InvalidAllowedOrigin(String),
 
+    /// PII hash key was supplied but is empty or whitespace.
+    #[error("pii.key must not be empty when set")]
+    EmptyPiiKey,
+
+    /// PII hash key is shorter than the minimum length, in bytes.
+    #[error("pii.key must be at least 32 bytes, got {0}")]
+    PiiKeyTooShort(usize),
+
     /// NER was enabled without a model path.
     #[error("pii.ner_model (model directory) is required when pii.ner_enabled is set")]
     PiiNerModelMissing,

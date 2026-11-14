@@ -395,6 +395,8 @@ pub const HTTP_ALLOW_UNAUTHENTICATED: Setting = setting(
 pub const PII_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
 /// `pii.operator` / `DBMCP_PII_OPERATOR`.
 pub const PII_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", choice(&PII_OPERATOR_NAMES));
+/// `pii.key` / `DBMCP_PII_KEY`.
+pub const PII_KEY: Setting = setting("pii.key", "DBMCP_PII_KEY", Kind::Text);
 /// `pii.categories` / `DBMCP_PII_CATEGORIES`.
 pub const PII_CATEGORIES: Setting = setting(
     "pii.categories",
@@ -468,6 +470,7 @@ pub const SETTINGS: &[Setting] = &[
     HTTP_ALLOW_UNAUTHENTICATED,
     PII_ENABLE,
     PII_OPERATOR,
+    PII_KEY,
     PII_CATEGORIES,
     PII_NER_ENABLE,
     PII_NER_MODEL,
@@ -670,7 +673,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 43);
+        assert_eq!(SETTINGS.len(), 44);
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {

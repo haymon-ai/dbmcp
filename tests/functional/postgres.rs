@@ -3847,6 +3847,9 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
     .expect("handler builds")
 }
 
+/// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
+const PII_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
+
 fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
@@ -3854,6 +3857,7 @@ fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
         http: None,
         pii: Some(PiiConfig {
             operator,
+            key: (operator == PiiOperator::Hash).then(|| PII_TEST_KEY.into()),
             ..PiiConfig::default()
         }),
         ssh: None,
@@ -3948,7 +3952,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 }
 
 #[tokio::test]
-async fn read_query_hash_operator_emits_stable_digest() {
+async fn read_query_hash_operator_emits_keyed_token() {
     let handler = handler_with_operator(PiiOperator::Hash);
     let rows = handler
         .read_query(
@@ -3961,10 +3965,8 @@ async fn read_query_hash_operator_emits_stable_digest() {
         .unwrap();
     let a = rows.rows[0]["a"].as_str().unwrap();
     let b = rows.rows[0]["b"].as_str().unwrap();
-    assert_eq!(a, b, "same input must hash to same digest");
-    assert_ne!(a, "jane.doe@example.com");
-    assert_eq!(a.len(), 64, "SHA-256 hex digest is 64 chars: {a}");
-    assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "digest must be hex: {a}");
+    assert_eq!(a, "<EMAIL_ADDRESS_4e1f0dd69c51e84c>");
+    assert_eq!(b, a, "same text must give the same token");
 }
 
 // Spec 092 / issue #141 (US3) — NUMERIC, MONEY, REAL, DOUBLE PRECISION round-trip

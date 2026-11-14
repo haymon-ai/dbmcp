@@ -4,4 +4,4 @@ mod hash;
 mod mask;
 mod ops;
 
-pub use ops::{ChunkCount, HashAlgorithm, Operator, OperatorKind};
+pub use ops::{ChunkCount, Operator, OperatorKind};

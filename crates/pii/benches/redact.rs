@@ -3,6 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use dbmcp_config::{PiiConfig, PiiOperator};
 use dbmcp_pii::Redactor;
 use serde_json::{Map, Value, json};
 
@@ -78,7 +79,13 @@ fn large_blob_rows(pool: &[String]) -> Vec<Value> {
 }
 
 fn bench_redact_shapes(c: &mut Criterion) {
-    let redactor = Redactor::with_defaults();
+    let config = PiiConfig {
+        operator: PiiOperator::Replace,
+        ..PiiConfig::default()
+    };
+    let redactor = Redactor::from_config(Some(&config))
+        .expect("replace needs no key or model")
+        .expect("pii is enabled");
     let pool = pii_pool(POOL_STEMS);
 
     let shapes: [(&str, Vec<Value>); 3] = [

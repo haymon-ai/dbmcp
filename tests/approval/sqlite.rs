@@ -148,7 +148,7 @@ async fn test_call_tool_error_is_redacted_when_pii_enabled() {
         .expect("tool error must not be a protocol error");
         assert_eq!(result.is_error, Some(true));
         assert!(!text(&result).contains("jane@doe.com"), "got: {}", text(&result));
-        assert!(text(&result).contains("<EMAIL_ADDRESS>"), "got: {}", text(&result));
+        assert!(text(&result).contains("<EMAIL_ADDRESS_"), "got: {}", text(&result));
     })
     .await;
 }

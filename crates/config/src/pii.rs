@@ -2,20 +2,22 @@
 
 use std::path::PathBuf;
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
 /// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PiiOperator {
-    /// Replace each detected span with an entity-aware placeholder (default).
-    #[default]
+    /// Replace each detected span with an entity-aware placeholder.
     Replace,
     /// Mask each detected span with `'*'` (length-preserving).
     Mask,
     /// Remove each detected span (replace with empty string).
     Redact,
-    /// Replace each detected span with a stable hex digest (SHA-256).
+    /// Keyed hash token per value (HMAC-SHA-256 under `pii.key`) (default).
+    #[default]
     Hash,
 }
 
@@ -97,6 +99,10 @@ impl std::fmt::Display for PiiCategory {
 pub struct PiiConfig {
     /// Which built-in operator rewrites detected spans.
     pub operator: PiiOperator,
+    /// HMAC key for the `hash` operator, at least 32 bytes; never logged.
+    ///
+    /// Set only when [`Self::operator`] is [`PiiOperator::Hash`].
+    pub key: Option<SecretString>,
     /// Optional explicit category set; routes the analyzer through
     /// `dbmcp_pii::Analyzer::builder().categories(...)`.
     pub categories: Option<Vec<PiiCategory>>,
@@ -111,20 +117,31 @@ pub struct PiiConfig {
 
 impl PiiConfig {
     /// Default PII operator when no override is supplied.
-    pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
+    pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Hash;
     /// Default ML/NER pass state (off — opt-in only).
     pub const DEFAULT_NER_ENABLED: bool = false;
     /// NER confidence floor applied to every detected span.
     pub const DEFAULT_NER_THRESHOLD: f32 = 0.5;
+    /// Minimum `pii.key` length, in bytes.
+    pub const MIN_KEY_BYTES: usize = 32;
 
     /// Validates this configuration.
     ///
     /// # Errors
     ///
-    /// Returns one [`Diagnostic`] per problem: `categories` is empty or repeats an
-    /// entry, or when `ner_enabled` is set without a `ner_model` path.
+    /// Returns one [`Diagnostic`] per problem: `key` is blank or shorter than
+    /// [`Self::MIN_KEY_BYTES`], `categories` is empty or repeats an entry, or
+    /// `ner_enabled` is set without a `ner_model` path.
     pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
+        if let Some(key) = &self.key {
+            let key = key.expose_secret();
+            if key.trim().is_empty() {
+                errors.push(Diagnostic::new(ConfigError::EmptyPiiKey).involving(&[env::PII_KEY]));
+            } else if key.len() < Self::MIN_KEY_BYTES {
+                errors.push(Diagnostic::new(ConfigError::PiiKeyTooShort(key.len())).involving(&[env::PII_KEY]));
+            }
+        }
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
                 errors.push(
@@ -149,9 +166,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pii_config_default_operator_is_replace() {
+    fn pii_config_default_operator_is_hash() {
         let pii = PiiConfig::default();
-        assert_eq!(pii.operator, PiiOperator::Replace);
+        assert_eq!(pii.operator, PiiOperator::Hash);
     }
 
     #[test]
