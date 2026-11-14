@@ -59,7 +59,8 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if read-only or the query fails.
+    /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
+    /// [`SqlError`] if the query fails.
     pub async fn create_database(
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,

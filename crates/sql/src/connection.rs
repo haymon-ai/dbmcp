@@ -57,10 +57,9 @@ where
 /// [`set_timeout`](Connection::set_timeout), and [`kill`](Connection::kill),
 /// plus their [`read_only`](Connection::read_only) mode, and receive default
 /// implementations for query execution. They may override
-/// [`fetch_read_only`](Connection::fetch_read_only) when they lack
-/// read-only transactions. They may
-/// override [`counts`](Connection::counts) when their query results do
-/// not describe their own statement.
+/// [`fetch_read_only`](Connection::fetch_read_only) when they lack read-only
+/// transactions, and [`counts`](Connection::counts) when their query results
+/// do not describe their own statement.
 ///
 /// Query methods accept any [`IntoSafeQuery`] value: a bindless `&str` (run
 /// through the unprepared text protocol, which some `MySQL` statements need)
