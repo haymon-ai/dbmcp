@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use dbmcp_pii::{Analyzer, ChunkCount, HashAlgorithm, Operator, OperatorConfig, RecognizerResult, anonymize};
+use dbmcp_pii::{Analyzer, ChunkCount, Operator, OperatorConfig, RecognizerResult, anonymize};
 
 mod common;
 
@@ -45,11 +45,7 @@ fn bench_anonymize(c: &mut Criterion) {
         ),
         ("mask", Operator::default_mask()),
         ("redact", Operator::Redact),
-        ("hash_sha256", Operator::hash(HashAlgorithm::Sha256)),
-    ];
-    let hash_algorithms: [(&str, Operator); 2] = [
-        ("sha256", Operator::hash(HashAlgorithm::Sha256)),
-        ("sha512", Operator::hash(HashAlgorithm::Sha512)),
+        ("hash", Operator::hash(b"0123456789abcdef0123456789abcdef")),
     ];
     let mask_variants: [(&str, Operator); 3] = [
         (
@@ -79,7 +75,6 @@ fn bench_anonymize(c: &mut Criterion) {
     ];
 
     run_group(c, "anonymize/operators", &payload, &results, &operators);
-    run_group(c, "anonymize/hash_algorithms", &payload, &results, &hash_algorithms);
     run_group(c, "anonymize/mask_chunk_count", &payload, &results, &mask_variants);
 }
 

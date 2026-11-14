@@ -5,9 +5,20 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use dbmcp_pii::{
-    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Entity, HashAlgorithm, Operator, OperatorConfig,
-    RecognizerResult, Score, ValidationOutcome, anonymize,
+    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Entity, Operator, OperatorConfig, RecognizerResult,
+    Score, ValidationOutcome, anonymize,
 };
+
+/// The 32-byte test key from the keyed-token spec vectors.
+const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+/// An operator config that hashes every entity under `key`.
+fn hash_config(key: &[u8]) -> OperatorConfig {
+    OperatorConfig {
+        default: Some(Operator::hash(key)),
+        ..OperatorConfig::default()
+    }
+}
 
 fn make_result(et: Entity, start: usize, end: usize) -> RecognizerResult {
     make_result_scored(et, start, end, Score::new(0.5).unwrap())
@@ -102,7 +113,7 @@ fn us2_4_hash_deterministic_per_input() {
     };
 
     let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha256));
+    per_entity.insert(Entity::EmailAddress, Operator::hash(KEY));
     let config = OperatorConfig {
         per_entity,
         ..OperatorConfig::default()
@@ -184,55 +195,53 @@ fn multiple_non_overlapping_spans_rewrite_in_position_order() {
 }
 
 #[test]
-fn sha256_deterministic_bare() {
-    let text = "hello world";
-    let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha256));
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
-    };
-    let a = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    let b = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    assert_eq!(a.text, b.text);
+fn hash_emits_keyed_token_shape() {
+    let text = "mail jane.doe@example.com now";
+    let out = anonymize(text, vec![make_result(Entity::EmailAddress, 5, 25)], &hash_config(KEY));
+    assert_eq!(out.text, "mail <EMAIL_ADDRESS_4e1f0dd69c51e84c> now");
+    let token = &out.text[out.operations[0].new_start..out.operations[0].new_end];
+    let suffix = token
+        .strip_prefix("<EMAIL_ADDRESS_")
+        .and_then(|t| t.strip_suffix('>'))
+        .expect("token shape");
+    assert_eq!(suffix.len(), 16);
+    assert!(suffix.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
 }
 
 #[test]
-fn sha512_deterministic_bare() {
-    let text = "hello world";
-    let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha512));
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
-    };
-    let a = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    let b = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    assert_eq!(a.text, b.text);
+fn hash_embedded_span_matches_whole_cell() {
+    let email = "jane.doe@example.com";
+    let embedded = format!("contact {email} today");
+    let config = hash_config(KEY);
+    let whole = anonymize(email, vec![make_result(Entity::EmailAddress, 0, email.len())], &config);
+    let inner = anonymize(
+        &embedded,
+        vec![make_result(Entity::EmailAddress, 8, 8 + email.len())],
+        &config,
+    );
+    assert_eq!(inner.text, format!("contact {} today", whole.text));
 }
 
 #[test]
-fn sha256_differs_from_sha512() {
+fn hash_ner_only_entity_gets_typed_token() {
+    // A hand-built `Person` span (an NER-only type): the detector plays no part.
+    let text = "jane.doe@example.com";
+    let out = anonymize(
+        text,
+        vec![make_result(Entity::Person, 0, text.len())],
+        &hash_config(KEY),
+    );
+    assert_eq!(out.text, "<PERSON_a31fec90098295f4>");
+}
+
+#[test]
+fn hash_different_keys_differ() {
     let text = "hello world";
-
-    let cfg = |alg| {
-        let mut per = HashMap::new();
-        per.insert(Entity::EmailAddress, Operator::hash(alg));
-        OperatorConfig {
-            per_entity: per,
-            ..OperatorConfig::default()
-        }
-    };
-
-    let s256 = anonymize(
+    let a = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &hash_config(KEY));
+    let b = anonymize(
         text,
         vec![make_result(Entity::EmailAddress, 0, 5)],
-        &cfg(HashAlgorithm::Sha256),
+        &hash_config(b"fedcba9876543210fedcba9876543210"),
     );
-    let s512 = anonymize(
-        text,
-        vec![make_result(Entity::EmailAddress, 0, 5)],
-        &cfg(HashAlgorithm::Sha512),
-    );
-    assert_ne!(s256.text, s512.text);
+    assert_ne!(a.text, b.text);
 }

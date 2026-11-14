@@ -104,7 +104,8 @@ impl PostgresHandler {
     /// # Errors
     ///
     /// Returns [`dbmcp_pii::RedactorInitError`] when PII redaction is enabled
-    /// with a NER model that fails to load (fail-closed startup).
+    /// with a NER model that fails to load, or when the `hash` operator has no
+    /// key and the OS random source fails (fail-closed startup).
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
         Ok(Self {
             config: config.database.clone(),

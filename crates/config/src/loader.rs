@@ -93,6 +93,10 @@ impl<T: fmt::Display> fmt::Display for Bullets<'_, T> {
     }
 }
 
+/// Warning pushed when the `hash` operator runs without `pii.key`.
+const RANDOM_PII_KEY_WARNING: &str =
+    "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas";
+
 /// Loads and validates the configuration described by `options`.
 ///
 /// # Errors
@@ -113,11 +117,20 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         home: options.home.as_deref(),
     };
     match resolver.build() {
-        Ok((config, log_level)) => Ok(Loaded {
-            config,
-            log_level,
-            warnings,
-        }),
+        Ok((config, log_level)) => {
+            if config
+                .pii
+                .as_ref()
+                .is_some_and(|pii| pii.operator == PiiOperator::Hash && pii.key.is_none())
+            {
+                warnings.push(RANDOM_PII_KEY_WARNING.to_owned());
+            }
+            Ok(Loaded {
+                config,
+                log_level,
+                warnings,
+            })
+        }
         Err(mut diagnostics) => {
             for diagnostic in &mut diagnostics {
                 diagnostic.attach_sources(settings.sources());
@@ -1193,6 +1206,28 @@ mod tests {
 
         let loaded = Fixture::new().env("DBMCP_PII_KEY", "short").ok();
         assert!(loaded.config.pii.is_none());
+    }
+
+    #[test]
+    fn pii_defaults_to_hash_and_warns_without_a_key() {
+        let loaded = Fixture::new().config("dbmcp.yaml", "pii:\n  enabled: true\n").ok();
+        let pii = loaded.config.pii.expect("pii");
+        assert_eq!(pii.operator, PiiOperator::Hash);
+        assert!(pii.key.is_none());
+        assert_eq!(loaded.warnings, [RANDOM_PII_KEY_WARNING]);
+        assert_eq!(
+            RANDOM_PII_KEY_WARNING,
+            "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
+        );
+
+        let loaded = Fixture::new()
+            .config("dbmcp.yaml", &format!("pii:\n  enabled: true\n  key: {PII_KEY_32}\n"))
+            .ok();
+        assert!(loaded.config.pii.expect("pii").key.is_some());
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+
+        let loaded = pii_fixture("replace").ok();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]

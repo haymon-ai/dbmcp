@@ -2,7 +2,8 @@
 //!
 //! Library-only crate. Regex/pattern recognition with optional checksum
 //! validation, plus four built-in operators (`Replace`, `Mask`, `Redact`,
-//! `Hash`). An optional ML/NER pass detects person, location, organization,
+//! `Hash`). `Hash` emits a keyed token `<{TYPE}_{16 hex}>` (HMAC-SHA-256),
+//! and is what [`Redactor::from_config`] uses by default. An optional ML/NER pass detects person, location, organization,
 //! NRP, and facility spans (which entities depend on the model's labels); it
 //! is always compiled and enabled at runtime via `PiiConfig`. Inference runs
 //! locally via ONNX Runtime with no network. Wired into the MCP server's
@@ -46,7 +47,7 @@ pub use crate::category::{Category, ParseCategoryError};
 pub use crate::context::ContextSettings;
 pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::ner::{NerEngine, NerError};
-pub use crate::operators::{ChunkCount, HashAlgorithm, Operator};
+pub use crate::operators::{ChunkCount, Operator};
 pub use crate::redact::{MaybeRedact, RedactionError, RedactionStats, Redactor, RedactorInitError};
 pub use crate::result::{AnalysisExplanation, RecognizerResult};
 pub use crate::score::{MAX_SCORE, Score};

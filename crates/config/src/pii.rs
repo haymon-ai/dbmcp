@@ -10,14 +10,14 @@ use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 /// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PiiOperator {
-    /// Replace each detected span with an entity-aware placeholder (default).
-    #[default]
+    /// Replace each detected span with an entity-aware placeholder.
     Replace,
     /// Mask each detected span with `'*'` (length-preserving).
     Mask,
     /// Remove each detected span (replace with empty string).
     Redact,
-    /// Replace each detected span with a stable hex digest (SHA-256).
+    /// Keyed hash token per value (HMAC-SHA-256 under `pii.key`) (default).
+    #[default]
     Hash,
 }
 
@@ -117,7 +117,7 @@ pub struct PiiConfig {
 
 impl PiiConfig {
     /// Default PII operator when no override is supplied.
-    pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Replace;
+    pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Hash;
     /// Default ML/NER pass state (off — opt-in only).
     pub const DEFAULT_NER_ENABLED: bool = false;
     /// NER confidence floor applied to every detected span.
@@ -166,9 +166,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pii_config_default_operator_is_replace() {
+    fn pii_config_default_operator_is_hash() {
         let pii = PiiConfig::default();
-        assert_eq!(pii.operator, PiiOperator::Replace);
+        assert_eq!(pii.operator, PiiOperator::Hash);
     }
 
     #[test]

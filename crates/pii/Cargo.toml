@@ -14,8 +14,11 @@ bech32 = { workspace = true }
 bs58 = { workspace = true }
 dbmcp-config = { workspace = true }
 fancy-regex = { workspace = true }
+getrandom = { workspace = true }
+hmac = { workspace = true }
 ort = { workspace = true }
 rmcp = { workspace = true }
+secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

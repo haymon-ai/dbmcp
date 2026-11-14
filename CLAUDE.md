@@ -51,7 +51,8 @@ Cargo workspace: root binary (`dbmcp`) + 11 library crates under `crates/`. Work
 - Every setting (YAML key, env name) is listed in `crates/config/src/env.rs` and in the all-settings table in `docs/content/docs/configuration/index.mdx`; each setting is explained on its feature page under `docs/content/docs/`
 - `DBMCP_DB_READ_ONLY` defaults to `true` — write operations blocked unless explicitly disabled
 - Pinning a database name (`database.name` / `DBMCP_DB_NAME`) hides the cross-database tools (`listDatabases`, `createDatabase`, `dropDatabase`) on MySQL/PostgreSQL
-- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`; `Config.pii` is `Some` only when PII is enabled, just as `Config.http` is `Some` only for the `http` transport. The toggle (`pii.enabled` / `DBMCP_PII_ENABLE`) defaults to **off**; the operator (`pii.operator` / `DBMCP_PII_OPERATOR`) defaults to `replace`. Optional category subset via `pii.categories` / `DBMCP_PII_CATEGORIES` (YAML list or comma-separated kebab values; unset = all built-ins).
+- `PiiConfig` is a top-level config section alongside `DatabaseConfig` and `HttpConfig`; `Config.pii` is `Some` only when PII is enabled, just as `Config.http` is `Some` only for the `http` transport. The toggle (`pii.enabled` / `DBMCP_PII_ENABLE`) defaults to **off**; the operator (`pii.operator` / `DBMCP_PII_OPERATOR`) defaults to `hash` (keyed tokens like `<EMAIL_ADDRESS_4e1f0dd69c51e84c>`). Optional category subset via `pii.categories` / `DBMCP_PII_CATEGORIES` (YAML list or comma-separated kebab values; unset = all built-ins).
+- `pii.key` / `DBMCP_PII_KEY`: HMAC key (≥ 32 bytes, raw UTF-8) for the `hash` operator, ignored otherwise; unset = random per-process key plus a load warning (tokens change on restart and across replicas).
 
 ## Code Style
 

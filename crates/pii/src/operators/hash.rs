@@ -1,51 +1,79 @@
-//! `Hash` operator: SHA-256 / SHA-512 bare digest.
+//! `Hash` operator: keyed token `<{TYPE}_{16 hex}>` per detected span.
+//!
+//! The suffix is the first 8 bytes of HMAC-SHA-256 under the operator's key,
+//! taken over `Entity::as_str ‖ 0x00 ‖ span`. The span bytes are used as given,
+//! with no canonicalisation, so equal stored text gives equal tokens. The
+//! entity type is part of the identity: one text under two types gives two
+//! unrelated tokens.
 
-use sha2::{Digest, Sha256, Sha512};
+use std::fmt::Write as _;
 
-use super::HashAlgorithm;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
-pub(crate) fn apply(candidate: &str, algorithm: HashAlgorithm) -> String {
-    let bytes = candidate.as_bytes();
-    match algorithm {
-        HashAlgorithm::Sha256 => to_hex(Sha256::digest(bytes).as_slice()),
-        HashAlgorithm::Sha512 => to_hex(Sha512::digest(bytes).as_slice()),
+use crate::Entity;
+
+/// Digest bytes kept in the token suffix (16 hex chars).
+const SUFFIX_BYTES: usize = 8;
+
+pub(crate) fn apply(mac: &Hmac<Sha256>, entity: Entity, candidate: &str) -> String {
+    let mut mac = mac.clone();
+    let name = entity.as_str();
+    mac.update(name.as_bytes());
+    mac.update(&[0]);
+    mac.update(candidate.as_bytes());
+    let digest = mac.finalize().into_bytes();
+
+    let mut out = String::with_capacity(name.len() + 3 + SUFFIX_BYTES * 2);
+    out.push('<');
+    out.push_str(name);
+    out.push('_');
+    for byte in &digest[..SUFFIX_BYTES] {
+        write!(out, "{byte:02x}").expect("writing to a String never fails");
     }
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = vec![0u8; bytes.len() * 2];
-    for (i, &b) in bytes.iter().enumerate() {
-        out[i * 2] = HEX[(b >> 4) as usize];
-        out[i * 2 + 1] = HEX[(b & 0x0f) as usize];
-    }
-    String::from_utf8(out).expect("hex digits are ASCII")
+    out.push('>');
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HashAlgorithm, apply};
+    use hmac::{Hmac, KeyInit};
+    use sha2::Sha256;
 
-    #[test]
-    fn sha256_known_answer() {
-        let out = apply("abc", HashAlgorithm::Sha256);
-        assert_eq!(out, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    use super::apply;
+    use crate::Entity;
+
+    const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
+    const SPAN: &str = "jane.doe@example.com";
+
+    fn mac(key: &[u8]) -> Hmac<Sha256> {
+        Hmac::new_from_slice(key).expect("HMAC accepts any key length")
     }
 
     #[test]
-    fn sha512_known_answer() {
-        let out = apply("abc", HashAlgorithm::Sha512);
+    fn known_vectors_include_the_entity_type() {
         assert_eq!(
-            out,
-            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
-             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+            apply(&mac(KEY), Entity::EmailAddress, SPAN),
+            "<EMAIL_ADDRESS_4e1f0dd69c51e84c>"
+        );
+        assert_eq!(apply(&mac(KEY), Entity::Person, SPAN), "<PERSON_a31fec90098295f4>");
+    }
+
+    #[test]
+    fn deterministic_per_key() {
+        let mac = mac(KEY);
+        assert_eq!(
+            apply(&mac, Entity::EmailAddress, SPAN),
+            apply(&mac, Entity::EmailAddress, SPAN)
         );
     }
 
     #[test]
-    fn deterministic() {
-        let a = apply("hello", HashAlgorithm::Sha256);
-        let b = apply("hello", HashAlgorithm::Sha256);
-        assert_eq!(a, b);
+    fn different_keys_differ() {
+        let other = b"fedcba9876543210fedcba9876543210";
+        assert_ne!(
+            apply(&mac(KEY), Entity::EmailAddress, SPAN),
+            apply(&mac(other), Entity::EmailAddress, SPAN)
+        );
     }
 }

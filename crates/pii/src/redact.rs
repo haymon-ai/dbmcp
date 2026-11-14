@@ -1,8 +1,9 @@
 //! PII redaction for query tool response payloads.
 //!
 //! Walks every reachable [`Value::String`] leaf in each row through the
-//! [`Analyzer`] plus the configured per-entity operator (default
-//! `Replace { "<TYPE>" }`), mutating the input slice in place. Object
+//! [`Analyzer`] plus the configured per-entity operator (key-free default
+//! `Replace { "<TYPE>" }`; [`Redactor::from_config`] defaults to the keyed
+//! `hash` token), mutating the input slice in place. Object
 //! keys, non-string scalars (`Number`, `Bool`, `Null`), and the JSON
 //! shape (container ordering, key names, array indexes) are preserved
 //! verbatim. The traversal is iterative — it uses an explicit
@@ -20,13 +21,14 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use dbmcp_config::PiiCategory;
+use dbmcp_config::{PiiCategory, PiiOperator};
+use secrecy::ExposeSecret;
 use serde_json::Value;
 
 use crate::Entity;
 use crate::result::RecognizerResult;
 use crate::words::push_key_words;
-use crate::{AnalyzeOptions, Analyzer, OperatorConfig, anonymize};
+use crate::{AnalyzeOptions, Analyzer, Operator, OperatorConfig, anonymize};
 
 /// Errors produced by [`Redactor::apply`].
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +53,9 @@ pub enum RedactorInitError {
     /// The optional NER engine failed to load; the server must not start.
     #[error("NER engine initialisation failed: {0}")]
     Ner(String),
+    /// The OS random source failed while drawing the fallback `hash` key.
+    #[error("failed to generate a random pii key: {0}")]
+    Rng(getrandom::Error),
 }
 
 /// Per-request redaction summary returned by [`Redactor::apply`].
@@ -149,18 +154,41 @@ impl Redactor {
     /// `min_score_with_context` floor — so weak-pattern recognizers (CVV,
     /// AWS secret, bank account, …) surface only when a nearby keyword
     /// lifts them.
+    ///
+    /// The `hash` operator is keyed with `cfg.key`, or, when unset, with 32
+    /// bytes drawn from the OS random source (a per-process key).
+    ///
     /// # Errors
     ///
-    /// Returns [`RedactorInitError`] when the optional NER engine is enabled
-    /// but fails to load. Startup must abort — the redactor is fail-closed and
-    /// never degrades to regex-only when NER was requested.
+    /// Returns [`RedactorInitError::Ner`] when the optional NER engine is
+    /// enabled but fails to load, and [`RedactorInitError::Rng`] when the
+    /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
+    /// is fail-closed and never degrades to regex-only when NER was requested.
     pub fn from_config(cfg: Option<&dbmcp_config::PiiConfig>) -> Result<Option<Self>, RedactorInitError> {
         let Some(cfg) = cfg else {
             return Ok(None);
         };
+        let default = match cfg.operator {
+            PiiOperator::Replace => None,
+            PiiOperator::Mask => Some(Operator::default_mask()),
+            PiiOperator::Redact => Some(Operator::Redact),
+            PiiOperator::Hash => Some(if let Some(key) = &cfg.key {
+                Operator::hash(key.expose_secret().as_bytes())
+            } else {
+                let mut key = [0u8; 32];
+                getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
+                Operator::hash(&key)
+            }),
+        };
         let mut analyzer = crate::Analyzer::from_config(cfg);
         attach_ner(&mut analyzer, cfg)?;
-        Ok(Some(Self::new(analyzer, cfg.operator.into())))
+        Ok(Some(Self::new(
+            analyzer,
+            OperatorConfig {
+                default,
+                ..OperatorConfig::default()
+            },
+        )))
     }
 
     /// Reports whether an ML/NER engine is attached.
@@ -480,8 +508,40 @@ mod tests {
     use crate::score::Score;
 
     use crate::validators::Validator;
-    use dbmcp_config::PiiOperator;
     use serde_json::json;
+
+    /// The 32-byte test key from the keyed-token spec vectors.
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    fn with_default(operator: Operator) -> Redactor {
+        Redactor::new(
+            Analyzer::with_defaults(),
+            OperatorConfig {
+                default: Some(operator),
+                ..OperatorConfig::default()
+            },
+        )
+    }
+
+    fn hash_config(key: Option<&str>) -> dbmcp_config::PiiConfig {
+        dbmcp_config::PiiConfig {
+            operator: PiiOperator::Hash,
+            key: key.map(Into::into),
+            ..dbmcp_config::PiiConfig::default()
+        }
+    }
+
+    fn from_config(cfg: &dbmcp_config::PiiConfig) -> Redactor {
+        Redactor::from_config(Some(cfg))
+            .expect("config ok")
+            .expect("redactor present")
+    }
+
+    fn redact_one(r: &Redactor, value: &str) -> Value {
+        let mut rows = vec![Value::String(value.to_owned())];
+        r.apply(&mut rows).expect("apply ok");
+        rows.remove(0)
+    }
 
     fn email_row() -> Value {
         json!({"msg": "ping me at jane.doe@example.com"})
@@ -727,7 +787,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Redact));
+        let r = with_default(Operator::Redact);
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -738,7 +798,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Mask));
+        let r = with_default(Operator::default_mask());
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -748,12 +808,13 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), OperatorConfig::from(PiiOperator::Hash));
+        let r = with_default(Operator::hash(KEY.as_bytes()));
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
         let _ = r.apply(&mut text_rows).expect("apply ok");
         assert_eq!(json_rows[0]["v"], text_rows[0]);
+        assert_eq!(text_rows[0], "<EMAIL_ADDRESS_06fff299b93c0784>");
     }
 
     #[test]
@@ -1122,6 +1183,83 @@ mod tests {
         assert_eq!(none.redact_message(message), message);
         let some = Some(Redactor::with_defaults());
         assert_eq!(some.redact_message(message), "no such table: <EMAIL_ADDRESS>");
+    }
+
+    #[test]
+    fn from_config_maps_each_operator() {
+        let cfg = |operator| dbmcp_config::PiiConfig {
+            operator,
+            ..dbmcp_config::PiiConfig::default()
+        };
+        assert!(from_config(&cfg(PiiOperator::Replace)).operator.default.is_none());
+        assert!(matches!(
+            from_config(&cfg(PiiOperator::Mask)).operator.default,
+            Some(Operator::Mask { .. })
+        ));
+        assert!(matches!(
+            from_config(&cfg(PiiOperator::Redact)).operator.default,
+            Some(Operator::Redact)
+        ));
+        assert!(matches!(
+            from_config(&cfg(PiiOperator::Hash)).operator.default,
+            Some(Operator::Hash { .. })
+        ));
+    }
+
+    #[test]
+    fn from_config_hash_uses_the_configured_key() {
+        let r = from_config(&hash_config(Some(KEY)));
+        assert_eq!(
+            redact_one(&r, "jane.doe@example.com"),
+            "<EMAIL_ADDRESS_4e1f0dd69c51e84c>"
+        );
+    }
+
+    #[test]
+    fn from_config_same_key_gives_same_token_across_redactors() {
+        let cfg = hash_config(Some(KEY));
+        let (a, b) = (from_config(&cfg), from_config(&cfg));
+        assert_eq!(redact_one(&a, "x@y.com"), redact_one(&b, "x@y.com"));
+    }
+
+    #[test]
+    fn from_config_different_keys_differ() {
+        let a = from_config(&hash_config(Some(KEY)));
+        let b = from_config(&hash_config(Some("fedcba9876543210fedcba9876543210")));
+        assert_ne!(redact_one(&a, "x@y.com"), redact_one(&b, "x@y.com"));
+    }
+
+    #[test]
+    fn from_config_without_key_draws_a_random_key_per_redactor() {
+        let cfg = hash_config(None);
+        let (a, b) = (from_config(&cfg), from_config(&cfg));
+        let token = redact_one(&a, "x@y.com");
+        let token = token.as_str().expect("string");
+        assert!(token.starts_with("<EMAIL_ADDRESS_") && token.len() == "<EMAIL_ADDRESS_>".len() + 16);
+        assert_eq!(redact_one(&a, "x@y.com"), token, "stable within one redactor");
+        assert_ne!(redact_one(&b, "x@y.com"), token);
+    }
+
+    #[test]
+    fn hash_token_is_the_same_on_every_surface() {
+        let r = from_config(&hash_config(Some(KEY)));
+        let email = "jane.doe@example.com";
+        let cell = redact_one(&r, email);
+        let cell = cell.as_str().expect("string");
+        let mut rows = vec![json!({"outer": {"inner": [ {"email": email} ]}})];
+        r.apply(&mut rows).expect("apply ok");
+        assert_eq!(rows[0]["outer"]["inner"][0]["email"], cell);
+        let message = r
+            .redact_text(&format!("Duplicate entry '{email}' for key 'email'"))
+            .expect("redacts");
+        assert_eq!(message, format!("Duplicate entry '{cell}' for key 'email'"));
+    }
+
+    #[test]
+    fn redactor_debug_hides_the_key() {
+        let debug = format!("{:?}", from_config(&hash_config(Some(KEY))));
+        assert!(debug.contains("Hash { key: <redacted> }"), "{debug}");
+        assert!(!debug.contains(KEY), "key leaked: {debug}");
     }
 
     #[test]

@@ -337,7 +337,7 @@
             "hash",
             null
           ],
-          "default": "replace"
+          "default": "hash"
         },
         "key": {
           "description": "HMAC key for the hash operator, at least 32 bytes; ignored for other operators.",

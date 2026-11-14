@@ -1,19 +1,14 @@
 //! Operators that rewrite a single matched span and the operator-config map.
 
 use std::borrow::Cow;
+use std::fmt;
+
+use hmac::{Hmac, KeyInit};
+use sha2::Sha256;
 
 use crate::Entity;
 
 use super::{hash, mask};
-
-/// Hash algorithm for [`Operator::Hash`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HashAlgorithm {
-    /// SHA-256, 256-bit digest.
-    Sha256,
-    /// SHA-512, 512-bit digest.
-    Sha512,
-}
 
 /// Mask coverage parameter for [`Operator::Mask`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -25,7 +20,9 @@ pub enum ChunkCount {
 }
 
 /// Algorithm used to rewrite a single PII span.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// `Debug` is hand-written so the `Hash` key never reaches a log.
+#[derive(Clone)]
 pub enum Operator {
     /// Replace the span with a fixed literal.
     Replace {
@@ -43,11 +40,31 @@ pub enum Operator {
     },
     /// Replace the span with the empty string.
     Redact,
-    /// Replace the span with a bare hex digest.
+    /// Replace the span with a keyed token `<{TYPE}_{16 hex}>`.
     Hash {
-        /// Hash algorithm to use.
-        algorithm: HashAlgorithm,
+        /// HMAC-SHA-256 state, already keyed; the raw key is not kept.
+        mac: Hmac<Sha256>,
     },
+}
+
+impl fmt::Debug for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Replace { new_value } => f.debug_struct("Replace").field("new_value", new_value).finish(),
+            Self::Mask {
+                masking_char,
+                chars_to_mask,
+                from_end,
+            } => f
+                .debug_struct("Mask")
+                .field("masking_char", masking_char)
+                .field("chars_to_mask", chars_to_mask)
+                .field("from_end", from_end)
+                .finish(),
+            Self::Redact => f.write_str("Redact"),
+            Self::Hash { .. } => f.write_str("Hash { key: <redacted> }"),
+        }
+    }
 }
 
 /// Tag-only kind enum for audit-trail use.
@@ -85,10 +102,18 @@ impl Operator {
         }
     }
 
-    /// Construct a hash operator.
+    /// Construct a keyed hash operator from the raw HMAC key bytes.
+    ///
+    /// Only the keyed HMAC state is kept, never `key` itself.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: HMAC accepts keys of any length.
     #[must_use]
-    pub const fn hash(algorithm: HashAlgorithm) -> Self {
-        Self::Hash { algorithm }
+    pub fn hash(key: &[u8]) -> Self {
+        Self::Hash {
+            mac: Hmac::new_from_slice(key).expect("HMAC accepts any key length"),
+        }
     }
 
     /// Tag describing this operator's variant.
@@ -102,11 +127,11 @@ impl Operator {
         }
     }
 
-    /// Apply the operator to one matched span.
+    /// Apply the operator to one matched span of type `entity`.
     ///
     /// Returns `Cow::Borrowed` for `Replace` and `Redact` (zero allocation);
     /// `Cow::Owned` for `Mask` and `Hash` (each writes a fresh String).
-    pub(crate) fn apply<'a>(&'a self, candidate: &str) -> Cow<'a, str> {
+    pub(crate) fn apply<'a>(&'a self, entity: Entity, candidate: &str) -> Cow<'a, str> {
         match self {
             Self::Replace { new_value } => Cow::Borrowed(new_value.as_ref()),
             Self::Mask {
@@ -115,7 +140,20 @@ impl Operator {
                 from_end,
             } => Cow::Owned(mask::apply(candidate, *masking_char, *chars_to_mask, *from_end)),
             Self::Redact => Cow::Borrowed(""),
-            Self::Hash { algorithm } => Cow::Owned(hash::apply(candidate, *algorithm)),
+            Self::Hash { mac } => Cow::Owned(hash::apply(mac, entity, candidate)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Operator;
+
+    #[test]
+    fn hash_debug_hides_the_key() {
+        let key = "0123456789abcdef0123456789abcdef";
+        let debug = format!("{:?}", Operator::hash(key.as_bytes()));
+        assert_eq!(debug, "Hash { key: <redacted> }");
+        assert!(!debug.contains(key));
     }
 }
