@@ -156,14 +156,14 @@ fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
     let conn_ops = SqliteConnectOptions::new()
         .filename(config.name.as_deref().unwrap_or_default())
         .read_only(config.read_only);
-    let mut pool_opts = sqlx::pool::PoolOptions::new()
+    let mut pool_ops = sqlx::pool::PoolOptions::new()
         .max_connections(1)
         .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
         .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
         .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
 
     if !config.read_only {
-        pool_opts = pool_opts.before_acquire(|conn, _meta| {
+        pool_ops = pool_ops.before_acquire(|conn, _meta| {
             Box::pin(async move {
                 sqlx::query("PRAGMA query_only = OFF").execute(&mut *conn).await?;
                 Ok(true)
@@ -172,10 +172,10 @@ fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
     }
 
     if let Some(timeout) = config.connection_timeout {
-        pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
+        pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
     }
 
-    pool_opts.connect_lazy_with(conn_ops)
+    pool_ops.connect_lazy_with(conn_ops)
 }
 
 /// Quotes `value` as a `SQLite` identifier (ANSI double-quote style).
