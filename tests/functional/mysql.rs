@@ -4853,6 +4853,38 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
 }
 
 #[tokio::test]
+async fn write_query_response_cap_counts_returned_rows_it_drops() {
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb (INSERT ... RETURNING)");
+        return;
+    }
+    let handler = handler_with_caps(0, 12, false);
+    let response = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES \
+             ('CapReturn', 'capreturn1@test.com'), \
+             ('CapReturn', 'capreturn2@test.com'), \
+             ('CapReturn', 'capreturn3@test.com') RETURNING id"
+                .into(),
+            Some("app".into()),
+        )
+        .await;
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email LIKE 'capreturn_@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("cleanup");
+    let response = response.expect("write_query");
+    // `rows_affected` is not asserted: MariaDB reports 0 for `… RETURNING`
+    // (known bug, out of scope here).
+    assert_eq!(response.rows.len(), 1);
+    assert!(response.truncation.truncated);
+    assert_eq!(response.truncation.rows_omitted, Some(2));
+}
+
+#[tokio::test]
 async fn read_query_redacts_before_cutting() {
     let handler = handler_with_caps(14, 0, true);
     let response = handler
@@ -4878,4 +4910,76 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert_eq!(response.rows[0]["s"], "abc");
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
+}
+
+/// Collected ids of `query` paged two rows at a time.
+async fn collect_paged_ids(query: &str) -> Vec<i64> {
+    let handler = handler_with_page_size(2);
+    collect_all_paged_read_query(&handler, query)
+        .await
+        .iter()
+        .map(|row| row["id"].as_i64().expect("id is integer"))
+        .collect()
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_merged() {
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_skipped() {
+    // `LIMIT 18446744073709551615` is out of `i64`, so `plan` skips it.
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC LIMIT 18446744073709551615").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+/// Pages through `query`, whose two output columns are both named `id`.
+async fn assert_duplicate_names_page(query: &str) {
+    let handler = handler_with_page_size(2);
+    let rows = collect_all_paged_read_query(&handler, query).await;
+    assert_eq!(rows.len(), 3, "input = {query:?}");
+    for row in &rows {
+        let keys: Vec<&String> = row.as_object().expect("row is an object").keys().collect();
+        assert_eq!(keys, ["id"], "input = {query:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_merged() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id").await;
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_skipped() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id LIMIT 18446744073709551615").await;
+}
+
+/// Five rows that fail at the fourth. The scalar subquery returns two rows at `n = 4`.
+const LATE_ERROR: &str = "SELECT n, (SELECT 1 FROM (SELECT 1 AS x UNION ALL SELECT 2) AS d WHERE t.n = 4) AS v FROM (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) AS t";
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_fails_skipped_page() {
+    let handler = handler_with_page_size(2);
+    let result = handler
+        .read_query(
+            format!("{LATE_ERROR} LIMIT 18446744073709551615"),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_err(), "a skipped page reads the whole result: {result:?}");
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_spares_merged_first_page() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(format!("{LATE_ERROR} LIMIT 100"), Some("app".into()), None, None)
+        .await
+        .expect("a merged first page stops before the failing row");
+    assert_eq!(response.rows.len(), 2);
+    assert!(response.next_cursor.is_some());
 }

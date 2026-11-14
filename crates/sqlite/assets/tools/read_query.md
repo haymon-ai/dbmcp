@@ -27,7 +27,7 @@ Long string values are cut and end in `…[truncated, N chars total]`; read the 
 </what_it_returns>
 
 <pagination>
-`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. `EXPLAIN` returns a single page and ignores `cursor`.
+`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `EXPLAIN` returns a single page and ignores `cursor`.
 </pagination>
 
 <timeout>

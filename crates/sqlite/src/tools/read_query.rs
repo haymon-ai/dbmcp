@@ -1,12 +1,12 @@
 //! MCP tool: `readQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::listing;
+use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate;
 use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};
 
 use dbmcp_sql::StatementKind;
-use dbmcp_sql::pagination::with_limit_offset;
+use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
 
 use super::prelude::*;
@@ -66,8 +66,9 @@ impl SqliteHandler {
     ///
     /// Validates that the query is read-only and runs it under
     /// `query_only`, so `SQLite` rejects writes the validator misses. It
-    /// then dispatches on the classified [`StatementKind`]: `Select` is
-    /// wrapped in a subquery with a server-controlled `LIMIT`/`OFFSET`;
+    /// then dispatches on the classified [`StatementKind`]: `Select` gets
+    /// the page window spliced into its own top-level `LIMIT`/`OFFSET`, or
+    /// runs unchanged with the page cut client-side when it cannot be spliced;
     /// `NonSelect` (`EXPLAIN` under the `SQLite` dialect) is executed as-is
     /// and returned in a single page. A malformed `cursor` is rejected by the serde deserializer
     /// before this method is called, which rmcp reports as a tool result
@@ -85,25 +86,41 @@ impl SqliteHandler {
         let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
 
-        let (rows, next_cursor) = match kind {
+        let start = cursor.map_or(0, |c| c.offset);
+        let page_size = Some(usize::from(self.config.page_size));
+        let (sql, offset, size) = match kind {
             StatementKind::Select => {
-                listing::paginate(cursor, self.config.page_size, async |page| {
-                    let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.read_json(wrapped.as_str(), None, timeout).await
+                let limit = u64::from(self.config.page_size) + 1;
+                match plan(&query, &sqlparser::dialect::SQLiteDialect {}, limit, start) {
+                    Page::Merged(sql) => (Cow::Owned(sql), 0, page_size),
+                    Page::Skip => (Cow::Borrowed(query.as_str()), start, page_size),
+                }
+            }
+            StatementKind::NonSelect => (Cow::Borrowed(query.as_str()), 0, None),
+        };
+        let mut window =
+            truncate::Window::new(offset, size, self.config.max_cell_chars, self.config.max_response_chars);
+        self.connection
+            .read_json(&*sql, None, timeout, |row| window.push(row))
+            .await?;
+        let rows = self.redactor.redact_rows(window.rows).await?;
+        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        // A paged `SELECT` resumes past its last row; other statements count the rest.
+        let next_cursor = match kind {
+            StatementKind::Select => {
+                // A short page with rows left over was cut by the budget, not by the page size.
+                if window.rest > 0 && fitted.rows.len() < usize::from(self.config.page_size) {
+                    fitted.truncation.truncated = true;
+                    fitted.truncation.hint = Some(truncate::HINT);
+                }
+                (fitted.truncation.rows_omitted.take().is_some() || window.rest > 0).then(|| Cursor {
+                    offset: start.saturating_add(fitted.rows.len() as u64),
                 })
-                .await?
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.read_json(query.as_str(), None, timeout).await?;
-                (rows, None)
+                fitted.omit(window.rest);
+                None
             }
-        };
-        let rows = self.redactor.redact_rows(rows).await?;
-        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
-        // A paged `SELECT` resumes dropped rows; other statements count them.
-        let next_cursor = match kind {
-            StatementKind::Select => fitted.resume(cursor, next_cursor),
-            StatementKind::NonSelect => next_cursor,
         };
         Ok(ReadQueryResponse {
             rows: fitted.rows,
