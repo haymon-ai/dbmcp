@@ -325,14 +325,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_json_reads_through_read_json_in_read_only_mode() {
+    async fn read_json_reads_in_read_only_mode() {
         let connection = SqliteConnection::new(&DatabaseConfig {
             name: Some(":memory:".into()),
             read_only: true,
             ..base_config()
         });
         let rows = connection
-            .fetch_json("SELECT 1 AS v", None, 0)
+            .read_json("SELECT 1 AS v", None, 0)
             .await
             .expect("reads still work");
         assert_eq!(rows, vec![serde_json::json!({"v": 1})]);
@@ -355,7 +355,7 @@ mod tests {
     async fn assert_endless_times_out(connection: &SqliteConnection) {
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            connection.fetch_json(ENDLESS, None, connection.query_timeout()),
+            connection.read_json(ENDLESS, None, connection.query_timeout()),
         )
         .await
         .expect("statement must stop before the test deadline");
@@ -380,7 +380,7 @@ mod tests {
         assert_endless_times_out(&connection).await;
         let rows = tokio::time::timeout(
             Duration::from_secs(1),
-            connection.fetch_json("SELECT 1 AS v", None, connection.query_timeout()),
+            connection.read_json("SELECT 1 AS v", None, connection.query_timeout()),
         )
         .await
         .expect("connection must be free right after the timeout")

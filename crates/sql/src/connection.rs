@@ -97,9 +97,8 @@ where
     /// Returns whether this connection runs in read-only mode.
     ///
     /// In read-only mode [`execute`](Connection::execute) and
-    /// [`execute_json`](Connection::execute_json) refuse to run, and
-    /// [`fetch_json`](Connection::fetch_json) runs through
-    /// [`read_json`](Connection::read_json).
+    /// [`execute_json`](Connection::execute_json) refuse to run.
+    /// [`read_json`](Connection::read_json) refuses writes in every mode.
     fn read_only(&self) -> bool;
 
     /// Returns whether `error` is this backend's own statement timeout.
@@ -193,29 +192,6 @@ where
         }
         execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             Ok(conn.execute(query).await?.rows_affected())
-        })
-        .await
-    }
-
-    /// Runs a statement under `timeout_secs` and collects every result row as JSON.
-    ///
-    /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
-    /// for this call (`0` = disabled). In read-only mode it runs through
-    /// [`read_json`](Connection::read_json).
-    ///
-    /// # Errors
-    ///
-    /// See trait-level documentation.
-    async fn fetch_json<Q>(&self, query: Q, database: Option<&str>, timeout_secs: u64) -> Result<Vec<Value>, SqlError>
-    where
-        Q: IntoSafeQuery<Self::DB>,
-    {
-        if self.read_only() {
-            return self.read_json(query, database, timeout_secs).await;
-        }
-        execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
-            let rows = conn.fetch_all(query).await?;
-            Ok(rows.iter().map(RowExt::to_json).collect())
         })
         .await
     }

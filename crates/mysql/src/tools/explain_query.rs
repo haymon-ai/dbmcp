@@ -103,25 +103,25 @@ impl AsyncTool<MysqlHandler> for UnpinnedExplainQueryTool {
 impl MysqlHandler {
     /// Returns the execution plan for a query.
     ///
-    /// The inner query must be a single statement. When `analyze` is true
-    /// and read-only mode is enabled, it must also be read-only. In read-only
-    /// mode the plan is fetched inside a read-only transaction.
+    /// The inner query must be a single statement, and read-only when
+    /// `analyze` is true. The plan is always fetched so the database
+    /// rejects writes, in every mode.
     ///
     /// # Errors
     ///
     /// Returns [`SqlError::MultiStatement`] if the query holds more than
     /// one statement.
-    /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true,
-    /// read-only mode is enabled, and the query is a write statement.
+    /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
+    /// the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error, including
-    /// a write statement explained in read-only mode.
+    /// a plain `EXPLAIN` of a write statement.
     pub async fn explain_query(
         &self,
         database: Option<String>,
         query: String,
         analyze: bool,
     ) -> Result<QueryResponse, ErrorData> {
-        if analyze && self.config.read_only {
+        if analyze {
             let _ = validate_read(&query, &sqlparser::dialect::MySqlDialect {})?;
         } else {
             validate_single_statement(&query, &sqlparser::dialect::MySqlDialect {})?;
@@ -135,11 +135,10 @@ impl MysqlHandler {
             format!("EXPLAIN FORMAT=JSON {query}")
         };
 
-        // ANALYZE executes the statement, and planning alone can run user
-        // functions; in read-only mode `fetch_json` stops their writes.
+        // ANALYZE executes the statement, and planning alone can run user functions.
         let rows = self
             .connection
-            .fetch_json(explain_sql.as_str(), database, self.config.query_timeout)
+            .read_json(explain_sql.as_str(), database, self.config.query_timeout)
             .await?;
         let rows = self.redactor.redact_rows(rows).await?;
         let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);

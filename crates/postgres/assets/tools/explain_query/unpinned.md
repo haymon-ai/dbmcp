@@ -21,7 +21,7 @@ Use when:
 
 <safety>
 Set `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).
-IMPORTANT: EXPLAIN ANALYZE actually executes the query! In read-only mode, only read-only statements are allowed with analyze.
+IMPORTANT: EXPLAIN ANALYZE actually executes the query, so only read-only statements are allowed with analyze.
 When analyze is false, returns EXPLAIN (FORMAT JSON) output without executing.
 Only a single SQL statement is accepted.
 </safety>
