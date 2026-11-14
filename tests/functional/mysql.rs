@@ -4866,7 +4866,7 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog cache
+// Cache
 // ---------------------------------------------------------------------------
 
 /// Statements building a catalog parity fixture database.
@@ -4875,7 +4875,7 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
 /// case, and non-ASCII. Every kind spans at least two pages at page size 2.
 ///
 /// Known residuals of the in-memory matcher stay out of this fixture
-/// (catalog cache spec §4): collation-specific lowering (`ß`, Turkish `İ`),
+/// (cache spec §4): collation-specific lowering (`ß`, Turkish `İ`),
 /// and `MariaDB`'s `utf8mb3_general_ci` catalog collation, which matches
 /// accent-insensitively (`é` finds `e`) and orders names differing only in
 /// case (`Foo` / `foo`) as ties that live SQL breaks arbitrarily. So no
@@ -5086,7 +5086,7 @@ fn assert_pages_equal(cached: &[String], live: &[String]) {
 }
 
 #[tokio::test]
-async fn catalog_cache_matches_live_sql() {
+async fn cache_matches_live_sql() {
     const DATABASE: &str = "catalog_parity";
     catalog_fixture(DATABASE).await;
 
@@ -5102,7 +5102,7 @@ async fn catalog_cache_matches_live_sql() {
 }
 
 #[tokio::test]
-async fn catalog_cache_list_databases_matches_live_sql() {
+async fn cache_list_databases_matches_live_sql() {
     // Other tests create and drop databases concurrently: retry until the
     // live list is stable around the cached walk.
     let live_handler = catalog_handler("app", None);
@@ -5119,7 +5119,7 @@ async fn catalog_cache_list_databases_matches_live_sql() {
 }
 
 #[tokio::test]
-async fn catalog_cache_nonexistent_database_lists_nothing() {
+async fn cache_nonexistent_database_lists_nothing() {
     const DATABASE: &str = "catalog_nonexistent_xyz";
     let cached = catalog_handler("app", MINUTE_CACHE);
     let live = catalog_handler("app", None);
@@ -5156,7 +5156,7 @@ async fn lists_database(handler: &MysqlHandler, name: &str) -> bool {
 }
 
 #[tokio::test]
-async fn catalog_cache_shows_new_table_after_ttl() {
+async fn cache_shows_new_table_after_ttl() {
     const TTL: Duration = Duration::from_secs(2);
     const DATABASE: &str = "catalog_stale";
     catalog_fixture(DATABASE).await;
@@ -5191,7 +5191,7 @@ async fn catalog_cache_shows_new_table_after_ttl() {
 }
 
 #[tokio::test]
-async fn catalog_cache_shows_new_database_after_ttl() {
+async fn cache_shows_new_database_after_ttl() {
     const TTL: Duration = Duration::from_secs(2);
     const DATABASE: &str = "catalog_late_db";
     let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));

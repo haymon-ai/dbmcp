@@ -10,8 +10,8 @@ use dbmcp_sql::Connection as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
-use super::{list_tables, list_triggers, list_views};
 use crate::connection::SqliteConnection;
+use crate::tools::{list_tables, list_triggers, list_views};
 
 /// `LIMIT` that makes `SQLite` return every row.
 const ALL_ROWS: i64 = -1;
@@ -34,7 +34,7 @@ impl SqliteConnection {
     /// nothing and yields the [`ErrorData`] the live catalog query would
     /// return, so the next call retries.
     pub(crate) async fn snapshot(&self) -> Option<Result<Arc<Snapshot>, ErrorData>> {
-        let cache = self.catalog.as_ref()?;
+        let cache = self.cache.as_ref()?;
         let snapshot = cache
             .try_get_with((), async {
                 let no_search: Option<&str> = None;

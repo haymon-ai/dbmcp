@@ -2633,7 +2633,7 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog cache
+// Cache
 // ---------------------------------------------------------------------------
 
 /// Statements building the catalog parity fixture.
@@ -2777,7 +2777,7 @@ async fn walk_catalog(handler: &SqliteHandler) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn catalog_cache_matches_live_sql() {
+async fn cache_matches_live_sql() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = catalog_fixture(dir.path()).await;
     let live = walk_catalog(&catalog_handler(&path, None)).await;
@@ -2816,7 +2816,7 @@ async fn lists_table(handler: &SqliteHandler, name: &str) -> bool {
 }
 
 #[tokio::test]
-async fn catalog_cache_shows_new_table_after_ttl() {
+async fn cache_shows_new_table_after_ttl() {
     const TTL: Duration = Duration::from_secs(2);
     let dir = tempfile::tempdir().expect("tempdir");
     let path = catalog_fixture(dir.path()).await;

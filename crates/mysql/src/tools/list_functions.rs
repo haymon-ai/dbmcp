@@ -140,7 +140,7 @@ const BRIEF_SQL: &str = r"
 /// `LIMIT` pushes down before the JSON projection and the correlated
 /// subqueries, so per-page work scales with `page_size + 1` rows regardless
 /// of how many functions the schema holds in total.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(r.ROUTINE_NAME AS CHAR) AS name,
         JSON_OBJECT(

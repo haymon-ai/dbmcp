@@ -35,7 +35,7 @@ pub struct Config {
     /// SSH tunnel settings (`None` = connect to the database directly).
     pub ssh: Option<SshConfig>,
 
-    /// Catalog cache settings (`None` = caching off).
+    /// Cache settings (`None` = caching off).
     pub cache: Option<CacheConfig>,
 }
 

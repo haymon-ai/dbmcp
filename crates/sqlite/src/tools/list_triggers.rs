@@ -82,7 +82,7 @@ const BRIEF_SQL: &str = r"
 /// `sql` so those triggers are still discoverable by name. `SQLite` trigger
 /// names are unique within a database, so `ORDER BY name` is sufficient
 /// for stable pagination — no secondary tie-breaker needed.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         name,
         json_object(

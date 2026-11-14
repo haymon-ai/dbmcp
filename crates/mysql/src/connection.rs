@@ -3,7 +3,7 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`MysqlHandler`](crate::MysqlHandler),
 //! which composes one [`MysqlConnection`] as a field.
-//! It also holds the catalog cache next to the pools.
+//! It also holds the cache next to the pools.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,21 +17,21 @@ use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
 use tracing::info;
 
-use crate::tools::Snapshot;
+use crate::cache::Snapshot;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 
 /// Maximum number of cached per-database catalog snapshots.
-pub(crate) const CATALOG_CACHE_CAPACITY: u64 = 16;
+pub(crate) const CACHE_CAPACITY: u64 = 16;
 
-/// Owns every `MySqlPool` the handler uses, plus the catalog cache.
+/// Owns every `MySqlPool` the handler uses, plus the cache.
 #[derive(Clone)]
 pub(crate) struct MysqlConnection {
     config: DatabaseConfig,
     pools: Cache<String, MySqlPool>,
     /// Catalog snapshots keyed by database name; `None` when caching is off.
-    pub(crate) catalog: Option<Cache<String, Arc<Snapshot>>>,
+    pub(crate) cache: Option<Cache<String, Arc<Snapshot>>>,
     /// The one database-list entry; `None` when caching is off.
     pub(crate) databases: Option<Cache<(), Arc<Vec<String>>>>,
 }
@@ -45,7 +45,7 @@ impl std::fmt::Debug for MysqlConnection {
 }
 
 impl MysqlConnection {
-    /// Builds the connection; the catalog cache exists only when `cache` is set.
+    /// Builds the connection; the cache exists only when `cache` is set.
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
@@ -67,9 +67,9 @@ impl MysqlConnection {
         Self {
             config: config.clone(),
             pools,
-            catalog: cache.map(|cache| {
+            cache: cache.map(|cache| {
                 Cache::builder()
-                    .max_capacity(CATALOG_CACHE_CAPACITY)
+                    .max_capacity(CACHE_CAPACITY)
                     .time_to_live(cache.ttl)
                     .build()
             }),

@@ -39,7 +39,7 @@ const BRIEF_SQL: &str = r"
 /// segment after the **last** `@` (`SUBSTRING_INDEX(..., '@', -1)`) and the
 /// user is everything before it (`LEFT(..., LENGTH - host_len - 1)`), with
 /// embedded backticks doubled in both components.
-pub(super) const DETAILED_SQL: &str = r#"
+pub(crate) const DETAILED_SQL: &str = r#"
 WITH table_info AS (
     SELECT
         t.TABLE_SCHEMA AS table_schema,

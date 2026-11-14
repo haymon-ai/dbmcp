@@ -10,6 +10,6 @@ pub struct CacheConfig {
 }
 
 impl CacheConfig {
-    /// Default catalog cache time-to-live, in seconds.
+    /// Default cache time-to-live, in seconds.
     pub const DEFAULT_TTL_SECS: u64 = 3600;
 }

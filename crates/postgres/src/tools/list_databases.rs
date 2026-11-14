@@ -55,7 +55,7 @@ impl AsyncTool<PostgresHandler> for ListDatabasesTool {
 }
 
 /// Lists one page of non-template database names, sorted by name.
-pub(super) const SQL: &str = r"
+pub(crate) const SQL: &str = r"
     SELECT datname
     FROM pg_database
     WHERE datistemplate = false

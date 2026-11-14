@@ -126,7 +126,7 @@ const BRIEF_SQL: &str = r"
 /// needed. `populated` and `indexed` are projected directly from
 /// `pg_matviews.ispopulated` / `pg_matviews.hasindexes`. Matview names are
 /// unique per schema, so `matviewname` alone is a stable sort key.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         mv.matviewname AS name,
         json_build_object(

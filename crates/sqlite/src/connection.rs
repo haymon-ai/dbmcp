@@ -5,7 +5,7 @@
 //! at one connection. In read-only mode the file is opened with
 //! `SQLITE_OPEN_READONLY`, so `SQLite` itself rejects every write.
 //! A progress handler interrupts statements that outlive the query timeout.
-//! It also holds the catalog cache next to the pool.
+//! It also holds the cache next to the pool.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,18 +21,18 @@ use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePool, SqliteQuer
 use sqlx::{Executor as _, SqlStr};
 use tracing::info;
 
-use crate::tools::Snapshot;
+use crate::cache::Snapshot;
 
 /// Virtual machine instructions `SQLite` runs between deadline checks.
 const PROGRESS_OPS: i32 = 1000;
 
-/// Owns the lazy `SQLite` pool, the logic that builds it, and the catalog cache.
+/// Owns the lazy `SQLite` pool, the logic that builds it, and the cache.
 #[derive(Clone)]
 pub(crate) struct SqliteConnection {
     config: DatabaseConfig,
     pool: SqlitePool,
     /// Catalog snapshot under one constant key; `None` when caching is off.
-    pub(crate) catalog: Option<Cache<(), Arc<Snapshot>>>,
+    pub(crate) cache: Option<Cache<(), Arc<Snapshot>>>,
 }
 
 impl std::fmt::Debug for SqliteConnection {
@@ -42,14 +42,14 @@ impl std::fmt::Debug for SqliteConnection {
 }
 
 impl SqliteConnection {
-    /// Builds the connection, its lazy pool, and the catalog cache when `cache` is set.
+    /// Builds the connection, its lazy pool, and the cache when `cache` is set.
     pub(crate) fn new(config: &DatabaseConfig, cache: Option<CacheConfig>) -> Self {
         info!("SQLite lazy connection pool created");
 
         Self {
             config: config.clone(),
             pool: create_lazy_pool(config),
-            catalog: cache.map(|cache| Cache::builder().time_to_live(cache.ttl).build()),
+            cache: cache.map(|cache| Cache::builder().time_to_live(cache.ttl).build()),
         }
     }
 

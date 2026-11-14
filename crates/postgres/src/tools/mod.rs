@@ -5,23 +5,21 @@
 //! [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool).
 //! Router assembly happens in [`crate::handler`].
 
-mod catalog;
 mod create_database;
 mod drop_database;
 mod drop_table;
 mod explain_query;
-mod list_databases;
-mod list_functions;
-mod list_materialized_views;
-mod list_procedures;
-mod list_tables;
-mod list_triggers;
-mod list_views;
+pub(crate) mod list_databases;
+pub(crate) mod list_functions;
+pub(crate) mod list_materialized_views;
+pub(crate) mod list_procedures;
+pub(crate) mod list_tables;
+pub(crate) mod list_triggers;
+pub(crate) mod list_views;
 mod prelude;
 mod read_query;
 mod write_query;
 
-pub(crate) use catalog::Snapshot;
 pub(crate) use create_database::CreateDatabaseTool;
 pub(crate) use drop_database::DropDatabaseTool;
 pub(crate) use drop_table::{PinnedDropTableTool, UnpinnedDropTableTool};

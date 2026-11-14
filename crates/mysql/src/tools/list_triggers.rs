@@ -129,7 +129,7 @@ const BRIEF_SQL: &str = r"
 /// `activationLevel` is always `ROW`. `ORDER BY TRIGGER_NAME` is sufficient —
 /// `(TRIGGER_SCHEMA, TRIGGER_NAME)` is the table's primary key, and the
 /// `WHERE` clause already pins `TRIGGER_SCHEMA`.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(TRIGGER_NAME AS CHAR) AS name,
         JSON_OBJECT(

@@ -14,10 +14,10 @@ use dbmcp_sql::Connection as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
-use super::{
+use crate::connection::PostgresConnection;
+use crate::tools::{
     list_databases, list_functions, list_materialized_views, list_procedures, list_tables, list_triggers, list_views,
 };
-use crate::connection::PostgresConnection;
 
 /// `LIMIT NULL`: makes `PostgreSQL` return every row.
 const ALL_ROWS: Option<i64> = None;
@@ -50,7 +50,7 @@ impl PostgresConnection {
     /// caches nothing and yields the [`ErrorData`] the live catalog query
     /// would return, so the next call retries.
     pub(crate) async fn snapshot(&self, database: Option<&str>) -> Option<Result<Arc<Snapshot>, ErrorData>> {
-        let cache = self.catalog.as_ref()?;
+        let cache = self.cache.as_ref()?;
         let database = database.unwrap_or_else(|| self.default_database_name());
         let snapshot = cache
             .try_get_with_by_ref(database, async {
@@ -94,7 +94,7 @@ impl PostgresConnection {
 ///
 /// Live SQL filters and lists brief names by `proname`, but keys detailed
 /// rows by signature. Each row's entry carries `proname` as `name`.
-pub(super) fn list_routines(
+pub(crate) fn list_routines(
     rows: &[(String, Value)],
     cursor: Option<Cursor>,
     page_size: u16,
@@ -150,7 +150,7 @@ mod tests {
         let connection = connection(Some(CacheConfig {
             ttl: Duration::from_mins(1),
         }));
-        assert!(connection.catalog.is_some());
+        assert!(connection.cache.is_some());
         assert!(connection.databases.is_some());
     }
 

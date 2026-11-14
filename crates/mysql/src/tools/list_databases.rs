@@ -55,7 +55,7 @@ impl AsyncTool<MysqlHandler> for ListDatabasesTool {
 }
 
 /// Lists one page of schema names, sorted by name.
-pub(super) const SQL: &str = r"
+pub(crate) const SQL: &str = r"
     SELECT CAST(SCHEMA_NAME AS CHAR)
     FROM information_schema.SCHEMATA
     ORDER BY SCHEMA_NAME

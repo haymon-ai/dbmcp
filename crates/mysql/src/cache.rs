@@ -12,8 +12,8 @@ use dbmcp_sql::Connection as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
-use super::{list_databases, list_functions, list_procedures, list_tables, list_triggers, list_views};
 use crate::connection::MysqlConnection;
+use crate::tools::{list_databases, list_functions, list_procedures, list_tables, list_triggers, list_views};
 
 /// `LIMIT` large enough for every row: `MySQL` has no unbounded `LIMIT` form.
 const ALL_ROWS: i64 = i64::MAX;
@@ -45,7 +45,7 @@ impl MysqlConnection {
     /// fill. A failed fill caches nothing and yields the [`ErrorData`] the
     /// live catalog query would return, so the next call retries.
     pub(crate) async fn snapshot(&self, database: &str) -> Option<Result<Arc<Snapshot>, ErrorData>> {
-        let cache = self.catalog.as_ref()?;
+        let cache = self.cache.as_ref()?;
         let snapshot = cache
             .try_get_with_by_ref(database, async {
                 let no_search: Option<&str> = None;
@@ -124,7 +124,7 @@ mod tests {
         let connection = connection(Some(CacheConfig {
             ttl: Duration::from_mins(1),
         }));
-        assert!(connection.catalog.is_some());
+        assert!(connection.cache.is_some());
         assert!(connection.databases.is_some());
     }
 }

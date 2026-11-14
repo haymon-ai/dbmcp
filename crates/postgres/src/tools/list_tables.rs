@@ -113,7 +113,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// `LIMIT`/`OFFSET` are pushed into `table_info` so every downstream CTE
 /// scans at most `page_size + 1` tables, never the full schema.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     WITH table_info AS (
         SELECT
             t.oid AS table_oid,

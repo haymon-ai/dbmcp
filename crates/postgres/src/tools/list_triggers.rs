@@ -132,7 +132,7 @@ const BRIEF_SQL: &str = r"
 /// `TRIGGER_TYPE_ROW`=1, `TRIGGER_TYPE_BEFORE`=2, `TRIGGER_TYPE_INSERT`=4,
 /// `TRIGGER_TYPE_DELETE`=8, `TRIGGER_TYPE_UPDATE`=16,
 /// `TRIGGER_TYPE_TRUNCATE`=32, `TRIGGER_TYPE_INSTEAD`=64.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         t.tgname AS name,
         json_build_object(

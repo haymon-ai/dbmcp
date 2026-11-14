@@ -126,7 +126,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// `LIMIT` pushes down before the JSON projection, so per-page work scales
 /// with `page_size + 1` rows regardless of how many views the schema holds.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(v.TABLE_NAME AS CHAR) AS name,
         JSON_OBJECT(

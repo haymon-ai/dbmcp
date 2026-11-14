@@ -95,7 +95,7 @@ const BRIEF_SQL: &str = r"
 /// SQL, a synthesised `CREATE [UNIQUE] INDEX …` string so the field is never
 /// null. Columns use 1-based `ordinalPosition` (`cid + 1`) for cross-backend
 /// parity with `PostgreSQL`'s `pg_attribute.attnum`.
-pub(super) const DETAILED_SQL: &str = r#"
+pub(crate) const DETAILED_SQL: &str = r#"
     WITH table_info AS (
         SELECT
             tl.name AS table_name,

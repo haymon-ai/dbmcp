@@ -56,7 +56,7 @@ impl AsyncTool<SqliteHandler> for ListViewsTool {
 }
 
 /// Lists one page of user view names, sorted by name.
-pub(super) const SQL: &str = r"
+pub(crate) const SQL: &str = r"
     SELECT name
     FROM sqlite_schema
     WHERE type = 'view' AND name NOT LIKE 'sqlite_%'

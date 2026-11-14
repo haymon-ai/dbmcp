@@ -4538,7 +4538,7 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog cache
+// Cache
 // ---------------------------------------------------------------------------
 
 /// Statements building a catalog parity fixture database.
@@ -4766,7 +4766,7 @@ fn assert_pages_equal(cached: &[String], live: &[String]) {
 }
 
 #[tokio::test]
-async fn catalog_cache_matches_live_sql() {
+async fn cache_matches_live_sql() {
     const DATABASE: &str = "catalog_parity";
     catalog_fixture(DATABASE).await;
     let ttl = Some(CacheConfig {
@@ -4785,7 +4785,7 @@ async fn catalog_cache_matches_live_sql() {
 }
 
 #[tokio::test]
-async fn catalog_cache_list_databases_matches_live_sql() {
+async fn cache_list_databases_matches_live_sql() {
     // Other tests create and drop databases concurrently: retry until the
     // live list is stable around the cached walk.
     let live_handler = catalog_handler("app", None);
@@ -4825,7 +4825,7 @@ async fn table_names(handler: &PostgresHandler, database: &str) -> (Vec<String>,
 }
 
 #[tokio::test]
-async fn catalog_cache_brief_and_detailed_tables_agree() {
+async fn cache_brief_and_detailed_tables_agree() {
     const DATABASE: &str = "catalog_tables";
     catalog_fixture(DATABASE).await;
 
@@ -4849,7 +4849,7 @@ async fn catalog_cache_brief_and_detailed_tables_agree() {
 }
 
 #[tokio::test]
-async fn catalog_cache_keeps_overloaded_routines() {
+async fn cache_keeps_overloaded_routines() {
     const DATABASE: &str = "catalog_overloads";
     catalog_fixture(DATABASE).await;
     let live = catalog_handler("app", None);
@@ -4891,7 +4891,7 @@ async fn lists_database(handler: &PostgresHandler, name: &str) -> bool {
 }
 
 #[tokio::test]
-async fn catalog_cache_shows_new_table_after_ttl() {
+async fn cache_shows_new_table_after_ttl() {
     const TTL: Duration = Duration::from_secs(2);
     const DATABASE: &str = "catalog_stale";
     catalog_fixture(DATABASE).await;
@@ -4926,7 +4926,7 @@ async fn catalog_cache_shows_new_table_after_ttl() {
 }
 
 #[tokio::test]
-async fn catalog_cache_shows_new_database_after_ttl() {
+async fn cache_shows_new_database_after_ttl() {
     const TTL: Duration = Duration::from_secs(2);
     const DATABASE: &str = "catalog_late_db";
     let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));
@@ -4955,7 +4955,7 @@ async fn catalog_cache_shows_new_database_after_ttl() {
 }
 
 #[tokio::test]
-async fn catalog_cache_failed_fill_caches_nothing() {
+async fn cache_failed_fill_caches_nothing() {
     const DATABASE: &str = "catalog_missing";
     let admin = handler(false);
     let _ = admin

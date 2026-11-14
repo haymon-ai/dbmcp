@@ -5,17 +5,15 @@
 //! [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool).
 //! Router assembly happens in [`crate::handler`].
 
-mod catalog;
 mod drop_table;
 mod explain_query;
-mod list_tables;
-mod list_triggers;
-mod list_views;
+pub(crate) mod list_tables;
+pub(crate) mod list_triggers;
+pub(crate) mod list_views;
 mod prelude;
 mod read_query;
 mod write_query;
 
-pub(crate) use catalog::Snapshot;
 pub(crate) use drop_table::DropTableTool;
 pub(crate) use explain_query::ExplainQueryTool;
 pub(crate) use list_tables::ListTablesTool;

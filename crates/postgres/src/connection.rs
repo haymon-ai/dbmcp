@@ -3,7 +3,7 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`PostgresHandler`](crate::PostgresHandler),
 //! which composes one [`PostgresConnection`] as a field.
-//! It also holds the catalog cache next to the pools.
+//! It also holds the cache next to the pools.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,21 +16,21 @@ use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
 
-use crate::tools::Snapshot;
+use crate::cache::Snapshot;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 
 /// Maximum number of cached per-database catalog snapshots.
-pub(crate) const CATALOG_CACHE_CAPACITY: u64 = 16;
+pub(crate) const CACHE_CAPACITY: u64 = 16;
 
-/// Owns every `PgPool` the handler uses, the logic that builds them, and the catalog cache.
+/// Owns every `PgPool` the handler uses, the logic that builds them, and the cache.
 #[derive(Clone)]
 pub(crate) struct PostgresConnection {
     config: DatabaseConfig,
     pools: Cache<String, PgPool>,
     /// Catalog snapshots keyed by database name; `None` when caching is off.
-    pub(crate) catalog: Option<Cache<String, Arc<Snapshot>>>,
+    pub(crate) cache: Option<Cache<String, Arc<Snapshot>>>,
     /// The one database-list entry; `None` when caching is off.
     pub(crate) databases: Option<Cache<(), Arc<Vec<String>>>>,
 }
@@ -44,7 +44,7 @@ impl std::fmt::Debug for PostgresConnection {
 }
 
 impl PostgresConnection {
-    /// Builds the connection with an empty pool cache and, when `cache` is set, catalog cache.
+    /// Builds the connection with an empty pool cache and, when `cache` is set, the cache.
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
@@ -66,9 +66,9 @@ impl PostgresConnection {
         Self {
             config: config.clone(),
             pools,
-            catalog: cache.map(|cache| {
+            cache: cache.map(|cache| {
                 Cache::builder()
-                    .max_capacity(CATALOG_CACHE_CAPACITY)
+                    .max_capacity(CACHE_CAPACITY)
                     .time_to_live(cache.ttl)
                     .build()
             }),

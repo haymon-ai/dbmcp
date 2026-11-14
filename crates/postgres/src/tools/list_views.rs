@@ -123,7 +123,7 @@ const BRIEF_SQL: &str = r"
 /// page's rows — never the full schema. `pg_views.viewowner` is already a role
 /// name, so no `pg_roles` join is needed. View names are unique per schema, so
 /// `viewname` alone is a stable sort key.
-pub(super) const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         v.viewname AS name,
         json_build_object(
