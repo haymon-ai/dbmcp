@@ -1,6 +1,6 @@
 //! MCP tool: `listFunctions`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
@@ -140,7 +140,7 @@ const BRIEF_SQL: &str = r"
 /// `LIMIT` pushes down before the JSON projection and the correlated
 /// subqueries, so per-page work scales with `page_size + 1` rows regardless
 /// of how many functions the schema holds in total.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(r.ROUTINE_NAME AS CHAR) AS name,
         JSON_OBJECT(
@@ -227,6 +227,17 @@ impl MysqlHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.connection.default_database_name());
+
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.functions,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::MYSQL,
+            ));
+        }
 
         listing::list_entries(
             cursor,

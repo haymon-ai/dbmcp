@@ -473,6 +473,27 @@
           "maximum": 65535
         }
       }
+    },
+    "cache": {
+      "description": "In-memory caches.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ttl": {
+          "description": "Cache time-to-live in seconds, counted from each fill; 0 disables the cache.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 86400,
+          "default": 3600
+        }
+      }
     }
   }
 }

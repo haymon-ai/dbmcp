@@ -132,7 +132,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// `prosecdef` is a boolean. Procedure-only fields (`returnType`, `volatility`,
 /// `strict`, `parallelSafety`) are deliberately absent — see the tool description above.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         p.proname || '(' || args.text || ')' AS name,
         json_build_object(
@@ -171,6 +171,16 @@ impl PostgresHandler {
         detailed: bool,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(crate::cache::list_routines(
+                &snapshot?.procedures,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

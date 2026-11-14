@@ -12,7 +12,9 @@
 
 mod probe;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use dbmcp_config::{CacheConfig, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use dbmcp_server::listing::Cursor;
+use dbmcp_server::types::ListEntriesResponse;
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
@@ -23,6 +25,7 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::path::Path;
+use std::time::Duration;
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
@@ -41,6 +44,7 @@ fn handler(read_only: bool) -> SqliteHandler {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -56,6 +60,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -195,6 +200,7 @@ async fn test_query_timeout_fast_query_succeeds() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -220,6 +226,7 @@ async fn test_read_query_timeout_argument() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = |timeout| ReadQueryRequest {
@@ -246,6 +253,7 @@ async fn test_query_timeout_disabled_with_zero() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -270,6 +278,7 @@ async fn test_query_timeout_stops_long_statement() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     // Counting an endless recursive CTE yields no row until the statement ends.
@@ -2043,6 +2052,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -2057,6 +2067,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -2513,6 +2524,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pi
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -2618,4 +2630,215 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert_eq!(response.rows[0]["s"], "abc");
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Cache
+// ---------------------------------------------------------------------------
+
+/// Statements building the catalog parity fixture.
+///
+/// Names cover `LIKE` wildcards, a backslash, a trailing backslash, mixed
+/// case, and non-ASCII. Every kind spans at least two pages at page size 2.
+const CATALOG_FIXTURE: &[&str] = &[
+    r#"CREATE TABLE "a_b" (id INTEGER PRIMARY KEY, name TEXT UNIQUE)"#,
+    r#"CREATE TABLE "a%b" (id INTEGER PRIMARY KEY)"#,
+    r#"CREATE TABLE "a\b" (id INTEGER PRIMARY KEY, ab_id INTEGER REFERENCES "a_b" (id))"#,
+    r#"CREATE TABLE "ab\" (id INTEGER)"#,
+    r#"CREATE TABLE "axb" (id INTEGER)"#,
+    r#"CREATE TABLE "Foo" (id INTEGER)"#,
+    r#"CREATE TABLE "café" (id INTEGER)"#,
+    r#"CREATE TABLE "CAFÉ_2" (id INTEGER)"#,
+    r#"CREATE INDEX "idx_axb" ON "axb" (id)"#,
+    r#"CREATE VIEW "v_a" AS SELECT 1"#,
+    r#"CREATE VIEW "v%b" AS SELECT 1"#,
+    r#"CREATE VIEW "v\" AS SELECT 1"#,
+    r#"CREATE VIEW "Vé" AS SELECT 1"#,
+    r#"CREATE VIEW "vb" AS SELECT 1"#,
+    r#"CREATE TRIGGER "t_a" AFTER INSERT ON "axb" BEGIN SELECT 1; END"#,
+    r#"CREATE TRIGGER "t%b" AFTER INSERT ON "axb" BEGIN SELECT 1; END"#,
+    r#"CREATE TRIGGER "t\b" AFTER UPDATE ON "Foo" BEGIN SELECT 1; END"#,
+    r#"CREATE TRIGGER "Trig\" AFTER DELETE ON "Foo" BEGIN SELECT 1; END"#,
+    r#"CREATE TRIGGER "trigé" AFTER DELETE ON "café" BEGIN SELECT 1; END"#,
+];
+
+/// Searches the parity suite runs: wildcards, escapes, case, non-ASCII, blank.
+const CATALOG_SEARCHES: &[Option<&str>] = &[
+    None,
+    Some(""),
+    Some("   "),
+    Some("%"),
+    Some("_"),
+    Some("a_b"),
+    Some("a%b"),
+    Some(r"\"),
+    Some(r"a\"),
+    Some(r"\b"),
+    Some("FOO"),
+    Some("foo"),
+    Some("é"),
+    Some("É"),
+    Some("CAF"),
+    Some(" t_ "),
+    Some("zzz"),
+];
+
+/// Builds a handler on `path` with page size 2 and the given cache.
+fn catalog_handler(path: &Path, cache: Option<CacheConfig>) -> SqliteHandler {
+    SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            backend: DatabaseBackend::Sqlite,
+            name: Some(path.to_str().expect("utf-8 path").into()),
+            read_only: false,
+            page_size: 2,
+            ..DatabaseConfig::default()
+        },
+        http: None,
+        pii: None,
+        ssh: None,
+        cache,
+    })
+    .expect("handler builds")
+}
+
+/// Creates the parity fixture in its own file under `dir`.
+async fn catalog_fixture(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("catalog.db");
+    std::fs::File::create(&path).expect("create fixture file");
+    let handler = catalog_handler(&path, None);
+    for sql in CATALOG_FIXTURE {
+        handler
+            .write_query(QueryRequest { query: (*sql).into() })
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+    path
+}
+
+/// Walks every page from `call`, returning each serialized response.
+async fn walk_pages(mut call: impl AsyncFnMut(Option<Cursor>) -> ListEntriesResponse) -> Vec<String> {
+    let mut pages = Vec::new();
+    let mut cursor = None;
+    loop {
+        let response = call(cursor).await;
+        pages.push(serde_json::to_string(&response).expect("serialize response"));
+        match response.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return pages,
+        }
+    }
+}
+
+/// Walks every page of every catalog tool, every search, both modes.
+async fn walk_catalog(handler: &SqliteHandler) -> Vec<String> {
+    let mut pages = Vec::new();
+    for search in CATALOG_SEARCHES {
+        for detailed in [false, true] {
+            let search = search.map(str::to_owned);
+            pages.extend(
+                walk_pages(async |cursor| {
+                    handler
+                        .list_tables(ListTablesRequest {
+                            cursor,
+                            search: search.clone(),
+                            detailed,
+                        })
+                        .await
+                        .expect("listTables")
+                })
+                .await,
+            );
+            pages.extend(
+                walk_pages(async |cursor| {
+                    handler
+                        .list_triggers(ListTriggersRequest {
+                            cursor,
+                            search: search.clone(),
+                            detailed,
+                        })
+                        .await
+                        .expect("listTriggers")
+                })
+                .await,
+            );
+        }
+    }
+    pages.extend(
+        walk_pages(async |cursor| {
+            handler
+                .list_views(ListViewsRequest { cursor })
+                .await
+                .expect("listViews")
+        })
+        .await,
+    );
+    pages
+}
+
+#[tokio::test]
+async fn cache_matches_live_sql() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = catalog_fixture(dir.path()).await;
+    let live = walk_catalog(&catalog_handler(&path, None)).await;
+    let cached = walk_catalog(&catalog_handler(
+        &path,
+        Some(CacheConfig {
+            ttl: Duration::from_mins(1),
+        }),
+    ))
+    .await;
+
+    assert!(
+        live.iter().any(|page| page.contains("nextCursor")),
+        "fixture must span more than one page"
+    );
+    assert_eq!(cached.len(), live.len(), "page counts differ");
+    for (cached, live) in cached.iter().zip(&live) {
+        assert_eq!(cached, live);
+    }
+}
+
+/// Returns whether `listTables` brief mode lists `name`.
+async fn lists_table(handler: &SqliteHandler, name: &str) -> bool {
+    let pages = walk_pages(async |cursor| {
+        handler
+            .list_tables(ListTablesRequest {
+                cursor,
+                search: Some(name.into()),
+                detailed: false,
+            })
+            .await
+            .expect("listTables")
+    })
+    .await;
+    pages.iter().any(|page| page.contains(&format!("\"{name}\"")))
+}
+
+#[tokio::test]
+async fn cache_shows_new_table_after_ttl() {
+    const TTL: Duration = Duration::from_secs(2);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = catalog_fixture(dir.path()).await;
+    let cached = catalog_handler(&path, Some(CacheConfig { ttl: TTL }));
+    let live = catalog_handler(&path, None);
+
+    let filled = std::time::Instant::now();
+    assert!(!lists_table(&cached, "late_table").await, "fills the snapshot");
+    cached
+        .write_query(QueryRequest {
+            query: "CREATE TABLE late_table (id INTEGER)".into(),
+        })
+        .await
+        .expect("create table");
+    let hidden = !lists_table(&cached, "late_table").await;
+    assert!(
+        filled.elapsed() < TTL,
+        "test ran too slowly to observe the cached snapshot"
+    );
+    assert!(hidden, "cached path hides it until the TTL expires");
+    assert!(lists_table(&live, "late_table").await, "live path sees it at once");
+
+    tokio::time::sleep(TTL.saturating_sub(filled.elapsed()) + Duration::from_millis(500)).await;
+    assert!(lists_table(&cached, "late_table").await, "refilled after the TTL");
 }

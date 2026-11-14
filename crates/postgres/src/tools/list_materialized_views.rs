@@ -1,6 +1,6 @@
 //! MCP tool: `listMaterializedViews`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListMaterializedViewsRequest};
@@ -126,7 +126,7 @@ const BRIEF_SQL: &str = r"
 /// needed. `populated` and `indexed` are projected directly from
 /// `pg_matviews.ispopulated` / `pg_matviews.hasindexes`. Matview names are
 /// unique per schema, so `matviewname` alone is a stable sort key.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         mv.matviewname AS name,
         json_build_object(
@@ -160,6 +160,17 @@ impl PostgresHandler {
         detailed: bool,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.materialized_views,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::POSTGRES,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

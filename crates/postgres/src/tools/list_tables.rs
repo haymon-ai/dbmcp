@@ -1,6 +1,6 @@
 //! MCP tool: `listTables`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListTablesRequest};
@@ -113,7 +113,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// `LIMIT`/`OFFSET` are pushed into `table_info` so every downstream CTE
 /// scans at most `page_size + 1` tables, never the full schema.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     WITH table_info AS (
         SELECT
             t.oid AS table_oid,
@@ -274,6 +274,17 @@ impl PostgresHandler {
         // Identifier validation runs inside the connection pool — passing the
         // trimmed name straight through avoids a redundant round-trip check.
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.tables,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::POSTGRES,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

@@ -1,6 +1,6 @@
 //! MCP tool: `listTriggers`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListTriggersRequest};
@@ -132,7 +132,7 @@ const BRIEF_SQL: &str = r"
 /// `TRIGGER_TYPE_ROW`=1, `TRIGGER_TYPE_BEFORE`=2, `TRIGGER_TYPE_INSERT`=4,
 /// `TRIGGER_TYPE_DELETE`=8, `TRIGGER_TYPE_UPDATE`=16,
 /// `TRIGGER_TYPE_TRUNCATE`=32, `TRIGGER_TYPE_INSTEAD`=64.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         t.tgname AS name,
         json_build_object(
@@ -183,6 +183,17 @@ impl PostgresHandler {
         detailed: bool,
     ) -> Result<ListEntriesResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.triggers,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::POSTGRES,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

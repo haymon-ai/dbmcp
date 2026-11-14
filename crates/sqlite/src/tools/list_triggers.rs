@@ -1,6 +1,6 @@
 //! MCP tool: `listTriggers`.
 
-use dbmcp_server::listing;
+use dbmcp_server::listing::{self, Like};
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
@@ -82,7 +82,7 @@ const BRIEF_SQL: &str = r"
 /// `sql` so those triggers are still discoverable by name. `SQLite` trigger
 /// names are unique within a database, so `ORDER BY name` is sufficient
 /// for stable pagination — no secondary tie-breaker needed.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         name,
         json_object(
@@ -112,6 +112,18 @@ impl SqliteHandler {
             detailed,
         }: ListTriggersRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
+        if let Some(snapshot) = self.connection.snapshot().await {
+            let snapshot = snapshot?;
+            return Ok(listing::list_rows(
+                &snapshot.triggers,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::SQLITE,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,

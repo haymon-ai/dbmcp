@@ -76,7 +76,7 @@ impl SqliteHandler {
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
         Ok(Self {
             config: config.database.clone(),
-            connection: SqliteConnection::new(&config.database),
+            connection: SqliteConnection::new(&config.database, config.cache),
             redactor: Redactor::from_config(config.pii.as_ref())?,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
         })
@@ -137,6 +137,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test")
     }

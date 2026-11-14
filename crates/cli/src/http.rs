@@ -206,6 +206,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         };
         let server = crate::server::build_server(&config).expect("server builds in test");
         let cancel = CancellationToken::new();

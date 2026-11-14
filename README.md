@@ -18,6 +18,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Layered config** — `DBMCP_*` environment variables, an env file, and an optional YAML config file with `${}` interpolation, with sensible defaults per backend
+- **Cache** — schema-discovery results are kept in memory per database for `DBMCP_CACHE_TTL` seconds (default 1 h, `0` disables); see [Cache](https://dbmcp.haymon.ai/features/cache)
 - **SSH tunnel** — reach MySQL/MariaDB/PostgreSQL through an SSH bastion with an embedded client: password or key auth, `known_hosts` verification, automatic reconnect
 
 ## Install 📦

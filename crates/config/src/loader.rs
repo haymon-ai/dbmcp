@@ -19,6 +19,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::cache::CacheConfig;
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, Kind, SETTINGS, Setting, Value};
@@ -205,7 +206,8 @@ impl Resolver<'_> {
     /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
     ///
     /// Activation rules run here: a section exists only when its trigger is
-    /// set, and SSH settings without `ssh.host` are an error.
+    /// set, the cache only when `cache.ttl` is not `0`, and SSH settings
+    /// without `ssh.host` are an error.
     fn build(&self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
             .enumeration(env::TRANSPORT, Transport::CHOICES)
@@ -221,6 +223,10 @@ impl Resolver<'_> {
             .collect();
         let ssh = ssh_set.contains(&env::SSH_HOST).then(|| self.ssh());
         let missing_ssh_host = ssh.is_none() && !ssh_set.is_empty();
+        let ttl = self.int(env::CACHE_TTL).unwrap_or(CacheConfig::DEFAULT_TTL_SECS);
+        let cache = (ttl > 0).then(|| CacheConfig {
+            ttl: Duration::from_secs(ttl),
+        });
 
         let config = Config {
             transport,
@@ -228,6 +234,7 @@ impl Resolver<'_> {
             http,
             pii,
             ssh,
+            cache,
         };
         let mut diagnostics = config.validate().err().unwrap_or_default();
         if missing_ssh_host {
@@ -506,12 +513,51 @@ mod tests {
                 "ssh.port" => ssh.port.into(),
                 "ssh.strict_host_key_checking" => choice(StrictHostKeyChecking::CHOICES, &ssh.strict_host_key_checking),
                 "ssh.keepalive_interval" => ssh.keepalive_interval.as_secs().into(),
+                "cache.ttl" => plain.config.cache.expect("cache").ttl.as_secs().into(),
                 other => panic!("{other} has a schema default; compare it here"),
             };
             assert_eq!(default, &resolved, "{}", setting.path);
             compared += 1;
         }
-        assert_eq!(compared, 23);
+        assert_eq!(compared, 24);
+    }
+
+    #[test]
+    fn cache_ttl_defaults_to_an_hour_and_zero_turns_the_cache_off() {
+        let ttl = |fixture: Fixture| fixture.ok().config.cache.map(|cache| cache.ttl);
+        assert_eq!(ttl(Fixture::new()), Some(Duration::from_hours(1)));
+        assert_eq!(
+            ttl(Fixture::new().config("dbmcp.yaml", "cache:\n  ttl: 600\n")),
+            Some(Duration::from_mins(10))
+        );
+        assert_eq!(ttl(Fixture::new().config("dbmcp.yaml", "cache:\n  ttl: 0\n")), None);
+        assert_eq!(
+            ttl(Fixture::new()
+                .config("dbmcp.yaml", "cache:\n  ttl: 600\n")
+                .env("DBMCP_CACHE_TTL", "0")),
+            None
+        );
+    }
+
+    #[test]
+    fn cache_ttl_out_of_range_or_not_an_integer_is_a_located_error() {
+        for (yaml, reason) in [
+            ("86401", "must be at most 86400"),
+            ("-1", "must be at least 0"),
+            ("abc", "expected non-negative integer, found string"),
+        ] {
+            let fixture = Fixture::new().config("dbmcp.yaml", &format!("cache:\n  ttl: {yaml}\n"));
+            let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+            assert_eq!(
+                fixture.err(),
+                format!("invalid settings:\n  - {file}:2:8: cache.ttl: {reason}"),
+                "{yaml}"
+            );
+        }
+        assert_eq!(
+            Fixture::new().env("DBMCP_CACHE_TTL", "86401").err(),
+            "invalid settings:\n  - DBMCP_CACHE_TTL: cache.ttl: must be at most 86400"
+        );
     }
 
     #[test]
@@ -878,7 +924,11 @@ mod tests {
             )),
             "{error}"
         );
-        assert!(error.contains("extra: unknown field; expected one of transport, log_level, database, http, pii, ssh"));
+        assert!(
+            error.contains(
+                "extra: unknown field; expected one of transport, log_level, database, http, pii, ssh, cache"
+            )
+        );
     }
 
     #[test]

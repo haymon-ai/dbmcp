@@ -7,9 +7,9 @@
 
 mod drop_table;
 mod explain_query;
-mod list_tables;
-mod list_triggers;
-mod list_views;
+pub(crate) mod list_tables;
+pub(crate) mod list_triggers;
+pub(crate) mod list_views;
 mod prelude;
 mod read_query;
 mod write_query;

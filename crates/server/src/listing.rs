@@ -15,6 +15,10 @@
 //! for any row type, and [`list_entries`] for the brief/detailed `list*`
 //! tools. Both hand the fetch closure a [`Page`] to bind as `LIMIT` /
 //! `OFFSET`, then trim the one-row lookahead and derive the next cursor.
+//!
+//! Rows already held in memory page through [`list_rows`] and
+//! [`paginate_names`] instead, which filter by a backend's [`Like`] rules
+//! and return output identical to the SQL-backed entry points.
 
 use std::borrow::Cow;
 
@@ -174,6 +178,185 @@ pub async fn list_entries<E>(
     Ok(ListEntriesResponse::brief(names, next_cursor))
 }
 
+/// Letter-case folding a backend applies before matching a `LIKE` pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fold {
+    /// Folds only ASCII letters; other characters compare exactly.
+    Ascii,
+    /// Folds every character with Unicode lowercasing.
+    Unicode,
+}
+
+/// The `LIKE` rules of one backend's catalog `search` filter.
+///
+/// Mirrors the SQL each backend runs today, `name LIKE '%' || search || '%'`:
+/// `%` matches any run of characters, `_` matches exactly one, and the
+/// escape character (when the backend has one) makes the next character
+/// literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Like {
+    /// Character that makes the next pattern character literal, if any.
+    pub escape: Option<char>,
+    /// Case folding applied to both the name and the pattern.
+    pub fold: Fold,
+}
+
+impl Like {
+    /// `PostgreSQL` `ILIKE` under the C collation: `\` escape, ASCII fold.
+    pub const POSTGRES: Self = Self {
+        escape: Some('\\'),
+        fold: Fold::Ascii,
+    };
+
+    /// `MySQL` / `MariaDB` `LOWER(name) LIKE LOWER(pattern)`: `\` escape, Unicode fold.
+    pub const MYSQL: Self = Self {
+        escape: Some('\\'),
+        fold: Fold::Unicode,
+    };
+
+    /// `SQLite` `LIKE` without an `ESCAPE` clause: no escape, ASCII fold.
+    pub const SQLITE: Self = Self {
+        escape: None,
+        fold: Fold::Ascii,
+    };
+
+    /// Folds and tokenizes the composed pattern `%<search>%`.
+    ///
+    /// Composing first, as the backend SQL does, means a trailing lone
+    /// escape in `search` escapes the closing `%`.
+    fn compile(self, search: &str) -> Vec<Token> {
+        let composed = self.fold(&format!("%{search}%"));
+        let mut tokens = Vec::new();
+        let mut chars = composed.chars();
+        while let Some(c) = chars.next() {
+            let token = match c {
+                c if Some(c) == self.escape => Token::Lit(chars.next().unwrap_or(c)),
+                '%' => Token::Any,
+                '_' => Token::One,
+                c => Token::Lit(c),
+            };
+            tokens.push(token);
+        }
+        tokens
+    }
+
+    /// Matches a folded `name` against compiled `pattern` tokens.
+    fn test(self, pattern: &[Token], name: &str) -> bool {
+        let name: Vec<char> = self.fold(name).chars().collect();
+        let (mut p, mut n) = (0, 0);
+        let mut backtrack = None;
+        while n < name.len() {
+            match pattern.get(p) {
+                Some(Token::Any) => {
+                    backtrack = Some((p, n));
+                    p += 1;
+                }
+                Some(Token::One) => (p, n) = (p + 1, n + 1),
+                Some(Token::Lit(c)) if *c == name[n] => (p, n) = (p + 1, n + 1),
+                _ => match backtrack {
+                    Some((star, from)) => {
+                        backtrack = Some((star, from + 1));
+                        (p, n) = (star + 1, from + 1);
+                    }
+                    None => return false,
+                },
+            }
+        }
+        pattern[p..].iter().all(|t| *t == Token::Any)
+    }
+
+    /// Applies this backend's case folding to `s`.
+    fn fold(self, s: &str) -> String {
+        match self.fold {
+            Fold::Ascii => s.to_ascii_lowercase(),
+            Fold::Unicode => s.chars().flat_map(char::to_lowercase).collect(),
+        }
+    }
+}
+
+/// One compiled `LIKE` pattern element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token {
+    /// `%`: any run of characters, including none.
+    Any,
+    /// `_`: exactly one character.
+    One,
+    /// A character that must match exactly (after folding).
+    Lit(char),
+}
+
+/// Pages in-memory `list*` rows into the response [`list_entries`] builds.
+///
+/// `rows` are name → metadata pairs in the SQL `ORDER BY` order. `search`
+/// is trimmed and dropped when blank, otherwise filters names with `like`.
+/// The filtered rows keep their order and page as in [`paginate`]. Brief
+/// mode returns the names of the paged rows.
+#[must_use]
+pub fn list_rows(
+    rows: &[(String, Value)],
+    cursor: Option<Cursor>,
+    page_size: u16,
+    search: Option<&str>,
+    detailed: bool,
+    like: Like,
+) -> ListEntriesResponse {
+    let (page, next_cursor) = page_matching(rows, |(name, _)| name, cursor, page_size, search, like);
+
+    if detailed {
+        let entries = page.into_iter().map(|(name, value)| (name.clone(), value.clone()));
+        return ListEntriesResponse::detailed(entries.collect(), next_cursor);
+    }
+
+    let names = page.into_iter().map(|(name, _)| name.clone()).collect();
+    ListEntriesResponse::brief(names, next_cursor)
+}
+
+/// Pages in-memory names the way [`paginate`] pages SQL rows.
+///
+/// `names` are in the SQL `ORDER BY` order. `search` is trimmed and
+/// dropped when blank, otherwise filters names with `like`.
+#[must_use]
+pub fn paginate_names(
+    names: &[String],
+    cursor: Option<Cursor>,
+    page_size: u16,
+    search: Option<&str>,
+    like: Like,
+) -> (Vec<String>, Option<Cursor>) {
+    let (page, next_cursor) = page_matching(names, String::as_str, cursor, page_size, search, like);
+    (page.into_iter().cloned().collect(), next_cursor)
+}
+
+/// Filters `items` by name, then slices one page with lookahead.
+///
+/// `items` are in the SQL `ORDER BY` order and `name` returns the text
+/// `search` matches. `search` is trimmed and dropped when blank. Serves
+/// rows whose search name differs from their detailed key.
+#[must_use]
+pub fn page_matching<'a, T>(
+    items: &'a [T],
+    name: impl Fn(&'a T) -> &'a str,
+    cursor: Option<Cursor>,
+    page_size: u16,
+    search: Option<&str>,
+    like: Like,
+) -> (Vec<&'a T>, Option<Cursor>) {
+    let page = Page {
+        offset: cursor.map_or(0, |c| c.offset),
+        size: page_size,
+    };
+    let pattern = search.map(str::trim).filter(|s| !s.is_empty()).map(|s| like.compile(s));
+    let skip = usize::try_from(page.offset).unwrap_or(usize::MAX);
+    let take = usize::from(page.size) + 1;
+    let window = items
+        .iter()
+        .filter(|item| pattern.as_ref().is_none_or(|p| like.test(p, name(item))))
+        .skip(skip)
+        .take(take)
+        .collect();
+    page.split(window)
+}
+
 /// Encodes a zero-based page offset as an opaque cursor string.
 fn encode_cursor(offset: u64) -> String {
     let payload = Payload { offset };
@@ -199,7 +382,220 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use serde_json::{Value, json};
 
-    use super::{Cursor, decode_cursor, encode_cursor, list_entries, paginate};
+    use super::{Cursor, Like, decode_cursor, encode_cursor, list_entries, list_rows, paginate, paginate_names};
+
+    fn matches(like: Like, name: &str, search: &str) -> bool {
+        like.test(&like.compile(search), name)
+    }
+
+    fn names(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn like_percent_matches_any_run() {
+        for like in [Like::POSTGRES, Like::MYSQL, Like::SQLITE] {
+            assert!(matches(like, "orders", "ord"));
+            assert!(matches(like, "orders", "o%s"));
+            assert!(matches(like, "orders", "%"));
+            assert!(matches(like, "", "%"));
+            assert!(!matches(like, "orders", "o%x"));
+        }
+    }
+
+    #[test]
+    fn like_underscore_matches_one_char() {
+        for like in [Like::POSTGRES, Like::MYSQL, Like::SQLITE] {
+            assert!(matches(like, "a_b", "a_b"));
+            assert!(matches(like, "axb", "a_b"));
+            assert!(matches(like, "aéb", "a_b"), "`_` must match one char, not one byte");
+            assert!(!matches(like, "ab", "a_b"));
+        }
+    }
+
+    #[test]
+    fn like_backslash_escapes_wildcards_and_itself() {
+        for like in [Like::POSTGRES, Like::MYSQL] {
+            assert!(matches(like, "a%b", r"a\%b"));
+            assert!(!matches(like, "axb", r"a\%b"));
+            assert!(matches(like, "a_b", r"a\_b"));
+            assert!(!matches(like, "axb", r"a\_b"));
+            assert!(matches(like, r"a\b", r"a\\b"));
+            assert!(!matches(like, "ab", r"a\\b"));
+        }
+    }
+
+    #[test]
+    fn like_trailing_lone_backslash_escapes_closing_percent() {
+        for like in [Like::POSTGRES, Like::MYSQL] {
+            assert!(matches(like, "xa%", r"a\"));
+            assert!(!matches(like, "xa%y", r"a\"));
+            assert!(!matches(like, r"xa\", r"a\"));
+            assert!(!matches(like, "xab", r"a\"));
+        }
+    }
+
+    #[test]
+    fn like_without_escape_treats_backslash_literally() {
+        let like = Like::SQLITE;
+        assert!(matches(like, r"a\b", r"a\b"));
+        assert!(matches(like, r"a\xb", r"a\_b"));
+        assert!(!matches(like, "a_b", r"a\_b"));
+        assert!(matches(like, r"xa\", r"a\"));
+    }
+
+    #[test]
+    fn like_ascii_fold_leaves_non_ascii_case_distinct() {
+        for like in [Like::POSTGRES, Like::SQLITE] {
+            assert!(matches(like, "Foo", "fOO"));
+            assert!(!matches(like, "Éa", "éA"));
+            assert!(matches(like, "é", "é"));
+        }
+    }
+
+    #[test]
+    fn like_unicode_fold_matches_non_ascii_case() {
+        let like = Like::MYSQL;
+        assert!(matches(like, "Foo", "fOO"));
+        assert!(matches(like, "Éa", "éA"));
+        assert!(matches(like, "straße", "STRA"));
+        assert!(matches(like, "ΟΣΑ", "ΟΣ"), "fold per char, no final-sigma context");
+    }
+
+    #[test]
+    fn paginate_names_blank_search_returns_all() {
+        let all = names(&["b", "a", "c"]);
+        for search in [None, Some(""), Some("   ")] {
+            let (page, next) = paginate_names(&all, None, 10, search, Like::POSTGRES);
+            assert_eq!(page, all, "search = {search:?}");
+            assert!(next.is_none());
+        }
+    }
+
+    #[test]
+    fn paginate_names_trims_search_and_keeps_fill_order() {
+        let all = names(&["zeta_ord", "orders", "users", "Ord"]);
+        let (page, next) = paginate_names(&all, None, 10, Some("  ord "), Like::POSTGRES);
+        assert_eq!(page, names(&["zeta_ord", "orders", "Ord"]));
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn paginate_names_exact_page_multiple_has_no_trailing_cursor() {
+        let all = names(&["a", "b", "c", "d"]);
+        let (first, next) = paginate_names(&all, None, 2, None, Like::SQLITE);
+        assert_eq!(first, names(&["a", "b"]));
+        assert_eq!(next, Some(Cursor { offset: 2 }));
+        let (second, next) = paginate_names(&all, next, 2, None, Like::SQLITE);
+        assert_eq!(second, names(&["c", "d"]));
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn paginate_names_partial_last_page() {
+        let all = names(&["a", "b", "c", "d", "e"]);
+        let (last, next) = paginate_names(&all, Some(Cursor { offset: 4 }), 2, None, Like::SQLITE);
+        assert_eq!(last, names(&["e"]));
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn paginate_names_offset_past_end_is_empty() {
+        let all = names(&["a", "b"]);
+        for offset in [2, 3, u64::MAX] {
+            let (page, next) = paginate_names(&all, Some(Cursor { offset }), 2, None, Like::SQLITE);
+            assert!(page.is_empty(), "offset = {offset}");
+            assert!(next.is_none(), "offset = {offset}");
+        }
+    }
+
+    #[test]
+    fn paginate_names_pages_the_filtered_subset() {
+        let all = names(&["t1", "x", "t2", "y", "t3"]);
+        let (first, next) = paginate_names(&all, None, 2, Some("t"), Like::SQLITE);
+        assert_eq!(first, names(&["t1", "t2"]));
+        let (second, next) = paginate_names(&all, next, 2, Some("t"), Like::SQLITE);
+        assert_eq!(second, names(&["t3"]));
+        assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn paginate_names_cursors_equal_paginate() {
+        let all: Vec<String> = (0..7).map(|i| format!("n{i}")).collect();
+        for page_size in [1u16, 2, 3, 7, 8] {
+            let mut cursor = None;
+            loop {
+                let ours = paginate_names(&all, cursor, page_size, None, Like::POSTGRES);
+                let theirs = paginate(cursor, page_size, async |page| {
+                    let start = usize::try_from(page.offset()).expect("small offset");
+                    let end = (start + usize::try_from(page.limit()).expect("small limit")).min(all.len());
+                    Ok::<_, Infallible>(all.get(start..end).unwrap_or_default().to_vec())
+                })
+                .await
+                .expect("infallible");
+                assert_eq!(ours, theirs, "page_size = {page_size}, cursor = {cursor:?}");
+                cursor = ours.1;
+                if cursor.is_none() {
+                    break;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn list_rows_detailed_duplicates_collect_like_list_entries() {
+        let rows = vec![
+            ("f".to_owned(), json!({"args": "int"})),
+            ("g".to_owned(), json!({"args": ""})),
+            ("f".to_owned(), json!({"args": "text"})),
+        ];
+        let ours = list_rows(&rows, None, 5, None, true, Like::POSTGRES);
+        let theirs = list_entries(
+            None,
+            5,
+            None,
+            true,
+            async |_, _| unreachable!(),
+            async |_, _| Ok::<_, Infallible>(rows.clone()),
+        )
+        .await
+        .expect("infallible");
+        assert_eq!(
+            serde_json::to_value(&ours).expect("response serializes"),
+            serde_json::to_value(&theirs).expect("response serializes")
+        );
+        assert_eq!(ours.entries.as_detailed(), theirs.entries.as_detailed());
+    }
+
+    #[test]
+    fn list_rows_brief_projects_paged_names() {
+        let rows = vec![
+            ("orders".to_owned(), json!(1)),
+            ("users".to_owned(), json!(2)),
+            ("order_items".to_owned(), json!(3)),
+            ("ordinals".to_owned(), json!(4)),
+        ];
+        let response = list_rows(&rows, None, 2, Some("ord"), false, Like::MYSQL);
+        assert_eq!(
+            response.entries.as_brief(),
+            Some(&["orders".to_owned(), "order_items".to_owned()][..])
+        );
+        assert_eq!(response.next_cursor, Some(Cursor { offset: 2 }));
+    }
+
+    #[test]
+    fn list_rows_detailed_pages_filtered_rows() {
+        let rows = vec![
+            ("a1".to_owned(), json!(1)),
+            ("b".to_owned(), json!(2)),
+            ("a2".to_owned(), json!(3)),
+        ];
+        let response = list_rows(&rows, Some(Cursor { offset: 1 }), 5, Some("a"), true, Like::SQLITE);
+        let map = response.entries.as_detailed().expect("detailed entries");
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["a2"]);
+        assert_eq!(map["a2"], json!(3));
+        assert!(response.next_cursor.is_none());
+    }
 
     #[test]
     fn encode_decode_round_trips_representative_offsets() {

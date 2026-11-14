@@ -1,6 +1,6 @@
 //! MCP tool: `listTriggers`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 use dbmcp_server::types::{ListEntriesResponse, ListTriggersRequest};
 
 use super::prelude::*;
@@ -129,7 +129,7 @@ const BRIEF_SQL: &str = r"
 /// `activationLevel` is always `ROW`. `ORDER BY TRIGGER_NAME` is sufficient —
 /// `(TRIGGER_SCHEMA, TRIGGER_NAME)` is the table's primary key, and the
 /// `WHERE` clause already pins `TRIGGER_SCHEMA`.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(TRIGGER_NAME AS CHAR) AS name,
         JSON_OBJECT(
@@ -181,6 +181,17 @@ impl MysqlHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.connection.default_database_name());
+
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.triggers,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::MYSQL,
+            ));
+        }
 
         listing::list_entries(
             cursor,

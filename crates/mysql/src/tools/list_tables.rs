@@ -1,6 +1,6 @@
 //! MCP tool: `listTables`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListTablesRequest};
@@ -39,7 +39,7 @@ const BRIEF_SQL: &str = r"
 /// segment after the **last** `@` (`SUBSTRING_INDEX(..., '@', -1)`) and the
 /// user is everything before it (`LEFT(..., LENGTH - host_len - 1)`), with
 /// embedded backticks doubled in both components.
-const DETAILED_SQL: &str = r#"
+pub(crate) const DETAILED_SQL: &str = r#"
 WITH table_info AS (
     SELECT
         t.TABLE_SCHEMA AS table_schema,
@@ -398,6 +398,17 @@ impl MysqlHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.connection.default_database_name());
+
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.tables,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::MYSQL,
+            ));
+        }
 
         listing::list_entries(
             cursor,

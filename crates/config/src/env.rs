@@ -435,6 +435,8 @@ pub const SSH_KEEPALIVE_INTERVAL: Setting = setting(
 );
 /// `ssh.local_port` / `DBMCP_SSH_LOCAL_PORT`.
 pub const SSH_LOCAL_PORT: Setting = setting("ssh.local_port", "DBMCP_SSH_LOCAL_PORT", int(1, u16::MAX as u64));
+/// `cache.ttl` / `DBMCP_CACHE_TTL`.
+pub const CACHE_TTL: Setting = setting("cache.ttl", "DBMCP_CACHE_TTL", int(0, 86400));
 
 /// Every setting, in documentation order.
 pub const SETTINGS: &[Setting] = &[
@@ -481,6 +483,7 @@ pub const SETTINGS: &[Setting] = &[
     SSH_STRICT_HOST_KEY_CHECKING,
     SSH_KEEPALIVE_INTERVAL,
     SSH_LOCAL_PORT,
+    CACHE_TTL,
 ];
 
 #[cfg(test)]
@@ -670,7 +673,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 43);
+        assert_eq!(SETTINGS.len(), 44);
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {

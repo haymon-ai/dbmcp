@@ -3,10 +3,12 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`PostgresHandler`](crate::PostgresHandler),
 //! which composes one [`PostgresConnection`] as a field.
+//! It also holds the cache next to the pools.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{CacheConfig, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
@@ -14,14 +16,23 @@ use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::info;
 
+use crate::cache::Snapshot;
+
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 
-/// Owns every `PgPool` the handler uses and the logic that builds them.
+/// Maximum number of cached per-database catalog snapshots.
+pub(crate) const CACHE_CAPACITY: u64 = 16;
+
+/// Owns every `PgPool` the handler uses, the logic that builds them, and the cache.
 #[derive(Clone)]
 pub(crate) struct PostgresConnection {
     config: DatabaseConfig,
     pools: Cache<String, PgPool>,
+    /// Catalog snapshots keyed by database name; `None` when caching is off.
+    pub(crate) cache: Option<Cache<String, Arc<Snapshot>>>,
+    /// The one database-list entry; `None` when caching is off.
+    pub(crate) databases: Option<Cache<(), Arc<Vec<String>>>>,
 }
 
 impl std::fmt::Debug for PostgresConnection {
@@ -33,11 +44,11 @@ impl std::fmt::Debug for PostgresConnection {
 }
 
 impl PostgresConnection {
-    /// Builds the connection with an empty pool cache.
+    /// Builds the connection with an empty pool cache and, when `cache` is set, the cache.
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig) -> Self {
+    pub(crate) fn new(config: &DatabaseConfig, cache: Option<CacheConfig>) -> Self {
         info!(
             "PostgreSQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -55,6 +66,13 @@ impl PostgresConnection {
         Self {
             config: config.clone(),
             pools,
+            cache: cache.map(|cache| {
+                Cache::builder()
+                    .max_capacity(CACHE_CAPACITY)
+                    .time_to_live(cache.ttl)
+                    .build()
+            }),
+            databases: cache.map(|cache| Cache::builder().max_capacity(1).time_to_live(cache.ttl).build()),
         }
     }
 
@@ -259,28 +277,31 @@ mod tests {
 
     #[tokio::test]
     async fn default_database_name_derived_from_config() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), None);
         assert_eq!(connection.default_database_name(), "mydb");
     }
 
     #[tokio::test]
     async fn defaults_db_to_username_when_name_missing() {
-        let connection = PostgresConnection::new(&DatabaseConfig {
-            name: None,
-            ..base_config()
-        });
+        let connection = PostgresConnection::new(
+            &DatabaseConfig {
+                name: None,
+                ..base_config()
+            },
+            None,
+        );
         assert_eq!(connection.default_database_name(), "pgadmin");
     }
 
     #[tokio::test]
     async fn none_target_returns_default_pool() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), None);
         connection.pool(None).await.expect("None target should succeed");
     }
 
     #[tokio::test]
     async fn arbitrary_target_database_is_permitted() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), None);
         connection
             .pool(Some("any_db"))
             .await
@@ -289,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pools() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), None);
         connection.pool(Some("a")).await.expect("pool a");
         connection.pool(Some("b")).await.expect("pool b");
         connection.shutdown().await;
@@ -298,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_cache_respects_capacity_const() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), None);
 
         // Insert one more pool than the cap; moka should evict the
         // oldest so the cached count stays at or below POOL_CACHE_CAPACITY.

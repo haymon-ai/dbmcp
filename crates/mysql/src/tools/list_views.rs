@@ -1,6 +1,6 @@
 //! MCP tool: `listViews`.
 
-use dbmcp_server::listing::{self, Cursor};
+use dbmcp_server::listing::{self, Cursor, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListViewsRequest};
@@ -126,7 +126,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// `LIMIT` pushes down before the JSON projection, so per-page work scales
 /// with `page_size + 1` rows regardless of how many views the schema holds.
-const DETAILED_SQL: &str = r"
+pub(crate) const DETAILED_SQL: &str = r"
     SELECT
         CAST(v.TABLE_NAME AS CHAR) AS name,
         JSON_OBJECT(
@@ -164,6 +164,17 @@ impl MysqlHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.connection.default_database_name());
+
+        if let Some(snapshot) = self.connection.snapshot(database).await {
+            return Ok(listing::list_rows(
+                &snapshot?.views,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::MYSQL,
+            ));
+        }
 
         listing::list_entries(
             cursor,

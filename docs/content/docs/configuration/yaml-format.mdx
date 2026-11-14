@@ -3,7 +3,7 @@ title: YAML format
 description: Structure of the dbmcp YAML config file, with an annotated example
 ---
 
-The config file is a YAML mapping. Top-level keys are `transport` and `log_level`, plus the sections `database`, `http`, `pii`, and `ssh`. Every key is the YAML key listed in [Configuration](/configuration).
+The config file is a YAML mapping. Top-level keys are `transport` and `log_level`, plus the sections `database`, `cache`, `http`, `pii`, and `ssh`. Every key is the YAML key listed in [Configuration](/configuration).
 
 - **Keys** are snake_case and strict: an unknown key is an error that names the file, line, and column, plus the keys accepted at that level.
 - **Enum values** are kebab-case and case-sensitive (`backend: postgres`, `strict_host_key_checking: accept-new`).
@@ -41,6 +41,9 @@ database:
   page_size: 100         # 1–500
   max_cell_chars: 4096   # per string value; 0 disables
   max_response_chars: 32000 # per response; 0 disables
+
+cache:
+  ttl: 3600              # cache lifetime in seconds; 0 disables
 
 http:                    # used only with transport: http
   host: 127.0.0.1

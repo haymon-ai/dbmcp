@@ -273,6 +273,7 @@ pub(crate) mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         }
     }
 
