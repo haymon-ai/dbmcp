@@ -1176,6 +1176,7 @@ dependencies = [
  "dbmcp-pii",
  "dbmcp-server",
  "dbmcp-sql",
+ "moka",
  "rmcp",
  "schemars",
  "serde",

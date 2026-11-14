@@ -5,12 +5,15 @@
 //! at one connection. In read-only mode the file is opened with
 //! `SQLITE_OPEN_READONLY`, so `SQLite` itself rejects every write.
 //! A progress handler interrupts statements that outlive the query timeout.
+//! It also holds the catalog cache next to the pool.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{CacheConfig, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
+use moka::future::Cache;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
@@ -18,14 +21,18 @@ use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePool, SqliteQuer
 use sqlx::{Executor as _, SqlStr};
 use tracing::info;
 
+use crate::tools::Snapshot;
+
 /// Virtual machine instructions `SQLite` runs between deadline checks.
 const PROGRESS_OPS: i32 = 1000;
 
-/// Owns the lazy `SQLite` pool and the logic that builds it.
+/// Owns the lazy `SQLite` pool, the logic that builds it, and the catalog cache.
 #[derive(Clone)]
 pub(crate) struct SqliteConnection {
     config: DatabaseConfig,
     pool: SqlitePool,
+    /// Catalog snapshot under one constant key; `None` when caching is off.
+    pub(crate) catalog: Option<Cache<(), Arc<Snapshot>>>,
 }
 
 impl std::fmt::Debug for SqliteConnection {
@@ -35,13 +42,14 @@ impl std::fmt::Debug for SqliteConnection {
 }
 
 impl SqliteConnection {
-    /// Builds the connection and its lazy pool.
-    pub(crate) fn new(config: &DatabaseConfig) -> Self {
+    /// Builds the connection, its lazy pool, and the catalog cache when `cache` is set.
+    pub(crate) fn new(config: &DatabaseConfig, cache: Option<CacheConfig>) -> Self {
         info!("SQLite lazy connection pool created");
 
         Self {
             config: config.clone(),
             pool: create_lazy_pool(config),
+            catalog: cache.map(|cache| Cache::builder().time_to_live(cache.ttl).build()),
         }
     }
 
@@ -217,13 +225,13 @@ mod tests {
 
     #[tokio::test]
     async fn new_creates_lazy_pool() {
-        let connection = SqliteConnection::new(&base_config());
+        let connection = SqliteConnection::new(&base_config(), None);
         assert_eq!(connection.pool.size(), 0, "pool should be lazy");
     }
 
     #[tokio::test]
     async fn pool_returns_single_pool() {
-        let connection = SqliteConnection::new(&base_config());
+        let connection = SqliteConnection::new(&base_config(), None);
         connection.pool(None).await.expect("None target should succeed");
         connection
             .pool(Some("anything"))
@@ -233,19 +241,25 @@ mod tests {
 
     #[tokio::test]
     async fn ping_succeeds_on_memory_db() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                ..base_config()
+            },
+            None,
+        );
         connection.ping().await.expect("in-memory database answers");
     }
 
     #[tokio::test]
     async fn ping_succeeds_while_connection_busy() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                ..base_config()
+            },
+            None,
+        );
         let _busy = connection.pool.acquire().await.expect("acquire the single connection");
         tokio::time::timeout(Duration::from_millis(500), connection.ping())
             .await
@@ -255,20 +269,26 @@ mod tests {
 
     #[tokio::test]
     async fn ping_fails_on_missing_file() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some("/nonexistent-dbmcp-dir/missing.db".into()),
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some("/nonexistent-dbmcp-dir/missing.db".into()),
+                ..base_config()
+            },
+            None,
+        );
         assert!(connection.ping().await.is_err(), "missing file must not ping");
     }
 
     #[tokio::test]
     async fn read_only_connection_rejects_writes() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            read_only: true,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                read_only: true,
+                ..base_config()
+            },
+            None,
+        );
         let error = connection
             .execute("CREATE TABLE t (id INTEGER)", None)
             .await
@@ -326,11 +346,14 @@ mod tests {
 
     #[tokio::test]
     async fn read_json_reads_in_read_only_mode() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            read_only: true,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                read_only: true,
+                ..base_config()
+            },
+            None,
+        );
         let rows = connection
             .read_json("SELECT 1 AS v", None, 0)
             .await
@@ -341,11 +364,14 @@ mod tests {
     #[tokio::test]
     async fn read_json_rejects_writes_in_read_only_mode() {
         // Without `query_only`, only the read-only file stops this write.
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            read_only: true,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                read_only: true,
+                ..base_config()
+            },
+            None,
+        );
         let error = connection
             .read_json("CREATE TABLE t (id INTEGER)", None, 0)
             .await
@@ -355,11 +381,14 @@ mod tests {
 
     #[tokio::test]
     async fn read_write_connection_allows_writes() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            read_only: false,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                read_only: false,
+                ..base_config()
+            },
+            None,
+        );
         connection
             .execute("CREATE TABLE t (id INTEGER)", None)
             .await
@@ -385,11 +414,14 @@ mod tests {
 
     #[tokio::test]
     async fn timed_out_statement_stops_and_frees_connection() {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            query_timeout: 1,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                query_timeout: 1,
+                ..base_config()
+            },
+            None,
+        );
         assert_endless_times_out(&connection).await;
         // Each statement gets a fresh deadline.
         assert_endless_times_out(&connection).await;
@@ -405,7 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pool() {
-        let connection = SqliteConnection::new(&base_config());
+        let connection = SqliteConnection::new(&base_config(), None);
         connection.shutdown().await;
         connection.shutdown().await;
     }
@@ -415,11 +447,14 @@ mod tests {
     /// The pool's single connection keeps the change count and rowid
     /// between statements, as in production.
     async fn memory_with_table() -> SqliteConnection {
-        let connection = SqliteConnection::new(&DatabaseConfig {
-            name: Some(":memory:".into()),
-            read_only: false,
-            ..base_config()
-        });
+        let connection = SqliteConnection::new(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                read_only: false,
+                ..base_config()
+            },
+            None,
+        );
         connection
             .execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)", None)
             .await

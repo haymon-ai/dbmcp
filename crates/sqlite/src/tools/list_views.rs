@@ -1,6 +1,6 @@
 //! MCP tool: `listViews`.
 
-use dbmcp_server::listing;
+use dbmcp_server::listing::{self, Like};
 use dbmcp_server::types::ListEntriesResponse;
 
 use super::prelude::*;
@@ -56,7 +56,7 @@ impl AsyncTool<SqliteHandler> for ListViewsTool {
 }
 
 /// Lists one page of user view names, sorted by name.
-const SQL: &str = r"
+pub(super) const SQL: &str = r"
     SELECT name
     FROM sqlite_schema
     WHERE type = 'view' AND name NOT LIKE 'sqlite_%'
@@ -73,6 +73,13 @@ impl SqliteHandler {
         &self,
         ListViewsRequest { cursor }: ListViewsRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
+        if let Some(snapshot) = self.connection.snapshot().await {
+            let snapshot = snapshot?;
+            let (views, next_cursor) =
+                listing::paginate_names(&snapshot.views, cursor, self.config.page_size, None, Like::SQLITE);
+            return Ok(ListEntriesResponse::brief(views, next_cursor));
+        }
+
         let (views, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
             self.connection
                 .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)

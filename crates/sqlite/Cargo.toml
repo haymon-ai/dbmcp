@@ -12,6 +12,7 @@ dbmcp-config = { workspace = true }
 dbmcp-pii = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
+moka = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

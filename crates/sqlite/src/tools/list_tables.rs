@@ -1,6 +1,6 @@
 //! MCP tool: `listTables`.
 
-use dbmcp_server::listing;
+use dbmcp_server::listing::{self, Like};
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListTablesRequest};
@@ -95,7 +95,7 @@ const BRIEF_SQL: &str = r"
 /// SQL, a synthesised `CREATE [UNIQUE] INDEX …` string so the field is never
 /// null. Columns use 1-based `ordinalPosition` (`cid + 1`) for cross-backend
 /// parity with `PostgreSQL`'s `pg_attribute.attnum`.
-const DETAILED_SQL: &str = r#"
+pub(super) const DETAILED_SQL: &str = r#"
     WITH table_info AS (
         SELECT
             tl.name AS table_name,
@@ -256,6 +256,18 @@ impl SqliteHandler {
             detailed,
         }: ListTablesRequest,
     ) -> Result<ListEntriesResponse, ErrorData> {
+        if let Some(snapshot) = self.connection.snapshot().await {
+            let snapshot = snapshot?;
+            return Ok(listing::list_rows(
+                &snapshot.tables,
+                cursor,
+                self.config.page_size,
+                search.as_deref(),
+                detailed,
+                Like::SQLITE,
+            ));
+        }
+
         listing::list_entries(
             cursor,
             self.config.page_size,
