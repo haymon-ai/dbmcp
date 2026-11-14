@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Simulation script for the data privacy VHS GIF.
 # Runs as an interactive session that looks like Claude Code, with redaction and the
-# optional ML model on, so names come back as <PERSON> too.
+# optional ML model on, so names come back as <PERSON_…> tokens too. The default
+# hash operator gives the same stored value the same token, so orders can be linked.
 # Usage: ./privacy.sh (interactive mode, no arguments)
 
 set -euo pipefail
@@ -41,15 +42,14 @@ respond() {
       printf "  ${DIM}⎿  3 rows, personal data redacted${RESET}\n"
       sleep 0.4
       printf "\n● Last week's 3 biggest orders:\n\n"
-      printf "  #1042  ${ACCENT}<PERSON>  <EMAIL_ADDRESS>${RESET}  \$4,820.00\n"
-      printf "  #1037  ${ACCENT}<PERSON>  <EMAIL_ADDRESS>${RESET}  \$3,915.50\n"
-      printf "  #1051  ${ACCENT}<PERSON>  <EMAIL_ADDRESS>${RESET}  \$2,640.00\n"
+      printf "  #1042  ${ACCENT}<PERSON_a31fec90098295f4>${RESET}  \$4,820.00\n"
+      printf "  #1037  ${ACCENT}<PERSON_7c02e4b19d5a6f38>${RESET}  \$3,915.50\n"
+      printf "  #1051  ${ACCENT}<PERSON_a31fec90098295f4>${RESET}  \$2,640.00\n"
       ;;
-    *"who placed"*|*"Who placed"*)
+    *"same customer"*)
       think "1.4s" 1.4
-      printf "\n● I can't tell: dbmcp redacted the real values,\n"
-      printf "  so I only see ${ACCENT}<PERSON>${RESET} and ${ACCENT}<EMAIL_ADDRESS>${RESET}.\n"
-      printf "  The total, ${BOLD}\$4,820.00${RESET}, is not personal data.\n"
+      printf "\n● Yes, both carry the same ${ACCENT}<PERSON_a31fec90098295f4>${RESET} token,\n"
+      printf "  so the same stored name; I still can't see who it is.\n"
       ;;
     *)
       think "1.0s" 1.0

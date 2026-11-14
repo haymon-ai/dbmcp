@@ -44,6 +44,8 @@ bs58 = { version = "0.5", features = ["check"] }
 clap = { version = "4", features = ["derive", "env"] }
 fancy-regex = "0.20"
 futures-util = { version = "0.3", default-features = false }
+getrandom = "0.4"
+hmac = "0.13"
 http = "1"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"

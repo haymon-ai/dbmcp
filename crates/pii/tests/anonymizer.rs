@@ -2,12 +2,14 @@
 //! CT-007 / SC-003 round-trip safety, and CT-008 hash-operator determinism.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use dbmcp_pii::{
-    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Entity, HashAlgorithm, Operator, OperatorConfig,
-    RecognizerResult, Score, ValidationOutcome, anonymize,
+    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Entity, Operator, RecognizerResult, Score,
+    ValidationOutcome, anonymize, operators::OperatorKind,
 };
+
+/// The 32-byte test key from the keyed-token spec vectors.
+const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
 fn make_result(et: Entity, start: usize, end: usize) -> RecognizerResult {
     make_result_scored(et, start, end, Score::new(0.5).unwrap())
@@ -35,7 +37,7 @@ fn us2_1_default_replace_rewrite() {
     let analyzer = Analyzer::with_defaults();
     let text = "ping me at jane.doe@example.com";
     let results = analyzer.analyze(text, &AnalyzeOptions::default());
-    let out = anonymize(text, results, &OperatorConfig::default());
+    let out = anonymize(text, results, &Operator::Replace);
     assert_eq!(out.text, "ping me at <EMAIL_ADDRESS>");
     assert_eq!(out.operations.len(), 1);
     let op = &out.operations[0];
@@ -48,20 +50,12 @@ fn us2_2_mask_chars_to_mask_12_from_end_true() {
     let analyzer = Analyzer::with_defaults();
     let text = "card 4111-1111-1111-1111";
     let results = analyzer.analyze(text, &AnalyzeOptions::default());
-    let mut per_entity = HashMap::new();
-    per_entity.insert(
-        Entity::CreditCard,
-        Operator::Mask {
-            masking_char: '*',
-            chars_to_mask: ChunkCount::N(12),
-            from_end: true,
-        },
-    );
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
+    let mask = Operator::Mask {
+        masking_char: '*',
+        chars_to_mask: ChunkCount::N(12),
+        from_end: true,
     };
-    let out = anonymize(text, results, &config);
+    let out = anonymize(text, results, &mask);
     assert!(out.text.starts_with("card 4111-11"), "got {:?}", out.text);
     assert!(out.text.ends_with("************"), "got {:?}", out.text);
     let cc = out
@@ -82,7 +76,7 @@ fn us2_3_overlap_collapses_to_single_op() {
         make_result_scored(Entity::EmailAddress, 2, 6, s),
         make_result_scored(Entity::CreditCard, 3, 7, high),
     ];
-    let out = anonymize(text, results, &OperatorConfig::default());
+    let out = anonymize(text, results, &Operator::Replace);
     assert_eq!(out.operations.len(), 1);
     assert_eq!(out.operations[0].entity_type, Entity::CreditCard);
     assert!(
@@ -101,15 +95,10 @@ fn us2_4_hash_deterministic_per_input() {
         analyzer.analyze(text, &AnalyzeOptions::default())
     };
 
-    let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha256));
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
-    };
+    let hash = Operator::hash(KEY);
 
-    let a = anonymize(text, results_call(), &config);
-    let b = anonymize(text, results_call(), &config);
+    let a = anonymize(text, results_call(), &hash);
+    let b = anonymize(text, results_call(), &hash);
     assert_eq!(a.text, b.text);
 }
 
@@ -130,7 +119,7 @@ fn new_offsets_are_codepoint_aligned() {
 
     for (label, text, start, end) in cases.iter().copied() {
         let r = make_result(Entity::EmailAddress, start, end);
-        let out = anonymize(text, vec![r], &OperatorConfig::default());
+        let out = anonymize(text, vec![r], &Operator::Replace);
         for op in &out.operations {
             assert!(
                 out.text.is_char_boundary(op.new_start),
@@ -159,7 +148,7 @@ fn outside_regions_byte_equal_to_input() {
     let text = "hello WORLD goodbye";
     // Replace WORLD only.
     let r = make_result(Entity::EmailAddress, 6, 11);
-    let out = anonymize(text, vec![r], &OperatorConfig::default());
+    let out = anonymize(text, vec![r], &Operator::Replace);
     // Prefix and suffix in the rewritten text must match the input outside the span.
     assert!(out.text.starts_with("hello "));
     assert!(out.text.ends_with(" goodbye"));
@@ -170,7 +159,7 @@ fn multiple_non_overlapping_spans_rewrite_in_position_order() {
     let text = "aaa BBB ccc DDD eee";
     let r1 = make_result(Entity::EmailAddress, 4, 7);
     let r2 = make_result(Entity::CreditCard, 12, 15);
-    let out = anonymize(text, vec![r1, r2], &OperatorConfig::default());
+    let out = anonymize(text, vec![r1, r2], &Operator::Replace);
     assert_eq!(out.operations.len(), 2);
     assert!(out.operations[0].original_start < out.operations[1].original_start);
     assert_eq!(
@@ -184,55 +173,27 @@ fn multiple_non_overlapping_spans_rewrite_in_position_order() {
 }
 
 #[test]
-fn sha256_deterministic_bare() {
-    let text = "hello world";
-    let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha256));
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
-    };
-    let a = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    let b = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    assert_eq!(a.text, b.text);
+fn hash_emits_keyed_token_shape() {
+    let text = "mail jane.doe@example.com now";
+    let out = anonymize(
+        text,
+        vec![make_result(Entity::EmailAddress, 5, 25)],
+        &Operator::hash(KEY),
+    );
+    assert_eq!(out.text, "mail <EMAIL_ADDRESS_4e1f0dd69c51e84c> now");
+    assert_eq!(out.operations[0].operator, OperatorKind::Hash);
 }
 
 #[test]
-fn sha512_deterministic_bare() {
-    let text = "hello world";
-    let mut per_entity = HashMap::new();
-    per_entity.insert(Entity::EmailAddress, Operator::hash(HashAlgorithm::Sha512));
-    let config = OperatorConfig {
-        per_entity,
-        ..OperatorConfig::default()
-    };
-    let a = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    let b = anonymize(text, vec![make_result(Entity::EmailAddress, 0, 5)], &config);
-    assert_eq!(a.text, b.text);
-}
-
-#[test]
-fn sha256_differs_from_sha512() {
-    let text = "hello world";
-
-    let cfg = |alg| {
-        let mut per = HashMap::new();
-        per.insert(Entity::EmailAddress, Operator::hash(alg));
-        OperatorConfig {
-            per_entity: per,
-            ..OperatorConfig::default()
-        }
-    };
-
-    let s256 = anonymize(
-        text,
-        vec![make_result(Entity::EmailAddress, 0, 5)],
-        &cfg(HashAlgorithm::Sha256),
+fn hash_embedded_span_matches_whole_cell() {
+    let email = "jane.doe@example.com";
+    let embedded = format!("contact {email} today");
+    let config = Operator::hash(KEY);
+    let whole = anonymize(email, vec![make_result(Entity::EmailAddress, 0, email.len())], &config);
+    let inner = anonymize(
+        &embedded,
+        vec![make_result(Entity::EmailAddress, 8, 8 + email.len())],
+        &config,
     );
-    let s512 = anonymize(
-        text,
-        vec![make_result(Entity::EmailAddress, 0, 5)],
-        &cfg(HashAlgorithm::Sha512),
-    );
-    assert_ne!(s256.text, s512.text);
+    assert_eq!(inner.text, format!("contact {} today", whole.text));
 }

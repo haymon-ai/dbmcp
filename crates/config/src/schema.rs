@@ -3,7 +3,7 @@
 //! The schema is hand-written in `assets/dbmcp.schema.json` and embedded in
 //! the binary. Editors use all of it; the loader uses only its structure.
 //! [`validate`] strips the value keywords (`type`, `enum`, `minimum`,
-//! `maximum`, `items`) from every setting, then checks the file's keys and
+//! `maximum`, `minLength`, `items`) from every setting, then checks the file's keys and
 //! the shape of the root and each section. Setting values are checked by
 //! their [`Kind`] instead. Errors are rendered here, value-free; `boon`'s own
 //! messages echo values and are never shown.
@@ -30,7 +30,7 @@ pub(crate) const URL: &str =
 pub(crate) const SCHEMA: &str = include_str!("../assets/dbmcp.schema.json");
 
 /// Keywords that check a setting's value; [`Kind`](crate::env::Kind) owns these rules.
-const VALUE_KEYWORDS: [&str; 5] = ["type", "enum", "minimum", "maximum", "items"];
+const VALUE_KEYWORDS: [&str; 6] = ["type", "enum", "minimum", "maximum", "minLength", "items"];
 
 /// Validates the structure of the config file at `file` against the config schema.
 ///

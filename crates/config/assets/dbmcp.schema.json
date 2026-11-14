@@ -337,7 +337,15 @@
             "hash",
             null
           ],
-          "default": "replace"
+          "default": "hash"
+        },
+        "key": {
+          "description": "HMAC key for the hash operator, at least 32 bytes; ignored for other operators.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 32
         },
         "categories": {
           "description": "Category subset for the analyzer registry; all built-ins when unset.",
