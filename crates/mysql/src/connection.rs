@@ -206,17 +206,17 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
         }
     }
 
-    let mut pool_opts = sqlx::pool::PoolOptions::new()
+    let mut pool_ops = sqlx::pool::PoolOptions::new()
         .max_connections(config.max_pool_size)
         .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
         .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
         .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
 
     if let Some(timeout) = config.connection_timeout {
-        pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
+        pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
     }
     if config.read_only {
-        pool_opts = pool_opts.after_connect(|conn, _meta| {
+        pool_ops = pool_ops.after_connect(|conn, _meta| {
             Box::pin(async move {
                 sqlx::raw_sql("SET SESSION TRANSACTION READ ONLY")
                     .execute(conn)
@@ -226,7 +226,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
         });
     }
 
-    pool_opts.connect_lazy_with(conn_ops)
+    pool_ops.connect_lazy_with(conn_ops)
 }
 
 /// Quotes `value` as a `MySQL` identifier (backtick-wrapped).
