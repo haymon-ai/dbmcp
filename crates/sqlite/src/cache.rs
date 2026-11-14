@@ -137,17 +137,17 @@ mod tests {
 
     #[tokio::test]
     async fn failed_fill_caches_nothing() {
-        let path = std::env::temp_dir().join(format!("dbmcp-catalog-{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        // The pool keeps the file open, so the directory's drop cleans it up; Windows
+        // refuses to remove an open file.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("cache.db");
         let connection = cached(path.to_str().expect("utf-8 path"));
 
         let error = snapshot(&connection).await.expect_err("missing file must fail");
         assert!(error.message.contains("Database error"), "unexpected error: {error:?}");
 
         std::fs::File::create(&path).expect("create database file");
-        let filled = snapshot(&connection).await;
-        std::fs::remove_file(&path).expect("remove database file");
-        filled.expect("next call retries the fill");
+        snapshot(&connection).await.expect("next call retries the fill");
     }
 
     #[tokio::test]

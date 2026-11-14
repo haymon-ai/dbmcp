@@ -1183,6 +1183,7 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]
