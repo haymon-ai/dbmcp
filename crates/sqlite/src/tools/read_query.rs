@@ -64,11 +64,12 @@ impl AsyncTool<SqliteHandler> for ReadQueryTool {
 impl SqliteHandler {
     /// Executes a read-only SQL query, paginating `SELECT` result rows.
     ///
-    /// Validates that the query is read-only, then dispatches on the
-    /// classified [`StatementKind`]: `Select` is wrapped in a subquery with
-    /// a server-controlled `LIMIT`/`OFFSET`; `NonSelect` (`EXPLAIN` under
-    /// the `SQLite` dialect) is executed as-is and returned in a single
-    /// page. A malformed `cursor` is rejected by the serde deserializer
+    /// Validates that the query is read-only and runs it under
+    /// `query_only`, so `SQLite` rejects writes the validator misses. It
+    /// then dispatches on the classified [`StatementKind`]: `Select` is
+    /// wrapped in a subquery with a server-controlled `LIMIT`/`OFFSET`;
+    /// `NonSelect` (`EXPLAIN` under the `SQLite` dialect) is executed as-is
+    /// and returned in a single page. A malformed `cursor` is rejected by the serde deserializer
     /// before this method is called, which rmcp reports as a tool result
     /// with `isError: true`.
     ///
@@ -88,12 +89,12 @@ impl SqliteHandler {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.fetch_json(wrapped.as_str(), None, timeout).await
+                    self.connection.read_json(wrapped.as_str(), None, timeout).await
                 })
                 .await?
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.fetch_json(query.as_str(), None, timeout).await?;
+                let rows = self.connection.read_json(query.as_str(), None, timeout).await?;
                 (rows, None)
             }
         };

@@ -121,6 +121,10 @@ impl Connection for PostgresConnection {
         self.config.query_timeout
     }
 
+    fn read_only(&self) -> bool {
+        self.config.read_only
+    }
+
     fn is_timeout(error: &sqlx::Error) -> bool {
         // 57014 is shared with other cancels; only `statement_timeout` counts.
         error

@@ -724,20 +724,20 @@ async fn test_explain_query_select() {
 }
 
 #[tokio::test]
-async fn test_explain_query_analyze_write_blocked_read_only() {
-    let handler = handler(true);
-
-    let response = handler
-        .explain_query(
-            Some("app".into()),
-            "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
-            true,
-        )
-        .await;
-    assert!(
-        response.is_err(),
-        "Expected error for EXPLAIN ANALYZE on write statement in read-only mode"
-    );
+async fn test_explain_query_analyze_write_blocked() {
+    for read_only in [true, false] {
+        let response = handler(read_only)
+            .explain_query(
+                Some("app".into()),
+                "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+                true,
+            )
+            .await;
+        assert!(
+            response.is_err(),
+            "Expected error for EXPLAIN ANALYZE on write statement (read_only={read_only})"
+        );
+    }
 }
 
 #[tokio::test]
@@ -836,21 +836,21 @@ async fn test_explain_query_analyze() {
 }
 
 #[tokio::test]
-async fn test_explain_query_plain_write_blocked_in_read_only() {
-    let handler = handler(true);
-
-    // Read-only mode runs every EXPLAIN in a read-only transaction, which rejects write statements.
-    let response = handler
-        .explain_query(
-            Some("app".into()),
-            "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
-            false,
-        )
-        .await;
-    assert!(
-        response.is_err(),
-        "Plain EXPLAIN of a write statement must be rejected in read-only mode"
-    );
+async fn test_explain_query_plain_write_blocked() {
+    // Every EXPLAIN runs in a read-only transaction, which rejects write statements.
+    for read_only in [true, false] {
+        let response = handler(read_only)
+            .explain_query(
+                Some("app".into()),
+                "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
+                false,
+            )
+            .await;
+        assert!(
+            response.is_err(),
+            "Plain EXPLAIN of a write statement must be rejected (read_only={read_only})"
+        );
+    }
 }
 
 #[tokio::test]

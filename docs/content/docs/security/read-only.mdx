@@ -36,9 +36,9 @@ This validation is always enforced, even when read-only mode is disabled, preven
 
 ## Read-Only Transactions
 
-On MySQL, MariaDB, and PostgreSQL, `readQuery` runs every statement inside a `START TRANSACTION READ ONLY` transaction, and so does `explainQuery` in read-only mode. The database itself rejects writes to data, including writes made by functions that pass validation, such as sequence functions (`nextval`), large-object functions, and user-defined functions. The transaction is always rolled back; on PostgreSQL this also keeps session settings changed by a query from carrying over to later queries.
+`readQuery` and `explainQuery` run read-only in every mode, even when read-only mode is disabled. On MySQL, MariaDB, and PostgreSQL, they run every statement inside a `START TRANSACTION READ ONLY` transaction. The database itself rejects writes to data, including writes made by functions that pass validation, such as sequence functions (`nextval`), large-object functions, and user-defined functions. The transaction is always rolled back; on PostgreSQL this also keeps session settings changed by a query from carrying over to later queries.
 
-SQLite has no read-only transactions. Instead, in read-only mode the database file is opened read-only (`SQLITE_OPEN_READONLY`), so SQLite itself rejects every write, including writes to attached databases.
+SQLite has no read-only transactions. Instead, in read-only mode the database file is opened read-only (`SQLITE_OPEN_READONLY`), so SQLite itself rejects every write, including writes to attached databases. When read-only mode is disabled, `readQuery` and `explainQuery` run under `PRAGMA query_only`; <Dbmcp /> switches it off again before the connection's next use.
 
 ## Blocked Operations
 

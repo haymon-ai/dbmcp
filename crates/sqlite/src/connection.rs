@@ -14,7 +14,8 @@ use dbmcp_sql::SqlError;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqliteQueryResult};
+use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePool, SqliteQueryResult, SqliteRow};
+use sqlx::{Executor as _, SqlStr};
 use tracing::info;
 
 /// Virtual machine instructions `SQLite` runs between deadline checks.
@@ -72,6 +73,10 @@ impl Connection for SqliteConnection {
         self.config.query_timeout
     }
 
+    fn read_only(&self) -> bool {
+        self.config.read_only
+    }
+
     fn is_timeout(error: &sqlx::Error) -> bool {
         // Only the progress handler set by `set_timeout` interrupts statements.
         error
@@ -99,6 +104,22 @@ impl Connection for SqliteConnection {
             }
         }
         (rows_affected, last_insert_id)
+    }
+
+    /// Fetches under `PRAGMA query_only`: `SQLite` has no read-only transactions.
+    ///
+    /// A file opened read-only needs no pragma. Otherwise the pool's
+    /// `before_acquire` hook switches `query_only` off again before the
+    /// connection's next use.
+    async fn fetch_read_only(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        query: (SqlStr, Option<SqliteArguments>),
+    ) -> Result<Vec<SqliteRow>, sqlx::Error> {
+        if !self.read_only() {
+            sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
+        }
+        conn.fetch_all(query).await
     }
 
     async fn session_id(&self, _conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
@@ -129,6 +150,8 @@ impl Connection for SqliteConnection {
 /// Forces `max_connections` to 1 — `SQLite` is a single-writer backend.
 /// Opens the file read-only when `config.read_only` is set, backing the
 /// statement filter at the database: `SQLite` has no read-only transactions.
+/// Otherwise switches `query_only` off on every acquire, undoing
+/// [`fetch_read_only`](Connection::fetch_read_only).
 fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
     let conn_ops = SqliteConnectOptions::new()
         .filename(config.name.as_deref().unwrap_or_default())
@@ -138,6 +161,15 @@ fn create_lazy_pool(config: &DatabaseConfig) -> SqlitePool {
         .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
         .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
         .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+
+    if !config.read_only {
+        pool_opts = pool_opts.before_acquire(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA query_only = OFF").execute(&mut *conn).await?;
+                Ok(true)
+            })
+        });
+    }
 
     if let Some(timeout) = config.connection_timeout {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
@@ -156,6 +188,9 @@ pub(crate) fn quote_ident(value: &str) -> String {
 mod tests {
     use super::*;
     use dbmcp_config::DatabaseBackend;
+
+    /// Counts rows of an endless recursive CTE; only a timeout stops it.
+    const ENDLESS: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c";
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {
@@ -238,6 +273,83 @@ mod tests {
             .execute("CREATE TABLE t (id INTEGER)", None)
             .await
             .expect_err("read-only connection must reject writes");
+        assert!(
+            matches!(error, SqlError::ReadOnlyViolation),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_json_rejects_writes_in_read_write_mode() {
+        let connection = memory_with_table().await;
+        let error = connection
+            .read_json("INSERT INTO t (a) VALUES (1) RETURNING id", None, 0)
+            .await
+            .expect_err("read_json must reject writes");
+        assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
+        connection
+            .execute("INSERT INTO t (a) VALUES (2)", None)
+            .await
+            .expect("query_only is switched off after the read");
+    }
+
+    #[tokio::test]
+    async fn read_json_switches_query_only_off_after_timeout() {
+        let connection = memory_with_table().await;
+        let error = connection
+            .read_json(ENDLESS, None, 1)
+            .await
+            .expect_err("endless read must time out");
+        assert!(
+            matches!(error, SqlError::QueryTimeout { .. }),
+            "unexpected error: {error}"
+        );
+        connection
+            .execute("INSERT INTO t (a) VALUES (1)", None)
+            .await
+            .expect("query_only is switched off after the timed-out read");
+    }
+
+    #[tokio::test]
+    async fn dropped_read_leaves_no_query_only_behind() {
+        let connection = memory_with_table().await;
+        // Drop the read mid-statement.
+        let _ = tokio::time::timeout(Duration::from_millis(200), connection.read_json(ENDLESS, None, 1)).await;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            connection.execute("INSERT INTO t (a) VALUES (1)", None),
+        )
+        .await
+        .expect("connection must come back")
+        .expect("before_acquire switches query_only off");
+    }
+
+    #[tokio::test]
+    async fn read_json_reads_in_read_only_mode() {
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: true,
+            ..base_config()
+        });
+        let rows = connection
+            .read_json("SELECT 1 AS v", None, 0)
+            .await
+            .expect("reads still work");
+        assert_eq!(rows, vec![serde_json::json!({"v": 1})]);
+    }
+
+    #[tokio::test]
+    async fn read_json_rejects_writes_in_read_only_mode() {
+        // Without `query_only`, only the read-only file stops this write.
+        let connection = SqliteConnection::new(&DatabaseConfig {
+            name: Some(":memory:".into()),
+            read_only: true,
+            ..base_config()
+        });
+        let error = connection
+            .read_json("CREATE TABLE t (id INTEGER)", None, 0)
+            .await
+            .expect_err("read-only file must reject writes");
         assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
     }
 
@@ -256,10 +368,9 @@ mod tests {
 
     /// Counts an endless recursive CTE, asserting `SQLite` stops it at the 1 s timeout.
     async fn assert_endless_times_out(connection: &SqliteConnection) {
-        let endless = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c";
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            connection.fetch_json(endless, None, connection.query_timeout()),
+            connection.read_json(ENDLESS, None, connection.query_timeout()),
         )
         .await
         .expect("statement must stop before the test deadline");
@@ -284,7 +395,7 @@ mod tests {
         assert_endless_times_out(&connection).await;
         let rows = tokio::time::timeout(
             Duration::from_secs(1),
-            connection.fetch_json("SELECT 1 AS v", None, connection.query_timeout()),
+            connection.read_json("SELECT 1 AS v", None, connection.query_timeout()),
         )
         .await
         .expect("connection must be free right after the timeout")
