@@ -12,12 +12,14 @@ dbmcp-config = { workspace = true }
 dbmcp-pii = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
+futures-util = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlparser = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite", "json"] }
+sqlx-json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

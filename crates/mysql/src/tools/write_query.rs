@@ -114,9 +114,14 @@ impl MysqlHandler {
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), database).await?;
-        let rows = self.redactor.redact_rows(rows).await?;
-        let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        let mut window = truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
+        let (rows_affected, last_insert_id) = self
+            .connection
+            .execute_json(query.as_str(), database, |row| window.push(row))
+            .await?;
+        let rows = self.redactor.redact_rows(window.rows).await?;
+        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        fitted.omit(window.rest);
 
         Ok(WriteQueryResponse {
             rows: fitted.rows,

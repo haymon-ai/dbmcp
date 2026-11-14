@@ -11,11 +11,14 @@ use std::time::Duration;
 use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
+use futures_util::TryStreamExt as _;
+use serde_json::Value;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePool, SqliteQueryResult, SqliteRow};
+use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePool, SqliteQueryResult};
 use sqlx::{Executor as _, SqlStr};
+use sqlx_json::RowExt as _;
 use tracing::info;
 
 /// Virtual machine instructions `SQLite` runs between deadline checks.
@@ -115,11 +118,16 @@ impl Connection for SqliteConnection {
         &self,
         conn: &mut sqlx::SqliteConnection,
         query: (SqlStr, Option<SqliteArguments>),
-    ) -> Result<Vec<SqliteRow>, sqlx::Error> {
+        mut sink: impl FnMut(Value) + Send,
+    ) -> Result<(), sqlx::Error> {
         if !self.read_only() {
             sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
         }
-        conn.fetch_all(query).await
+        let mut rows = conn.fetch(query);
+        while let Some(row) = rows.try_next().await? {
+            sink(row.to_json());
+        }
+        Ok(())
     }
 
     async fn session_id(&self, _conn: &mut sqlx::SqliteConnection) -> Result<Option<u64>, sqlx::Error> {
@@ -283,7 +291,7 @@ mod tests {
     async fn read_json_rejects_writes_in_read_write_mode() {
         let connection = memory_with_table().await;
         let error = connection
-            .read_json("INSERT INTO t (a) VALUES (1) RETURNING id", None, 0)
+            .read_json("INSERT INTO t (a) VALUES (1) RETURNING id", None, 0, |_| {})
             .await
             .expect_err("read_json must reject writes");
         assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
@@ -297,7 +305,7 @@ mod tests {
     async fn read_json_switches_query_only_off_after_timeout() {
         let connection = memory_with_table().await;
         let error = connection
-            .read_json(ENDLESS, None, 1)
+            .read_json(ENDLESS, None, 1, |_| {})
             .await
             .expect_err("endless read must time out");
         assert!(
@@ -314,7 +322,11 @@ mod tests {
     async fn dropped_read_leaves_no_query_only_behind() {
         let connection = memory_with_table().await;
         // Drop the read mid-statement.
-        let _ = tokio::time::timeout(Duration::from_millis(200), connection.read_json(ENDLESS, None, 1)).await;
+        let _ = tokio::time::timeout(
+            Duration::from_millis(200),
+            connection.read_json(ENDLESS, None, 1, |_| {}),
+        )
+        .await;
         tokio::time::timeout(
             Duration::from_secs(10),
             connection.execute("INSERT INTO t (a) VALUES (1)", None),
@@ -331,8 +343,9 @@ mod tests {
             read_only: true,
             ..base_config()
         });
-        let rows = connection
-            .read_json("SELECT 1 AS v", None, 0)
+        let mut rows = Vec::new();
+        connection
+            .read_json("SELECT 1 AS v", None, 0, |row| rows.push(row))
             .await
             .expect("reads still work");
         assert_eq!(rows, vec![serde_json::json!({"v": 1})]);
@@ -347,7 +360,7 @@ mod tests {
             ..base_config()
         });
         let error = connection
-            .read_json("CREATE TABLE t (id INTEGER)", None, 0)
+            .read_json("CREATE TABLE t (id INTEGER)", None, 0, |_| {})
             .await
             .expect_err("read-only file must reject writes");
         assert!(error.to_string().contains("readonly"), "unexpected error: {error}");
@@ -370,7 +383,7 @@ mod tests {
     async fn assert_endless_times_out(connection: &SqliteConnection) {
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            connection.read_json(ENDLESS, None, connection.query_timeout()),
+            connection.read_json(ENDLESS, None, connection.query_timeout(), |_| {}),
         )
         .await
         .expect("statement must stop before the test deadline");
@@ -393,9 +406,10 @@ mod tests {
         assert_endless_times_out(&connection).await;
         // Each statement gets a fresh deadline.
         assert_endless_times_out(&connection).await;
-        let rows = tokio::time::timeout(
+        let mut rows = Vec::new();
+        tokio::time::timeout(
             Duration::from_secs(1),
-            connection.read_json("SELECT 1 AS v", None, connection.query_timeout()),
+            connection.read_json("SELECT 1 AS v", None, connection.query_timeout(), |row| rows.push(row)),
         )
         .await
         .expect("connection must be free right after the timeout")
@@ -428,8 +442,7 @@ mod tests {
     }
 
     async fn counts(connection: &SqliteConnection, sql: &str) -> (u64, Option<u64>) {
-        let (_, rows_affected, last_insert_id) = connection.execute_json(sql, None).await.expect(sql);
-        (rows_affected, last_insert_id)
+        connection.execute_json(sql, None, |_| {}).await.expect(sql)
     }
 
     #[tokio::test]
@@ -502,8 +515,9 @@ mod tests {
     #[tokio::test]
     async fn execute_json_returns_returning_rows() {
         let connection = memory_with_table().await;
-        let (rows, rows_affected, last_insert_id) = connection
-            .execute_json("INSERT INTO t (a) VALUES (7) RETURNING a", None)
+        let mut rows = Vec::new();
+        let (rows_affected, last_insert_id) = connection
+            .execute_json("INSERT INTO t (a) VALUES (7) RETURNING a", None, |row| rows.push(row))
             .await
             .expect("insert returning");
         assert_eq!(rows, vec![serde_json::json!({"a": 7})]);

@@ -15,6 +15,11 @@
 //!
 //! A cap of `0` disables it. Run [`fit`] after PII redaction, so a span
 //! cut by a cap is still seen whole by the redactor.
+//!
+//! [`Window`] applies the same budget while rows are read: it keeps only
+//! the rows whose estimated size fits and counts the rest without storing
+//! them, so a large result never sits in memory whole. [`fit`] then
+//! applies the exact caps to the rows the window kept.
 
 use std::fmt::Write as _;
 use std::io;
@@ -80,6 +85,110 @@ impl Fitted {
         Some(Cursor {
             offset: start.saturating_add(self.rows.len() as u64),
         })
+    }
+
+    /// Counts `rows` more rows that were dropped before [`fit`] saw them.
+    ///
+    /// Adds them to `rowsOmitted` and marks the result truncated; `0` changes nothing.
+    pub fn omit(&mut self, rows: u64) {
+        if rows == 0 {
+            return;
+        }
+        let omitted = self.truncation.rows_omitted.unwrap_or(0).saturating_add(rows);
+        self.truncation = Truncation {
+            truncated: true,
+            hint: Some(HINT),
+            rows_omitted: Some(omitted),
+        };
+    }
+}
+
+/// Rows read into the response budget, plus a count of the rows past it.
+///
+/// Feed every row of a result to [`push`](Window::push). The window skips
+/// the first `offset` rows, then keeps rows while it holds fewer than
+/// `size` and their estimated size fits the response budget. Once a row
+/// is not kept, the window is full: every later row only bumps
+/// [`rest`](Window::rest), so kept rows stay contiguous.
+#[derive(Debug)]
+pub struct Window {
+    /// Leading rows still to skip.
+    offset: u64,
+    /// Most rows to keep; `None` = bounded by the budget only.
+    size: Option<usize>,
+    /// Rows kept, uncut and in read order.
+    pub rows: Vec<Value>,
+    /// Rows read after the window was full; counted, not stored.
+    pub rest: u64,
+    /// Per-cell cap the estimate applies, `0` = off.
+    max_cell: usize,
+    /// Response cap the kept rows must fit, `0` = off.
+    max_response: usize,
+    /// Estimated serialized chars of the kept rows, brackets and commas included.
+    chars: usize,
+}
+
+impl Window {
+    /// Creates an empty window skipping `offset` rows and keeping up to `size`.
+    ///
+    /// `max_cell` and `max_response` are the caps [`fit`] applies later,
+    /// `0` = off.
+    #[must_use]
+    pub fn new(offset: u64, size: Option<usize>, max_cell: usize, max_response: usize) -> Self {
+        Self {
+            offset,
+            size,
+            rows: Vec::new(),
+            rest: 0,
+            max_cell,
+            max_response,
+            // `[` and `]` around the rows.
+            chars: 2,
+        }
+    }
+
+    /// Skips, keeps, or counts the next row of the result.
+    ///
+    /// The size estimate measures a copy of `row` cut to `max_cell`, as
+    /// [`fit`] will; the kept row stays uncut. The first kept row is kept
+    /// whatever its size, so paging moves forward.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: serializing a JSON value into the in-memory char
+    /// counter cannot fail.
+    pub fn push(&mut self, row: Value) {
+        if self.offset > 0 {
+            self.offset -= 1;
+            return;
+        }
+        if self.rest > 0 || self.size.is_some_and(|size| self.rows.len() >= size) {
+            self.rest += 1;
+            return;
+        }
+        if self.max_response > 0 {
+            let total = self.chars + self.estimate(&row) + usize::from(!self.rows.is_empty());
+            if !self.rows.is_empty() && total > self.max_response.saturating_sub(RESERVED_CHARS) {
+                self.rest += 1;
+                return;
+            }
+            self.chars = total;
+        }
+        self.rows.push(row);
+    }
+
+    /// Serialized chars of `row` once [`fit`] cuts its long strings.
+    fn estimate(&self, row: &Value) -> usize {
+        let mut chars = CharCount(0);
+        if self.max_cell > 0 {
+            let mut cut = row.clone();
+            cut_strings(&mut cut, self.max_cell);
+            serde_json::to_writer(&mut chars, &cut)
+        } else {
+            serde_json::to_writer(&mut chars, row)
+        }
+        .expect("a JSON value serializes into a char counter");
+        chars.0
     }
 }
 
@@ -230,6 +339,119 @@ mod tests {
         assert_eq!(fitted.rows.len(), 1);
         assert_eq!(fitted.truncation.rows_omitted, Some(1));
         assert!(fitted.truncation.truncated);
+    }
+
+    #[test]
+    fn omit_adds_rows_and_marks_truncated() {
+        let mut fitted = fit(vec![json!({"i": 0})], 0, 0);
+        fitted.omit(0);
+        assert_eq!(fitted.truncation, Truncation::default());
+        fitted.omit(2);
+        assert_eq!(
+            fitted.truncation,
+            Truncation {
+                truncated: true,
+                hint: Some(HINT),
+                rows_omitted: Some(2),
+            }
+        );
+        let rows: Vec<Value> = (0..5).map(|i| json!({"i": i})).collect();
+        let mut fitted = fit(rows, 0, RESERVED_CHARS + 17);
+        fitted.omit(4);
+        assert_eq!(fitted.truncation.rows_omitted, Some(7));
+    }
+
+    /// Pushes `rows` into `window` and returns it.
+    fn filled(mut window: Window, rows: impl IntoIterator<Item = Value>) -> Window {
+        for row in rows {
+            window.push(row);
+        }
+        window
+    }
+
+    /// Rows `{"i":0}` .. `{"i":n-1}`, 7 chars each serialized for `n <= 10`.
+    fn numbered(n: i64) -> Vec<Value> {
+        (0..n).map(|i| json!({"i": i})).collect()
+    }
+
+    #[test]
+    fn window_skips_offset_rows_without_counting_them() {
+        let window = filled(Window::new(3, Some(2), 0, 0), numbered(6));
+        assert_eq!(window.rows, vec![json!({"i": 3}), json!({"i": 4})]);
+        assert_eq!(window.rest, 1);
+
+        let window = filled(Window::new(10, None, 0, 0), numbered(6));
+        assert!(window.rows.is_empty());
+        assert_eq!(window.rest, 0);
+    }
+
+    #[test]
+    fn window_keeps_size_rows_and_counts_the_rest() {
+        let window = filled(Window::new(0, Some(2), 0, RESERVED_CHARS + 1000), numbered(10));
+        assert_eq!(window.rows, numbered(2));
+        assert_eq!(window.rest, 8);
+
+        // Without a size, the budget alone bounds the rows:
+        // `[` + 2 rows + `,` + `]` = 17.
+        let window = filled(Window::new(0, None, 0, RESERVED_CHARS + 17), numbered(10));
+        assert_eq!(window.rows, numbered(2));
+        assert_eq!(window.rest, 8);
+    }
+
+    #[test]
+    fn window_stops_at_the_budget_and_keeps_one_row() {
+        let window = filled(Window::new(0, None, 0, RESERVED_CHARS + 16), numbered(3));
+        assert_eq!(window.rows, numbered(1));
+        assert_eq!(window.rest, 2);
+
+        let big = json!({"v": "z".repeat(50)});
+        let window = filled(Window::new(0, None, 0, 10), [big.clone(), json!({"v": 1})]);
+        assert_eq!(window.rows, vec![big]);
+        assert_eq!(window.rest, 1);
+    }
+
+    #[test]
+    fn window_estimates_the_cut_row_and_keeps_it_uncut() {
+        // Cut to 2 chars, `{"v":"xx…[truncated, 1000 chars total]"}` is 41 chars.
+        let huge = json!({"v": "x".repeat(1000)});
+        let window = filled(
+            Window::new(0, None, 2, RESERVED_CHARS + 100),
+            [json!({"i": 0}), huge.clone(), json!({"i": 2})],
+        );
+        assert_eq!(window.rows, vec![json!({"i": 0}), huge, json!({"i": 2})]);
+        assert_eq!(window.rest, 0);
+    }
+
+    #[test]
+    fn window_zero_caps_keep_rows_and_measure_uncut() {
+        let rows: Vec<Value> = (0..50).map(|i| json!({"v": "y".repeat(100), "i": i})).collect();
+        let window = filled(Window::new(0, None, 0, 0), rows.clone());
+        assert_eq!(window.rows, rows);
+        assert_eq!(window.rest, 0);
+
+        let window = filled(Window::new(0, Some(5), 0, 0), rows.clone());
+        assert_eq!(window.rows, rows[..5]);
+        assert_eq!(window.rest, 45);
+
+        // With no cell cap, the 1000-char cell counts whole and does not fit.
+        let huge = json!({"v": "x".repeat(1000)});
+        let window = filled(
+            Window::new(0, None, 0, RESERVED_CHARS + 100),
+            [json!({"i": 0}), huge, json!({"i": 2})],
+        );
+        assert_eq!(window.rows, numbered(1));
+        assert_eq!(window.rest, 2);
+    }
+
+    #[test]
+    fn window_stays_full_once_a_row_is_not_kept() {
+        let big = json!({"v": "z".repeat(50)});
+        let window = filled(
+            Window::new(0, None, 0, RESERVED_CHARS + 20),
+            [json!({"i": 0}), big, json!({"i": 2})],
+        );
+        assert_eq!(window.rows, numbered(1));
+        assert_eq!(window.rest, 2);
     }
 
     #[test]

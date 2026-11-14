@@ -85,21 +85,31 @@ impl SqliteHandler {
         let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
 
-        let (rows, next_cursor) = match kind {
+        let (rows, next_cursor, rest) = match kind {
             StatementKind::Select => {
-                listing::paginate(cursor, self.config.page_size, async |page| {
+                let (rows, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection.read_json(wrapped.as_str(), None, timeout).await
+                    let mut rows = Vec::new();
+                    self.connection
+                        .read_json(wrapped.as_str(), None, timeout, |row| rows.push(row))
+                        .await?;
+                    Ok::<_, dbmcp_sql::SqlError>(rows)
                 })
-                .await?
+                .await?;
+                (rows, next_cursor, 0)
             }
             StatementKind::NonSelect => {
-                let rows = self.connection.read_json(query.as_str(), None, timeout).await?;
-                (rows, None)
+                let mut window =
+                    truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
+                self.connection
+                    .read_json(query.as_str(), None, timeout, |row| window.push(row))
+                    .await?;
+                (window.rows, None, window.rest)
             }
         };
         let rows = self.redactor.redact_rows(rows).await?;
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        fitted.omit(rest);
         // A paged `SELECT` resumes dropped rows; other statements count them.
         let next_cursor = match kind {
             StatementKind::Select => fitted.resume(cursor, next_cursor),

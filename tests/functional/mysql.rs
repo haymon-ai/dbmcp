@@ -4853,6 +4853,38 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
 }
 
 #[tokio::test]
+async fn write_query_response_cap_counts_returned_rows_it_drops() {
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb (INSERT ... RETURNING)");
+        return;
+    }
+    let handler = handler_with_caps(0, 12, false);
+    let response = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES \
+             ('CapReturn', 'capreturn1@test.com'), \
+             ('CapReturn', 'capreturn2@test.com'), \
+             ('CapReturn', 'capreturn3@test.com') RETURNING id"
+                .into(),
+            Some("app".into()),
+        )
+        .await;
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email LIKE 'capreturn_@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("cleanup");
+    let response = response.expect("write_query");
+    // `rows_affected` is not asserted: MariaDB reports 0 for `… RETURNING`
+    // (known bug, out of scope here).
+    assert_eq!(response.rows.len(), 1);
+    assert!(response.truncation.truncated);
+    assert_eq!(response.truncation.rows_omitted, Some(2));
+}
+
+#[tokio::test]
 async fn read_query_redacts_before_cutting() {
     let handler = handler_with_caps(14, 0, true);
     let response = handler
