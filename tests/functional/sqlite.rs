@@ -2619,3 +2619,78 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
 }
+
+/// Collected ids of `query` paged two rows at a time.
+async fn collect_paged_ids(query: &str) -> Vec<i64> {
+    let handler = handler_with_page_size(2);
+    collect_all_paged_read_query(&handler, query)
+        .await
+        .iter()
+        .map(|row| row["id"].as_i64().expect("id is integer"))
+        .collect()
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_merged() {
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_keeps_order_by_desc_when_skipped() {
+    // A subquery limit is a `Skip` shape.
+    let ids = collect_paged_ids("SELECT id FROM users ORDER BY id DESC LIMIT (SELECT 100)").await;
+    assert_eq!(ids, vec![3, 2, 1]);
+}
+
+/// Pages through `query`, whose two output columns are both named `id`.
+async fn assert_duplicate_names_page(query: &str) {
+    let handler = handler_with_page_size(2);
+    let rows = collect_all_paged_read_query(&handler, query).await;
+    assert_eq!(rows.len(), 3, "input = {query:?}");
+    for row in &rows {
+        let keys: Vec<&String> = row.as_object().expect("row is an object").keys().collect();
+        assert_eq!(keys, ["id"], "input = {query:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_merged() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id").await;
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_duplicate_names_when_skipped() {
+    assert_duplicate_names_page("SELECT id, name AS id FROM users ORDER BY users.id LIMIT (SELECT 100)").await;
+}
+
+/// Five rows that fail at the fourth. `abs(i64::MIN)` overflows at `n = 4`.
+const LATE_ERROR: &str = "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 5) SELECT n, CASE WHEN n = 4 THEN abs(-9223372036854775807 - 1) ELSE n END AS v FROM c";
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_fails_skipped_page() {
+    let handler = handler_with_page_size(2);
+    let result = handler
+        .read_query(ReadQueryRequest {
+            query: format!("{LATE_ERROR} LIMIT (SELECT 100)"),
+            cursor: None,
+            timeout: None,
+        })
+        .await;
+    assert!(result.is_err(), "a skipped page reads the whole result: {result:?}");
+}
+
+#[tokio::test]
+async fn test_read_query_pagination_late_error_spares_merged_first_page() {
+    let handler = handler_with_page_size(2);
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: format!("{LATE_ERROR} LIMIT 100"),
+            cursor: None,
+            timeout: None,
+        })
+        .await
+        .expect("a merged first page stops before the failing row");
+    assert_eq!(response.rows.len(), 2);
+    assert!(response.next_cursor.is_some());
+}

@@ -9,9 +9,8 @@
 //!   receives. [`RESERVED_CHARS`] of it go to the untrusted-data envelope
 //!   and the fields beside `rows`; trailing rows are dropped once the
 //!   serialized rows exceed the rest. At least one row is always kept, so
-//!   paging moves forward. A paged `SELECT` calls [`Fitted::resume`] for a
-//!   cursor to the first dropped row; other calls report them as
-//!   `rowsOmitted`.
+//!   paging moves forward. A paged `SELECT` returns a cursor to the first
+//!   dropped row; other calls report them as `rowsOmitted`.
 //!
 //! A cap of `0` disables it. Run [`fit`] after PII redaction, so a span
 //! cut by a cap is still seen whole by the redactor.
@@ -27,8 +26,6 @@ use std::io;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
-
-use crate::listing::Cursor;
 
 /// Hint returned beside `truncated: true` when a cap cut the output.
 pub const HINT: &str = "Output exceeded size caps. Select fewer or narrower columns or narrow the query; \
@@ -70,23 +67,6 @@ pub struct Fitted {
 }
 
 impl Fitted {
-    /// Cursor to the first dropped row of a page fetched at `cursor`.
-    ///
-    /// `next` is the cursor the page itself derived. When the response cap
-    /// dropped rows, they move from `rowsOmitted` to a cursor at
-    /// `cursor + rows.len()`, saturating at [`u64::MAX`]; otherwise `next`
-    /// is returned unchanged.
-    #[must_use]
-    pub fn resume(&mut self, cursor: Option<Cursor>, next: Option<Cursor>) -> Option<Cursor> {
-        if self.truncation.rows_omitted.take().is_none() {
-            return next;
-        }
-        let start = cursor.map_or(0, |c| c.offset);
-        Some(Cursor {
-            offset: start.saturating_add(self.rows.len() as u64),
-        })
-    }
-
     /// Counts `rows` more rows that were dropped before [`fit`] saw them.
     ///
     /// Adds them to `rowsOmitted` and marks the result truncated; `0` changes nothing.
@@ -452,22 +432,5 @@ mod tests {
         );
         assert_eq!(window.rows, numbered(1));
         assert_eq!(window.rest, 2);
-    }
-
-    #[test]
-    fn resume_moves_dropped_rows_behind_a_cursor() {
-        let rows: Vec<Value> = (0..5).map(|i| json!({"i": i})).collect();
-        let mut fitted = fit(rows, 0, RESERVED_CHARS + 17);
-        let next = fitted.resume(Some(Cursor { offset: 200 }), None);
-        assert_eq!(next, Some(Cursor { offset: 202 }));
-        assert_eq!(fitted.truncation.rows_omitted, None);
-        assert!(fitted.truncation.truncated);
-    }
-
-    #[test]
-    fn resume_keeps_the_page_cursor_when_nothing_was_dropped() {
-        let mut fitted = fit(vec![json!({"i": 0})], 0, 0);
-        let page = Some(Cursor { offset: 3 });
-        assert_eq!(fitted.resume(None, page), page);
     }
 }
