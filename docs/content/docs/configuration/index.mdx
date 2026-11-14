@@ -46,7 +46,8 @@ The `master` URL tracks the latest schema; replace `master` with a release tag s
 | [`database.max_response_chars`](/features/pagination) | `DBMCP_DB_MAX_RESPONSE_CHARS` | `32000` |
 | [`log_level`](#logging) | `DBMCP_LOG_LEVEL` | `info` |
 | [`pii.enabled`](/privacy/redaction) | `DBMCP_PII_ENABLE` | `false` |
-| [`pii.operator`](/privacy/redaction) | `DBMCP_PII_OPERATOR` | `replace` |
+| [`pii.operator`](/privacy/redaction) | `DBMCP_PII_OPERATOR` | `hash` |
+| [`pii.key`](/privacy/redaction#hash-key) | `DBMCP_PII_KEY` | *unset (random per process)* |
 | [`pii.categories`](/privacy/redaction) | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* |
 | [`pii.ner_enabled`](/privacy/machine-learning) | `DBMCP_PII_NER_ENABLE` | `false` |
 | [`pii.ner_model`](/privacy/machine-learning) | `DBMCP_PII_NER_MODEL` | *unset* |
