@@ -3,10 +3,12 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`MysqlHandler`](crate::MysqlHandler),
 //! which composes one [`MysqlConnection`] as a field.
+//! It also holds the catalog cache next to the pools.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
+use dbmcp_config::{CacheConfig, DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use moka::future::Cache;
@@ -15,14 +17,23 @@ use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
 use tracing::info;
 
+use crate::tools::Snapshot;
+
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 
-/// Owns every `MySqlPool` the handler uses and the logic that builds them.
+/// Maximum number of cached per-database catalog snapshots.
+pub(crate) const CATALOG_CACHE_CAPACITY: u64 = 16;
+
+/// Owns every `MySqlPool` the handler uses, plus the catalog cache.
 #[derive(Clone)]
 pub(crate) struct MysqlConnection {
     config: DatabaseConfig,
     pools: Cache<String, MySqlPool>,
+    /// Catalog snapshots keyed by database name; `None` when caching is off.
+    pub(crate) catalog: Option<Cache<String, Arc<Snapshot>>>,
+    /// The one database-list entry; `None` when caching is off.
+    pub(crate) databases: Option<Cache<(), Arc<Vec<String>>>>,
 }
 
 impl std::fmt::Debug for MysqlConnection {
@@ -34,11 +45,11 @@ impl std::fmt::Debug for MysqlConnection {
 }
 
 impl MysqlConnection {
-    /// Builds the connection with an empty pool cache.
+    /// Builds the connection; the catalog cache exists only when `cache` is set.
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig) -> Self {
+    pub(crate) fn new(config: &DatabaseConfig, cache: Option<CacheConfig>) -> Self {
         info!(
             "MySQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -56,6 +67,13 @@ impl MysqlConnection {
         Self {
             config: config.clone(),
             pools,
+            catalog: cache.map(|cache| {
+                Cache::builder()
+                    .max_capacity(CATALOG_CACHE_CAPACITY)
+                    .time_to_live(cache.ttl)
+                    .build()
+            }),
+            databases: cache.map(|cache| Cache::builder().max_capacity(1).time_to_live(cache.ttl).build()),
         }
     }
 
@@ -269,28 +287,31 @@ mod tests {
 
     #[tokio::test]
     async fn default_db_derived_from_config() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
         assert_eq!(connection.default_database_name(), "mydb");
     }
 
     #[tokio::test]
     async fn defaults_db_to_empty_when_name_missing() {
-        let connection = MysqlConnection::new(&DatabaseConfig {
-            name: None,
-            ..base_config()
-        });
+        let connection = MysqlConnection::new(
+            &DatabaseConfig {
+                name: None,
+                ..base_config()
+            },
+            None,
+        );
         assert_eq!(connection.default_database_name(), "");
     }
 
     #[tokio::test]
     async fn none_target_returns_default_pool() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
         connection.pool(None).await.expect("None target should succeed");
     }
 
     #[tokio::test]
     async fn default_db_target_returns_default_pool() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
         connection
             .pool(Some("mydb"))
             .await
@@ -299,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn arbitrary_target_database_is_permitted() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
         connection
             .pool(Some("any_db"))
             .await
@@ -308,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pools() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
         connection.pool(Some("a")).await.expect("pool a");
         connection.pool(Some("b")).await.expect("pool b");
         connection.shutdown().await;
@@ -317,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_cache_respects_capacity_const() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), None);
 
         for i in 0..=POOL_CACHE_CAPACITY {
             let name = format!("db_{i}");

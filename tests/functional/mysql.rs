@@ -10,10 +10,13 @@
 
 mod probe;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use std::time::Duration;
+
+use dbmcp_config::{CacheConfig, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
-use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_server::listing::Cursor;
+use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest, ListEntriesResponse};
 use serde_json::Value;
 
 /// Returns the backend under test from `DBMCP_DB_BACKEND` (default `Mysql`).
@@ -4860,4 +4863,358 @@ async fn read_query_default_caps_leave_small_results_unchanged() {
     assert_eq!(response.rows[0]["s"], "abc");
     assert!(!response.truncation.truncated);
     assert!(response.truncation.hint.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Catalog cache
+// ---------------------------------------------------------------------------
+
+/// Statements building a catalog parity fixture database.
+///
+/// Names cover `LIKE` wildcards, a backslash, a trailing backslash, mixed
+/// case, and non-ASCII. Every kind spans at least two pages at page size 2.
+///
+/// Known residuals of the in-memory matcher stay out of this fixture
+/// (catalog cache spec §4): collation-specific lowering (`ß`, Turkish `İ`),
+/// and `MariaDB`'s `utf8mb3_general_ci` catalog collation, which matches
+/// accent-insensitively (`é` finds `e`) and orders names differing only in
+/// case (`Foo` / `foo`) as ties that live SQL breaks arbitrarily. So no
+/// name holds a plain `e`, and no two names differ only in case.
+const CATALOG_FIXTURE: &[&str] = &[
+    "CREATE TABLE `a_b` (id INT PRIMARY KEY, name VARCHAR(20) UNIQUE)",
+    "CREATE TABLE `a%b` (id INT PRIMARY KEY)",
+    r"CREATE TABLE `a\b` (id INT PRIMARY KEY, ab_id INT, CONSTRAINT `fk_ab` FOREIGN KEY (ab_id) REFERENCES `a_b` (id))",
+    r"CREATE TABLE `ab\` (id INT)",
+    "CREATE TABLE `axb` (id INT, INDEX `idx_axb` (id))",
+    "CREATE TABLE `Foo` (id INT) COMMENT 'mixed case'",
+    "CREATE TABLE `café` (id INT)",
+    "CREATE TABLE `CAFÉ_2` (id INT)",
+    "CREATE TABLE `prtd` (id INT) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10))",
+    "CREATE VIEW `v_a` AS SELECT 1 AS one",
+    "CREATE VIEW `v%b` AS SELECT 1 AS one",
+    r"CREATE VIEW `v\` AS SELECT 1 AS one",
+    "CREATE VIEW `Vé` AS SELECT 1 AS one",
+    "CREATE VIEW `vb` AS SELECT 1 AS one",
+    "CREATE FUNCTION `f_b`() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE FUNCTION `f%b`(a INT) RETURNS INT DETERMINISTIC RETURN a",
+    r"CREATE FUNCTION `f\`() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE FUNCTION `Fé`() RETURNS INT DETERMINISTIC COMMENT 'it''s' RETURN 1",
+    "CREATE FUNCTION `fxb`() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE PROCEDURE `p_a`(IN a INT) SELECT a",
+    "CREATE PROCEDURE `p%b`() SELECT 1",
+    r"CREATE PROCEDURE `p\`() SELECT 1",
+    "CREATE PROCEDURE `Pé`() SELECT 1",
+    "CREATE PROCEDURE `pxb`() SELECT 1",
+    "CREATE TRIGGER `t_a` BEFORE INSERT ON `axb` FOR EACH ROW SET NEW.id = NEW.id",
+    "CREATE TRIGGER `t%b` AFTER UPDATE ON `axb` FOR EACH ROW SET @x = 1",
+    r"CREATE TRIGGER `t\b` AFTER DELETE ON `Foo` FOR EACH ROW SET @x = 1",
+    r"CREATE TRIGGER `Trig\` BEFORE UPDATE ON `Foo` FOR EACH ROW SET NEW.id = NEW.id",
+    "CREATE TRIGGER `trigé` BEFORE INSERT ON `café` FOR EACH ROW SET NEW.id = NEW.id",
+];
+
+/// Searches the parity suite runs: wildcards, escapes, case, non-ASCII, blank.
+const CATALOG_SEARCHES: &[Option<&str>] = &[
+    None,
+    Some(""),
+    Some("   "),
+    Some("%"),
+    Some("_"),
+    Some("a_b"),
+    Some("a%b"),
+    Some(r"\"),
+    Some(r"a\"),
+    Some(r"\b"),
+    Some("FOO"),
+    Some("foo"),
+    Some("é"),
+    Some("É"),
+    Some("CAF"),
+    Some(" t_ "),
+    Some("zzz"),
+];
+
+/// The catalog tools under test.
+#[derive(Debug, Clone, Copy)]
+enum CatalogTool {
+    Tables,
+    Views,
+    Functions,
+    Procedures,
+    Triggers,
+}
+
+const CATALOG_TOOLS: [CatalogTool; 5] = [
+    CatalogTool::Tables,
+    CatalogTool::Views,
+    CatalogTool::Functions,
+    CatalogTool::Procedures,
+    CatalogTool::Triggers,
+];
+
+/// Calls one catalog tool on `handler`.
+async fn list_catalog(
+    handler: &MysqlHandler,
+    tool: CatalogTool,
+    database: Option<&str>,
+    cursor: Option<Cursor>,
+    search: Option<&str>,
+    detailed: bool,
+) -> Result<ListEntriesResponse, rmcp::ErrorData> {
+    let database = database.map(str::to_owned);
+    let search = search.map(str::to_owned);
+    match tool {
+        CatalogTool::Tables => handler.list_tables(database, cursor, search, detailed).await,
+        CatalogTool::Views => handler.list_views(database, cursor, search, detailed).await,
+        CatalogTool::Functions => handler.list_functions(database, cursor, search, detailed).await,
+        CatalogTool::Procedures => handler.list_procedures(database, cursor, search, detailed).await,
+        CatalogTool::Triggers => handler.list_triggers(database, cursor, search, detailed).await,
+    }
+}
+
+/// Builds a handler with page size 2, the given pinned name, and cache.
+fn catalog_handler(name: &str, cache: Option<CacheConfig>) -> MysqlHandler {
+    MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            name: Some(name.into()),
+            page_size: 2,
+            ..base_db_config(false)
+        },
+        http: None,
+        pii: None,
+        ssh: None,
+        cache,
+    })
+    .expect("handler builds")
+}
+
+/// A one-minute cache: long enough that no test sees it expire.
+const MINUTE_CACHE: Option<CacheConfig> = Some(CacheConfig {
+    ttl: Duration::from_mins(1),
+});
+
+/// Creates `database` afresh and fills it with the parity fixture.
+async fn catalog_fixture(database: &str) {
+    let handler = handler(false);
+    let _ = handler
+        .drop_database(DropDatabaseRequest {
+            database: database.into(),
+        })
+        .await;
+    handler
+        .create_database(CreateDatabaseRequest {
+            database: database.into(),
+        })
+        .await
+        .expect("create fixture database");
+    for sql in CATALOG_FIXTURE {
+        handler
+            .write_query((*sql).into(), Some(database.into()))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+}
+
+/// Walks every page from `call`, which returns the serialized page and next cursor.
+async fn walk_pages(mut call: impl AsyncFnMut(Option<Cursor>) -> (String, Option<Cursor>)) -> Vec<String> {
+    let mut pages = Vec::new();
+    let mut cursor = None;
+    loop {
+        let (page, next) = call(cursor).await;
+        pages.push(page);
+        match next {
+            Some(next) => cursor = Some(next),
+            None => return pages,
+        }
+    }
+}
+
+/// Walks every page of one catalog tool for one search and mode.
+async fn walk_tool(
+    handler: &MysqlHandler,
+    tool: CatalogTool,
+    database: Option<&str>,
+    search: Option<&str>,
+    detailed: bool,
+) -> Vec<String> {
+    walk_pages(async |cursor| {
+        let response = list_catalog(handler, tool, database, cursor, search, detailed)
+            .await
+            .unwrap_or_else(|e| panic!("{tool:?}: {e:?}"));
+        let page = serde_json::to_string(&response).expect("serialize response");
+        (page, response.next_cursor)
+    })
+    .await
+}
+
+/// Walks every catalog tool, every search, both modes: one labelled entry of all pages each.
+async fn walk_catalog(handler: &MysqlHandler, database: Option<&str>) -> Vec<String> {
+    let mut walks = Vec::new();
+    for tool in CATALOG_TOOLS {
+        for search in CATALOG_SEARCHES {
+            for detailed in [false, true] {
+                let pages = walk_tool(handler, tool, database, *search, detailed).await;
+                walks.push(format!("{tool:?} {search:?} detailed={detailed}\n{}", pages.join("\n")));
+            }
+        }
+    }
+    walks
+}
+
+/// Walks every `listDatabases` page.
+async fn walk_databases(handler: &MysqlHandler) -> Vec<String> {
+    walk_pages(async |cursor| {
+        let response = handler
+            .list_databases(ListDatabasesRequest { cursor })
+            .await
+            .expect("listDatabases");
+        let page = serde_json::to_string(&response).expect("serialize response");
+        (page, response.next_cursor)
+    })
+    .await
+}
+
+fn assert_pages_equal(cached: &[String], live: &[String]) {
+    assert!(
+        live.iter().any(|page| page.contains("nextCursor")),
+        "fixture must span more than one page"
+    );
+    assert_eq!(cached.len(), live.len(), "page counts differ");
+    for (cached, live) in cached.iter().zip(live) {
+        assert_eq!(cached, live);
+    }
+}
+
+#[tokio::test]
+async fn catalog_cache_matches_live_sql() {
+    const DATABASE: &str = "catalog_parity";
+    catalog_fixture(DATABASE).await;
+
+    // Pinned: the tools omit `database` and read the configured one.
+    let live = walk_catalog(&catalog_handler(DATABASE, None), None).await;
+    let cached = walk_catalog(&catalog_handler(DATABASE, MINUTE_CACHE), None).await;
+    assert_pages_equal(&cached, &live);
+
+    // Unpinned: the tools name the fixture database explicitly.
+    let live = walk_catalog(&catalog_handler("app", None), Some(DATABASE)).await;
+    let cached = walk_catalog(&catalog_handler("app", MINUTE_CACHE), Some(DATABASE)).await;
+    assert_pages_equal(&cached, &live);
+}
+
+#[tokio::test]
+async fn catalog_cache_list_databases_matches_live_sql() {
+    // Other tests create and drop databases concurrently: retry until the
+    // live list is stable around the cached walk.
+    let live_handler = catalog_handler("app", None);
+    for _ in 0..10 {
+        let before = walk_databases(&live_handler).await;
+        let cached = walk_databases(&catalog_handler("app", MINUTE_CACHE)).await;
+        let after = walk_databases(&live_handler).await;
+        if before == after {
+            assert_pages_equal(&cached, &before);
+            return;
+        }
+    }
+    panic!("database list never stable across a cached walk");
+}
+
+#[tokio::test]
+async fn catalog_cache_nonexistent_database_lists_nothing() {
+    const DATABASE: &str = "catalog_nonexistent_xyz";
+    let cached = catalog_handler("app", MINUTE_CACHE);
+    let live = catalog_handler("app", None);
+
+    for tool in CATALOG_TOOLS {
+        for detailed in [false, true] {
+            let cached = walk_tool(&cached, tool, Some(DATABASE), None, detailed).await;
+            let live = walk_tool(&live, tool, Some(DATABASE), None, detailed).await;
+            assert_eq!(cached, live, "{tool:?}");
+            let response: Value = serde_json::from_str(&cached[0]).expect("page json");
+            assert!(
+                response["entries"].as_array().is_some_and(Vec::is_empty)
+                    || response["entries"].as_object().is_some_and(serde_json::Map::is_empty),
+                "{tool:?}: expected no entries, got {response}"
+            );
+        }
+    }
+}
+
+/// Returns whether `listTables` brief mode lists `name` in `database`.
+async fn lists_table(handler: &MysqlHandler, database: &str, name: &str) -> bool {
+    walk_tool(handler, CatalogTool::Tables, Some(database), Some(name), false)
+        .await
+        .iter()
+        .any(|page| page.contains(&format!("\"{name}\"")))
+}
+
+/// Returns whether `listDatabases` lists `name`.
+async fn lists_database(handler: &MysqlHandler, name: &str) -> bool {
+    walk_databases(handler)
+        .await
+        .iter()
+        .any(|page| page.contains(&format!("\"{name}\"")))
+}
+
+#[tokio::test]
+async fn catalog_cache_shows_new_table_after_ttl() {
+    const TTL: Duration = Duration::from_secs(2);
+    const DATABASE: &str = "catalog_stale";
+    catalog_fixture(DATABASE).await;
+    let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));
+    let live = catalog_handler("app", None);
+
+    let filled = std::time::Instant::now();
+    assert!(
+        !lists_table(&cached, DATABASE, "late_table").await,
+        "fills the snapshot"
+    );
+    cached
+        .write_query("CREATE TABLE late_table (id INT)".into(), Some(DATABASE.into()))
+        .await
+        .expect("create table");
+    let hidden = !lists_table(&cached, DATABASE, "late_table").await;
+    assert!(
+        filled.elapsed() < TTL,
+        "test ran too slowly to observe the cached snapshot"
+    );
+    assert!(hidden, "cached path hides it until the TTL expires");
+    assert!(
+        lists_table(&live, DATABASE, "late_table").await,
+        "live path sees it at once"
+    );
+
+    tokio::time::sleep(TTL.saturating_sub(filled.elapsed()) + Duration::from_millis(500)).await;
+    assert!(
+        lists_table(&cached, DATABASE, "late_table").await,
+        "refilled after the TTL"
+    );
+}
+
+#[tokio::test]
+async fn catalog_cache_shows_new_database_after_ttl() {
+    const TTL: Duration = Duration::from_secs(2);
+    const DATABASE: &str = "catalog_late_db";
+    let cached = catalog_handler("app", Some(CacheConfig { ttl: TTL }));
+    let live = catalog_handler("app", None);
+    let _ = live
+        .drop_database(DropDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await;
+
+    let filled = std::time::Instant::now();
+    assert!(!lists_database(&cached, DATABASE).await, "fills the database list");
+    cached
+        .create_database(CreateDatabaseRequest {
+            database: DATABASE.into(),
+        })
+        .await
+        .expect("create database");
+    let hidden = !lists_database(&cached, DATABASE).await;
+    assert!(filled.elapsed() < TTL, "test ran too slowly to observe the cached list");
+    assert!(hidden, "cached list hides it until the TTL expires");
+    assert!(lists_database(&live, DATABASE).await, "live list sees it at once");
+
+    tokio::time::sleep(TTL.saturating_sub(filled.elapsed()) + Duration::from_millis(500)).await;
+    assert!(lists_database(&cached, DATABASE).await, "refilled after the TTL");
 }
