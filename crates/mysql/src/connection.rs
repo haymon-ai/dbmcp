@@ -3,6 +3,8 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`MysqlHandler`](crate::MysqlHandler),
 //! which composes one [`MysqlConnection`] as a field.
+//!
+//! In read-only mode every pooled connection is a read-only session.
 
 use std::time::Duration;
 
@@ -168,7 +170,9 @@ impl Connection for MysqlConnection {
 ///
 /// Combines pool lifecycle options with backend-specific connect
 /// options into a single lazy pool that establishes connections on
-/// first use.
+/// first use. In read-only mode every new connection runs
+/// `SET SESSION TRANSACTION READ ONLY`, so the server rejects writes
+/// through any [`Connection`] method.
 fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
     let mut conn_ops = MySqlConnectOptions::new()
         .host(&config.host)
@@ -211,6 +215,16 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
     if let Some(timeout) = config.connection_timeout {
         pool_opts = pool_opts.acquire_timeout(Duration::from_secs(timeout));
     }
+    if config.read_only {
+        pool_opts = pool_opts.after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::raw_sql("SET SESSION TRANSACTION READ ONLY")
+                    .execute(conn)
+                    .await
+                    .map(|_| ())
+            })
+        });
+    }
 
     pool_opts.connect_lazy_with(conn_ops)
 }
@@ -241,6 +255,18 @@ mod tests {
     async fn create_lazy_pool_returns_idle_pool() {
         let pool = create_lazy_pool(&base_config(), "mydb");
         assert_eq!(pool.size(), 0, "pool should be lazy (no connections yet)");
+    }
+
+    #[tokio::test]
+    async fn create_lazy_pool_read_only_stays_lazy() {
+        let pool = create_lazy_pool(
+            &DatabaseConfig {
+                read_only: true,
+                ..base_config()
+            },
+            "mydb",
+        );
+        assert_eq!(pool.size(), 0, "read-only pool should stay lazy");
     }
 
     #[tokio::test]

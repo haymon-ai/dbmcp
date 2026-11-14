@@ -4367,6 +4367,28 @@ async fn test_read_only_discards_session_settings() {
 }
 
 #[tokio::test]
+async fn test_read_only_session_per_connection() {
+    for (read_only, expected) in [(true, "on"), (false, "off")] {
+        let handler = handler(read_only);
+        for database in ["app", "analytics"] {
+            let rows = handler
+                .read_query(
+                    "SELECT current_setting('default_transaction_read_only') AS ro".into(),
+                    Some(database.into()),
+                    None,
+                    None,
+                )
+                .await
+                .expect("read default_transaction_read_only");
+            assert_eq!(
+                rows.rows[0]["ro"], expected,
+                "session read-only on {database} (read_only={read_only})"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn http_probes_answer_without_token() {
     probe::assert_ready(probe::backend_command("postgres", "postgres")).await;
 }
