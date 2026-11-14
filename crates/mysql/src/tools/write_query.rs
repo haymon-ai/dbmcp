@@ -106,8 +106,9 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError::UseBlocked`] for `USE`, or [`SqlError`] if the
-    /// query fails.
+    /// Returns [`SqlError::UseBlocked`] for `USE`,
+    /// [`SqlError::ReadOnlyViolation`] in read-only mode, or [`SqlError`]
+    /// if the query fails.
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;
 

@@ -1,7 +1,6 @@
 //! MCP tool: `dropTable`.
 
 use dbmcp_server::types::MessageResponse;
-use dbmcp_sql::SqlError;
 
 use super::prelude::*;
 use crate::connection::quote_ident;
@@ -116,10 +115,6 @@ impl PostgresHandler {
         table: String,
         cascade: bool,
     ) -> Result<MessageResponse, ErrorData> {
-        if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let mut drop_sql = format!("DROP TABLE {}", quote_ident(&table));

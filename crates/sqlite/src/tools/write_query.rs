@@ -61,7 +61,8 @@ impl SqliteHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if the query fails.
+    /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
+    /// [`SqlError`] if the query fails.
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
         let (rows, rows_affected, last_insert_id) = self.connection.execute_json(query.as_str(), None).await?;
         let rows = self.redactor.redact_rows(rows).await?;

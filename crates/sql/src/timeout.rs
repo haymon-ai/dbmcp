@@ -236,6 +236,10 @@ mod tests {
             self.timeout_secs
         }
 
+        fn read_only(&self) -> bool {
+            false
+        }
+
         fn is_timeout(error: &sqlx::Error) -> bool {
             matches!(error, sqlx::Error::Configuration(m) if m.to_string() == "server timeout")
         }

@@ -71,10 +71,6 @@ impl PostgresHandler {
         &self,
         DropDatabaseRequest { database }: DropDatabaseRequest,
     ) -> Result<MessageResponse, ErrorData> {
-        if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-
         // Guard: prevent dropping the currently connected database.
         if self.connection.default_database_name() == database.as_str() {
             return Err(SqlError::Query(format!("Cannot drop the currently connected database '{database}'.")).into());

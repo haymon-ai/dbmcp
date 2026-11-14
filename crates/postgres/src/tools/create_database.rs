@@ -60,15 +60,12 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError`] if read-only or the query fails.
+    /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
+    /// [`SqlError`] if the query fails.
     pub async fn create_database(
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
     ) -> Result<MessageResponse, ErrorData> {
-        if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-
         let create_sql = format!("CREATE DATABASE {}", quote_ident(&database));
         self.connection.execute(create_sql.as_str(), None).await.map_err(|e| {
             let msg = e.to_string();

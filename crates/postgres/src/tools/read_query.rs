@@ -137,17 +137,12 @@ impl PostgresHandler {
             StatementKind::Select => {
                 listing::paginate(cursor, self.config.page_size, async |page| {
                     let wrapped = with_limit_offset(&query, page.limit(), page.offset());
-                    self.connection
-                        .fetch_json_read_only(wrapped.as_str(), database, timeout)
-                        .await
+                    self.connection.read_json(wrapped.as_str(), database, timeout).await
                 })
                 .await?
             }
             StatementKind::NonSelect => {
-                let rows = self
-                    .connection
-                    .fetch_json_read_only(query.as_str(), database, timeout)
-                    .await?;
+                let rows = self.connection.read_json(query.as_str(), database, timeout).await?;
                 (rows, None)
             }
         };
