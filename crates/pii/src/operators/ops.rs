@@ -1,7 +1,6 @@
 //! Operators that rewrite a single matched span.
 
 use std::borrow::Cow;
-use std::fmt;
 
 use hmac::{Hmac, KeyInit};
 use sha2::Sha256;
@@ -21,8 +20,8 @@ pub enum ChunkCount {
 
 /// Algorithm used to rewrite a single PII span.
 ///
-/// `Debug` is hand-written so the `Hash` key never reaches a log.
-#[derive(Clone)]
+/// The derived `Debug` never shows the `Hash` key: `Hmac` prints `Hmac { ... }`.
+#[derive(Debug, Clone)]
 pub enum Operator {
     /// Replace the span with its entity placeholder `<{TYPE}>`.
     Replace,
@@ -42,26 +41,6 @@ pub enum Operator {
         /// HMAC-SHA-256 state, already keyed; the raw key is not kept.
         mac: Hmac<Sha256>,
     },
-}
-
-impl fmt::Debug for Operator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Replace => f.write_str("Replace"),
-            Self::Mask {
-                masking_char,
-                chars_to_mask,
-                from_end,
-            } => f
-                .debug_struct("Mask")
-                .field("masking_char", masking_char)
-                .field("chars_to_mask", chars_to_mask)
-                .field("from_end", from_end)
-                .finish(),
-            Self::Redact => f.write_str("Redact"),
-            Self::Hash { .. } => f.write_str("Hash { key: <redacted> }"),
-        }
-    }
 }
 
 /// Tag-only kind enum for audit-trail use.
@@ -140,7 +119,7 @@ mod tests {
     fn hash_debug_hides_the_key() {
         let key = "0123456789abcdef0123456789abcdef";
         let debug = format!("{:?}", Operator::hash(key.as_bytes()));
-        assert_eq!(debug, "Hash { key: <redacted> }");
+        assert_eq!(debug, "Hash { mac: Hmac { ... } }");
         assert!(!debug.contains(key));
     }
 }

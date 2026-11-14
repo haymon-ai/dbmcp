@@ -1253,7 +1253,7 @@ mod tests {
     #[test]
     fn redactor_debug_hides_the_key() {
         let debug = format!("{:?}", from_config(&hash_config(Some(KEY))));
-        assert!(debug.contains("Hash { key: <redacted> }"), "{debug}");
+        assert!(debug.contains("Hash { mac: Hmac { ... } }"), "{debug}");
         assert!(!debug.contains(KEY), "key leaked: {debug}");
     }
 
