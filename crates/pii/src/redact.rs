@@ -155,8 +155,10 @@ impl Redactor {
     /// AWS secret, bank account, …) surface only when a nearby keyword
     /// lifts them.
     ///
-    /// The `hash` operator is keyed with `cfg.key`, or, when unset, with 32
-    /// bytes drawn from the OS random source (a per-process key).
+    /// The `hash` operator is keyed with `cfg.key`, or, when unset, with
+    /// [`PiiConfig::MIN_KEY_BYTES`](dbmcp_config::PiiConfig::MIN_KEY_BYTES)
+    /// bytes drawn from the OS random source (a per-process key), logging a
+    /// warning.
     ///
     /// # Errors
     ///
@@ -175,8 +177,11 @@ impl Redactor {
             PiiOperator::Hash => Some(if let Some(key) = &cfg.key {
                 Operator::hash(key.expose_secret().as_bytes())
             } else {
-                let mut key = [0u8; 32];
+                let mut key = [0u8; dbmcp_config::PiiConfig::MIN_KEY_BYTES];
                 getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
+                tracing::warn!(
+                    "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
+                );
                 Operator::hash(&key)
             }),
         };
