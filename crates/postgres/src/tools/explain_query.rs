@@ -134,16 +134,12 @@ impl PostgresHandler {
             format!("EXPLAIN (FORMAT JSON) {query}")
         };
 
-        // ANALYZE executes the statement, and planning alone can run user functions.
-        let rows = if self.config.read_only {
-            self.connection
-                .fetch_json_read_only(explain_sql.as_str(), database, self.config.query_timeout)
-                .await?
-        } else {
-            self.connection
-                .fetch_json(explain_sql.as_str(), database, self.config.query_timeout)
-                .await?
-        };
+        // ANALYZE executes the statement, and planning alone can run user
+        // functions; in read-only mode `fetch_json` stops their writes.
+        let rows = self
+            .connection
+            .fetch_json(explain_sql.as_str(), database, self.config.query_timeout)
+            .await?;
         let rows = self.redactor.redact_rows(rows).await?;
         let fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
 

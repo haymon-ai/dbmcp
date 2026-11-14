@@ -1,7 +1,6 @@
 //! MCP tool: `createDatabase`.
 
 use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
-use dbmcp_sql::SqlError;
 
 use super::prelude::*;
 use crate::connection::quote_ident;
@@ -65,10 +64,6 @@ impl MysqlHandler {
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
     ) -> Result<MessageResponse, ErrorData> {
-        if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-
         let exists: Option<String> = self
             .connection
             .fetch_optional(

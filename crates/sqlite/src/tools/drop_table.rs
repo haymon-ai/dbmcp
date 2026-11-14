@@ -1,7 +1,6 @@
 //! MCP tool: `dropTable`.
 
 use dbmcp_server::types::MessageResponse;
-use dbmcp_sql::SqlError;
 
 use super::prelude::*;
 use crate::connection::quote_ident;
@@ -65,10 +64,6 @@ impl SqliteHandler {
     /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
     pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, ErrorData> {
-        if self.config.read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-
         let drop_sql = format!("DROP TABLE {}", quote_ident(&table));
         self.connection.execute(drop_sql.as_str(), None).await?;
 

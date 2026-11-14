@@ -55,7 +55,10 @@ where
 /// [`query_timeout`](Connection::query_timeout), and the timeout hooks
 /// [`is_timeout`](Connection::is_timeout), [`session_id`](Connection::session_id),
 /// [`set_timeout`](Connection::set_timeout), and [`kill`](Connection::kill),
-/// and receive default implementations for query execution. They may
+/// plus their [`read_only`](Connection::read_only) mode, and receive default
+/// implementations for query execution. They may override
+/// [`fetch_read_only`](Connection::fetch_read_only) when they lack
+/// read-only transactions. They may
 /// override [`counts`](Connection::counts) when their query results do
 /// not describe their own statement.
 ///
@@ -92,6 +95,14 @@ where
     /// Returns the configured query timeout in seconds (`0` = disabled).
     fn query_timeout(&self) -> u64;
 
+    /// Returns whether this connection runs in read-only mode.
+    ///
+    /// In read-only mode [`execute`](Connection::execute) and
+    /// [`execute_json`](Connection::execute_json) refuse to run, and
+    /// [`fetch_json`](Connection::fetch_json) runs through
+    /// [`read_json`](Connection::read_json).
+    fn read_only(&self) -> bool;
+
     /// Returns whether `error` is this backend's own statement timeout.
     fn is_timeout(error: &sqlx::Error) -> bool;
 
@@ -126,6 +137,26 @@ where
         id: u64,
     ) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
 
+    /// Fetches every row of `query` on `conn` so the database rejects writes.
+    ///
+    /// Hook behind [`read_json`](Connection::read_json). The default runs
+    /// `query` in a `START TRANSACTION READ ONLY` transaction and rolls it
+    /// back. Backends without read-only transactions override it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver error, including writes the database rejected.
+    async fn fetch_read_only(
+        &self,
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+        query: (SqlStr, Option<<Self::DB as sqlx::Database>::Arguments>),
+    ) -> Result<Vec<<Self::DB as sqlx::Database>::Row>, sqlx::Error> {
+        let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
+        let rows = (&mut *tx).fetch_all(query).await?;
+        tx.rollback().await?;
+        Ok(rows)
+    }
+
     /// Checks that the default database answers `SELECT 1`.
     ///
     /// Succeeds without a query while every pooled connection is busy:
@@ -141,18 +172,26 @@ where
         if pool.size() > 0 && pool.num_idle() == 0 {
             return Ok(());
         }
-        self.execute("SELECT 1", None).await.map(|_| ())
+        // Not `execute`: a ping is no write, and read-only mode refuses `execute`.
+        execute_with_timeout(self, None, self.query_timeout(), "SELECT 1", async |conn, query| {
+            conn.execute(query).await.map(|_| ())
+        })
+        .await
     }
 
     /// Runs a statement that returns no meaningful rows.
     ///
     /// # Errors
     ///
-    /// See trait-level documentation.
+    /// See trait-level documentation. [`SqlError::ReadOnlyViolation`] in
+    /// read-only mode.
     async fn execute<Q>(&self, query: Q, database: Option<&str>) -> Result<u64, SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
+        if self.read_only() {
+            return Err(SqlError::ReadOnlyViolation);
+        }
         execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             Ok(conn.execute(query).await?.rows_affected())
         })
@@ -162,7 +201,8 @@ where
     /// Runs a statement under `timeout_secs` and collects every result row as JSON.
     ///
     /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
-    /// for this call (`0` = disabled).
+    /// for this call (`0` = disabled). In read-only mode it runs through
+    /// [`read_json`](Connection::read_json).
     ///
     /// # Errors
     ///
@@ -171,6 +211,9 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
+        if self.read_only() {
+            return self.read_json(query, database, timeout_secs).await;
+        }
         execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
             let rows = conn.fetch_all(query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
@@ -186,7 +229,8 @@ where
     ///
     /// # Errors
     ///
-    /// See trait-level documentation.
+    /// See trait-level documentation. [`SqlError::ReadOnlyViolation`] in
+    /// read-only mode.
     async fn execute_json<Q>(
         &self,
         query: Q,
@@ -195,6 +239,9 @@ where
     where
         Q: IntoSafeQuery<Self::DB>,
     {
+        if self.read_only() {
+            return Err(SqlError::ReadOnlyViolation);
+        }
         execute_with_timeout(self, database, self.query_timeout(), query, async |conn, query| {
             let sql = query.0.clone();
             let mut stream = conn.fetch_many(query);
@@ -223,16 +270,16 @@ where
         (rows_affected, last_insert_id)
     }
 
-    /// Runs a statement in a read-only transaction and collects every row as JSON.
+    /// Runs a statement the database must not let write; collects rows as JSON.
     ///
-    /// The database itself rejects writes, so side-effecting functions that
-    /// pass read-only validation (sequences, large objects, user-defined
-    /// functions) cannot modify data. The transaction is always rolled back,
-    /// which on `PostgreSQL` also discards session settings changed by the
-    /// statement; `MySQL` user variables persist.
+    /// Holds in every mode. The database itself rejects writes, so
+    /// side-effecting functions that pass read-only validation (sequences,
+    /// large objects, user-defined functions) cannot modify data.
     ///
-    /// Requires `START TRANSACTION READ ONLY` support (`MySQL`, `MariaDB`,
-    /// `PostgreSQL`); `SQLite` rejects it.
+    /// The mechanism is the [`fetch_read_only`](Connection::fetch_read_only)
+    /// hook. Under the default read-only transaction, `PostgreSQL` also
+    /// discards session settings changed by the statement; `MySQL` user
+    /// variables persist.
     ///
     /// `timeout_secs` replaces [`query_timeout`](Connection::query_timeout)
     /// for this call (`0` = disabled).
@@ -241,19 +288,12 @@ where
     ///
     /// See trait-level documentation. Writes attempted by the statement
     /// surface as [`SqlError::Query`].
-    async fn fetch_json_read_only<Q>(
-        &self,
-        query: Q,
-        database: Option<&str>,
-        timeout_secs: u64,
-    ) -> Result<Vec<Value>, SqlError>
+    async fn read_json<Q>(&self, query: Q, database: Option<&str>, timeout_secs: u64) -> Result<Vec<Value>, SqlError>
     where
         Q: IntoSafeQuery<Self::DB>,
     {
         execute_with_timeout(self, database, timeout_secs, query, async |conn, query| {
-            let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static("START TRANSACTION READ ONLY")).await?;
-            let rows = (&mut *tx).fetch_all(query).await?;
-            tx.rollback().await?;
+            let rows = self.fetch_read_only(conn, query).await?;
             Ok(rows.iter().map(RowExt::to_json).collect())
         })
         .await

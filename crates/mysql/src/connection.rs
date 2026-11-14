@@ -118,6 +118,10 @@ impl Connection for MysqlConnection {
         self.config.query_timeout
     }
 
+    fn read_only(&self) -> bool {
+        self.config.read_only
+    }
+
     fn is_timeout(error: &sqlx::Error) -> bool {
         // 3024: MySQL `max_execution_time`; 1969: MariaDB `max_statement_time`.
         error
