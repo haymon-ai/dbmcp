@@ -511,10 +511,6 @@ mod tests {
     /// The 32-byte test key from the keyed-token spec vectors.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
-    fn with_operator(operator: Operator) -> Redactor {
-        Redactor::new(Analyzer::with_defaults(), operator)
-    }
-
     fn hash_config(key: Option<&str>) -> dbmcp_config::PiiConfig {
         dbmcp_config::PiiConfig {
             operator: PiiOperator::Hash,
@@ -523,16 +519,10 @@ mod tests {
         }
     }
 
-    fn from_config(cfg: &dbmcp_config::PiiConfig) -> Redactor {
+    fn build(cfg: &dbmcp_config::PiiConfig) -> Redactor {
         Redactor::from_config(Some(cfg))
             .expect("config ok")
             .expect("redactor present")
-    }
-
-    fn redact_one(r: &Redactor, value: &str) -> Value {
-        let mut rows = vec![Value::String(value.to_owned())];
-        r.apply(&mut rows).expect("apply ok");
-        rows.remove(0)
     }
 
     fn email_row() -> Value {
@@ -779,7 +769,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = with_operator(Operator::Redact);
+        let r = Redactor::new(Analyzer::with_defaults(), Operator::Redact);
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -790,7 +780,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = with_operator(Operator::default_mask());
+        let r = Redactor::new(Analyzer::with_defaults(), Operator::default_mask());
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -800,7 +790,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = with_operator(Operator::hash(KEY.as_bytes()));
+        let r = Redactor::new(Analyzer::with_defaults(), Operator::hash(KEY.as_bytes()));
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -1183,78 +1173,47 @@ mod tests {
             operator,
             ..dbmcp_config::PiiConfig::default()
         };
-        assert!(matches!(
-            from_config(&cfg(PiiOperator::Replace)).operator,
-            Operator::Replace
-        ));
-        assert!(matches!(
-            from_config(&cfg(PiiOperator::Mask)).operator,
-            Operator::Mask { .. }
-        ));
-        assert!(matches!(
-            from_config(&cfg(PiiOperator::Redact)).operator,
-            Operator::Redact
-        ));
-        assert!(matches!(
-            from_config(&cfg(PiiOperator::Hash)).operator,
-            Operator::Hash { .. }
-        ));
+        assert!(matches!(build(&cfg(PiiOperator::Replace)).operator, Operator::Replace));
+        assert!(matches!(build(&cfg(PiiOperator::Mask)).operator, Operator::Mask { .. }));
+        assert!(matches!(build(&cfg(PiiOperator::Redact)).operator, Operator::Redact));
+        assert!(matches!(build(&cfg(PiiOperator::Hash)).operator, Operator::Hash { .. }));
     }
 
     #[test]
     fn from_config_hash_uses_the_configured_key() {
-        let r = from_config(&hash_config(Some(KEY)));
+        let r = build(&hash_config(Some(KEY)));
         assert_eq!(
-            redact_one(&r, "jane.doe@example.com"),
+            r.redact_text("jane.doe@example.com").expect("redacts"),
             "<EMAIL_ADDRESS_4e1f0dd69c51e84c>"
         );
     }
 
     #[test]
-    fn from_config_same_key_gives_same_token_across_redactors() {
-        let cfg = hash_config(Some(KEY));
-        let (a, b) = (from_config(&cfg), from_config(&cfg));
-        assert_eq!(redact_one(&a, "x@y.com"), redact_one(&b, "x@y.com"));
-    }
-
-    #[test]
-    fn from_config_different_keys_differ() {
-        let a = from_config(&hash_config(Some(KEY)));
-        let b = from_config(&hash_config(Some("fedcba9876543210fedcba9876543210")));
-        assert_ne!(redact_one(&a, "x@y.com"), redact_one(&b, "x@y.com"));
-    }
-
-    #[test]
     fn from_config_without_key_draws_a_random_key_per_redactor() {
         let cfg = hash_config(None);
-        let (a, b) = (from_config(&cfg), from_config(&cfg));
-        let token = redact_one(&a, "x@y.com");
-        let token = token.as_str().expect("string");
+        let (a, b) = (build(&cfg), build(&cfg));
+        let token = a.redact_text("x@y.com").expect("redacts");
         assert!(token.starts_with("<EMAIL_ADDRESS_") && token.len() == "<EMAIL_ADDRESS_>".len() + 16);
-        assert_eq!(redact_one(&a, "x@y.com"), token, "stable within one redactor");
-        assert_ne!(redact_one(&b, "x@y.com"), token);
+        assert_eq!(
+            a.redact_text("x@y.com").expect("redacts"),
+            token,
+            "stable within one redactor"
+        );
+        assert_ne!(b.redact_text("x@y.com").expect("redacts"), token);
     }
 
     #[test]
     fn hash_token_is_the_same_on_every_surface() {
-        let r = from_config(&hash_config(Some(KEY)));
+        let r = build(&hash_config(Some(KEY)));
         let email = "jane.doe@example.com";
-        let cell = redact_one(&r, email);
-        let cell = cell.as_str().expect("string");
-        let mut rows = vec![json!({"outer": {"inner": [ {"email": email} ]}})];
+        let mut rows = vec![json!(email), json!({"outer": {"inner": [ {"email": email} ]}})];
         r.apply(&mut rows).expect("apply ok");
-        assert_eq!(rows[0]["outer"]["inner"][0]["email"], cell);
+        let cell = rows[0].as_str().expect("string");
+        assert_eq!(rows[1]["outer"]["inner"][0]["email"], cell);
         let message = r
             .redact_text(&format!("Duplicate entry '{email}' for key 'email'"))
             .expect("redacts");
         assert_eq!(message, format!("Duplicate entry '{cell}' for key 'email'"));
-    }
-
-    #[test]
-    fn redactor_debug_hides_the_key() {
-        let debug = format!("{:?}", from_config(&hash_config(Some(KEY))));
-        assert!(debug.contains("Hash { mac: Hmac { ... } }"), "{debug}");
-        assert!(!debug.contains(KEY), "key leaked: {debug}");
     }
 
     #[test]

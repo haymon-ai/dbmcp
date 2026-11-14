@@ -6,8 +6,6 @@
 //! entity type is part of the identity: one text under two types gives two
 //! unrelated tokens.
 
-use std::fmt::Write as _;
-
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -15,6 +13,9 @@ use crate::Entity;
 
 /// Digest bytes kept in the token suffix (16 hex chars).
 const SUFFIX_BYTES: usize = 8;
+
+/// Lowercase hex digits, indexed by nibble.
+const HEX: &[u8; 16] = b"0123456789abcdef";
 
 pub(crate) fn apply(mac: &Hmac<Sha256>, entity: Entity, candidate: &str) -> String {
     let mut mac = mac.clone();
@@ -28,8 +29,9 @@ pub(crate) fn apply(mac: &Hmac<Sha256>, entity: Entity, candidate: &str) -> Stri
     out.push('<');
     out.push_str(name);
     out.push('_');
-    for byte in &digest[..SUFFIX_BYTES] {
-        write!(out, "{byte:02x}").expect("writing to a String never fails");
+    for &byte in &digest[..SUFFIX_BYTES] {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0xf)]));
     }
     out.push('>');
     out
