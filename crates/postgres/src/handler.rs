@@ -183,6 +183,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test")
     }
@@ -199,6 +200,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test")
     }
@@ -214,6 +216,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test");
         assert_eq!(handler.connection.default_database_name(), "mydb");

@@ -177,6 +177,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test")
     }
@@ -193,6 +194,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         })
         .expect("handler builds in test")
     }

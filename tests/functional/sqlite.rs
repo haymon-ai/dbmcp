@@ -41,6 +41,7 @@ fn handler(read_only: bool) -> SqliteHandler {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -56,6 +57,7 @@ fn handler_with_page_size(page_size: u16) -> SqliteHandler {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -195,6 +197,7 @@ async fn test_query_timeout_fast_query_succeeds() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -220,6 +223,7 @@ async fn test_read_query_timeout_argument() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = |timeout| ReadQueryRequest {
@@ -246,6 +250,7 @@ async fn test_query_timeout_disabled_with_zero() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     let request = ReadQueryRequest {
@@ -270,6 +275,7 @@ async fn test_query_timeout_stops_long_statement() {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds");
     // Counting an endless recursive CTE yields no row until the statement ends.
@@ -2043,6 +2049,7 @@ fn handler_with_redaction(redact_pii: bool) -> SqliteHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -2057,6 +2064,7 @@ fn handler_with_operator(operator: PiiOperator) -> SqliteHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -2513,6 +2521,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pi
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }

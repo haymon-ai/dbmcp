@@ -45,6 +45,7 @@ fn handler_with(config: DatabaseConfig) -> PostgresHandler {
         http: None,
         pii: None,
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -3843,6 +3844,7 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -3857,6 +3859,7 @@ fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }
@@ -4437,6 +4440,7 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pi
             ..PiiConfig::default()
         }),
         ssh: None,
+        cache: None,
     })
     .expect("handler builds")
 }

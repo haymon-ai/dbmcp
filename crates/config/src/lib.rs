@@ -17,6 +17,7 @@
 //! token are stored as [`secrecy::SecretString`], so their values never
 //! reach [`Debug`] output.
 
+mod cache;
 mod config;
 mod database;
 mod dotenv;
@@ -37,6 +38,7 @@ mod ssh;
 mod template;
 mod transport;
 
+pub use cache::CacheConfig;
 pub use config::Config;
 pub use database::{DatabaseBackend, DatabaseConfig};
 pub use http::HttpConfig;

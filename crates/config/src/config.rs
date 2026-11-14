@@ -1,5 +1,6 @@
-//! Top-level [`Config`] composing the transport and the database, http, pii, and ssh sections.
+//! Top-level [`Config`] composing the transport and the database, http, pii, ssh, and cache sections.
 
+use crate::cache::CacheConfig;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
@@ -11,10 +12,11 @@ use crate::transport::Transport;
 /// Runtime configuration for the MCP server.
 ///
 /// Composes the selected [`Transport`] with [`DatabaseConfig`] and the
-/// optional [`HttpConfig`], [`PiiConfig`], and [`SshConfig`] sections.
+/// optional [`HttpConfig`], [`PiiConfig`], [`SshConfig`], and [`CacheConfig`] sections.
 /// HTTP config is present only when `transport` / `DBMCP_TRANSPORT` is `http`;
 /// PII config only when `pii.enabled` / `DBMCP_PII_ENABLE` is on; SSH
-/// config only when `ssh.host` / `DBMCP_SSH_HOST` is set. The log level is
+/// config only when `ssh.host` / `DBMCP_SSH_HOST` is set; cache config
+/// unless `cache.ttl` / `DBMCP_CACHE_TTL` is `0`. The log level is
 /// returned next to it in [`Loaded`](crate::Loaded), not part of this struct.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -32,6 +34,9 @@ pub struct Config {
 
     /// SSH tunnel settings (`None` = connect to the database directly).
     pub ssh: Option<SshConfig>,
+
+    /// Catalog cache settings (`None` = caching off).
+    pub cache: Option<CacheConfig>,
 }
 
 impl Config {
@@ -87,6 +92,7 @@ mod tests {
             http: None,
             pii: None,
             ssh: None,
+            cache: None,
         }
     }
 
@@ -228,6 +234,7 @@ mod tests {
                 local_port: None,
             }),
             pii: None,
+            cache: None,
         };
         let debug = format!("{config:?}");
         assert!(!debug.contains("hunter2"), "secret leaked: {debug}");
