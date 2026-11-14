@@ -89,11 +89,7 @@ pub fn plan(sql: &str, dialect: &dyn Dialect, limit: u64, offset: u64) -> Page {
             let (Some(own_skip), Some(own_fetch)) = (literal(offset), literal(fetch)) else {
                 return Page::Skip;
             };
-            (
-                own_skip,
-                Some(own_fetch),
-                Some(offset.span().start.min(fetch.span().start)),
-            )
+            (own_skip, Some(own_fetch), Some(offset.span().start))
         }
         Some(LimitClause::LimitOffset { .. }) => return Page::Skip,
     };

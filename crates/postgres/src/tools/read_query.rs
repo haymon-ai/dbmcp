@@ -151,14 +151,13 @@ impl PostgresHandler {
         self.connection
             .read_json(&*sql, database, timeout, |row| window.push(row))
             .await?;
-        let kept = window.rows.len();
         let rows = self.redactor.redact_rows(window.rows).await?;
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
         let next_cursor = match kind {
             StatementKind::Select => {
                 // A short page with rows left over was cut by the budget, not by the page size.
-                if window.rest > 0 && kept < usize::from(self.config.page_size) {
+                if window.rest > 0 && fitted.rows.len() < usize::from(self.config.page_size) {
                     fitted.truncation.truncated = true;
                     fitted.truncation.hint = Some(truncate::HINT);
                 }

@@ -118,7 +118,7 @@ impl Window {
         Self {
             offset,
             size,
-            rows: Vec::new(),
+            rows: Vec::with_capacity(size.unwrap_or(0)),
             rest: 0,
             max_cell,
             max_response,
