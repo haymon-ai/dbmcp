@@ -1,0 +1,50 @@
+---
+title: Catalog cache
+description: Keep schema-discovery results in memory and control how long they stay fresh
+---
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `cache.ttl` | `DBMCP_CACHE_TTL` | seconds | `3600` | How long cached catalog data lives after it is read, up to `86400` (`0` disables the cache) |
+
+Agents often call the schema-discovery tools many times in one session, and on large schemas each call can be slow. <Dbmcp /> keeps their results in memory, so repeat calls skip the catalog queries.
+
+## What Is Cached
+
+- **Catalog tools**: `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, and `listMaterializedViews`. The first call for a database reads that database's whole catalog for every one of these tools, with full detail, and keeps it as one snapshot. Later calls for the same database, any tool, any `search`, `detailed`, or `cursor`, answer from the snapshot.
+- **`listDatabases`** (MySQL, MariaDB, PostgreSQL): the database list is cached as one separate entry.
+
+Snapshots are kept for up to 16 databases. When a 17th database is read, the least recently used snapshot is dropped. On SQLite there is one snapshot for the file.
+
+Search and paging run over the snapshot and return the same responses as uncached calls. Cursors work the same way, and responses carry no cache marker.
+
+The cache lives in memory only. It starts empty when <Dbmcp /> starts, nothing is written to disk, and a restart clears it.
+
+## Expiry
+
+A snapshot expires `ttl` seconds after it was read, however often it is used in between. The first call after expiry reads the catalog again and waits for it. If several calls arrive at once, they share one read. A failed read caches nothing: the call returns the same error as without the cache, and the next call tries again.
+
+Nothing else refreshes the cache. Changes made through <Dbmcp /> itself (`writeQuery`, `dropTable`, `createDatabase`, `dropDatabase`) are not reflected until the snapshot expires, and neither are changes made by other clients. With the default `ttl` of one hour, a table created through `writeQuery` can be missing from `listTables` for up to an hour.
+
+```yaml
+cache:
+  ttl: 300   # re-read the catalog at most every 5 minutes
+```
+
+## Turning It Off
+
+Set `cache.ttl: 0` (`DBMCP_CACHE_TTL=0`) to disable the cache. Every catalog call then queries the database directly, and each page fetches only its own rows.
+
+Turn the cache off when:
+
+- **The catalog is huge.** A snapshot holds every object of a database in memory, with full detail. If one of its catalog queries takes longer than `query_timeout`, the read fails, and every later catalog call for that database tries the whole read again.
+- **The session changes the schema often.** Write-heavy sessions that create and drop objects need each listing to reflect the latest state.
+
+## MySQL and MariaDB Search
+
+With the cache on, `search` is matched in memory with Unicode lowercase folding. A few names can match differently than in the database's own collation:
+
+- **MySQL and MariaDB**: collation-specific case rules are not emulated, such as `ß` against `ss` or the Turkish dotted `İ`.
+- **MariaDB**: the catalog uses an accent-insensitive collation, so an uncached search for `e` also finds `é`; the cache does not. Names that differ only in case (`Foo`, `foo`) may also be listed in a different order than uncached calls, which already order them arbitrarily.
+
+PostgreSQL and SQLite searches match uncached results exactly.

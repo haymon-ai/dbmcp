@@ -6,6 +6,7 @@
     "database",
     "query-timeouts",
     "pagination",
+    "cache",
     "ssh-tunnel"
   ]
 }
