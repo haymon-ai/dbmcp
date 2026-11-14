@@ -1,10 +1,9 @@
 //! Anonymizer benches: operator comparison + variant tuning.
 
-use std::borrow::Cow;
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use dbmcp_pii::{Analyzer, ChunkCount, Operator, OperatorConfig, RecognizerResult, anonymize};
+use dbmcp_pii::{Analyzer, ChunkCount, Operator, RecognizerResult, anonymize};
 
 mod common;
 
@@ -16,14 +15,10 @@ fn run_group(c: &mut Criterion, name: &str, payload: &str, results: &[Recognizer
     let mut g = c.benchmark_group(name);
     g.throughput(Throughput::Bytes(payload.len() as u64));
     for (label, op) in cases {
-        let cfg = OperatorConfig {
-            default: Some(op.clone()),
-            ..OperatorConfig::default()
-        };
         g.bench_with_input(BenchmarkId::from_parameter(label), &payload, |b, text| {
             b.iter_batched(
                 || results.to_vec(),
-                |r| anonymize(black_box(text), r, black_box(&cfg)),
+                |r| anonymize(black_box(text), r, black_box(op)),
                 BatchSize::SmallInput,
             );
         });
@@ -37,12 +32,7 @@ fn bench_anonymize(c: &mut Criterion) {
     let results = sample_results(&analyzer, &payload);
 
     let operators: [(&str, Operator); 4] = [
-        (
-            "replace",
-            Operator::Replace {
-                new_value: Cow::Borrowed("<REDACTED>"),
-            },
-        ),
+        ("replace", Operator::Replace),
         ("mask", Operator::default_mask()),
         ("redact", Operator::Redact),
         ("hash", Operator::hash(b"0123456789abcdef0123456789abcdef")),

@@ -1,37 +1,8 @@
 //! Anonymizer engine: collapse overlaps, rewrite forward in a single pass.
 
-use std::borrow::Cow;
-use std::collections::HashMap;
-
-use crate::Entity;
 use crate::operators::Operator;
 use crate::overlap;
 use crate::result::{OperatorResult, RecognizerResult};
-
-/// Per-entity-type operator map handed to [`anonymize`].
-#[derive(Debug, Clone, Default)]
-pub struct OperatorConfig {
-    /// Explicit overrides looked up by entity type.
-    pub per_entity: HashMap<Entity, Operator>,
-    /// Optional fallback when an entity type has no per-entity override.
-    /// `None` means "use the entity-aware [`Operator::default_for`] placeholder".
-    pub default: Option<Operator>,
-}
-
-impl OperatorConfig {
-    /// Pick the operator for `entity`. Borrows from the config when possible;
-    /// only allocates a fresh placeholder when neither a per-entity override nor
-    /// `default` is set.
-    fn select(&self, entity: Entity) -> Cow<'_, Operator> {
-        if let Some(op) = self.per_entity.get(&entity) {
-            return Cow::Borrowed(op);
-        }
-        if let Some(default) = &self.default {
-            return Cow::Borrowed(default);
-        }
-        Cow::Owned(Operator::default_for(entity))
-    }
-}
 
 /// Output of [`anonymize`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -42,14 +13,14 @@ pub struct AnonymizedText {
     pub operations: Vec<OperatorResult>,
 }
 
-/// Apply per-entity operators in a single forward pass.
+/// Apply `operator` to every surviving span in a single forward pass.
 ///
 /// Steps: (1) collapse overlaps via [`overlap::resolve`] — which returns survivors in
 /// start-ascending order; (2) walk left-to-right, appending the gap between cursor and
 /// span verbatim, then the operator output. Time complexity is
 /// `O(text_len + Σ rewrites)`.
 #[must_use]
-pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorConfig) -> AnonymizedText {
+pub fn anonymize(text: &str, results: Vec<RecognizerResult>, operator: &Operator) -> AnonymizedText {
     let surviving = overlap::resolve(results);
     if surviving.is_empty() {
         return AnonymizedText {
@@ -80,7 +51,6 @@ pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorCo
         new_text.push_str(&text[cursor..start]);
         let new_start = new_text.len();
 
-        let operator = config.select(entity_type);
         let rewritten = operator.apply(entity_type, &text[start..end]);
         new_text.push_str(&rewritten);
         let new_end = new_text.len();
@@ -105,7 +75,10 @@ pub fn anonymize(text: &str, results: Vec<RecognizerResult>, config: &OperatorCo
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
+    use crate::Entity;
     use crate::operators::OperatorKind;
     use crate::result::AnalysisExplanation;
     use crate::score::Score;
@@ -132,37 +105,23 @@ mod tests {
         }]
     }
 
-    fn with_default(operator: Operator) -> OperatorConfig {
-        OperatorConfig {
-            default: Some(operator),
-            ..OperatorConfig::default()
-        }
-    }
-
     #[test]
-    fn hash_default_emits_keyed_token_and_hash_kind() {
-        let out = anonymize(TEXT, email_span(), &with_default(Operator::hash(KEY)));
+    fn hash_emits_keyed_token_and_hash_kind() {
+        let out = anonymize(TEXT, email_span(), &Operator::hash(KEY));
         assert_eq!(out.text, "<EMAIL_ADDRESS_4e1f0dd69c51e84c>");
         assert_eq!(out.operations[0].operator, OperatorKind::Hash);
     }
 
     #[test]
-    fn per_entity_override_beats_hash_default() {
-        let mut config = with_default(Operator::hash(KEY));
-        config.per_entity.insert(Entity::EmailAddress, Operator::Redact);
-        assert_eq!(anonymize(TEXT, email_span(), &config).text, "");
-    }
-
-    #[test]
     fn key_free_operators_are_unchanged() {
         assert_eq!(
-            anonymize(TEXT, email_span(), &OperatorConfig::default()).text,
+            anonymize(TEXT, email_span(), &Operator::Replace).text,
             "<EMAIL_ADDRESS>"
         );
         assert_eq!(
-            anonymize(TEXT, email_span(), &with_default(Operator::default_mask())).text,
+            anonymize(TEXT, email_span(), &Operator::default_mask()).text,
             "*".repeat(TEXT.len())
         );
-        assert_eq!(anonymize(TEXT, email_span(), &with_default(Operator::Redact)).text, "");
+        assert_eq!(anonymize(TEXT, email_span(), &Operator::Redact).text, "");
     }
 }

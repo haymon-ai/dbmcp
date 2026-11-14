@@ -1,4 +1,4 @@
-//! Operators that rewrite a single matched span and the operator-config map.
+//! Operators that rewrite a single matched span.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -24,11 +24,8 @@ pub enum ChunkCount {
 /// `Debug` is hand-written so the `Hash` key never reaches a log.
 #[derive(Clone)]
 pub enum Operator {
-    /// Replace the span with a fixed literal.
-    Replace {
-        /// Literal text written into the span.
-        new_value: Cow<'static, str>,
-    },
+    /// Replace the span with its entity placeholder `<{TYPE}>`.
+    Replace,
     /// Mask code points with `masking_char`.
     Mask {
         /// Character emitted in place of each masked code point.
@@ -50,7 +47,7 @@ pub enum Operator {
 impl fmt::Debug for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Replace { new_value } => f.debug_struct("Replace").field("new_value", new_value).finish(),
+            Self::Replace => f.write_str("Replace"),
             Self::Mask {
                 masking_char,
                 chars_to_mask,
@@ -81,17 +78,6 @@ pub enum OperatorKind {
 }
 
 impl Operator {
-    /// Default placeholder operator: `Replace { new_value: "<{entity_type}>" }`.
-    ///
-    /// Always borrows a `'static` placeholder from [`Entity::placeholder`] —
-    /// zero allocation since the entity set is closed.
-    #[must_use]
-    pub const fn default_for(entity: Entity) -> Self {
-        Self::Replace {
-            new_value: Cow::Borrowed(entity.placeholder()),
-        }
-    }
-
     /// Default `Mask` per spec clarification: `'*'`, full span, length-preserving.
     #[must_use]
     pub fn default_mask() -> Self {
@@ -120,7 +106,7 @@ impl Operator {
     #[must_use]
     pub const fn kind(&self) -> OperatorKind {
         match self {
-            Self::Replace { .. } => OperatorKind::Replace,
+            Self::Replace => OperatorKind::Replace,
             Self::Mask { .. } => OperatorKind::Mask,
             Self::Redact => OperatorKind::Redact,
             Self::Hash { .. } => OperatorKind::Hash,
@@ -129,11 +115,12 @@ impl Operator {
 
     /// Apply the operator to one matched span of type `entity`.
     ///
-    /// Returns `Cow::Borrowed` for `Replace` and `Redact` (zero allocation);
+    /// Returns `Cow::Borrowed` for `Replace` (the `'static` [`Entity::placeholder`])
+    /// and `Redact` (zero allocation);
     /// `Cow::Owned` for `Mask` and `Hash` (each writes a fresh String).
     pub(crate) fn apply<'a>(&'a self, entity: Entity, candidate: &str) -> Cow<'a, str> {
         match self {
-            Self::Replace { new_value } => Cow::Borrowed(new_value.as_ref()),
+            Self::Replace => Cow::Borrowed(entity.placeholder()),
             Self::Mask {
                 masking_char,
                 chars_to_mask,

@@ -12,12 +12,12 @@
 //! # Quickstart
 //!
 //! ```
-//! use dbmcp_pii::{AnalyzeOptions, Analyzer, OperatorConfig, anonymize};
+//! use dbmcp_pii::{AnalyzeOptions, Analyzer, Operator, anonymize};
 //!
 //! let analyzer = Analyzer::with_defaults();
 //! let text = "ping me at jane.doe@example.com";
 //! let results = analyzer.analyze(text, &AnalyzeOptions::default());
-//! let out = anonymize(text, results, &OperatorConfig::default());
+//! let out = anonymize(text, results, &Operator::Replace);
 //! assert_eq!(out.text, "ping me at <EMAIL_ADDRESS>");
 //! ```
 
@@ -42,7 +42,7 @@ pub mod validators;
 mod words;
 
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
-pub use crate::anonymizer::{OperatorConfig, anonymize};
+pub use crate::anonymizer::anonymize;
 pub use crate::category::{Category, ParseCategoryError};
 pub use crate::context::ContextSettings;
 pub use crate::entity::{Entity, ParseEntityError};

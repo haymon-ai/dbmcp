@@ -233,7 +233,7 @@ impl Entity {
         }
     }
 
-    /// Default placeholder token used by [`crate::Operator::default_for`].
+    /// Placeholder token written by [`crate::Operator::Replace`].
     #[must_use]
     pub const fn placeholder(self) -> &'static str {
         match self {
