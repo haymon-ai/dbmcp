@@ -3,8 +3,6 @@
 //! Owns a moka cache of lazily-created per-database pools (including the default).
 //! Hides every backend pool concern from [`PostgresHandler`](crate::PostgresHandler),
 //! which composes one [`PostgresConnection`] as a field.
-//!
-//! In read-only mode every pooled connection is a read-only session.
 
 use std::time::Duration;
 
@@ -238,18 +236,6 @@ mod tests {
     async fn create_lazy_pool_returns_idle_pool() {
         let pool = create_lazy_pool(&base_config(), "mydb");
         assert_eq!(pool.size(), 0, "pool should be lazy (no connections yet)");
-    }
-
-    #[tokio::test]
-    async fn create_lazy_pool_read_only_stays_lazy() {
-        let pool = create_lazy_pool(
-            &DatabaseConfig {
-                read_only: true,
-                ..base_config()
-            },
-            "mydb",
-        );
-        assert_eq!(pool.size(), 0, "read-only pool should stay lazy");
     }
 
     #[tokio::test]
