@@ -4557,6 +4557,43 @@ async fn test_read_numeric_columns_round_trip() {
     assert_eq!(null_row["dbl"], Value::Null);
 }
 
+// Unsigned integer columns of every width, and YEAR, must not decode to null:
+// sqlx-mysql decodes them only as `u64`. Values past `i64::MAX` become strings.
+#[tokio::test]
+async fn test_read_unsigned_integer_columns_round_trip() {
+    let handler = handler(false);
+    let rows = handler
+        .read_query(
+            "SELECT label, u_tiny, u_small, u_medium, u_int, u_big, yr FROM numeric_samples \
+                WHERE label IN ('basic', 'all_null') ORDER BY id"
+                .into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let basic = &rows.rows[0];
+    assert_eq!(basic["label"], "basic");
+    assert_eq!(basic["u_tiny"], serde_json::json!(255), "TINYINT UNSIGNED");
+    assert_eq!(basic["u_small"], serde_json::json!(65535), "SMALLINT UNSIGNED");
+    assert_eq!(basic["u_medium"], serde_json::json!(16_777_215), "MEDIUMINT UNSIGNED");
+    assert_eq!(basic["u_int"], serde_json::json!(4_294_967_295_u64), "INT UNSIGNED");
+    assert_eq!(
+        basic["u_big"],
+        serde_json::json!("18446744073709551615"),
+        "BIGINT UNSIGNED past i64::MAX is a string"
+    );
+    assert_eq!(basic["yr"], serde_json::json!(2026), "YEAR");
+
+    let null_row = &rows.rows[1];
+    assert_eq!(null_row["label"], "all_null");
+    for column in ["u_tiny", "u_small", "u_medium", "u_int", "u_big", "yr"] {
+        assert_eq!(null_row[column], Value::Null, "{column}: SQL NULL preserved");
+    }
+}
+
 // Spec 092 US2 — DECIMAL aggregation preserves precision end-to-end (SC-003).
 #[tokio::test]
 async fn test_read_decimal_aggregation_exact_precision() {

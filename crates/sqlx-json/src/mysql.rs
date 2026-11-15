@@ -1,7 +1,8 @@
 //! [`RowExt`](crate::RowExt) implementation for `MySQL` rows.
 //!
 //! Maps each column's `type_info().name()` to a [`Cell`]; JSON shapes are
-//! owned by [`encode`](crate::cell::encode). `DECIMAL` decodes to
+//! owned by [`encode`](crate::cell::encode). Unsigned integers and `YEAR`
+//! decode to `Cell::UInt`, signed integers to `Cell::Int`. `DECIMAL` decodes to
 //! `Cell::Decimal`, `FLOAT` to `Cell::Float32` (sqlx-mysql strict-checks the
 //! column type), `TIMESTAMP` to `Cell::DateTimeUtc`, and binary-collation `BLOB`,
 //! `BIT`, and `GEOMETRY` to `Cell::Bytes`. Text-like columns, including `MySQL` 9's
@@ -23,10 +24,13 @@ impl DecodeCell for MySqlRow {
         match type_name {
             "BOOLEAN" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
 
-            "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED"
-            | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "YEAR" => self.try_get(idx).map_or(Cell::Null, Cell::Int),
+            "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" => self.try_get(idx).map_or(Cell::Null, Cell::Int),
 
-            "BIGINT UNSIGNED" => self.try_get(idx).map_or(Cell::Null, Cell::UInt),
+            // sqlx-mysql decodes `i64` only without the UNSIGNED flag and `u64`
+            // only with it, so every unsigned width needs `u64`. `YEAR` carries
+            // the UNSIGNED flag and is not an `i64` type at all.
+            "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED" | "BIGINT UNSIGNED"
+            | "YEAR" => self.try_get(idx).map_or(Cell::Null, Cell::UInt),
 
             "DECIMAL" => self.try_get(idx).map_or(Cell::Null, Cell::Decimal),
 

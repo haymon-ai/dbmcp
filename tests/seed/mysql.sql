@@ -128,7 +128,13 @@ CREATE TABLE `app`.`numeric_samples` (
     `d_int`      DECIMAL(10, 0) NULL,
     `d_overflow` DECIMAL(38, 10) NULL,
     `f`          FLOAT NULL,
-    `dbl`        DOUBLE NULL
+    `dbl`        DOUBLE NULL,
+    `u_tiny`     TINYINT UNSIGNED NULL,
+    `u_small`    SMALLINT UNSIGNED NULL,
+    `u_medium`   MEDIUMINT UNSIGNED NULL,
+    `u_int`      INT UNSIGNED NULL,
+    `u_big`      BIGINT UNSIGNED NULL,
+    `yr`         YEAR NULL
 ) ENGINE=InnoDB;
 
 INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, `f`, `dbl`) VALUES
@@ -137,6 +143,13 @@ INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, 
     ('negative',     -99.99, -7,  -123.45,                           -1.5,   -2.5),
     ('overflow',      0.01,   1,  12345678901234567890.1234567890,    1.5,    1e100),
     ('all_null',      NULL,   NULL, NULL,                             NULL,   NULL);
+
+-- Unsigned integers and YEAR at their maximum values (issue: INT UNSIGNED
+-- decoded as null); the other rows keep them NULL.
+UPDATE `app`.`numeric_samples`
+    SET `u_tiny` = 255, `u_small` = 65535, `u_medium` = 16777215, `u_int` = 4294967295,
+        `u_big` = 18446744073709551615, `yr` = 2026
+    WHERE `label` = 'basic';
 
 -- Partitioned table — exercises the kind: "PARTITIONED_TABLE" detection path.
 -- The primary key includes `year` because MySQL requires every UNIQUE key to
