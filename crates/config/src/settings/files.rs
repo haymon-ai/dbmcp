@@ -13,6 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_saphyr::{MessageFormatter, UserMessageFormatter};
+
 use super::InputError;
 use crate::env::Raw;
 use crate::interpolate;
@@ -54,7 +56,10 @@ impl ConfigFiles {
                     .filter(|l| l.line() > 0)
                     .map(|l| format!("{}:{}: ", l.line(), l.column()))
                     .unwrap_or_default();
-                let message = error.to_string();
+                // The user formatter drops the developer hints (`set
+                // DuplicateKeyPolicy in Options`) and the `at line` suffix
+                // that `Display` adds; the location is the prefix above.
+                let message = UserMessageFormatter.format_message(&error);
                 let message = message.lines().next().unwrap_or_default();
                 LoadErrorKind::Parse {
                     errors: vec![format!("{}:{location}{message}", path.display())],

@@ -798,6 +798,17 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicate_key_is_reported_once_without_library_hints() {
+        let fixture = Fixture::new().config("a.yaml", "database:\n  port: 1\n  port: 2\n");
+        let error = fixture.err();
+        let a = fixture.dir.path().join("a.yaml").display().to_string();
+        assert_eq!(
+            error,
+            format!("failed to parse config file {a}:\n  - {a}:3:3: duplicate mapping key `port` is not allowed here")
+        );
+    }
+
+    #[test]
     fn anchors_do_not_cross_config_files() {
         let fixture = Fixture::new()
             .config("a.yaml", "database:\n  host: &h a\n")
