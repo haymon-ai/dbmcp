@@ -1,6 +1,9 @@
 //! [`RowExt`](crate::RowExt) implementation for `SQLite` rows.
+//!
+//! Decodes each value by its storage class, not its column's declared type.
 
 use sqlx::sqlite::SqliteRow;
+use sqlx::{TypeInfo as _, ValueRef as _};
 
 use crate::prelude::*;
 
@@ -12,37 +15,24 @@ impl RowExt for SqliteRow {
 
 impl DecodeCell for SqliteRow {
     fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
-        match type_name {
-            "BOOLEAN" | "BOOL" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
+        let Ok(value) = self.try_get_raw(idx) else {
+            return Cell::Null;
+        };
 
-            "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => {
-                self.try_get(idx).map_or(Cell::Null, Cell::Int)
-            }
+        let cell = match value.type_info().name() {
+            "INTEGER" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Int),
+            "REAL" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Float64),
+            "TEXT" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Text),
+            _ => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Bytes),
+        };
 
-            "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => self.try_get(idx).map_or(Cell::Null, Cell::Float64),
-
-            "BLOB" => self.try_get(idx).map_or(Cell::Null, Cell::Bytes),
-
-            "TEXT" | "VARCHAR" | "CHAR" | "CLOB" | "DATE" | "DATETIME" | "TIMESTAMP" | "TIME" => {
-                self.try_get(idx).map_or(Cell::Null, Cell::Text)
-            }
-
-            // SQLite reports "NULL" type for expressions like COUNT(*), SUM().
-            // The value is not null (checked by the caller), so probe: i64 → f64 → String.
-            _ => dynamic_probe(self, idx),
+        match (type_name, cell) {
+            ("BOOLEAN", Cell::Int(0)) => Cell::Bool(false),
+            ("BOOLEAN", Cell::Int(1)) => Cell::Bool(true),
+            ("BLOB", Cell::Text(text)) => Cell::Bytes(text.into_bytes()),
+            (_, cell) => cell,
         }
     }
-}
-
-/// Probes a `SQLite` value by trying types in order: i64 → f64 → String → Null.
-fn dynamic_probe(row: &SqliteRow, idx: usize) -> Cell {
-    if let Ok(n) = row.try_get::<i64, _>(idx) {
-        return Cell::Int(n);
-    }
-    if let Ok(f) = row.try_get::<f64, _>(idx) {
-        return Cell::Float64(f);
-    }
-    row.try_get::<String, _>(idx).map_or(Cell::Null, Cell::Text)
 }
 
 #[cfg(test)]
@@ -110,5 +100,39 @@ mod tests {
         .await;
 
         assert_eq!(row, json!({ "c": 2, "si": 3, "sr": 0.75, "s": "xy" }));
+    }
+
+    #[tokio::test]
+    async fn values_outside_their_declared_type_are_probed() {
+        let row = fetch(
+            "CREATE TABLE t (i INTEGER, big INTEGER, r REAL, dt DATETIME, b BOOLEAN, flag BOOLEAN);
+             INSERT INTO t VALUES ('abc', 18446744073709551615, 'x', 1767225600, 'true', 2);",
+            "SELECT * FROM t",
+        )
+        .await;
+
+        assert_eq!(
+            row,
+            json!({
+                "i": "abc",
+                "big": 18_446_744_073_709_551_615.0,
+                "r": "x",
+                "dt": 1_767_225_600,
+                "b": "true",
+                "flag": 2,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn blobs_without_a_declared_type_are_bytes() {
+        let row = fetch(
+            "CREATE TABLE t (j JSON, u);
+             INSERT INTO t VALUES (X'00FF', X'68690A');",
+            "SELECT j, u, X'0102' AS lit, zeroblob(2) AS z FROM t",
+        )
+        .await;
+
+        assert_eq!(row, json!({ "j": "AP8=", "u": "aGkK", "lit": "AQI=", "z": "AAA=" }));
     }
 }

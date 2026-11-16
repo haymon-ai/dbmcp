@@ -1875,6 +1875,32 @@ async fn test_read_query_returns_non_null_temporal_columns() {
 }
 
 #[tokio::test]
+async fn test_read_query_temporal_values_beyond_chrono_keep_server_text() {
+    let handler = handler(false);
+
+    let response = handler
+        .read_query(
+            "SELECT `date`, `time`, `datetime`, `timestamp`, SEC_TO_TIME(-3600) AS negative, \
+                TIMEDIFF('2026-01-03 00:00:00', '2026-01-01 00:00:00') AS two_days \
+                FROM temporal WHERE id = 2"
+                .into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .expect("temporal SELECT should succeed");
+
+    let row = &response.rows[0];
+    assert_eq!(row["date"], "0000-00-00");
+    assert_eq!(row["time"], "838:59:59");
+    assert_eq!(row["datetime"], "0000-00-00 00:00:00");
+    assert_eq!(row["timestamp"], "0000-00-00 00:00:00");
+    assert_eq!(row["negative"], "-01:00:00");
+    assert_eq!(row["two_days"], "48:00:00");
+}
+
+#[tokio::test]
 async fn test_read_query_blob_is_base64_varbinary_is_text() {
     // BLOB is always base64, even when its bytes are valid UTF-8; VARBINARY
     // keeps the UTF-8-first decode for MySQL 9 information_schema columns.
@@ -1884,7 +1910,7 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
 
     let response = handler
         .read_query(
-            "SELECT `blob`, `varbinary`, `text_bin` FROM binary_samples WHERE id = 1".into(),
+            "SELECT `blob`, `varbinary`, `text_bin`, `point` FROM binary_samples WHERE id = 1".into(),
             Some("app".into()),
             None,
             None,
@@ -1897,6 +1923,7 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
     assert_eq!(arr[0]["blob"], "aGVsbG8=", "BLOB → base64");
     assert_eq!(arr[0]["varbinary"], "hello", "VARBINARY → UTF-8 text");
     assert_eq!(arr[0]["text_bin"], "hello", "utf8mb4_bin TEXT → text");
+    assert_eq!(arr[0]["point"], "AAAAAAEBAAAAAAAAAAAA8D8AAAAAAAAAQA==");
 }
 
 #[tokio::test]
@@ -4496,16 +4523,15 @@ async fn read_query_hash_operator_emits_keyed_token() {
     assert_eq!(b, a, "same text must give the same token");
 }
 
-// Spec 092 / issue #141 — DECIMAL/FLOAT/DOUBLE, unsigned integer and YEAR
-// columns round-trip through readQuery without silent nulls or precision loss. Asserts against the value-driven
-// JSON shape rule from data-model.md.
+// Numeric columns round-trip through readQuery without silent nulls or
+// precision loss, following the value-driven JSON shape rule from data-model.md.
 #[tokio::test]
 async fn test_read_numeric_columns_round_trip() {
     let handler = handler(false);
     let rows = handler
         .read_query(
-            "SELECT label, d_small, d_int, d_overflow, f, dbl, u_tiny, u_small, u_medium, u_int, u_big, yr \
-                FROM numeric_samples ORDER BY id"
+            "SELECT label, d_small, d_int, d_overflow, f, dbl, u_tiny, u_small, u_medium, u_int, u_big, yr, \
+                bits, flag, uflag FROM numeric_samples ORDER BY id"
                 .into(),
             Some("app".into()),
             None,
@@ -4535,6 +4561,9 @@ async fn test_read_numeric_columns_round_trip() {
         "BIGINT UNSIGNED past i64::MAX is a string"
     );
     assert_eq!(basic["yr"], serde_json::json!(2155));
+    assert_eq!(basic["bits"], serde_json::json!(170));
+    assert_eq!(basic["flag"], serde_json::json!(5));
+    assert_eq!(basic["uflag"], serde_json::json!(200));
 
     let trailing = by_label["trailing_zero"];
     assert_eq!(trailing["d_small"], serde_json::json!(1.2), "trailing zero normalized");
@@ -4567,7 +4596,9 @@ async fn test_read_numeric_columns_round_trip() {
     assert_eq!(null_row["d_overflow"], Value::Null);
     assert_eq!(null_row["f"], Value::Null);
     assert_eq!(null_row["dbl"], Value::Null);
-    for column in ["u_tiny", "u_small", "u_medium", "u_int", "u_big", "yr"] {
+    for column in [
+        "u_tiny", "u_small", "u_medium", "u_int", "u_big", "yr", "bits", "flag", "uflag",
+    ] {
         assert_eq!(null_row[column], Value::Null, "{column}");
     }
 }

@@ -3969,6 +3969,42 @@ async fn read_query_hash_operator_emits_keyed_token() {
     assert_eq!(b, a, "same text must give the same token");
 }
 
+#[tokio::test]
+async fn test_read_types_without_rust_decode_keep_text() {
+    let handler = handler(false);
+    let rows = handler
+        .read_query(
+            "SELECT '6f1c2a4e-3b9d-4c1a-9e2f-1a2b3c4d5e6f'::uuid AS uuid, '10.0.0.1/24'::inet AS inet, \
+                interval '1 day 2 hours' AS span, '12:00:00+02'::timetz AS timetz, B'101'::bit(3) AS bits, \
+                ARRAY[1, 2] AS ints, int4range(1, 5) AS range, ROW(1, 'a') AS record, \
+                'infinity'::timestamp AS ts_inf, '-infinity'::timestamptz AS tstz_neg_inf, \
+                '0044-03-15 BC'::date AS bc, '24:00:00'::time AS midnight, \
+                26::oid AS small_oid, 4294967295::oid AS max_oid"
+                .into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let row = &rows.rows[0];
+    assert_eq!(row["uuid"], "6f1c2a4e-3b9d-4c1a-9e2f-1a2b3c4d5e6f");
+    assert_eq!(row["inet"], "10.0.0.1/24");
+    assert_eq!(row["span"], "1 day 02:00:00");
+    assert_eq!(row["timetz"], "12:00:00+02");
+    assert_eq!(row["bits"], "101");
+    assert_eq!(row["ints"], "{1,2}");
+    assert_eq!(row["range"], "[1,5)");
+    assert_eq!(row["record"], "(1,a)");
+    assert_eq!(row["ts_inf"], "infinity");
+    assert_eq!(row["tstz_neg_inf"], "-infinity");
+    assert_eq!(row["bc"], "0044-03-15 BC");
+    assert_eq!(row["midnight"], "24:00:00");
+    assert_eq!(row["small_oid"], serde_json::json!(26));
+    assert_eq!(row["max_oid"], serde_json::json!(4_294_967_295_u64));
+}
+
 // Spec 092 / issue #141 (US3) — NUMERIC, MONEY, REAL, DOUBLE PRECISION round-trip
 // through readQuery without silent nulls or precision loss. Asserts against
 // the value-driven JSON shape rule from data-model.md.
@@ -4083,13 +4119,9 @@ async fn test_read_numeric_avg_preserves_precision() {
     assert_eq!(rows.rows[0]["avg_int"], serde_json::json!(26));
 }
 
-// NUMERIC special values: 'NaN' and ±Infinity (PG 14+) are valid in
-// Postgres but unrepresentable in BigDecimal — sqlx::try_get fails and the
-// row decoder emits SQL Null. Pin behaviour so a future bigdecimal/sqlx
-// upgrade that adds support surfaces as an obvious diff (and we can revisit
-// emitting "NaN"/"Infinity" strings if downstream consumers want them).
+// NUMERIC 'NaN' and ±Infinity don't fit BigDecimal.
 #[tokio::test]
-async fn test_read_numeric_special_values_emit_null() {
+async fn test_read_numeric_special_values_keep_text() {
     let handler = handler(false);
     let rows = handler
         .read_query(
@@ -4103,13 +4135,9 @@ async fn test_read_numeric_special_values_emit_null() {
         )
         .await
         .unwrap();
-    assert_eq!(rows.rows[0]["n_nan"], Value::Null, "NaN unrepresentable → Null");
-    assert_eq!(rows.rows[0]["n_inf"], Value::Null, "+Infinity unrepresentable → Null");
-    assert_eq!(
-        rows.rows[0]["n_neg_inf"],
-        Value::Null,
-        "-Infinity unrepresentable → Null"
-    );
+    assert_eq!(rows.rows[0]["n_nan"], "NaN");
+    assert_eq!(rows.rows[0]["n_inf"], "Infinity");
+    assert_eq!(rows.rows[0]["n_neg_inf"], "-Infinity");
 }
 
 // Float NaN/Infinity round-trip: sqlx decodes as f64::NAN / f64::INFINITY,

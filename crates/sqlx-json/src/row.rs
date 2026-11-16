@@ -9,7 +9,7 @@ use crate::cell::{Cell, encode};
 pub(crate) trait DecodeCell: Row {
     /// Decodes column `idx`, whose driver-reported type name is `type_name`.
     ///
-    /// Never called for SQL `NULL` values; decode failures yield [`Cell::Null`].
+    /// Never called for SQL `NULL` values.
     fn decode_cell(&self, idx: usize, type_name: &str) -> Cell;
 }
 
