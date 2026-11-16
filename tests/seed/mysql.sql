@@ -106,7 +106,8 @@ CREATE TABLE `app`.`binary_samples` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `blob` BLOB NOT NULL,
     `varbinary` VARBINARY(16) NOT NULL,
-    `text_bin` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
+    `text_bin` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `point` POINT NULL
 ) ENGINE=InnoDB;
 
 -- Audit log written to by the posts_after_insert trigger.
@@ -120,7 +121,8 @@ CREATE TABLE `app`.`posts_audit` (
 -- FLOAT, and DOUBLE columns must come back through readQuery as real values
 -- with exact precision, not silent nulls. Includes a value beyond f64
 -- precision to verify the value-driven JSON shape rule (number when safe,
--- string when out of range) and an explicit-NULL row.
+-- string when out of range) and an explicit-NULL row. `flag` and `uflag` are
+-- TINYINT(1), which sqlx names BOOLEAN.
 CREATE TABLE `app`.`numeric_samples` (
     `id`         INT AUTO_INCREMENT PRIMARY KEY,
     `label`      VARCHAR(64) NOT NULL,
@@ -128,7 +130,16 @@ CREATE TABLE `app`.`numeric_samples` (
     `d_int`      DECIMAL(10, 0) NULL,
     `d_overflow` DECIMAL(38, 10) NULL,
     `f`          FLOAT NULL,
-    `dbl`        DOUBLE NULL
+    `dbl`        DOUBLE NULL,
+    `u_tiny`     TINYINT UNSIGNED NULL,
+    `u_small`    SMALLINT UNSIGNED NULL,
+    `u_medium`   MEDIUMINT UNSIGNED NULL,
+    `u_int`      INT UNSIGNED NULL,
+    `u_big`      BIGINT UNSIGNED NULL,
+    `yr`         YEAR NULL,
+    `bits`       BIT(8) NULL,
+    `flag`       TINYINT(1) NULL,
+    `uflag`      TINYINT(1) UNSIGNED NULL
 ) ENGINE=InnoDB;
 
 INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, `f`, `dbl`) VALUES
@@ -137,6 +148,11 @@ INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, 
     ('negative',     -99.99, -7,  -123.45,                           -1.5,   -2.5),
     ('overflow',      0.01,   1,  12345678901234567890.1234567890,    1.5,    1e100),
     ('all_null',      NULL,   NULL, NULL,                             NULL,   NULL);
+
+UPDATE `app`.`numeric_samples`
+    SET `u_tiny` = 255, `u_small` = 65535, `u_medium` = 16777215, `u_int` = 4294967295,
+        `u_big` = 18446744073709551615, `yr` = 2155, `bits` = b'10101010', `flag` = 5, `uflag` = 200
+    WHERE `label` = 'basic';
 
 -- Partitioned table — exercises the kind: "PARTITIONED_TABLE" detection path.
 -- The primary key includes `year` because MySQL requires every UNIQUE key to
@@ -156,9 +172,16 @@ PARTITION BY RANGE (`year`) (
 INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
     (1, '2026-04-20', '14:30:00', '2026-04-20 14:30:00', '2026-04-20 14:30:00');
 
--- Sample data: 1 binary row holding valid UTF-8 in every column
-INSERT INTO `app`.`binary_samples` (`id`, `blob`, `varbinary`, `text_bin`) VALUES
-    (1, 'hello', 'hello', 'hello');
+-- Zero dates (allowed only without strict mode) and a TIME beyond 24 hours.
+SET @seed_sql_mode = @@SESSION.sql_mode;
+SET SESSION sql_mode = '';
+INSERT INTO `app`.`temporal` (`id`, `date`, `time`, `datetime`, `timestamp`) VALUES
+    (2, '0000-00-00', '838:59:59', '0000-00-00 00:00:00', '0000-00-00 00:00:00');
+SET SESSION sql_mode = @seed_sql_mode;
+
+-- Sample data: 1 binary row holding valid UTF-8 in every text and blob column.
+INSERT INTO `app`.`binary_samples` (`id`, `blob`, `varbinary`, `text_bin`, `point`) VALUES
+    (1, 'hello', 'hello', 'hello', ST_GeomFromText('POINT(1 2)'));
 
 -- Views
 

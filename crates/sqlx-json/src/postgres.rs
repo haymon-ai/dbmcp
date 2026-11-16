@@ -12,7 +12,8 @@
 use std::str::FromStr;
 
 use bigdecimal::BigDecimal;
-use sqlx::postgres::PgRow;
+use sqlx::postgres::types::Oid;
+use sqlx::postgres::{PgRow, PgValueFormat};
 
 use crate::prelude::*;
 
@@ -35,12 +36,14 @@ impl RowExt for PgRow {
 
 impl DecodeCell for PgRow {
     fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
-        match type_name.to_ascii_uppercase().as_str() {
+        let cell = match type_name.to_ascii_uppercase().as_str() {
             "BOOL" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
 
             "INT8" => self.try_get(idx).map_or(Cell::Null, Cell::Int),
 
-            "INT4" | "OID" => self.try_get(idx).map_or(Cell::Null, |v: i32| Cell::Int(v.into())),
+            "INT4" => self.try_get(idx).map_or(Cell::Null, |v: i32| Cell::Int(v.into())),
+
+            "OID" => self.try_get(idx).map_or(Cell::Null, |v: Oid| Cell::UInt(v.0.into())),
 
             "INT2" => self.try_get(idx).map_or(Cell::Null, |v: i16| Cell::Int(v.into())),
 
@@ -50,10 +53,7 @@ impl DecodeCell for PgRow {
             // (text) protocol, where `PgMoney` errors out (binary-only). Parse the
             // locale-formatted text form ($1,234.56, -$99.99) directly — assumes the
             // en_US.UTF-8 lc_monetary default (`$` symbol, `.` decimal).
-            "MONEY" => self
-                .try_get_raw(idx)
-                .ok()
-                .and_then(|v| v.as_str().ok())
+            "MONEY" => text_value(self, idx)
                 .and_then(parse_pg_money_text)
                 .map_or(Cell::Null, Cell::Decimal),
 
@@ -73,9 +73,27 @@ impl DecodeCell for PgRow {
 
             "TIMESTAMPTZ" => self.try_get(idx).map_or(Cell::Null, Cell::DateTimeUtc),
 
-            _ => self.try_get(idx).map_or(Cell::Null, Cell::Text),
+            // sqlx refuses `String` for most types it knows (UUID, arrays, …).
+            _ => text_value(self, idx).map_or_else(
+                || self.try_get(idx).map_or(Cell::Null, Cell::Text),
+                |text| Cell::Text(text.to_owned()),
+            ),
+        };
+
+        // `infinity`, BC dates, `NaN` numerics, …: keep the text form.
+        match cell {
+            Cell::Null => text_value(self, idx).map_or(Cell::Null, |text| Cell::Text(text.to_owned())),
+            cell => cell,
         }
     }
+}
+
+/// Returns a text-format value's raw text; `None` for binary-format values.
+fn text_value(row: &PgRow, idx: usize) -> Option<&str> {
+    row.try_get_raw(idx)
+        .ok()
+        .filter(|v| v.format() == PgValueFormat::Text)
+        .and_then(|v| v.as_str().ok())
 }
 
 #[cfg(test)]
