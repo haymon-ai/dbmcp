@@ -2,7 +2,7 @@
 //!
 //! Maps each column's `type_info().name()` to a [`Cell`]; JSON shapes are
 //! owned by [`encode`](crate::cell::encode). Unsigned integers and `YEAR`
-//! decode to `Cell::UInt`, signed integers to `Cell::Int`. `DECIMAL` decodes to
+//! decode to `Cell::UInt`. `DECIMAL` decodes to
 //! `Cell::Decimal`, `FLOAT` to `Cell::Float32` (sqlx-mysql strict-checks the
 //! column type), `TIMESTAMP` to `Cell::DateTimeUtc`, and binary-collation `BLOB`,
 //! `BIT`, and `GEOMETRY` to `Cell::Bytes`. Text-like columns, including `MySQL` 9's
@@ -28,7 +28,7 @@ impl DecodeCell for MySqlRow {
 
             // sqlx-mysql decodes `i64` only without the UNSIGNED flag and `u64`
             // only with it, so every unsigned width needs `u64`. `YEAR` carries
-            // the UNSIGNED flag and is not an `i64` type at all.
+            // the UNSIGNED flag.
             "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED" | "BIGINT UNSIGNED"
             | "YEAR" => self.try_get(idx).map_or(Cell::Null, Cell::UInt),
 

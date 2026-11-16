@@ -4496,15 +4496,17 @@ async fn read_query_hash_operator_emits_keyed_token() {
     assert_eq!(b, a, "same text must give the same token");
 }
 
-// Spec 092 / issue #141 — DECIMAL/FLOAT/DOUBLE round-trip through readQuery
-// without silent nulls or precision loss. Asserts against the value-driven
+// Spec 092 / issue #141 — DECIMAL/FLOAT/DOUBLE, unsigned integer and YEAR
+// columns round-trip through readQuery without silent nulls or precision loss. Asserts against the value-driven
 // JSON shape rule from data-model.md.
 #[tokio::test]
 async fn test_read_numeric_columns_round_trip() {
     let handler = handler(false);
     let rows = handler
         .read_query(
-            "SELECT label, d_small, d_int, d_overflow, f, dbl FROM numeric_samples ORDER BY id".into(),
+            "SELECT label, d_small, d_int, d_overflow, f, dbl, u_tiny, u_small, u_medium, u_int, u_big, yr \
+                FROM numeric_samples ORDER BY id"
+                .into(),
             Some("app".into()),
             None,
             None,
@@ -4523,6 +4525,16 @@ async fn test_read_numeric_columns_round_trip() {
     assert_eq!(basic["d_overflow"], serde_json::json!(1.5), "DECIMAL(38,10) small fits");
     assert_eq!(basic["f"], serde_json::json!(1.5), "FLOAT must not be null");
     assert_eq!(basic["dbl"], serde_json::json!(2.5), "DOUBLE round-trip");
+    assert_eq!(basic["u_tiny"], serde_json::json!(255));
+    assert_eq!(basic["u_small"], serde_json::json!(65_535));
+    assert_eq!(basic["u_medium"], serde_json::json!(16_777_215));
+    assert_eq!(basic["u_int"], serde_json::json!(4_294_967_295_u64));
+    assert_eq!(
+        basic["u_big"],
+        serde_json::json!("18446744073709551615"),
+        "BIGINT UNSIGNED past i64::MAX is a string"
+    );
+    assert_eq!(basic["yr"], serde_json::json!(2155));
 
     let trailing = by_label["trailing_zero"];
     assert_eq!(trailing["d_small"], serde_json::json!(1.2), "trailing zero normalized");
@@ -4555,42 +4567,8 @@ async fn test_read_numeric_columns_round_trip() {
     assert_eq!(null_row["d_overflow"], Value::Null);
     assert_eq!(null_row["f"], Value::Null);
     assert_eq!(null_row["dbl"], Value::Null);
-}
-
-// Unsigned integer columns of every width, and YEAR, must not decode to null:
-// sqlx-mysql decodes them only as `u64`. Values past `i64::MAX` become strings.
-#[tokio::test]
-async fn test_read_unsigned_integer_columns_round_trip() {
-    let handler = handler(false);
-    let rows = handler
-        .read_query(
-            "SELECT label, u_tiny, u_small, u_medium, u_int, u_big, yr FROM numeric_samples \
-                WHERE label IN ('basic', 'all_null') ORDER BY id"
-                .into(),
-            Some("app".into()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-    let basic = &rows.rows[0];
-    assert_eq!(basic["label"], "basic");
-    assert_eq!(basic["u_tiny"], serde_json::json!(255), "TINYINT UNSIGNED");
-    assert_eq!(basic["u_small"], serde_json::json!(65535), "SMALLINT UNSIGNED");
-    assert_eq!(basic["u_medium"], serde_json::json!(16_777_215), "MEDIUMINT UNSIGNED");
-    assert_eq!(basic["u_int"], serde_json::json!(4_294_967_295_u64), "INT UNSIGNED");
-    assert_eq!(
-        basic["u_big"],
-        serde_json::json!("18446744073709551615"),
-        "BIGINT UNSIGNED past i64::MAX is a string"
-    );
-    assert_eq!(basic["yr"], serde_json::json!(2026), "YEAR");
-
-    let null_row = &rows.rows[1];
-    assert_eq!(null_row["label"], "all_null");
     for column in ["u_tiny", "u_small", "u_medium", "u_int", "u_big", "yr"] {
-        assert_eq!(null_row[column], Value::Null, "{column}: SQL NULL preserved");
+        assert_eq!(null_row[column], Value::Null, "{column}");
     }
 }
 

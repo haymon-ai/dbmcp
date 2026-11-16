@@ -120,7 +120,9 @@ CREATE TABLE `app`.`posts_audit` (
 -- FLOAT, and DOUBLE columns must come back through readQuery as real values
 -- with exact precision, not silent nulls. Includes a value beyond f64
 -- precision to verify the value-driven JSON shape rule (number when safe,
--- string when out of range) and an explicit-NULL row.
+-- string when out of range) and an explicit-NULL row. The unsigned integer and
+-- YEAR columns hold their type's maximum in the `basic` row only; `u_big`
+-- exceeds i64::MAX.
 CREATE TABLE `app`.`numeric_samples` (
     `id`         INT AUTO_INCREMENT PRIMARY KEY,
     `label`      VARCHAR(64) NOT NULL,
@@ -144,11 +146,9 @@ INSERT INTO `app`.`numeric_samples` (`label`, `d_small`, `d_int`, `d_overflow`, 
     ('overflow',      0.01,   1,  12345678901234567890.1234567890,    1.5,    1e100),
     ('all_null',      NULL,   NULL, NULL,                             NULL,   NULL);
 
--- Unsigned integers and YEAR at their maximum values (issue: INT UNSIGNED
--- decoded as null); the other rows keep them NULL.
 UPDATE `app`.`numeric_samples`
     SET `u_tiny` = 255, `u_small` = 65535, `u_medium` = 16777215, `u_int` = 4294967295,
-        `u_big` = 18446744073709551615, `yr` = 2026
+        `u_big` = 18446744073709551615, `yr` = 2155
     WHERE `label` = 'basic';
 
 -- Partitioned table — exercises the kind: "PARTITIONED_TABLE" detection path.
