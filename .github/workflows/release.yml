@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # crates.io asks API clients for a descriptive User-Agent.
   CRATES_IO_USER_AGENT: dbmcp-release (https://github.com/haymon-ai/dbmcp)
 
 permissions:
@@ -166,7 +165,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # A Sigstore or attestation API outage must not fail the job: a re-run would rebuild the image.
       - uses: actions/attest@v4
         continue-on-error: true
         with:
@@ -181,7 +179,6 @@ jobs:
         # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
-  # A separate job, so re-running a failed chart push does not rebuild and re-tag the image.
   ghcr-io-chart:
     name: Publish Helm chart to ghcr.io
     # The chart publishes after the image, so it never points at a missing image tag.
@@ -213,7 +210,6 @@ jobs:
         name: Package and push chart
         run: |
           helm package charts/dbmcp
-          # GHCR can answer "not found" for a manifest it has just accepted; pushing the same package again is safe.
           for attempt in 1 2 3; do
             out=$(helm push "dbmcp-${GITHUB_REF_NAME#v}.tgz" "oci://${CHARTS}" 2>&1) && break
             echo "$out"
@@ -225,7 +221,6 @@ jobs:
           test -n "$digest"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
-      # A Sigstore or attestation API outage must not fail the job.
       - uses: actions/attest@v4
         continue-on-error: true
         with:
@@ -311,12 +306,11 @@ jobs:
         timeout-minutes: 10
         run: |
           # The registry checks the README crates.io renders after publish, which can lag the publish by minutes.
-          # The readme endpoint redirects to the rendered HTML on static.crates.io.
+          # The readme endpoint redirects to the rendered HTML on static.crates.io; crates.io asks for a descriptive User-Agent.
           until curl -fsSL -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/dbmcp/${GITHUB_REF_NAME#v}/readme" | grep -q 'mcp-name: ai.haymon/dbmcp'; do sleep 15; done
 
       - name: Publish to MCP Registry
         run: |
-          # Skip a version the registry already lists, so the job can be re-run.
           if curl -fs -o /dev/null "https://registry.modelcontextprotocol.io/v0/servers/ai.haymon%2Fdbmcp/versions/${GITHUB_REF_NAME#v}"; then
             echo "ai.haymon/dbmcp@${GITHUB_REF_NAME#v} is already published"
             exit 0
@@ -340,7 +334,6 @@ jobs:
 
       - name: Publish workspace
         run: |
-          # `cargo publish --workspace` aborts if any crate already exists; publish only the missing ones so the job can be re-run.
           packages=()
           while read -r name version; do
             if curl -fs -o /dev/null -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/${name}/${version}"; then
