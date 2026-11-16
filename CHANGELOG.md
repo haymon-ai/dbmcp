@@ -2,6 +2,27 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.19.0](https://github.com/haymon-ai/dbmcp/compare/fb98def0fae51b8984215fac50cf7e7746bac488..v0.19.0) - 2026-11-16
+
+#### ⚠ BREAKING CHANGES
+- (**pii**) identifiable keyed-hash placeholders (#327) - ([68cf0bd](https://github.com/haymon-ai/dbmcp/commit/68cf0bdad816b20ec66522124ad1a9dcfaff37fd))
+- dbmcp-sql Connection::read_json, execute_json, and fetch_read_only take a row sink; read_json returns () and execute_json returns (rows_affected, last_insert_id). - ([db9a650](https://github.com/haymon-ai/dbmcp/commit/db9a6501b3e8fd05cffe11247ca9c82ad33bb648))
+- (**sql**) with read-only mode disabled, explainQuery no longer runs EXPLAIN ANALYZE of write statements (MySQL, MariaDB, PostgreSQL), and MySQL/MariaDB reject a plain EXPLAIN of a write statement. - ([d10d660](https://github.com/haymon-ai/dbmcp/commit/d10d6601df85cc072b2b4b1f19de6b250777ee4e))
+#### 🚀 Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**pii**) identifiable keyed-hash placeholders (#327) - ([68cf0bd](https://github.com/haymon-ai/dbmcp/commit/68cf0bdad816b20ec66522124ad1a9dcfaff37fd)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) page readQuery inside the statement's own LIMIT (#326) - ([db9a650](https://github.com/haymon-ai/dbmcp/commit/db9a6501b3e8fd05cffe11247ca9c82ad33bb648)) - [@athopen](https://github.com/athopen)
+- make every pooled connection a read-only session in read-only mode (#325) - ([436150d](https://github.com/haymon-ai/dbmcp/commit/436150dd0b9585dd831bfd4e528c29fafa6720e0)) - [@athopen](https://github.com/athopen)
+#### 🐛 Bug Fixes
+- (**config**) drop serde-saphyr developer hints from YAML parse errors (#331) - ([129832d](https://github.com/haymon-ai/dbmcp/commit/129832d5ee2df40037c23300c029247a939bb326)) - [@athopen](https://github.com/athopen)
+- (**sqlx-json**) return values that decoded to null on every backend (#328) - ([e5b3461](https://github.com/haymon-ai/dbmcp/commit/e5b3461bf4e294ce43de1bc0c53ffd9ebebab216)) - [@athopen](https://github.com/athopen)
+#### 📚 Documentation
+- improve SEO and LLM readiness of the docs site (#321) - ([364b8bf](https://github.com/haymon-ai/dbmcp/commit/364b8bfe86fda0678f25dade3458402658cd4d4d)) - [@athopen](https://github.com/athopen)
+- redesign the docs site and split it into small focused pages (#320) - ([fb98def](https://github.com/haymon-ai/dbmcp/commit/fb98def0fae51b8984215fac50cf7e7746bac488)) - [@athopen](https://github.com/athopen)
+#### 🚜 Refactoring
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**sql**) move read-only enforcement behind the Connection seam (#322) - ([d10d660](https://github.com/haymon-ai/dbmcp/commit/d10d6601df85cc072b2b4b1f19de6b250777ee4e)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.18.1](https://github.com/haymon-ai/dbmcp/compare/0c18eb5d7426d13fe0f6642e18b918a43baa8de8..v0.18.1) - 2026-11-11
 #### 🐛 Bug Fixes
 - (**release**) pin cosign-installer to an existing tag (#319) - ([0c18eb5](https://github.com/haymon-ai/dbmcp/commit/0c18eb5d7426d13fe0f6642e18b918a43baa8de8)) - [@athopen](https://github.com/athopen)
