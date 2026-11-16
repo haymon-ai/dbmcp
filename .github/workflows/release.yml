@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CRATES_IO_USER_AGENT: dbmcp-release (https://github.com/haymon-ai/dbmcp)
 
 permissions:
   contents: write
@@ -100,11 +101,10 @@ jobs:
           body: ${{ steps.changelog.outputs.stdout }}
           files: artifacts/*
 
-  ghcr-io:
-    name: Publish image and Helm chart to ghcr.io
+  ghcr-io-image:
+    name: Publish image to ghcr.io
     needs: [release]
     runs-on: ubuntu-24.04
-    continue-on-error: true
     permissions:
       contents: read
       packages: write
@@ -112,7 +112,6 @@ jobs:
       attestations: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}
-      CHARTS: ghcr.io/${{ github.repository_owner }}/charts
     steps:
       - uses: actions/checkout@v7
 
@@ -167,18 +166,42 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - uses: actions/attest@v4
+        continue-on-error: true
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Sign image
+        continue-on-error: true
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         # `--recursive` also signs each platform manifest, which a pull pinned to one platform resolves to.
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
-      # The chart publishes after the image, so it never points at a missing image tag.
+  ghcr-io-chart:
+    name: Publish Helm chart to ghcr.io
+    # The chart publishes after the image, so it never points at a missing image tag.
+    needs: [ghcr-io-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      CHARTS: ghcr.io/${{ github.repository_owner }}/charts
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: sigstore/cosign-installer@v4.1.3
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: azure/setup-helm@v5
 
       - uses: oras-project/setup-oras@v2
@@ -187,17 +210,26 @@ jobs:
         name: Package and push chart
         run: |
           helm package charts/dbmcp
-          helm push "dbmcp-${GITHUB_REF_NAME#v}.tgz" "oci://${CHARTS}"
-          digest=$(oras resolve "${CHARTS}/dbmcp:${GITHUB_REF_NAME#v}")
+          for attempt in 1 2 3; do
+            out=$(helm push "dbmcp-${GITHUB_REF_NAME#v}.tgz" "oci://${CHARTS}" 2>&1) && break
+            echo "$out"
+            [ "$attempt" -lt 3 ] || exit 1
+            sleep $((attempt * 15))
+          done
+          echo "$out"
+          digest=$(sed -n 's/^Digest: //p' <<< "$out")
+          test -n "$digest"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest@v4
+        continue-on-error: true
         with:
           subject-name: ${{ env.CHARTS }}/dbmcp
           subject-digest: ${{ steps.chart.outputs.digest }}
           push-to-registry: true
 
       - name: Sign chart
+        continue-on-error: true
         env:
           DIGEST: ${{ steps.chart.outputs.digest }}
         run: cosign sign --yes "${CHARTS}/dbmcp@${DIGEST}"
@@ -212,7 +244,6 @@ jobs:
     name: Publish to npmjs.org
     needs: [release]
     runs-on: ubuntu-24.04
-    continue-on-error: true
     permissions:
       id-token: write
       contents: read
@@ -249,9 +280,8 @@ jobs:
 
   registry-modelcontextprotocol-io:
     name: Publish to registry.modelcontextprotocol.io
-    needs: [ghcr-io, npmjs-org, crates-io]
+    needs: [ghcr-io-image, npmjs-org, crates-io]
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -277,16 +307,20 @@ jobs:
         run: |
           # The registry checks the README crates.io renders after publish, which can lag the publish by minutes.
           # The readme endpoint redirects to the rendered HTML on static.crates.io; crates.io asks for a descriptive User-Agent.
-          until curl -fsSL -A "dbmcp-release (https://github.com/haymon-ai/dbmcp)" "https://crates.io/api/v1/crates/dbmcp/${GITHUB_REF_NAME#v}/readme" | grep -q 'mcp-name: ai.haymon/dbmcp'; do sleep 15; done
+          until curl -fsSL -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/dbmcp/${GITHUB_REF_NAME#v}/readme" | grep -q 'mcp-name: ai.haymon/dbmcp'; do sleep 15; done
 
       - name: Publish to MCP Registry
-        run: ./mcp-publisher publish
+        run: |
+          if curl -fs -o /dev/null "https://registry.modelcontextprotocol.io/v0/servers/ai.haymon%2Fdbmcp/versions/${GITHUB_REF_NAME#v}"; then
+            echo "ai.haymon/dbmcp@${GITHUB_REF_NAME#v} is already published"
+            exit 0
+          fi
+          ./mcp-publisher publish
 
   crates-io:
     name: Publish to crates.io
     needs: [release]
     runs-on: ubuntu-24.04
-    continue-on-error: true
     permissions:
       id-token: write
       contents: read
@@ -299,6 +333,19 @@ jobs:
         id: auth
 
       - name: Publish workspace
-        run: cargo publish --workspace
+        run: |
+          packages=()
+          while read -r name version; do
+            if curl -fs -o /dev/null -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/${name}/${version}"; then
+              echo "${name}@${version} is already published"
+            else
+              packages+=(-p "$name")
+            fi
+          done < <(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish != []) | "\(.name) \(.version)"')
+          if [ ${#packages[@]} -eq 0 ]; then
+            echo "every crate is already published"
+            exit 0
+          fi
+          cargo publish "${packages[@]}"
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
