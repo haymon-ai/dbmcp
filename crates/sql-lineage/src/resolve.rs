@@ -171,11 +171,7 @@ impl<'c> Ctx<'c> {
             SetExpr::Table(_) => return Err(unsupported("TABLE statement")),
         };
         if let Some(order_by) = order_by {
-            // The outputs are the only names a set operation's ORDER BY sees.
-            let mut sorted = level.correlated();
-            sorted.add(Tree::single(self.dialect, Vec::new(), cols.clone(), None)?);
-            sorted.set_outputs(cols.clone());
-            self.order_by(order_by, &sorted)?;
+            self.order_by(order_by, &level.sorted(cols.clone())?)?;
         }
         Ok(cols)
     }
@@ -452,9 +448,7 @@ impl<'c> Ctx<'c> {
         let JoinConstraint::On(expr) = constraint else {
             return Ok(tree);
         };
-        // ON sees this join tree and the outer levels, not earlier FROM items.
-        let mut on = level.derived();
-        on.add(tree);
+        let on = level.on(tree);
         self.clause(expr, &on, Clause::On)?;
         Ok(on.into_tree())
     }

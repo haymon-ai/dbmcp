@@ -383,6 +383,30 @@ impl Level<'_> {
         self.child(true)
     }
 
+    /// Creates the scope of a `JOIN … ON` condition over `tree`.
+    ///
+    /// `ON` sees its own join tree and the outer levels, not the `FROM`
+    /// items before it. Take the tree back with [`Level::into_tree`].
+    pub(crate) fn on(&self, tree: Tree) -> Level<'_> {
+        let mut on = self.derived();
+        on.add(tree);
+        on
+    }
+
+    /// Creates the scope of a set operation's `ORDER BY` over its `outputs`.
+    ///
+    /// The outputs are the only names it sees at this level, both as
+    /// columns and as output aliases.
+    ///
+    /// # Errors
+    /// See [`Tree::single`].
+    pub(crate) fn sorted(&self, outputs: Columns) -> Result<Level<'_>, LineageError> {
+        let mut sorted = self.correlated();
+        sorted.add(Tree::single(self.dialect, Vec::new(), outputs.clone(), None)?);
+        sorted.set_outputs(outputs);
+        Ok(sorted)
+    }
+
     /// Adds a join tree to the `FROM` list.
     pub(crate) fn add(&mut self, tree: Tree) {
         self.from.rels.extend(tree.rels);
