@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use sqlparser::ast::{
     Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
-    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByExpr, OrderByKind, Query, Select, SelectFlavor,
-    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Values,
+    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
+    SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Values,
     WildcardAdditionalOptions,
 };
 
@@ -156,7 +156,7 @@ impl<'c> Ctx<'c> {
         level: &Level<'_>,
         order_by: Option<&OrderBy>,
     ) -> Result<Columns, LineageError> {
-        let cols = match body {
+        let mut cols = match body {
             SetExpr::Select(select) => return self.select(select, level.correlated(), order_by),
             SetExpr::Query(query) => self.query(query, level.correlated())?,
             SetExpr::SetOperation { left, right, .. } => {
@@ -171,7 +171,9 @@ impl<'c> Ctx<'c> {
             SetExpr::Table(_) => return Err(unsupported("TABLE statement")),
         };
         if let Some(order_by) = order_by {
-            self.order_by(order_by, &level.sorted(cols.clone())?)?;
+            let sorted = level.sorted(cols)?;
+            self.order_by(order_by, &sorted)?;
+            cols = sorted.into_outputs();
         }
         Ok(cols)
     }
@@ -367,18 +369,14 @@ impl<'c> Ctx<'c> {
             OrderByKind::All(_) => Err(unsupported("ORDER BY ALL")),
             OrderByKind::Expressions(items) => {
                 for item in items {
-                    self.order_item(item, level)?;
+                    if item.with_fill.is_some() {
+                        return Err(unsupported("ORDER BY WITH FILL"));
+                    }
+                    self.item(&item.expr, level, Clause::OrderBy)?;
                 }
                 Ok(())
             }
         }
-    }
-
-    fn order_item(&mut self, item: &OrderByExpr, level: &Level<'_>) -> Result<(), LineageError> {
-        if item.with_fill.is_some() {
-            return Err(unsupported("ORDER BY WITH FILL"));
-        }
-        self.item(&item.expr, level, Clause::OrderBy)
     }
 
     /// Records a `GROUP BY` / `ORDER BY` item, which may name an output directly.
@@ -429,7 +427,7 @@ impl<'c> Ctx<'c> {
             return Err(unsupported("join kind"));
         };
         let keys = match constraint {
-            JoinConstraint::None | JoinConstraint::On(_) => Keys::None,
+            JoinConstraint::None | JoinConstraint::On(_) => Keys::Using(Vec::new()),
             JoinConstraint::Using(names) => Keys::Using(
                 names
                     .iter()

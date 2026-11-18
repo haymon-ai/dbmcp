@@ -52,13 +52,13 @@ impl Ctx<'_> {
                 acc.extend(level.column(clause, &[], id)?);
                 Ok(())
             }
-            Expr::CompoundIdentifier(parts) => match parts.split_last() {
-                Some((name, qualifier)) => {
-                    acc.extend(level.column(clause, qualifier, name)?);
-                    Ok(())
-                }
-                None => Err(unsupported("empty identifier")),
-            },
+            Expr::CompoundIdentifier(parts) => {
+                let Some((name, qualifier)) = parts.split_last() else {
+                    return Err(unsupported("empty identifier"));
+                };
+                acc.extend(level.column(clause, qualifier, name)?);
+                Ok(())
+            }
             Expr::IsFalse(e)
             | Expr::IsNotFalse(e)
             | Expr::IsTrue(e)
@@ -195,10 +195,10 @@ impl Ctx<'_> {
             Expr::MatchAgainst { columns, .. } => {
                 for name in columns {
                     let parts = idents(name)?;
-                    match parts.split_last() {
-                        Some((name, qualifier)) => acc.extend(level.column(clause, qualifier, name)?),
-                        None => return Err(unsupported("empty identifier")),
-                    }
+                    let Some((name, qualifier)) = parts.split_last() else {
+                        return Err(unsupported("empty identifier"));
+                    };
+                    acc.extend(level.column(clause, qualifier, name)?);
                 }
                 Ok(())
             }

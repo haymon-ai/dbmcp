@@ -19,6 +19,7 @@ use sqlparser::ast::{Expr, Ident, TableAlias, Value};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{Role, SourceRef};
+use crate::resolve::unsupported;
 
 /// Physical sources of a value.
 pub(crate) type Sources = BTreeSet<SourceRef>;
@@ -149,9 +150,7 @@ impl Rel {
 /// How a join tree combines its two sides' columns.
 #[derive(Debug)]
 pub(crate) enum Keys {
-    /// No merge: the columns are concatenated (`ON`, `CROSS JOIN`).
-    None,
-    /// `USING` keys, merged first.
+    /// `USING` keys, merged first; none for `ON` and `CROSS JOIN`, which concatenate.
     Using(Vec<Ident>),
     /// `NATURAL`: every visible column both sides share, merged first.
     Natural,
@@ -209,7 +208,6 @@ impl Tree {
     /// when a `USING` key is missing from, or repeated in, a complete side.
     pub(crate) fn join(mut self, dialect: Dialect, right: Self, keys: Keys) -> Result<(Self, Sources), LineageError> {
         let keys = match keys {
-            Keys::None => Vec::new(),
             Keys::Using(keys) => keys,
             Keys::Natural => right
                 .cols
@@ -268,20 +266,20 @@ impl Tree {
 /// [`LineageError::ColumnNotFound`] when a complete list lacks it;
 /// [`LineageError::AmbiguousColumn`] when several columns match.
 fn take(dialect: Dialect, cols: &mut Columns, key: &Ident) -> Result<Option<Col>, LineageError> {
-    let hits: Vec<usize> = cols
+    let mut hits = cols
         .cols
         .iter()
         .enumerate()
         .filter(|(_, c)| dialect.matches(key, &c.name))
-        .map(|(i, _)| i)
-        .collect();
-    match hits.as_slice() {
-        [i] => Ok(Some(cols.cols.remove(*i))),
-        [] if cols.open => Ok(None),
-        [] => Err(LineageError::ColumnNotFound {
+        .map(|(i, _)| i);
+    let hits = (hits.next(), hits.next());
+    match hits {
+        (Some(i), None) => Ok(Some(cols.cols.remove(i))),
+        (None, _) if cols.open => Ok(None),
+        (None, _) => Err(LineageError::ColumnNotFound {
             column: key.value.clone(),
         }),
-        _ => Err(LineageError::AmbiguousColumn {
+        (Some(_), Some(_)) => Err(LineageError::AmbiguousColumn {
             column: key.value.clone(),
         }),
     }
@@ -364,12 +362,9 @@ impl Level<'_> {
 
     fn child(&self, derived: bool) -> Level<'_> {
         Level {
-            dialect: self.dialect,
             parent: Some(self),
             derived,
-            ctes: Vec::new(),
-            from: Tree::default(),
-            outputs: Columns::default(),
+            ..Level::root(self.dialect)
         }
     }
 
@@ -396,7 +391,7 @@ impl Level<'_> {
     /// Creates the scope of a set operation's `ORDER BY` over its `outputs`.
     ///
     /// The outputs are the only names it sees at this level, both as
-    /// columns and as output aliases.
+    /// columns and as output aliases. Take them back with [`Level::into_outputs`].
     ///
     /// # Errors
     /// See [`Tree::single`].
@@ -643,8 +638,4 @@ fn written(qualifier: &[Ident], name: &Ident) -> String {
 
 fn dotted(idents: &[Ident]) -> String {
     idents.iter().map(|i| i.value.as_str()).collect::<Vec<_>>().join(".")
-}
-
-fn unsupported(kind: &str) -> LineageError {
-    LineageError::Unsupported(kind.to_string())
 }
