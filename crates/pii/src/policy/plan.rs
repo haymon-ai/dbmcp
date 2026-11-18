@@ -18,15 +18,22 @@ use crate::entity::Entity;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// One entry per output column, by 0-based position.
-    pub positions: Vec<Position>,
-    /// The folded name each output column must come back under, where known.
+    pub columns: Vec<PlannedColumn>,
+}
+
+/// One output column's redaction and the name it must come back under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedColumn {
+    /// How the column's values are redacted.
+    pub position: Position,
+    /// The folded name the column must come back under, where known.
     ///
     /// `Some` only for a column with one source whose output name is that
     /// source's column name (`*`, a bare column, or a same-name alias): the
     /// server returns it under that name, so a mismatch means the result
     /// shifted since the plan was made. Expression names are engine-specific
     /// and stay `None`.
-    pub names: Vec<Option<String>>,
+    pub name: Option<String>,
 }
 
 /// How the values of one output column are redacted.
@@ -130,16 +137,19 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             },
         });
     }
-    let positions = lineage
+    let columns = lineage
         .columns
         .iter()
         .map(|column| {
-            combine(&column.sources, config).ok_or(Rejection::Conflict {
+            let position = combine(&column.sources, config).ok_or(Rejection::Conflict {
                 position: column.position,
+            })?;
+            Ok(PlannedColumn {
+                position,
+                name: known_name(column),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let names = lineage.columns.iter().map(known_name).collect();
     if *statement != StatementKind::CreateView
         && let Some(target) = &lineage.target
     {
@@ -165,7 +175,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             }
         }
     }
-    Ok(Plan { positions, names })
+    Ok(Plan { columns })
 }
 
 /// Returns the folded name a column comes back under, if the server keeps it.

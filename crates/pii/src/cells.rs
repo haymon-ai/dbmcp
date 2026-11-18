@@ -82,8 +82,8 @@ impl Cells {
 
 /// Checks that result columns named `names` fit `plan`.
 ///
-/// The column count must equal the plan's length, and every position with a
-/// known name ([`Plan::names`]) must come back under it, compared folded by
+/// The column count must equal the plan's length, and every column with a
+/// known name ([`PlannedColumn::name`](crate::policy::PlannedColumn::name)) must come back under it, compared folded by
 /// [`ColumnRule::fold`]. Duplicate names are allowed.
 ///
 /// # Errors
@@ -91,14 +91,14 @@ impl Cells {
 /// Returns [`ShapeError::ColumnCount`] on a count mismatch and
 /// [`ShapeError::NameMismatch`] for the first position whose name differs.
 fn check_columns(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
-    if names.len() != plan.positions.len() {
+    if names.len() != plan.columns.len() {
         return Err(ShapeError::ColumnCount {
-            expected: plan.positions.len(),
+            expected: plan.columns.len(),
             actual: names.len(),
         });
     }
-    for (position, (name, expected)) in names.iter().zip(&plan.names).enumerate() {
-        if let Some(expected) = expected
+    for (position, (name, column)) in names.iter().zip(&plan.columns).enumerate() {
+        if let Some(expected) = &column.name
             && ColumnRule::fold(name) != *expected
         {
             return Err(ShapeError::NameMismatch { position });
@@ -125,19 +125,19 @@ impl Redactor {
         if !rows.is_empty() {
             check_columns(plan, columns)?;
         }
-        if let Some(row) = rows.iter().find(|row| row.len() != plan.positions.len()) {
+        if let Some(row) = rows.iter().find(|row| row.len() != plan.columns.len()) {
             return Err(ShapeError::ColumnCount {
-                expected: plan.positions.len(),
+                expected: plan.columns.len(),
                 actual: row.len(),
             }
             .into());
         }
         let actions = plan
-            .positions
+            .columns
             .iter()
-            .map(|position| match position {
+            .map(|column| match column.position {
                 Position::Global => Ok(None),
-                Position::Action(operator, entity) => Ok(Some((self.rule_operator(*operator)?, *entity))),
+                Position::Action(operator, entity) => Ok(Some((self.rule_operator(operator)?, entity))),
             })
             .collect::<Result<Vec<_>, RedactionError>>()?;
 
@@ -179,14 +179,14 @@ impl Redactor {
     ///
     /// Returns [`RedactionError::Shape`] when the columns or a row do not fit
     /// `plan`: the column count must equal the plan's length, and a column
-    /// whose name the plan knows ([`Plan::names`]) must come back under it,
+    /// whose name the plan knows ([`PlannedColumn::name`](crate::policy::PlannedColumn::name)) must come back under it,
     /// compared folded by [`ColumnRule::fold`]. An empty result is not
     /// checked. Returns [`RedactionError::Internal`] when the pipeline or the
     /// offloaded task panics, the NER pass fails, or a rule hashes without a
     /// `hash` operator. The request must fail without returning any row
     /// (fail-closed).
     pub async fn redact_cells(&self, mut cells: Cells, plan: &Plan) -> Result<Vec<Value>, RedactionError> {
-        if self.uses_ner() && plan.positions.contains(&Position::Global) {
+        if self.uses_ner() && plan.columns.iter().any(|column| column.position == Position::Global) {
             let redactor = self.clone();
             let plan = plan.clone();
             cells = tokio::task::spawn_blocking(move || redactor.apply_cells(&mut cells, &plan).map(|_| cells))
@@ -229,14 +229,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::policy::PlannedColumn;
 
     const EMAIL: &str = "jane.doe@example.com";
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
     /// A plan with no known names.
     fn plan(positions: Vec<Position>) -> Plan {
-        let names = vec![None; positions.len()];
-        Plan { positions, names }
+        let columns = positions
+            .into_iter()
+            .map(|position| PlannedColumn { position, name: None })
+            .collect();
+        Plan { columns }
     }
 
     /// Column names as the result reports them.
@@ -310,8 +314,16 @@ mod tests {
     #[test]
     fn known_names_must_match_folded_and_unknown_ones_are_not_compared() {
         let plan = Plan {
-            positions: vec![Position::Global, Position::Global],
-            names: vec![Some("email".into()), None],
+            columns: vec![
+                PlannedColumn {
+                    position: Position::Global,
+                    name: Some("email".into()),
+                },
+                PlannedColumn {
+                    position: Position::Global,
+                    name: None,
+                },
+            ],
         };
         check_columns(&plan, &names(["EMAIL", "?column?"])).expect("folded match, unknown skipped");
         let err = check_columns(&plan, &names(["ssn", "x"])).expect_err("name differs");

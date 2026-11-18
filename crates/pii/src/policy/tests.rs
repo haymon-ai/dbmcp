@@ -86,9 +86,14 @@ fn pg(lineage: &Lineage, config: &PiiConfig) -> Result<Plan, Rejection> {
 
 /// The single position of a one-column plan.
 fn only(lineage: &Lineage, config: &PiiConfig) -> Position {
-    let plan = pg(lineage, config).expect("plan");
-    assert_eq!(plan.positions.len(), 1);
-    plan.positions.into_iter().next().expect("one position")
+    let positions = positions(pg(lineage, config).expect("plan"));
+    assert_eq!(positions.len(), 1);
+    positions.into_iter().next().expect("one position")
+}
+
+/// The positions of `plan`, in output order.
+fn positions(plan: Plan) -> Vec<Position> {
+    plan.columns.into_iter().map(|column| column.position).collect()
 }
 
 /// The masked `US_SSN` position.
@@ -111,7 +116,7 @@ fn exact_key_matches_only_its_column() {
         vec![col("orders", "ssn")],
     ]);
     assert_eq!(
-        pg(&lineage, &config).expect("plan").positions,
+        positions(pg(&lineage, &config).expect("plan")),
         [MASKED_SSN, Position::Global, Position::Global]
     );
 }
@@ -128,7 +133,7 @@ fn rule_for_another_engine_tuple_never_matches() {
     let config = config(vec![ssn("shop.shop.users.ssn")]);
     let source = SourceRef::new(RelationId::new("def", "shop", "users"), "ssn");
     let plan = plan(&select(vec![vec![source]]), Dialect::Mysql, &config).expect("plan");
-    assert_eq!(plan.positions, [Position::Global]);
+    assert_eq!(positions(plan), [Position::Global]);
 }
 
 #[test]
@@ -481,10 +486,7 @@ fn relations_only_ddl_on_unruled_relation_plans_empty() {
     for statement in [StatementKind::Drop, StatementKind::Truncate, StatementKind::CreateTable] {
         assert_eq!(
             pg(&ddl(statement.clone(), "orders"), &config),
-            Ok(Plan {
-                positions: Vec::new(),
-                names: Vec::new(),
-            }),
+            Ok(Plan { columns: Vec::new() }),
             "{statement:?}"
         );
     }
@@ -564,7 +566,7 @@ fn sourceless_and_unruled_positions_are_global() {
     let config = config(vec![ssn("shop.public.users.ssn")]);
     let lineage = select(vec![vec![], vec![col("users", "name")]]);
     assert_eq!(
-        pg(&lineage, &config).expect("plan").positions,
+        positions(pg(&lineage, &config).expect("plan")),
         [Position::Global, Position::Global]
     );
 }
@@ -821,7 +823,7 @@ fn names_are_known_only_for_single_same_name_sources() {
     lineage.columns[4].name = "one".into();
     let plan = pg(&lineage, &config(vec![])).expect("plan");
     assert_eq!(
-        plan.names,
+        plan.columns.into_iter().map(|column| column.name).collect::<Vec<_>>(),
         [Some("email".to_string()), Some("ssn".to_string()), None, None, None]
     );
 }
