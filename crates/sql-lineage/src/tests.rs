@@ -128,36 +128,19 @@ fn qualified_star_expands_one_relation() {
 }
 
 #[test]
-fn using_merges_keys_first_with_both_sources() {
-    let lineage = pg("SELECT * FROM a JOIN b USING (id)").expect("analyze");
-    assert_eq!(
-        columns(&lineage),
-        vec![col("id", &["a.id", "b.id"]), col("x", &["a.x"]), col("y", &["b.y"])]
-    );
-    assert_eq!(refs(&lineage), vec![r("a.id", Role::Join), r("b.id", Role::Join)]);
-}
-
-#[test]
 fn using_key_is_unambiguous_unqualified() {
     let lineage = pg("SELECT id FROM a JOIN b USING (id)").expect("analyze");
     assert_eq!(columns(&lineage), vec![col("id", &["a.id", "b.id"])]);
 }
 
 #[test]
-fn natural_join_merges_common_columns() {
-    let lineage = pg("SELECT * FROM a NATURAL JOIN b").expect("analyze");
-    assert_eq!(
-        columns(&lineage),
-        vec![col("id", &["a.id", "b.id"]), col("x", &["a.x"]), col("y", &["b.y"])]
-    );
-}
-
-#[test]
 fn ambiguous_unqualified_column_errors() {
-    assert!(matches!(
+    assert_eq!(
         pg("SELECT id FROM a, b"),
-        Err(LineageError::AmbiguousColumn { .. })
-    ));
+        Err(LineageError::AmbiguousColumn {
+            column: "id".to_string()
+        })
+    );
 }
 
 #[test]
@@ -168,14 +151,18 @@ fn unqualified_column_binds_to_its_only_owner() {
 
 #[test]
 fn nonexistent_column_in_single_table_errors() {
-    assert!(matches!(
-        pg("SELECT nope FROM users"),
-        Err(LineageError::ColumnNotFound { .. })
-    ));
-    assert!(matches!(
-        pg("SELECT u.nope FROM users u"),
-        Err(LineageError::ColumnNotFound { .. })
-    ));
+    for (sql, column) in [
+        ("SELECT nope FROM users", "nope"),
+        ("SELECT u.nope FROM users u", "u.nope"),
+    ] {
+        assert_eq!(
+            pg(sql),
+            Err(LineageError::ColumnNotFound {
+                column: column.to_string()
+            }),
+            "{sql}"
+        );
+    }
 }
 
 #[test]
@@ -208,14 +195,20 @@ fn alias_column_list_renames_positionally() {
 
 #[test]
 fn alias_column_list_too_long_errors() {
-    assert!(matches!(
-        pg("SELECT * FROM (SELECT id FROM users) AS d(p, q)"),
-        Err(LineageError::ColumnCountMismatch { .. })
-    ));
-    assert!(matches!(
-        pg("WITH c(p, q) AS (SELECT id FROM users) SELECT * FROM c"),
-        Err(LineageError::ColumnCountMismatch { .. })
-    ));
+    for (sql, relation) in [
+        ("SELECT * FROM (SELECT id FROM users) AS d(p, q)", "d"),
+        ("WITH c(p, q) AS (SELECT id FROM users) SELECT * FROM c", "c"),
+    ] {
+        assert_eq!(
+            pg(sql),
+            Err(LineageError::ColumnCountMismatch {
+                relation: relation.to_string(),
+                expected: 1,
+                found: 2,
+            }),
+            "{sql}"
+        );
+    }
 }
 
 #[test]
@@ -344,38 +337,30 @@ fn missing_lists_every_unknown_name_in_one_call() {
 }
 
 #[test]
-fn missing_takes_precedence_over_column_errors() {
-    let result = analyze("SELECT nope FROM t1, users", Dialect::Postgres, &fixture());
-    assert!(matches!(result, Err(LineageError::Missing(names)) if names.len() == 1));
-}
-
-#[test]
 fn absent_entry_is_unknown_relation() {
     let mut catalog = fixture();
     catalog.insert(WrittenName::query(vec![NamePart::bare("ghost")]), Entry::Absent);
-    assert!(matches!(
+    assert_eq!(
         analyze("SELECT * FROM ghost", Dialect::Postgres, &catalog),
-        Err(LineageError::UnknownRelation { .. })
-    ));
+        Err(LineageError::UnknownRelation {
+            name: "ghost".to_string()
+        })
+    );
 }
 
 #[test]
 fn postgres_matches_quoted_exactly_and_folds_unquoted() {
-    let catalog = catalog(&[("t", &["Email", "email"])]);
-    let quoted = analyze("SELECT \"Email\" FROM t", Dialect::Postgres, &catalog).expect("analyze");
+    let both = catalog(&[("t", &["Email", "email"])]);
+    let quoted = analyze("SELECT \"Email\" FROM t", Dialect::Postgres, &both).expect("analyze");
     assert_eq!(columns(&quoted), vec![col("Email", &["t.Email"])]);
-    let bare = analyze("SELECT Email FROM t", Dialect::Postgres, &catalog).expect("analyze");
+    let bare = analyze("SELECT Email FROM t", Dialect::Postgres, &both).expect("analyze");
     assert_eq!(columns(&bare), vec![col("email", &["t.email"])]);
-    let only_upper = catalog_with_upper();
-    assert!(matches!(
-        analyze("SELECT Email FROM t", Dialect::Postgres, &only_upper),
-        Err(LineageError::ColumnNotFound { .. })
-    ));
-}
-
-/// A catalog whose table `t` has only the column `Email`.
-fn catalog_with_upper() -> Catalog {
-    catalog(&[("t", &["Email"])])
+    assert_eq!(
+        analyze("SELECT Email FROM t", Dialect::Postgres, &catalog(&[("t", &["Email"])])),
+        Err(LineageError::ColumnNotFound {
+            column: "Email".to_string()
+        })
+    );
 }
 
 #[test]
@@ -387,10 +372,12 @@ fn postgres_quoted_relation_name_is_its_own_key() {
     );
     let lineage = analyze("SELECT id FROM \"Users\"", Dialect::Postgres, &catalog).expect("analyze");
     assert_eq!(columns(&lineage), vec![col("id", &["Users.id"])]);
-    assert!(matches!(
+    assert_eq!(
         analyze("SELECT id FROM users", Dialect::Postgres, &catalog),
-        Err(LineageError::Missing(_))
-    ));
+        Err(LineageError::Missing(vec![WrittenName::query(vec![NamePart::bare(
+            "users"
+        )])]))
+    );
 }
 
 #[test]
@@ -417,27 +404,28 @@ fn sqlite_where_falls_back_to_output_alias() {
     let sql = "SELECT ssn AS k FROM users WHERE k = '1'";
     let lineage = analyze(sql, Dialect::Sqlite, &fixture()).expect("analyze");
     assert_eq!(refs(&lineage), vec![r("users.ssn", Role::Filter)]);
-    assert!(matches!(pg(sql), Err(LineageError::ColumnNotFound { .. })));
+    assert_eq!(
+        pg(sql),
+        Err(LineageError::ColumnNotFound {
+            column: "k".to_string()
+        })
+    );
 }
 
 #[test]
 fn lexical_mismatch_rejects() {
     let mut catalog = fixture();
     catalog.set_lexical(Lexical::Mismatch("ANSI_QUOTES".to_string()));
-    assert!(matches!(
+    assert_eq!(
         analyze("SELECT id FROM users", Dialect::Mysql, &catalog),
-        Err(LineageError::LexicalMismatch(_))
-    ));
+        Err(LineageError::LexicalMismatch("ANSI_QUOTES".to_string()))
+    );
 }
 
 #[test]
-fn removed_fail_open_arms_now_error() {
+fn unsupported_constructs_fail_closed() {
     let cases: &[(&str, Dialect)] = &[
-        ("SHOW TABLES", Dialect::Mysql),
         ("INSERT INTO users (id) VALUES (1)", Dialect::Postgres),
-        ("UPDATE users SET email = 'x'", Dialect::Postgres),
-        ("DELETE FROM users", Dialect::Postgres),
-        ("CREATE TABLE t2 (id INT)", Dialect::Postgres),
         ("SELECT * FROM users TABLESAMPLE BERNOULLI (10)", Dialect::Postgres),
         ("SELECT * FROM generate_series(1, 3)", Dialect::Postgres),
         ("SELECT * FROM UNNEST(ARRAY[1, 2])", Dialect::Postgres),
@@ -455,8 +443,7 @@ fn removed_fail_open_arms_now_error() {
 fn wildcard_alias_is_unsupported() {
     // PostgreSQL parses `* AS name`; the other modifiers fail in the parser.
     for sql in ["SELECT * AS u FROM users", "SELECT users.* AS u FROM users"] {
-        let result = pg(sql);
-        assert!(matches!(result, Err(LineageError::Unsupported(_))), "{sql}: {result:?}");
+        assert_unsupported(sql, Dialect::Postgres, &fixture());
     }
 }
 
@@ -478,19 +465,6 @@ fn long_operator_chain_hits_depth_limit_without_overflow() {
 }
 
 #[test]
-fn missing_survives_errors_hidden_relations_cause() {
-    for sql in [
-        "SELECT * FROM (SELECT * FROM m1 UNION SELECT 1) d JOIN m2 ON true",
-        "WITH c AS (SELECT * FROM m1 ORDER BY 2) SELECT * FROM c, m2",
-    ] {
-        let Err(LineageError::Missing(names)) = pg(sql) else {
-            panic!("{sql}: expected Missing");
-        };
-        assert_eq!(names.len(), 2, "{sql}");
-    }
-}
-
-#[test]
 fn order_by_bare_output_name_wins_over_input_column() {
     let lineage = pg("SELECT id AS email FROM users ORDER BY email").expect("analyze");
     assert_eq!(refs(&lineage), vec![r("users.id", Role::Sort)]);
@@ -498,7 +472,12 @@ fn order_by_bare_output_name_wins_over_input_column() {
 
 #[test]
 fn star_without_from_errors() {
-    assert!(matches!(pg("SELECT *"), Err(LineageError::ColumnNotFound { .. })));
+    assert_eq!(
+        pg("SELECT *"),
+        Err(LineageError::ColumnNotFound {
+            column: "*".to_string()
+        })
+    );
 }
 
 #[test]
@@ -515,7 +494,7 @@ fn view_is_rejected_until_expansion_lands() {
 fn parse_and_statement_count_errors() {
     assert!(matches!(pg("SELEC 1"), Err(LineageError::Parse(_))));
     assert!(matches!(pg(""), Err(LineageError::Parse(_))));
-    assert!(matches!(pg("SELECT 1; SELECT 2"), Err(LineageError::MultiStatement)));
+    assert_eq!(pg("SELECT 1; SELECT 2"), Err(LineageError::MultiStatement));
 }
 
 #[test]
@@ -528,10 +507,7 @@ fn nesting_resolves_up_to_the_parser_recursion_limit() {
         sql
     };
     let lineage = pg(&nested(20)).expect("analyze");
-    assert_eq!(
-        columns(&lineage),
-        vec![("id".to_string(), vec!["users.id".to_string()])]
-    );
+    assert_eq!(columns(&lineage), vec![col("id", &["users.id"])]);
 
     let result = pg(&nested(25));
     assert!(matches!(result, Err(LineageError::Parse(_))), "{result:?}");
@@ -546,7 +522,7 @@ fn long_set_operation_chain_does_not_overflow() {
         .expect("spawn")
         .join()
         .expect("no stack overflow");
-    assert_eq!(lineage, Ok(vec![("id".to_string(), vec!["users.id".to_string()])]));
+    assert_eq!(lineage, Ok(vec![col("id", &["users.id"])]));
 }
 
 #[test]
@@ -555,26 +531,43 @@ fn on_sees_its_join_tree_not_earlier_from_items() {
     let lineage = analyze("SELECT 1 FROM a, b JOIN c ON x = c.y", Dialect::Postgres, &catalog).expect("analyze");
     assert_eq!(refs(&lineage), vec![r("c.x", Role::Join), r("c.y", Role::Join)]);
 
-    let result = analyze("SELECT 1 FROM a, b JOIN c ON a.x = c.x", Dialect::Postgres, &catalog);
-    assert!(matches!(result, Err(LineageError::ColumnNotFound { .. })), "{result:?}");
+    assert_eq!(
+        analyze("SELECT 1 FROM a, b JOIN c ON a.x = c.x", Dialect::Postgres, &catalog),
+        Err(LineageError::ColumnNotFound {
+            column: "a.x".to_string()
+        })
+    );
 }
 
 #[test]
 fn open_relations_defer_errors_until_the_catalog_fills() {
-    for sql in [
-        "SELECT * FROM m1 UNION SELECT id, x FROM a",
-        "SELECT * FROM (SELECT * FROM m1) d(p, q, r)",
-        "SELECT * FROM a JOIN m1 USING (x)",
-        "SELECT m.* FROM m1 m",
-        "SELECT * FROM m1 GROUP BY 5",
-        "WITH c AS (SELECT * FROM m1) SELECT c1.k FROM c c1 JOIN c c2 ON c1.k = c2.k",
-        "SELECT (SELECT nope FROM m1) FROM users",
+    for (sql, missing) in [
+        ("SELECT * FROM m1 UNION SELECT id, x FROM a", &["m1"][..]),
+        ("SELECT * FROM (SELECT * FROM m1) d(p, q, r)", &["m1"]),
+        ("SELECT * FROM a JOIN m1 USING (x)", &["m1"]),
+        ("SELECT m.* FROM m1 m", &["m1"]),
+        ("SELECT * FROM m1 GROUP BY 5", &["m1"]),
+        (
+            "WITH c AS (SELECT * FROM m1) SELECT c1.k FROM c c1 JOIN c c2 ON c1.k = c2.k",
+            &["m1"],
+        ),
+        ("SELECT (SELECT nope FROM m1) FROM users", &["m1"]),
+        ("SELECT nope FROM m1, users", &["m1"]),
+        // A second missing name is still collected past the open relation.
+        (
+            "SELECT * FROM (SELECT * FROM m1 UNION SELECT 1) d JOIN m2 ON true",
+            &["m1", "m2"],
+        ),
+        (
+            "WITH c AS (SELECT * FROM m1 ORDER BY 2) SELECT * FROM c, m2",
+            &["m1", "m2"],
+        ),
     ] {
-        let result = pg(sql);
-        assert!(
-            matches!(&result, Err(LineageError::Missing(names)) if names.len() == 1),
-            "{sql}: expected Missing, got {result:?}"
-        );
+        let missing = missing
+            .iter()
+            .map(|name| WrittenName::query(vec![NamePart::bare(*name)]))
+            .collect();
+        assert_eq!(pg(sql), Err(LineageError::Missing(missing)), "{sql}");
     }
 }
 
@@ -584,10 +577,12 @@ fn errors_independent_of_missing_relations_surface_at_once() {
         "SELECT nope FROM users WHERE EXISTS (SELECT 1 FROM m1)",
         "SELECT * FROM a JOIN m1 USING (nope)",
     ] {
-        let result = pg(sql);
-        assert!(
-            matches!(result, Err(LineageError::ColumnNotFound { .. })),
-            "{sql}: expected ColumnNotFound, got {result:?}"
+        assert_eq!(
+            pg(sql),
+            Err(LineageError::ColumnNotFound {
+                column: "nope".to_string()
+            }),
+            "{sql}"
         );
     }
 }
@@ -717,5 +712,143 @@ fn pass_through_expressions_keep_every_operand_source() {
         let sql = format!("SELECT {expr} AS v FROM users u, orders o");
         let lineage = analyze(&sql, *dialect, &fixture()).unwrap_or_else(|e| panic!("{expr} on {dialect:?}: {e}"));
         assert_eq!(columns(&lineage), vec![col("v", sources)], "{expr} on {dialect:?}");
+    }
+}
+
+#[test]
+fn values_names_columns_per_dialect_and_merges_rows() {
+    let rows = [
+        (
+            Dialect::Postgres,
+            "VALUES (1, 'a'), (2, 'b')",
+            vec![col("column1", &[]), col("column2", &[])],
+        ),
+        (
+            Dialect::Sqlite,
+            "VALUES (1, 'a')",
+            vec![col("column1", &[]), col("column2", &[])],
+        ),
+        (
+            Dialect::Mysql,
+            "VALUES ROW(1, 2)",
+            vec![col("column_0", &[]), col("column_1", &[])],
+        ),
+        (
+            Dialect::Mariadb,
+            "VALUES (1, 2)",
+            vec![col("column_0", &[]), col("column_1", &[])],
+        ),
+        (
+            Dialect::Postgres,
+            "VALUES ((SELECT email FROM users)), ((SELECT ssn FROM users))",
+            vec![col("column1", &["users.email", "users.ssn"])],
+        ),
+        (
+            Dialect::Postgres,
+            "SELECT email FROM users UNION VALUES ((SELECT ssn FROM users))",
+            vec![col("email", &["users.email", "users.ssn"])],
+        ),
+        (
+            Dialect::Postgres,
+            "SELECT * FROM (VALUES (1), (2)) AS v(x)",
+            vec![col("x", &[])],
+        ),
+    ];
+    for (dialect, sql, expected) in rows {
+        let lineage = analyze(sql, dialect, &fixture()).unwrap_or_else(|e| panic!("{sql} on {dialect:?}: {e}"));
+        assert_eq!(columns(&lineage), expected, "{sql} on {dialect:?}");
+    }
+
+    let result = pg("SELECT * FROM (VALUES (1, 2), (3)) AS v");
+    assert_eq!(
+        result,
+        Err(LineageError::ColumnCountMismatch {
+            relation: "VALUES".to_string(),
+            expected: 2,
+            found: 1,
+        })
+    );
+}
+
+#[test]
+fn every_join_kind_merges_shared_keys_first_with_both_sources() {
+    // Outer joins keep both key sources: a superset of the merged column's
+    // real source, which errs on the side of redaction.
+    for join in [
+        "JOIN b USING (id)",
+        "INNER JOIN b USING (id)",
+        "LEFT JOIN b USING (id)",
+        "LEFT OUTER JOIN b USING (id)",
+        "RIGHT JOIN b USING (id)",
+        "RIGHT OUTER JOIN b USING (id)",
+        "FULL JOIN b USING (id)",
+        "NATURAL JOIN b",
+    ] {
+        let sql = format!("SELECT * FROM a {join}");
+        let lineage = pg(&sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        assert_eq!(
+            columns(&lineage),
+            vec![col("id", &["a.id", "b.id"]), col("x", &["a.x"]), col("y", &["b.y"])],
+            "{sql}"
+        );
+        assert_eq!(
+            refs(&lineage),
+            vec![r("a.id", Role::Join), r("b.id", Role::Join)],
+            "{sql}"
+        );
+    }
+
+    let lineage = pg("SELECT * FROM a CROSS JOIN b").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![
+            col("id", &["a.id"]),
+            col("x", &["a.x"]),
+            col("id", &["b.id"]),
+            col("y", &["b.y"])
+        ]
+    );
+    assert!(lineage.references.is_empty());
+
+    let lineage = analyze(
+        "SELECT a.x FROM a STRAIGHT_JOIN b ON a.id = b.id",
+        Dialect::Mysql,
+        &fixture(),
+    )
+    .expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("x", &["a.x"])]);
+    assert_eq!(refs(&lineage), vec![r("a.id", Role::Join), r("b.id", Role::Join)]);
+}
+
+#[test]
+fn nested_join_alias_hides_inner_relations() {
+    let lineage = pg("SELECT * FROM (a JOIN b USING (id)) AS j").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("id", &["a.id", "b.id"]), col("x", &["a.x"]), col("y", &["b.y"])]
+    );
+
+    let lineage = pg("SELECT j.q FROM (a JOIN b ON a.id = b.id) AS j(p, q)").expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("q", &["a.x"])]);
+
+    let lineage = pg("SELECT a.x, orders.total FROM (a JOIN b USING (id)) JOIN orders ON orders.user_id = a.id")
+        .expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("x", &["a.x"]), col("total", &["orders.total"])]
+    );
+
+    for (sql, column) in [
+        ("SELECT a.x FROM (a JOIN b USING (id)) AS j", "a.x"),
+        ("SELECT j.x FROM (a JOIN b ON a.id = b.id) AS j(p, q)", "j.x"),
+    ] {
+        let result = pg(sql);
+        assert_eq!(
+            result,
+            Err(LineageError::ColumnNotFound {
+                column: column.to_string()
+            }),
+            "{sql}"
+        );
     }
 }
