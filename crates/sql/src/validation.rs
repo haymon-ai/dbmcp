@@ -92,13 +92,18 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
 /// Returns whether a `SHOW` names the warnings or errors list.
 ///
 /// The parser reads `SHOW WARNINGS`, `SHOW ERRORS`, and `SHOW COUNT(*)
-/// WARNINGS` as a `SHOW` of a variable. Their rows are the conditions the
-/// previous statement on the connection raised, and a conversion warning
-/// such as `Truncated incorrect DOUBLE value: '...'` quotes the value read.
+/// WARNINGS` (as `COUNT WARNINGS`) as a `SHOW` of a variable. Their rows are
+/// the conditions the previous statement on the connection raised, and a
+/// conversion warning such as `Truncated incorrect DOUBLE value: '...'`
+/// quotes the value read. Only the leading words count: `SHOW INDEX FROM
+/// errors` names a table, not the list.
 fn is_diagnostics(variable: &[Ident]) -> bool {
-    variable
-        .iter()
-        .any(|part| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors"))
+    let list = |part: &Ident| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors");
+    match variable {
+        [count, part, ..] if count.value.eq_ignore_ascii_case("count") => list(part),
+        [part, ..] => list(part),
+        [] => false,
+    }
 }
 
 /// Validates SQL for the write tool, rejecting `USE`.
@@ -372,6 +377,8 @@ mod tests {
             );
         }
         assert!(validate_read("SHOW VARIABLES", &MYSQL).is_ok());
+        assert!(validate_read("SHOW INDEX FROM errors", &MYSQL).is_ok());
+        assert!(validate_read("SHOW TABLE STATUS FROM warnings", &MYSQL).is_ok());
         assert!(validate_read("SHOW search_path", &POSTGRES).is_ok());
     }
 
