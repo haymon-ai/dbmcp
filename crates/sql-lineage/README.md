@@ -5,15 +5,16 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-Column-level SQL lineage extraction powering [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite.
+Catalog-aware, column-level SQL lineage powering [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite.
 
 ## What you get
 
-- `extract()` maps each output column to its physical `table.column` sources
-- AST-based via `sqlparser` — accepts any `Dialect`
-- Reads (`SELECT`) and writes (`INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE AS SELECT`, `MERGE`); writes also record a target
-- Resolves CTEs, derived tables, joins, and qualified references
-- Fail-closed — unresolvable columns (`SELECT *` over base tables, ambiguous unqualified columns in joins) abort the whole extraction
+- `analyze()` binds every column a statement uses to physical `relation.column` sources from a caller-supplied `Catalog`
+- Output columns with their sources, plus every other column use tagged by role (`Join`, `Filter`, `GroupBy`, `Sort`, `Window`), the relations touched, and the functions called
+- Catalog loop: names the catalog lacks come back together as `LineageError::Missing`; resolve them on your own connection, insert, call again
+- Per-dialect identifier rules for PostgreSQL, MySQL, MariaDB, and SQLite
+- Expands `*` / `t.*` from the catalog (skipping invisible columns), merges `USING` / `NATURAL` keys, follows CTEs, derived tables, and correlated subqueries
+- Fail-closed — unknown or ambiguous columns and any construct it does not model abort the whole analysis
 - Never connects to or executes against a database — analyzes SQL text only
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

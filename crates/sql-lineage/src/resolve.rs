@@ -1,385 +1,622 @@
-//! Resolves a parsed query into per-output-column source lineage.
+//! Resolves queries, `FROM` lists, and joins against the catalog.
 //!
-//! Walks query scopes (final `SELECT`, CTEs, derived tables, subqueries),
-//! resolving each projected expression's column references to physical
-//! [`SourceRef`]s. Fails closed on any unresolvable projected column.
+//! [`Ctx`] walks a query top-down. Each query level fills a [`Level`] from
+//! its `FROM` list, then resolves the projection into output columns and
+//! records every other column use as a [`Reference`] with its [`Role`].
+//! Relation names not in the catalog are collected in `missing` so one pass
+//! reports them all; each enters its level as an open relation.
 
-use std::collections::{BTreeSet, HashMap};
-use std::ops::ControlFlow;
+use std::collections::BTreeSet;
 
 use sqlparser::ast::{
-    Expr, ObjectName, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableFactor, TableWithJoins,
-    Values, Visit, Visitor,
+    Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
+    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
+    SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Values,
+    WildcardAdditionalOptions,
 };
 
+use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
+use crate::catalog::{Catalog, Entry, NamePart, WrittenName};
+use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{OutputColumn, SourceRef, TableRef};
-use crate::scope::{ExpandedColumns, RelExpose, Scope, VirtCol};
+use crate::model::{FunctionUse, Origin, Reference, RelationKind, RelationUse, Role, SourceRef};
 
-/// Maximum query-nesting depth before failing with [`LineageError::DepthLimitExceeded`].
+/// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
 
-/// Map of (folded) CTE name → its defining query.
-pub(crate) type CteMap<'a> = HashMap<String, &'a Query>;
-
-/// Set of (folded) CTE names currently being resolved, for cycle detection.
-pub(crate) type ActiveCtes = BTreeSet<String>;
-
-/// Lowercases an ASCII string for case-insensitive matching.
-fn fold(s: &str) -> String {
-    s.to_ascii_lowercase()
-}
-
-/// Resolves a top-level query with no inherited CTEs.
+/// Maximum expression-nesting depth before failing with [`LineageError::DepthLimit`].
 ///
-/// # Errors
-/// Returns [`LineageError`] on unresolved columns or excessive nesting.
-pub(crate) fn resolve(query: &Query) -> Result<Vec<OutputColumn>, LineageError> {
-    resolve_query(query, &CteMap::new(), &ActiveCtes::new(), 0)
-}
+/// The parser builds long operator chains (`a + b + …`) as left-deep trees
+/// without its recursion limit, so the walk bounds its own recursion.
+pub(crate) const MAX_EXPR_DEPTH: usize = 256;
 
-/// Resolves a query into its ordered output columns within a CTE context.
-///
-/// `active` carries the CTE names currently being resolved; a repeat triggers
-/// [`LineageError::CircularReference`] (this also rejects `WITH RECURSIVE`).
-///
-/// # Errors
-/// Returns [`LineageError`] on unresolved columns, cycles, or excessive nesting.
-fn resolve_query<'a>(
-    query: &'a Query,
-    parent: &CteMap<'a>,
-    active: &ActiveCtes,
+/// Mutable analysis state shared by the whole statement.
+#[derive(Debug)]
+pub(crate) struct Ctx<'c> {
+    pub dialect: Dialect,
+    catalog: &'c Catalog,
+    /// Names absent from the snapshot, in discovery order.
+    pub missing: Vec<WrittenName>,
+    /// Column uses outside the projection.
+    pub references: BTreeSet<Reference>,
+    /// Catalog relations touched.
+    pub relations: BTreeSet<RelationUse>,
+    /// Functions called.
+    pub functions: BTreeSet<FunctionUse>,
+    /// Current query-nesting depth.
     depth: usize,
-) -> Result<Vec<OutputColumn>, LineageError> {
-    if depth > MAX_DEPTH {
-        return Err(LineageError::DepthLimitExceeded);
-    }
-    let mut ctes: CteMap<'a> = parent.clone();
-    if let Some(with) = &query.with {
-        for cte in &with.cte_tables {
-            ctes.insert(fold(&cte.alias.name.value), &cte.query);
+    /// Current expression-nesting depth.
+    pub expr_depth: usize,
+}
+
+impl<'c> Ctx<'c> {
+    pub(crate) fn new(dialect: Dialect, catalog: &'c Catalog) -> Self {
+        Self {
+            dialect,
+            catalog,
+            missing: Vec::new(),
+            references: BTreeSet::new(),
+            relations: BTreeSet::new(),
+            functions: BTreeSet::new(),
+            depth: 0,
+            expr_depth: 0,
         }
     }
-    resolve_setexpr(&query.body, &ctes, active, depth)
-}
 
-/// Resolves a `SetExpr` (SELECT, set operation, `VALUES`, or parenthesized query).
-fn resolve_setexpr<'a>(
-    body: &'a SetExpr,
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<Vec<OutputColumn>, LineageError> {
-    match body {
-        SetExpr::Select(select) => resolve_select(select, ctes, active, depth),
-        SetExpr::Query(query) => resolve_query(query, ctes, active, depth + 1),
-        SetExpr::SetOperation { left, right, .. } => {
-            let left_cols = resolve_setexpr(left, ctes, active, depth)?;
-            let right_cols = resolve_setexpr(right, ctes, active, depth)?;
-            let mut out = Vec::with_capacity(left_cols.len());
-            for (i, lc) in left_cols.into_iter().enumerate() {
-                let mut sources = lc.sources;
-                if let Some(rc) = right_cols.get(i) {
-                    sources.extend(rc.sources.iter().cloned());
+    /// Records each source as a reference with `role`.
+    pub(crate) fn refer(&mut self, sources: Sources, role: Role) {
+        for source in sources {
+            self.references.insert(Reference {
+                source,
+                role,
+                origin: Origin::Query,
+            });
+        }
+    }
+
+    /// Resolves a query at `level`, a fresh child of the enclosing level.
+    ///
+    /// # Errors
+    /// Returns [`LineageError`] on unresolvable names or unsupported constructs.
+    pub(crate) fn query(&mut self, query: &Query, level: Level<'_>) -> Result<Columns, LineageError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(LineageError::DepthLimit);
+        }
+        self.depth += 1;
+        let result = self.query_inner(query, level);
+        self.depth -= 1;
+        result
+    }
+
+    /// Body of [`Ctx::query`], inside the depth guard.
+    fn query_inner(&mut self, query: &Query, mut level: Level<'_>) -> Result<Columns, LineageError> {
+        let Query {
+            with,
+            body,
+            order_by,
+            limit_clause,
+            fetch,
+            locks: _,
+            for_clause,
+            settings,
+            format_clause,
+            pipe_operators,
+        } = query;
+        if for_clause.is_some() || settings.is_some() || format_clause.is_some() || !pipe_operators.is_empty() {
+            return Err(unsupported("query clause (FOR/SETTINGS/FORMAT/pipe)"));
+        }
+
+        if let Some(with) = with {
+            if with.recursive {
+                return Err(unsupported("WITH RECURSIVE"));
+            }
+            for cte in &with.cte_tables {
+                if cte.from.is_some() {
+                    return Err(unsupported("CTE FROM clause"));
                 }
-                push_column(&mut out, lc.name, sources);
-            }
-            Ok(out)
-        }
-        SetExpr::Values(values) => resolve_values(values, ctes, active, depth),
-        _ => Ok(Vec::new()),
-    }
-}
-
-/// Resolves a `VALUES` clause into one unnamed output column per position.
-///
-/// Each row's expressions are resolved against an empty scope, so literals
-/// contribute no sources; a bare column reference fails closed.
-fn resolve_values<'a>(
-    values: &'a Values,
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<Vec<OutputColumn>, LineageError> {
-    let scope = Scope::default();
-    let mut out: Vec<OutputColumn> = Vec::new();
-    for row in &values.rows {
-        for (i, expr) in row.content.iter().enumerate() {
-            let sources = collect_sources(expr, &scope, ctes, active, depth)?;
-            match out.get_mut(i) {
-                Some(col) => col.sources.extend(sources),
-                None => push_column(&mut out, None, sources),
+                let cols = self.query(&cte.query, level.derived())?;
+                level.define(&cte.alias, cols)?;
             }
         }
+
+        let cols = self.set_expr(body, &level, order_by.as_ref())?;
+
+        match limit_clause {
+            None => {}
+            Some(LimitClause::LimitOffset {
+                limit,
+                offset,
+                limit_by,
+            }) => {
+                if !limit_by.is_empty() {
+                    return Err(unsupported("LIMIT BY"));
+                }
+                if let Some(limit) = limit {
+                    self.clause(limit, &level, Clause::Limit)?;
+                }
+                if let Some(offset) = offset {
+                    self.clause(&offset.value, &level, Clause::Limit)?;
+                }
+            }
+            Some(LimitClause::OffsetCommaLimit { offset, limit }) => {
+                self.clause(offset, &level, Clause::Limit)?;
+                self.clause(limit, &level, Clause::Limit)?;
+            }
+        }
+        if let Some(quantity) = fetch.as_ref().and_then(|f| f.quantity.as_ref()) {
+            self.clause(quantity, &level, Clause::Limit)?;
+        }
+        Ok(cols)
     }
-    Ok(out)
-}
 
-/// Resolves a single `SELECT` into its output columns.
-fn resolve_select<'a>(
-    select: &'a Select,
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<Vec<OutputColumn>, LineageError> {
-    let scope = build_scope(&select.from, ctes, active, depth)?;
-    let mut out: Vec<OutputColumn> = Vec::new();
+    /// Resolves a query body; `order_by` is the enclosing query's.
+    fn set_expr(
+        &mut self,
+        body: &SetExpr,
+        level: &Level<'_>,
+        order_by: Option<&OrderBy>,
+    ) -> Result<Columns, LineageError> {
+        let mut cols = match body {
+            SetExpr::Select(select) => return self.select(select, level.correlated(), order_by),
+            SetExpr::Query(query) => self.query(query, level.correlated())?,
+            SetExpr::SetOperation { .. } => {
+                // `a UNION b UNION c …` nests leftward once per operand, so walk
+                // the left spine in a loop; right operands nest only by precedence.
+                let mut rights = Vec::new();
+                let mut leftmost = body;
+                while let SetExpr::SetOperation { left, right, .. } = leftmost {
+                    rights.push(right);
+                    leftmost = left;
+                }
+                let mut cols = self.set_expr(leftmost, level, None)?;
+                for right in rights.into_iter().rev() {
+                    cols = cols.union(self.set_expr(right, level, None)?)?;
+                }
+                cols
+            }
+            SetExpr::Values(values) => self.values(values, level)?,
+            SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => {
+                return Err(unsupported("data-modifying statement in a query"));
+            }
+            SetExpr::Table(_) => return Err(unsupported("TABLE statement")),
+        };
+        if let Some(order_by) = order_by {
+            let sorted = level.sorted(cols)?;
+            self.order_by(order_by, &sorted)?;
+            cols = sorted.into_outputs();
+        }
+        Ok(cols)
+    }
 
-    for item in &select.projection {
-        let (expr, name) = match item {
-            SelectItem::UnnamedExpr(expr) => (expr, output_name(expr)),
-            SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
-            SelectItem::ExprWithAliases { expr, aliases } => (expr, aliases.first().map(|a| a.value.clone())),
-            SelectItem::Wildcard(_) => {
-                push_expanded(&mut out, scope.expand_wildcard()?);
-                continue;
-            }
-            SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::ObjectName(obj), _) => {
-                push_expanded(&mut out, scope.expand_qualified_wildcard(last_ident(obj))?);
-                continue;
-            }
-            SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::Expr(_), _) => {
-                return Err(LineageError::UnresolvedColumn {
-                    column: "*".to_string(),
-                    reason: "wildcard on an arbitrary expression is unsupported".to_string(),
+    /// Resolves a `VALUES` list into positional columns.
+    fn values(&mut self, values: &Values, level: &Level<'_>) -> Result<Columns, LineageError> {
+        let mut cols: Vec<Col> = Vec::new();
+        for (r, row) in values.rows.iter().enumerate() {
+            if r > 0 && row.content.len() != cols.len() {
+                return Err(LineageError::ColumnCountMismatch {
+                    relation: "VALUES".to_string(),
+                    expected: cols.len(),
+                    found: row.content.len(),
                 });
             }
+            for (i, expr) in row.content.iter().enumerate() {
+                let mut sources = BTreeSet::new();
+                self.expr(expr, level, Clause::Projection, &mut sources)?;
+                match cols.get_mut(i) {
+                    Some(col) => col.sources.extend(sources),
+                    None => cols.push(Col {
+                        name: self.dialect.values_column(i),
+                        sources,
+                        visible: true,
+                    }),
+                }
+            }
+        }
+        Ok(Columns::known(cols))
+    }
+
+    /// Resolves one `SELECT` at `level`, a fresh child of its query's level.
+    fn select(
+        &mut self,
+        select: &Select,
+        mut level: Level<'_>,
+        order_by: Option<&OrderBy>,
+    ) -> Result<Columns, LineageError> {
+        let Select {
+            select_token: _,
+            optimizer_hints: _,
+            distinct: _,
+            select_modifiers: _,
+            top,
+            top_before_distinct: _,
+            projection,
+            exclude,
+            into,
+            from,
+            lateral_views,
+            prewhere,
+            selection: _,
+            connect_by,
+            group_by: _,
+            cluster_by,
+            distribute_by,
+            sort_by,
+            having: _,
+            named_window: _,
+            qualify,
+            window_before_qualify: _,
+            value_table_mode,
+            flavor,
+        } = select;
+        if into.is_some() {
+            return Err(unsupported("SELECT INTO"));
+        }
+        if top.is_some()
+            || exclude.is_some()
+            || !lateral_views.is_empty()
+            || prewhere.is_some()
+            || !connect_by.is_empty()
+            || !cluster_by.is_empty()
+            || !distribute_by.is_empty()
+            || !sort_by.is_empty()
+            || qualify.is_some()
+            || value_table_mode.is_some()
+            || !matches!(flavor, SelectFlavor::Standard)
+        {
+            return Err(unsupported("SELECT clause outside the modeled dialects"));
+        }
+
+        for twj in from {
+            let tree = self.tree(twj, &level)?;
+            level.add(tree);
+        }
+
+        let mut out = Columns::default();
+        for item in projection {
+            self.select_item(item, &level, &mut out)?;
+        }
+        level.set_outputs(out);
+
+        self.select_clauses(select, &level)?;
+        if let Some(order_by) = order_by {
+            self.order_by(order_by, &level)?;
+        }
+        Ok(level.into_outputs())
+    }
+
+    /// Records a `SELECT`'s `WHERE`, `GROUP BY`, `HAVING`, `WINDOW`, and `DISTINCT ON` uses.
+    fn select_clauses(&mut self, select: &Select, level: &Level<'_>) -> Result<(), LineageError> {
+        let Select {
+            selection,
+            group_by,
+            having,
+            named_window,
+            distinct,
+            ..
+        } = select;
+        if let Some(selection) = selection {
+            self.clause(selection, level, Clause::Where)?;
+        }
+        match group_by {
+            GroupByExpr::All(_) => return Err(unsupported("GROUP BY ALL")),
+            GroupByExpr::Expressions(exprs, modifiers) => {
+                for expr in exprs {
+                    self.item(expr, level, Clause::GroupBy)?;
+                }
+                for modifier in modifiers {
+                    match modifier {
+                        GroupByWithModifier::Rollup | GroupByWithModifier::Cube | GroupByWithModifier::Totals => {}
+                        GroupByWithModifier::GroupingSets(expr) => self.clause(expr, level, Clause::GroupBy)?,
+                    }
+                }
+            }
+        }
+        if let Some(having) = having {
+            self.clause(having, level, Clause::Having)?;
+        }
+        for window in named_window {
+            match &window.1 {
+                NamedWindowExpr::NamedWindow(_) => {}
+                NamedWindowExpr::WindowSpec(spec) => self.window(spec, level, Clause::Window)?,
+            }
+        }
+        match distinct {
+            None | Some(Distinct::All | Distinct::Distinct) => {}
+            Some(Distinct::On(exprs)) => {
+                for expr in exprs {
+                    self.item(expr, level, Clause::GroupBy)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolves one projection item into output columns.
+    fn select_item(&mut self, item: &SelectItem, level: &Level<'_>, out: &mut Columns) -> Result<(), LineageError> {
+        let (expr, name) = match item {
+            SelectItem::UnnamedExpr(expr) => (expr, self.output_name(expr)),
+            SelectItem::ExprWithAlias { expr, alias } => (expr, self.dialect.normalize(alias)),
+            SelectItem::ExprWithAliases { .. } => return Err(unsupported("multiple aliases on one expression")),
+            SelectItem::Wildcard(options) => {
+                plain_wildcard(options)?;
+                out.extend(level.star()?);
+                return Ok(());
+            }
+            SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::ObjectName(name), options) => {
+                plain_wildcard(options)?;
+                out.extend(level.star_of(&idents(name)?)?);
+                return Ok(());
+            }
+            SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::Expr(_), _) => {
+                return Err(unsupported("wildcard on an expression"));
+            }
         };
-        let sources = collect_sources(expr, &scope, ctes, active, depth)?;
-        push_column(&mut out, name, sources);
+        let mut sources = BTreeSet::new();
+        self.expr(expr, level, Clause::Projection, &mut sources)?;
+        out.cols.push(Col {
+            name,
+            sources,
+            visible: true,
+        });
+        Ok(())
     }
 
-    Ok(out)
-}
-
-/// Builds the visible-relation scope for a `FROM`/`JOIN` list.
-///
-/// # Errors
-/// Returns [`LineageError`] on unresolved nested queries, cycles, or nesting.
-pub(crate) fn build_scope<'a>(
-    from: &'a [TableWithJoins],
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<Scope, LineageError> {
-    let mut scope = Scope::default();
-    for twj in from {
-        add_table_with_joins(twj, &mut scope, ctes, active, depth)?;
+    /// Returns the informational output name of an unaliased expression.
+    fn output_name(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Identifier(id) => self.dialect.normalize(id),
+            Expr::CompoundIdentifier(parts) => parts.last().map_or_else(String::new, |id| self.dialect.normalize(id)),
+            other => other.to_string(),
+        }
     }
-    Ok(scope)
+
+    /// Records `ORDER BY` items as [`Role::Sort`] references.
+    fn order_by(&mut self, order_by: &OrderBy, level: &Level<'_>) -> Result<(), LineageError> {
+        if order_by.interpolate.is_some() {
+            return Err(unsupported("ORDER BY INTERPOLATE"));
+        }
+        match &order_by.kind {
+            OrderByKind::All(_) => Err(unsupported("ORDER BY ALL")),
+            OrderByKind::Expressions(items) => {
+                for item in items {
+                    if item.with_fill.is_some() {
+                        return Err(unsupported("ORDER BY WITH FILL"));
+                    }
+                    self.item(&item.expr, level, Clause::OrderBy)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Records a `GROUP BY` / `ORDER BY` item, which may name an output directly.
+    fn item(&mut self, expr: &Expr, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
+        match level.output_item(clause, expr)? {
+            Some(sources) => {
+                if let Some(role) = clause.role() {
+                    self.refer(sources, role);
+                }
+                Ok(())
+            }
+            None => self.clause(expr, level, clause),
+        }
+    }
+
+    /// Resolves an expression and records its sources with the clause's role.
+    pub(crate) fn clause(&mut self, expr: &Expr, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
+        let mut sources = BTreeSet::new();
+        self.expr(expr, level, clause, &mut sources)?;
+        if let Some(role) = clause.role() {
+            self.refer(sources, role);
+        }
+        Ok(())
+    }
+
+    /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
+    fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
+        let mut tree = self.factor(&twj.relation, level)?;
+        for join in &twj.joins {
+            let right = self.factor(&join.relation, level)?;
+            tree = self.join(tree, right, join, level)?;
+        }
+        Ok(tree)
+    }
+
+    /// Joins `right` onto `left`, merging `USING`/`NATURAL` keys.
+    fn join(&mut self, left: Tree, right: Tree, join: &Join, level: &Level<'_>) -> Result<Tree, LineageError> {
+        let (JoinOperator::Join(constraint)
+        | JoinOperator::Inner(constraint)
+        | JoinOperator::Left(constraint)
+        | JoinOperator::LeftOuter(constraint)
+        | JoinOperator::Right(constraint)
+        | JoinOperator::RightOuter(constraint)
+        | JoinOperator::FullOuter(constraint)
+        | JoinOperator::CrossJoin(constraint)
+        | JoinOperator::StraightJoin(constraint)) = &join.join_operator
+        else {
+            return Err(unsupported("join kind"));
+        };
+        let keys = match constraint {
+            JoinConstraint::None | JoinConstraint::On(_) => Keys::Using(Vec::new()),
+            JoinConstraint::Using(names) => Keys::Using(
+                names
+                    .iter()
+                    .map(|n| {
+                        n.0.last()
+                            .and_then(ObjectNamePart::as_ident)
+                            .cloned()
+                            .ok_or_else(|| unsupported("USING column"))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            JoinConstraint::Natural => Keys::Natural,
+        };
+        let (tree, joined) = left.join(self.dialect, right, keys)?;
+        self.refer(joined, Role::Join);
+        let JoinConstraint::On(expr) = constraint else {
+            return Ok(tree);
+        };
+        let on = level.on(tree);
+        self.clause(expr, &on, Clause::On)?;
+        Ok(on.into_tree())
+    }
+
+    fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
+        match factor {
+            TableFactor::Table {
+                name,
+                alias,
+                args,
+                with_hints,
+                version,
+                with_ordinality,
+                partitions: _,
+                json_path,
+                sample,
+                index_hints: _,
+            } => {
+                if args.is_some() || *with_ordinality {
+                    return Err(unsupported("table function in FROM"));
+                }
+                if !with_hints.is_empty() || version.is_some() || json_path.is_some() || sample.is_some() {
+                    return Err(unsupported("table modifier (hints/version/sample)"));
+                }
+                self.named(name, alias.as_ref(), level)
+            }
+            TableFactor::Derived {
+                lateral,
+                subquery,
+                alias,
+                sample,
+            } => {
+                if *lateral {
+                    return Err(unsupported("LATERAL derived table"));
+                }
+                if sample.is_some() {
+                    return Err(unsupported("TABLESAMPLE"));
+                }
+                let cols = self.query(subquery, level.derived())?;
+                Tree::single(self.dialect, Vec::new(), cols, alias.as_ref())
+            }
+            TableFactor::NestedJoin {
+                table_with_joins,
+                alias,
+            } => {
+                let tree = self.tree(table_with_joins, level)?;
+                match alias {
+                    None => Ok(tree),
+                    Some(alias) => tree.aliased(self.dialect, alias),
+                }
+            }
+            TableFactor::TableFunction { .. } | TableFactor::Function { .. } => {
+                Err(unsupported("table function in FROM"))
+            }
+            TableFactor::UNNEST { .. } => Err(unsupported("UNNEST")),
+            TableFactor::JsonTable { .. } | TableFactor::OpenJsonTable { .. } => Err(unsupported("JSON_TABLE")),
+            TableFactor::Pivot { .. } | TableFactor::Unpivot { .. } | TableFactor::UnpivotExpr { .. } => {
+                Err(unsupported("PIVOT/UNPIVOT"))
+            }
+            TableFactor::MatchRecognize { .. } => Err(unsupported("MATCH_RECOGNIZE")),
+            TableFactor::XmlTable { .. } => Err(unsupported("XMLTABLE")),
+            TableFactor::SemanticView { .. } => Err(unsupported("SEMANTIC_VIEW")),
+        }
+    }
+
+    /// Resolves a named relation: a visible CTE, else a catalog entry.
+    fn named(
+        &mut self,
+        name: &ObjectName,
+        alias: Option<&TableAlias>,
+        level: &Level<'_>,
+    ) -> Result<Tree, LineageError> {
+        let parts = idents(name)?;
+        let path: Vec<String> = parts.iter().map(|p| self.dialect.normalize(p)).collect();
+
+        if let [single_part] = parts.as_slice()
+            && let Some(cols) = level.cte(single_part)?
+        {
+            return Tree::single(self.dialect, path, cols, alias);
+        }
+
+        let written = WrittenName::query(
+            parts
+                .iter()
+                .map(|p| NamePart {
+                    value: p.value.clone(),
+                    quoted: p.quote_style.is_some(),
+                })
+                .collect(),
+        );
+        let catalog = self.catalog;
+        let relation = match catalog.get(&written) {
+            None => {
+                if !self.missing.contains(&written) {
+                    self.missing.push(written);
+                }
+                return Tree::single(self.dialect, path, Columns::pending(), alias);
+            }
+            Some(Entry::Absent) => {
+                return Err(LineageError::UnknownRelation {
+                    name: written.to_string(),
+                });
+            }
+            Some(Entry::Resolved(relation)) => relation,
+        };
+        if relation.kind == RelationKind::View {
+            return Err(unsupported("view expansion"));
+        }
+        self.relations.insert(RelationUse {
+            id: relation.id.clone(),
+            kind: relation.kind,
+            origin: Origin::Query,
+        });
+        let cols = relation
+            .columns
+            .iter()
+            .map(|c| Col {
+                name: c.name.clone(),
+                sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                visible: c.star_visible,
+            })
+            .collect();
+        Tree::single(self.dialect, path, Columns::known(cols), alias)
+    }
 }
 
-/// Adds a relation and each of its joined relations to a scope.
-///
-/// # Errors
-/// Returns [`LineageError`] on unresolved nested queries, cycles, or nesting.
-pub(crate) fn add_table_with_joins<'a>(
-    twj: &'a TableWithJoins,
-    scope: &mut Scope,
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<(), LineageError> {
-    add_table_factor(&twj.relation, scope, ctes, active, depth)?;
-    for join in &twj.joins {
-        add_table_factor(&join.relation, scope, ctes, active, depth)?;
+/// Rejects wildcard modifiers (`EXCLUDE`, `REPLACE`, `RENAME`, …).
+fn plain_wildcard(options: &WildcardAdditionalOptions) -> Result<(), LineageError> {
+    let WildcardAdditionalOptions {
+        wildcard_token: _,
+        opt_ilike,
+        opt_exclude,
+        opt_except,
+        opt_replace,
+        opt_rename,
+        opt_alias,
+    } = options;
+    if opt_ilike.is_some()
+        || opt_exclude.is_some()
+        || opt_except.is_some()
+        || opt_replace.is_some()
+        || opt_rename.is_some()
+        || opt_alias.is_some()
+    {
+        return Err(unsupported("wildcard modifier (EXCLUDE/EXCEPT/REPLACE/RENAME)"));
     }
     Ok(())
 }
 
-/// Adds one table factor (and any nested joins) to a scope.
+/// Returns an object name's identifier parts.
 ///
 /// # Errors
-/// Returns [`LineageError`] on unresolved nested queries, cycles, or nesting.
-pub(crate) fn add_table_factor<'a>(
-    factor: &'a TableFactor,
-    scope: &mut Scope,
-    ctes: &CteMap<'a>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<(), LineageError> {
-    match factor {
-        TableFactor::Table { name, alias, .. } => {
-            let last = last_ident(name);
-            let visible = alias
-                .as_ref()
-                .map_or_else(|| last.to_string(), |a| a.name.value.clone());
-
-            let folded = fold(last);
-            if let Some(&cte_query) = ctes.get(folded.as_str()) {
-                if active.contains(&folded) {
-                    return Err(LineageError::CircularReference { cte: last.to_string() });
-                }
-                let mut active = active.clone();
-                active.insert(folded);
-                let cols = resolve_query(cte_query, ctes, &active, depth + 1)?;
-                scope.push(visible, virtual_from(cols));
-            } else {
-                let table = table_ref_from_object_name(name);
-                scope.push(visible, RelExpose::Physical { table });
-            }
-            Ok(())
-        }
-        TableFactor::Derived { subquery, alias, .. } => {
-            let cols = resolve_query(subquery, ctes, active, depth + 1)?;
-            let visible = alias.as_ref().map_or_else(String::new, |a| a.name.value.clone());
-            scope.push(visible, virtual_from(cols));
-            Ok(())
-        }
-        TableFactor::NestedJoin { table_with_joins, .. } => {
-            add_table_with_joins(table_with_joins, scope, ctes, active, depth)
-        }
-        _ => Ok(()),
-    }
-}
-
-/// Appends one output column, assigning its position from the current length.
-fn push_column(out: &mut Vec<OutputColumn>, name: Option<String>, sources: BTreeSet<SourceRef>) {
-    let position = out.len();
-    out.push(OutputColumn {
-        name,
-        position,
-        sources,
-    });
-}
-
-/// Appends wildcard-expanded columns to the projection, assigning positions.
-fn push_expanded(out: &mut Vec<OutputColumn>, expanded: ExpandedColumns) {
-    for (name, sources) in expanded {
-        push_column(out, name, sources);
-    }
-}
-
-/// Wraps resolved output columns as a virtual relation.
-fn virtual_from(cols: Vec<OutputColumn>) -> RelExpose {
-    let columns = cols
-        .into_iter()
-        .map(|c| VirtCol {
-            name: c.name,
-            sources: c.sources,
-        })
-        .collect();
-    RelExpose::Virtual { columns }
-}
-
-/// Returns the last identifier of an object name (its bare name), or `""`.
-pub(crate) fn last_ident(name: &ObjectName) -> &str {
+/// [`LineageError::Unsupported`] for function-call name parts.
+pub(crate) fn idents(name: &ObjectName) -> Result<Vec<Ident>, LineageError> {
     name.0
-        .last()
-        .and_then(|p| p.as_ident())
-        .map_or("", |i| i.value.as_str())
-}
-
-/// Builds a [`TableRef`] from an object name, keeping schema/database qualifiers.
-///
-/// Maps the last three identifier parts to `database.schema.name`; any deeper
-/// prefix (e.g. a linked-server qualifier) is deliberately dropped.
-pub(crate) fn table_ref_from_object_name(name: &ObjectName) -> TableRef {
-    let idents: Vec<&str> = name
-        .0
         .iter()
-        .filter_map(|p| p.as_ident())
-        .map(|i| i.value.as_str())
-        .collect();
-    match idents.as_slice() {
-        [] => TableRef::new(name.to_string()),
-        [table] => TableRef::new(*table),
-        [schema, table] => TableRef::qualified(*schema, *table),
-        [.., database, schema, table] => TableRef::builder(*table)
-            .with_schema(*schema)
-            .with_database(*database)
-            .build(),
-    }
+        .map(|p| p.as_ident().cloned().ok_or_else(|| unsupported("function name part")))
+        .collect()
 }
 
-/// Derives the client-visible output name of an unaliased projection expression.
-fn output_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Identifier(id) => Some(id.value.clone()),
-        Expr::CompoundIdentifier(parts) => parts.last().map(|i| i.value.clone()),
-        _ => None,
-    }
-}
-
-/// Collects the source columns contributing to one expression.
-///
-/// # Errors
-/// Returns [`LineageError`] when a referenced column cannot be resolved.
-pub(crate) fn collect_sources(
-    expr: &Expr,
-    scope: &Scope,
-    ctes: &CteMap<'_>,
-    active: &ActiveCtes,
-    depth: usize,
-) -> Result<BTreeSet<SourceRef>, LineageError> {
-    let mut collector = ExprCollector {
-        scope,
-        ctes,
-        active,
-        depth,
-        query_depth: 0,
-        sources: BTreeSet::new(),
-    };
-    match expr.visit(&mut collector) {
-        ControlFlow::Break(err) => Err(err),
-        ControlFlow::Continue(()) => Ok(collector.sources),
-    }
-}
-
-/// Visitor that collects column references from an expression subtree.
-///
-/// A scalar subquery is resolved as a whole (its output sources added); the
-/// subquery's inner column references are skipped via `query_depth`.
-struct ExprCollector<'a, 's> {
-    scope: &'s Scope,
-    ctes: &'s CteMap<'a>,
-    active: &'s ActiveCtes,
-    depth: usize,
-    query_depth: usize,
-    sources: BTreeSet<SourceRef>,
-}
-
-impl Visitor for ExprCollector<'_, '_> {
-    type Break = LineageError;
-
-    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
-        if self.query_depth == 0 {
-            match resolve_query(query, self.ctes, self.active, self.depth + 1) {
-                Ok(cols) => {
-                    for col in cols {
-                        self.sources.extend(col.sources);
-                    }
-                }
-                Err(err) => return ControlFlow::Break(err),
-            }
-        }
-        self.query_depth += 1;
-        ControlFlow::Continue(())
-    }
-
-    fn post_visit_query(&mut self, _query: &Query) -> ControlFlow<Self::Break> {
-        self.query_depth = self.query_depth.saturating_sub(1);
-        ControlFlow::Continue(())
-    }
-
-    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
-        if self.query_depth > 0 {
-            return ControlFlow::Continue(());
-        }
-        let resolved = match expr {
-            Expr::Identifier(id) => Some(self.scope.resolve_column(None, &id.value)),
-            Expr::CompoundIdentifier(parts) => match parts.as_slice() {
-                [.., qualifier, col] => Some(self.scope.resolve_column(Some(&qualifier.value), &col.value)),
-                [col] => Some(self.scope.resolve_column(None, &col.value)),
-                [] => None,
-            },
-            _ => None,
-        };
-        match resolved {
-            Some(Ok(found)) => self.sources.extend(found),
-            Some(Err(err)) => return ControlFlow::Break(err),
-            None => {}
-        }
-        ControlFlow::Continue(())
-    }
+pub(crate) fn unsupported(kind: &str) -> LineageError {
+    LineageError::Unsupported(kind.to_string())
 }
