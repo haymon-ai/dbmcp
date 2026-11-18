@@ -2299,3 +2299,71 @@ fn explain_of_an_update_carries_its_writes() {
     assert_eq!(lineage.statement, explain(StatementKind::Update));
     assert_eq!(writes(&lineage), vec![col("email", &["users.ssn"])]);
 }
+
+/// Renders writes as `(target column, named)`.
+fn named(lineage: &Lineage) -> Vec<(String, bool)> {
+    lineage.writes.iter().map(|w| (w.name.clone(), w.named)).collect()
+}
+
+#[test]
+fn create_columns_without_a_kept_name_are_unnamed() {
+    let lineage = on(
+        "CREATE TABLE t2 AS SELECT ssn, email AS mail, upper(email), 1 FROM users",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(
+        named(&lineage),
+        vec![
+            ("ssn".to_string(), true),
+            ("mail".to_string(), true),
+            ("upper(email)".to_string(), false),
+            ("1".to_string(), false),
+        ]
+    );
+    let lineage = on(
+        "CREATE VIEW v2 (a, b) AS SELECT upper(ssn), email FROM users",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(named(&lineage), vec![("a".to_string(), true), ("b".to_string(), true)]);
+    let lineage = on("CREATE TABLE t2 AS SELECT * FROM users", Dialect::Postgres).expect("analyze");
+    assert!(lineage.writes.iter().all(|w| w.named));
+}
+
+#[test]
+fn dml_targets_are_always_named() {
+    for sql in [
+        "INSERT INTO archive (ssn) SELECT upper(email) FROM users",
+        "UPDATE users SET email = upper(ssn)",
+    ] {
+        let lineage = on(sql, Dialect::Postgres).expect(sql);
+        assert!(lineage.writes.iter().all(|w| w.named), "{sql}");
+    }
+}
+
+#[test]
+fn created_columns_sharing_a_name_are_unsupported() {
+    for (sql, dialect) in [
+        (
+            "CREATE TABLE t2 AS SELECT email AS ssn, ssn FROM users",
+            Dialect::Sqlite,
+        ),
+        ("CREATE TABLE t2 AS SELECT id, id FROM users", Dialect::Postgres),
+        (
+            "CREATE VIEW v2 AS SELECT email AS X, ssn AS x FROM users",
+            Dialect::Mysql,
+        ),
+    ] {
+        assert_unsupported(sql, dialect, &create_fixture());
+    }
+}
+
+#[test]
+fn ctas_with_constraints_is_unsupported() {
+    assert_unsupported(
+        "CREATE TABLE t2 (UNIQUE (ssn)) AS SELECT ssn FROM users",
+        Dialect::Mysql,
+        &create_fixture(),
+    );
+}

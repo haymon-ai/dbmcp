@@ -271,6 +271,7 @@ impl<'c> Ctx<'c> {
                         name: self.dialect.values_column(i),
                         sources,
                         visible: true,
+                        named: false,
                     }),
                 }
             }
@@ -419,12 +420,15 @@ impl<'c> Ctx<'c> {
                 return Err(unsupported("wildcard on an expression"));
             }
         };
+        let named = !matches!(item, SelectItem::UnnamedExpr(expr)
+            if !matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_)));
         let mut sources = BTreeSet::new();
         self.expr(expr, level, Clause::Projection, &mut sources)?;
         out.cols.push(Col {
             name,
             sources,
             visible: true,
+            named,
         });
         Ok(())
     }
@@ -623,6 +627,7 @@ impl<'c> Ctx<'c> {
                 name: c.name.clone(),
                 sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
                 visible: c.star_visible,
+                named: true,
             })
             .collect();
         Ok(Tree::single(self.dialect, path, Columns::known(cols), alias)?.with_table(relation.id.clone()))
@@ -749,6 +754,7 @@ impl<'c> Ctx<'c> {
                     name: c.name.clone(),
                     sources: Sources::new(),
                     visible: c.star_visible,
+                    named: true,
                 })
                 .collect();
             self.expanded.insert(relation.id.clone(), cols.clone());
@@ -769,6 +775,7 @@ impl<'c> Ctx<'c> {
                 name: c.name.clone(),
                 sources: b.sources,
                 visible: c.star_visible,
+                named: true,
             })
             .collect();
         self.expanded.insert(relation.id.clone(), cols.clone());

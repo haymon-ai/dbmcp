@@ -13,6 +13,7 @@ base64 = { workspace = true }
 bech32 = { workspace = true }
 bs58 = { workspace = true }
 dbmcp-config = { workspace = true }
+dbmcp-sql-lineage = { workspace = true }
 fancy-regex = { workspace = true }
 getrandom = { workspace = true }
 hmac = { workspace = true }

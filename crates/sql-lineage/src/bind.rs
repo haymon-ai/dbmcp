@@ -33,6 +33,8 @@ pub(crate) struct Col {
     pub sources: Sources,
     /// Whether `*` expands to the column.
     pub visible: bool,
+    /// Whether `name` is the name the server keeps (not engine-specific expression text).
+    pub named: bool,
 }
 
 /// A column list that may still be incomplete.
@@ -113,6 +115,7 @@ impl Columns {
         }
         for (col, def) in self.cols.iter_mut().filter(|c| c.visible).zip(&alias.columns) {
             col.name = dialect.normalize(&def.name);
+            col.named = true;
         }
         Ok(())
     }
@@ -514,6 +517,7 @@ impl Level<'_> {
                     .map(|w| w.sources.clone())
                     .unwrap_or_default(),
                 visible: c.visible,
+                named: true,
             })
             .collect();
         let excluded = Rel {

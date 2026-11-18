@@ -179,6 +179,12 @@ pub struct TargetColumn {
     pub name: String,
     /// Physical columns whose values flow into the target column.
     pub sources: BTreeSet<SourceRef>,
+    /// Whether `name` is the name the server stores.
+    ///
+    /// `false` only for a created column from an unaliased expression or a
+    /// `VALUES` list, whose stored name is engine-specific: a rule cannot
+    /// name it reliably.
+    pub named: bool,
 }
 
 /// The lineage of a single statement.

@@ -184,15 +184,16 @@ impl Ctx<'_> {
         }
         let cols = self.query(&body, Level::root(self.dialect))?;
         Ok(Analysis {
-            writes: created(cols.cols),
+            writes: created(cols.cols)?,
             ..Analysis::bare(StatementKind::CreateTableAs, target)
         })
     }
 
     /// Resolves `CREATE TABLE`: the new name is the target, and a query feeds its columns.
     fn create_table(&mut self, create: &CreateTable) -> Result<Analysis, LineageError> {
-        if create.query.is_some() && !create.columns.is_empty() {
-            return Err(unsupported("CREATE TABLE AS with column definitions"));
+        if create.query.is_some() && (!create.columns.is_empty() || !create.constraints.is_empty()) {
+            // A key built while copying rows leaks values through duplicate-key errors.
+            return Err(unsupported("CREATE TABLE AS with column definitions or constraints"));
         }
         if create.like.is_some()
             || create.clone.is_some()
@@ -247,7 +248,7 @@ impl Ctx<'_> {
         };
         let cols = self.query(query, Level::root(self.dialect))?;
         Ok(Analysis {
-            writes: created(cols.cols),
+            writes: created(cols.cols)?,
             ..Analysis::bare(StatementKind::CreateTableAs, target)
         })
     }
@@ -289,7 +290,7 @@ impl Ctx<'_> {
         };
         cols.rename(self.dialect, &alias)?;
         Ok(Analysis {
-            writes: created(cols.cols),
+            writes: created(cols.cols)?,
             ..Analysis::bare(kind, target)
         })
     }
@@ -814,22 +815,34 @@ fn bare_columns(keys: &[IndexColumn]) -> Result<(), LineageError> {
     Ok(())
 }
 
-/// Turns a created relation's query columns into writes, one per column name.
-fn created(cols: Vec<Col>) -> Vec<TargetColumn> {
-    let mut writes = Vec::new();
+/// Turns a created relation's query columns into writes, one per column.
+///
+/// # Errors
+/// [`LineageError::Unsupported`] when two columns share a name: `SQLite`
+/// keeps both under engine-made names (`name:1`) no rule can match.
+fn created(cols: Vec<Col>) -> Result<Vec<TargetColumn>, LineageError> {
+    let mut writes: Vec<TargetColumn> = Vec::with_capacity(cols.len());
     for col in cols {
-        write(&mut writes, &col.name, col.sources);
+        if writes.iter().any(|w| w.name.to_lowercase() == col.name.to_lowercase()) {
+            return Err(unsupported("created columns sharing a name"));
+        }
+        writes.push(TargetColumn {
+            name: col.name,
+            sources: col.sources,
+            named: col.named,
+        });
     }
-    writes
+    Ok(writes)
 }
 
-/// Merges sources into the write of `name`, appending it when new.
+/// Merges sources into the write of target column `name`, appending it when new.
 fn write(writes: &mut Vec<TargetColumn>, name: &str, sources: Sources) {
     match writes.iter_mut().find(|w| w.name == name) {
         Some(existing) => existing.sources.extend(sources),
         None => writes.push(TargetColumn {
             name: name.to_string(),
             sources,
+            named: true,
         }),
     }
 }
