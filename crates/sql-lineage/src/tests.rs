@@ -2241,7 +2241,8 @@ fn write_targets_bind_strictly() {
             Dialect::Postgres,
             "column",
         ),
-        ("UPDATE users SET email.x = 1", Dialect::Postgres, "column"),
+        ("UPDATE users SET email.x = 1", Dialect::Postgres, "unknown"),
+        ("UPDATE users u SET x.email = 1", Dialect::Postgres, "unknown"),
         (
             "UPDATE users u JOIN orders o ON o.user_id = u.id SET id = 1",
             Dialect::Mysql,

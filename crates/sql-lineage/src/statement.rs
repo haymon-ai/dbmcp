@@ -427,8 +427,7 @@ impl Ctx<'_> {
     /// flag is set when the target is open, so the names may be incomplete.
     fn insert_columns(&self, tree: &Tree, columns: &[ObjectName]) -> Result<(Vec<String>, bool), LineageError> {
         if columns.is_empty() {
-            let level = Level::dml(self.dialect, vec![tree.clone()]);
-            let star = level.star()?;
+            let star = tree.star();
             return Ok((star.cols.into_iter().map(|c| c.name).collect(), star.open));
         }
         let mut names = Vec::new();

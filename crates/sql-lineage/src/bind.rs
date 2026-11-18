@@ -250,6 +250,7 @@ impl Tree {
     /// list. `None` while the relation that would hold it is open.
     ///
     /// # Errors
+    /// [`LineageError::UnknownRelation`] when the qualifier names no relation;
     /// [`LineageError::ColumnNotFound`] or [`LineageError::AmbiguousColumn`]
     /// when the column binds to no or several columns;
     /// [`LineageError::Unsupported`] for a column of a view or derived relation.
@@ -266,6 +267,11 @@ impl Tree {
             .iter()
             .filter(|r| qualifier.is_empty() || r.answers(dialect, qualifier))
             .collect();
+        if rels.is_empty() {
+            return Err(LineageError::UnknownRelation {
+                name: dotted(qualifier),
+            });
+        }
         let mut hits = rels.iter().flat_map(|rel| {
             rel.columns
                 .cols
@@ -286,11 +292,17 @@ impl Tree {
         let Some(id) = rel.writable()? else {
             return Ok(None);
         };
-        let stored = match col.sources.iter().collect::<Vec<_>>().as_slice() {
-            [source] => source.column.clone(),
+        let mut sources = col.sources.iter();
+        let stored = match (sources.next(), sources.next()) {
+            (Some(source), None) => source.column.clone(),
             _ => col.name.clone(),
         };
         Ok(Some((id, stored)))
+    }
+
+    /// Returns the star-visible columns, keeping openness.
+    pub(crate) fn star(&self) -> Columns {
+        self.cols.star()
     }
 
     /// Wraps the whole tree as one relation, as `(a JOIN b) AS x` does.
