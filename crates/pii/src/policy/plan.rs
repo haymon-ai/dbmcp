@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
-use dbmcp_sql_lineage::{Dialect, Lineage, Origin, RelationId, Role, SourceRef, StatementKind};
+use dbmcp_sql_lineage::{Dialect, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind};
 
 use super::deny;
 use super::rejection::Rejection;
@@ -18,7 +18,19 @@ use crate::entity::Entity;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// One entry per output column, by 0-based position.
-    pub positions: Vec<Position>,
+    pub columns: Vec<PlannedColumn>,
+}
+
+/// One output column's redaction and the name it must come back under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedColumn {
+    /// How the column's values are redacted.
+    pub position: Position,
+    /// The folded name the column must come back under, where known.
+    ///
+    /// `Some` only for a single source under its own name (`*`, a bare
+    /// column, or a same-name alias).
+    pub name: Option<String>,
 }
 
 /// How the values of one output column are redacted.
@@ -122,12 +134,16 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             },
         });
     }
-    let positions = lineage
+    let columns = lineage
         .columns
         .iter()
         .map(|column| {
-            combine(&column.sources, config).ok_or(Rejection::Conflict {
+            let position = combine(&column.sources, config).ok_or(Rejection::Conflict {
                 position: column.position,
+            })?;
+            Ok(PlannedColumn {
+                position,
+                name: known_name(column),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -156,7 +172,17 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             }
         }
     }
-    Ok(Plan { positions })
+    Ok(Plan { columns })
+}
+
+/// Computes [`PlannedColumn::name`].
+fn known_name(column: &OutputColumn) -> Option<String> {
+    let mut sources = column.sources.iter();
+    let (Some(source), None) = (sources.next(), sources.next()) else {
+        return None;
+    };
+    let folded = ColumnRule::fold(&source.column);
+    (ColumnRule::fold(&column.name) == folded).then_some(folded)
 }
 
 /// Returns the rule whose key is `source`'s folded `catalog.schema.table.column`.

@@ -35,5 +35,5 @@ mod rejection;
 #[cfg(test)]
 mod tests;
 
-pub use self::plan::{Plan, Position, plan, touches_ruled};
+pub use self::plan::{Plan, PlannedColumn, Position, plan, touches_ruled};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection, reject_lineage};
