@@ -38,8 +38,7 @@ impl Config {
     /// Validates every section and the rules spanning sections.
     ///
     /// Rules enforced, besides each present section's own `validate()`:
-    /// - an SSH tunnel is not supported with the `SQLite` backend;
-    /// - column rules are not yet supported on any backend.
+    /// - an SSH tunnel is not supported with the `SQLite` backend.
     ///
     /// # Errors
     ///
@@ -52,12 +51,6 @@ impl Config {
         }
         if let Some(pii) = &self.pii {
             errors.extend(pii.validate().err().into_iter().flatten());
-            if !pii.rules.is_empty() {
-                errors.push(
-                    Diagnostic::new(ConfigError::PiiRulesUnsupported(self.database.backend))
-                        .involving(&[env::PII_RULES, env::DB_BACKEND]),
-                );
-            }
         }
         if let Some(ssh) = &self.ssh {
             if self.database.backend == DatabaseBackend::Sqlite {

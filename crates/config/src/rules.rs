@@ -4,10 +4,13 @@
 //! value must meet (rule names, fields, column key shape, known entity and
 //! operator, and columns repeated within or across rules, compared
 //! case-insensitively). The last file that sets `pii.rules` wins it whole, so
-//! these checks run on one file's value. [`check`] runs the rules that need
-//! other settings on the winning value: `pii.enabled` must be on, and each
-//! column's catalog segment must fit the backend. Reasons are value-free:
-//! they name the rule and the item index, never a column key.
+//! these checks run on one file's value. [`flatten`] turns the winning value
+//! into one [`ColumnRule`] per listed column, each inheriting `pii.operator`
+//! when its rule sets none. [`check`] runs the rules that need other settings
+//! on the winning value: `pii.enabled` must be on, column rules are not yet
+//! supported on any backend, and each column's catalog segment must fit the
+//! backend. Reasons are value-free: they name the rule and the item index,
+//! never a column key.
 //!
 //! [`Kind::Rules`]: crate::env::Kind::Rules
 
@@ -20,7 +23,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, PII_OPERATOR_NAMES, Setting, choose, unsupported_tag};
 use crate::error::{ConfigError, Diagnostic};
 use crate::node::{Node, SpannedNode};
-use crate::pii::ColumnRule;
+use crate::pii::{ColumnRule, PiiOperator};
 
 /// A YAML mapping's entries, each with its key's location.
 type Entries = IndexMap<String, (Location, SpannedNode)>;
@@ -80,18 +83,49 @@ pub(crate) fn cast(entries: &Entries) -> Result<Vec<Rule>, String> {
     Ok(rules)
 }
 
+/// Flattens rules into one [`ColumnRule`] per listed column, in file order.
+///
+/// A rule without its own operator takes `default_operator`, the resolved
+/// `pii.operator`.
+pub(crate) fn flatten(rules: &[Rule], default_operator: PiiOperator) -> Vec<ColumnRule> {
+    rules
+        .iter()
+        .flat_map(|rule| {
+            rule.columns.iter().map(|key| ColumnRule {
+                name: rule.name.clone(),
+                key: key.clone(),
+                entity: rule.entity,
+                operator: rule.operator.map_or(default_operator, |name| {
+                    PiiOperator::CHOICES
+                        .iter()
+                        .find(|(choice, _)| *choice == name)
+                        .map(|&(_, operator)| operator)
+                        .expect("cast checked the operator name")
+                }),
+            })
+        })
+        .collect()
+}
+
 /// Checks the winning `pii.rules` value against the settings it depends on.
 ///
-/// Reports rules set while `pii_enabled` is off, and each rule whose column
-/// keys name a catalog the backend never uses: `def` on `MySQL`/`MariaDB`,
-/// `main` on `SQLite`, and `database.name` on `PostgreSQL` when that is set.
-/// The catalog is compared case-insensitively. Both checks always run.
+/// Reports, in this order: rules set while `pii_enabled` is off; rules set
+/// while it is on, since no backend enforces them yet; and each rule whose
+/// column keys name a catalog the backend never uses: `def` on
+/// `MySQL`/`MariaDB`, `main` on `SQLite`, and `database.name` on `PostgreSQL`
+/// when that is set. The catalog is compared case-insensitively. The catalog
+/// check always runs.
 pub(crate) fn check(rules: &[Rule], pii_enabled: bool, database: &DatabaseConfig) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
-    if !pii_enabled && !rules.is_empty() {
-        errors.push(Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE]));
-    }
     let backend = database.backend;
+    if !rules.is_empty() {
+        // Temporary: drop this gate once a backend enforces column rules.
+        errors.push(if pii_enabled {
+            Diagnostic::new(ConfigError::PiiRulesUnsupported(backend)).involving(&[env::PII_RULES, env::DB_BACKEND])
+        } else {
+            Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE])
+        });
+    }
     let (catalog, expected) = match backend {
         DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ("def", "def"),
         DatabaseBackend::Sqlite => ("main", "main"),
@@ -307,8 +341,9 @@ mod tests {
             (DatabaseBackend::Postgres, Some(""), &["anything"]),
         ];
         for (backend, name, catalogs) in fits {
-            assert!(
-                checked(&with_catalogs(catalogs), true, &database(backend, name)).is_empty(),
+            assert_eq!(
+                checked(&with_catalogs(catalogs), true, &database(backend, name)),
+                [gate(backend)],
                 "{backend}"
             );
         }
@@ -335,9 +370,99 @@ mod tests {
         for (backend, name, catalogs, message) in cases {
             assert_eq!(
                 checked(&with_catalogs(catalogs), true, &database(backend, name)),
-                [message]
+                [gate(backend), message.to_owned()]
             );
         }
+    }
+
+    /// The temporary backend gate's message on `backend`.
+    fn gate(backend: DatabaseBackend) -> String {
+        format!("pii.rules: column rules are not yet supported on {backend}")
+    }
+
+    #[test]
+    fn column_rules_are_not_yet_supported_on_any_backend() {
+        for (backend, name, catalog) in [
+            (DatabaseBackend::Mysql, None, "def"),
+            (DatabaseBackend::Mariadb, None, "def"),
+            (DatabaseBackend::Postgres, Some("app"), "app"),
+            (DatabaseBackend::Sqlite, Some("x.db"), "main"),
+        ] {
+            let database = database(backend, name);
+            assert_eq!(
+                checked(&with_catalogs(&[catalog]), true, &database),
+                [gate(backend)],
+                "{backend}"
+            );
+            assert!(check(&[], true, &database).is_empty(), "{backend}");
+        }
+    }
+
+    #[test]
+    fn flatten_yields_one_column_rule_per_listed_column() {
+        let rules = cast_yaml(
+            "emails:\n  columns: [def.shop.users.email, def.shop.orders.Email]\n  entity: EMAIL_ADDRESS\n\
+             names:\n  columns: [def.shop.users.name]\n  entity: PERSON\n  operator: redact\n",
+        )
+        .expect("valid rules");
+        let flat: Vec<_> = flatten(&rules, PiiOperator::Mask)
+            .into_iter()
+            .map(|rule| (rule.name, rule.key.join("."), rule.entity, rule.operator))
+            .collect();
+        assert_eq!(
+            flat,
+            [
+                (
+                    "emails".to_owned(),
+                    "def.shop.users.email".to_owned(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Mask
+                ),
+                (
+                    "emails".to_owned(),
+                    "def.shop.orders.Email".to_owned(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Mask
+                ),
+                (
+                    "names".to_owned(),
+                    "def.shop.users.name".to_owned(),
+                    "PERSON",
+                    PiiOperator::Redact
+                ),
+            ]
+        );
+        assert!(flatten(&[], PiiOperator::Hash).is_empty());
+    }
+
+    #[test]
+    fn flatten_maps_every_operator_name() {
+        let magento = cast_yaml(
+            "emails:\n  columns:\n    - def.magento.customer_entity.email\n    - def.magento.sales_order.customer_email\n  \
+             entity: EMAIL_ADDRESS\n\
+             names:\n  columns:\n    - def.magento.customer_entity.firstname\n    - def.magento.customer_entity.lastname\n  \
+             entity: PERSON\n  operator: replace\n\
+             phones:\n  columns: [def.magento.sales_order_address.telephone]\n  entity: PHONE_NUMBER\n  operator: mask\n\
+             cards:\n  columns: [def.magento.sales_order_payment.cc_number_enc]\n  entity: CREDIT_CARD\n  operator: redact\n\
+             tokens:\n  columns: [def.magento.oauth_token.secret]\n  entity: API_KEY\n  operator: hash\n",
+        )
+        .expect("valid rules");
+        let operators: Vec<_> = flatten(&magento, PiiOperator::Hash)
+            .iter()
+            .map(|rule| rule.operator)
+            .collect();
+        assert_eq!(
+            operators,
+            [
+                PiiOperator::Hash,
+                PiiOperator::Hash,
+                PiiOperator::Replace,
+                PiiOperator::Replace,
+                PiiOperator::Mask,
+                PiiOperator::Redact,
+                PiiOperator::Hash,
+            ]
+        );
     }
 
     #[test]
