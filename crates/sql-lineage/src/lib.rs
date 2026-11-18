@@ -46,6 +46,7 @@ mod catalog;
 mod dialect;
 mod error;
 mod expr;
+mod functions;
 mod model;
 mod resolve;
 #[cfg(test)]

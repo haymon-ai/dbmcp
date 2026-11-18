@@ -3,7 +3,7 @@
 use crate::SqlError;
 use std::ops::ControlFlow;
 
-use sqlparser::ast::{Expr, Function, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
+use sqlparser::ast::{Expr, Function, Ident, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
 
@@ -23,7 +23,8 @@ pub enum StatementKind {
 /// Parses the query using the given dialect and checks:
 /// 1. Exactly one statement (multi-statement injection blocked)
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN); `USE`
-///    is rejected because it would leak to later queries on a pooled connection
+///    is rejected because it would leak to later queries on a pooled connection;
+///    `SHOW WARNINGS` / `SHOW ERRORS` are rejected because warnings quote values
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
 /// 5. No dangerous functions (file access, large objects, sequences, extensions,
@@ -68,6 +69,7 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
             classify(statement)?;
             Ok(StatementKind::NonSelect)
         }
+        Statement::ShowVariable { variable } if is_diagnostics(variable) => Err(SqlError::DiagnosticsBlocked),
         Statement::ShowTables { .. }
         | Statement::ShowColumns { .. }
         | Statement::ShowCreate { .. }
@@ -83,6 +85,19 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
         | Statement::ExplainTable { .. } => Ok(StatementKind::NonSelect),
         Statement::Use(_) => Err(SqlError::UseBlocked),
         _ => Err(SqlError::ReadOnlyViolation),
+    }
+}
+
+/// Returns whether a `SHOW` names the warnings or errors list.
+///
+/// Only the leading words count (`SHOW COUNT(*) WARNINGS` parses as
+/// `COUNT WARNINGS`); `SHOW INDEX FROM errors` names a table.
+fn is_diagnostics(variable: &[Ident]) -> bool {
+    let list = |part: &Ident| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors");
+    match variable {
+        [count, part, ..] if count.value.eq_ignore_ascii_case("count") => list(part),
+        [part, ..] => list(part),
+        [] => false,
     }
 }
 
@@ -338,6 +353,45 @@ mod tests {
         // sqlparser parses DESC/DESCRIBE as ExplainTable
         assert!(validate_read("DESC users", &DIALECT).is_ok());
         assert!(validate_read("DESCRIBE users", &DIALECT).is_ok());
+    }
+
+    #[test]
+    fn diagnostics_are_blocked() {
+        for sql in [
+            "SHOW WARNINGS",
+            "show warnings",
+            "SHOW WARNINGS LIMIT 5",
+            "SHOW ERRORS",
+            "SHOW ERRORS LIMIT 1, 2",
+            "SHOW COUNT(*) WARNINGS",
+            "SHOW COUNT(*) ERRORS",
+            "show count(*) errors",
+            "SHOW COUNT ( * ) WARNINGS",
+            "SHOW /*x*/ WARNINGS",
+            "SHOW\nWARNINGS",
+            "SHOW `WARNINGS`",
+            "SHOW WARNINGS LIMIT 1 OFFSET 2",
+        ] {
+            assert!(
+                matches!(validate_read(sql, &MYSQL), Err(SqlError::DiagnosticsBlocked)),
+                "{sql}"
+            );
+        }
+        assert!(matches!(
+            validate_read("SHOW WARNINGS", &POSTGRES),
+            Err(SqlError::DiagnosticsBlocked)
+        ));
+        assert!(matches!(
+            validate_read("SHOW WARNINGS", &SQLITE),
+            Err(SqlError::DiagnosticsBlocked)
+        ));
+        assert!(validate_read("SHOW VARIABLES", &MYSQL).is_ok());
+        assert!(validate_read("SHOW INDEX FROM errors", &MYSQL).is_ok());
+        assert!(validate_read("SHOW COLUMNS FROM errors", &MYSQL).is_ok());
+        assert!(validate_read("SHOW VARIABLES LIKE 'warnings'", &MYSQL).is_ok());
+        assert!(validate_read("SHOW WARNINGS_X", &MYSQL).is_ok());
+        assert!(validate_read("SHOW TABLE STATUS FROM warnings", &MYSQL).is_ok());
+        assert!(validate_read("SHOW search_path", &POSTGRES).is_ok());
     }
 
     #[test]

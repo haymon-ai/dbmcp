@@ -28,6 +28,10 @@ pub enum SqlError {
     #[error("Query blocked: USE is not allowed")]
     UseBlocked,
 
+    /// `SHOW WARNINGS` / `SHOW ERRORS` blocked: they can quote values the previous query read.
+    #[error("Query blocked: SHOW WARNINGS and SHOW ERRORS are not allowed")]
+    DiagnosticsBlocked,
+
     /// Multiple SQL statements blocked.
     #[error("Query blocked: only single statements are allowed")]
     MultiStatement,
