@@ -10,6 +10,7 @@ use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
 
 use super::prelude::*;
+use crate::policy::Access;
 use crate::types::ReadQueryRequest;
 
 const NAME: &str = "readQuery";
@@ -79,7 +80,8 @@ impl SqliteHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
     /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`, or
-    /// [`SqlError::Query`] if the backend reports an error.
+    /// [`SqlError::Query`] if the backend reports an error. With column
+    /// rules, also the policy's rejection or a withheld database error.
     pub async fn read_query(
         &self,
         ReadQueryRequest { query, cursor, timeout }: ReadQueryRequest,
@@ -101,10 +103,16 @@ impl SqliteHandler {
         };
         let mut window =
             truncate::Window::new(offset, size, self.config.max_cell_chars, self.config.max_response_chars);
-        self.connection
-            .read_json(&*sql, None, timeout, |row| window.push(row))
-            .await?;
-        let rows = self.redactor.redact_rows(window.rows).await?;
+        let rows = if let Some(policy) = &self.policy {
+            self.enforce(policy, &sql, Access::Read, timeout, &mut window)
+                .await?
+                .rows
+        } else {
+            self.connection
+                .read_json(&*sql, None, timeout, |row| window.push(row))
+                .await?;
+            self.redactor.redact_rows(window.rows).await?
+        };
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
         let next_cursor = match kind {

@@ -254,6 +254,29 @@ where
         (rows_affected, last_insert_id)
     }
 
+    /// Runs `op` on one pooled connection under `timeout_secs`.
+    ///
+    /// Every statement `op` sends shares the connection and one deadline,
+    /// so a multi-step exchange (transaction, catalog reads, the statement)
+    /// is bounded as a whole. `sql` only labels a timeout error.
+    ///
+    /// Neither read-only mode nor the read-only mechanism of
+    /// [`read_json`](Connection::read_json) applies; the caller enforces both.
+    ///
+    /// # Errors
+    ///
+    /// See trait-level documentation. Driver errors returned by `op` map
+    /// like those of the other query methods.
+    async fn with_connection<T>(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        timeout_secs: u64,
+        op: impl AsyncFnOnce(&mut <Self::DB as sqlx::Database>::Connection) -> Result<T, sqlx::Error>,
+    ) -> Result<T, SqlError> {
+        execute_with_timeout(self, database, timeout_secs, sql, async |conn, _query| op(conn).await).await
+    }
+
     /// Runs a statement the database must not let write, feeding its rows to `sink`.
     ///
     /// Holds in every mode. The database itself rejects writes, so

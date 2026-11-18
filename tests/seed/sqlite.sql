@@ -111,6 +111,32 @@ CREATE VIEW IF NOT EXISTS active_users AS
 CREATE VIEW IF NOT EXISTS published_posts AS
     SELECT id, user_id, title FROM posts WHERE published = 1;
 
+-- Column-rules fixture: rules target `users` and `orders.customer_email`;
+-- `audit` stays unruled. `posts_fts` above is the FTS5 table.
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    action TEXT,
+    note TEXT
+);
+
+INSERT INTO audit (id, user_id, action, note) VALUES
+    (1, 1, 'login', 'ok'),
+    (2, 2, 'logout', NULL);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    customer_email TEXT
+);
+
+INSERT INTO orders (id, user_id, customer_email) VALUES
+    (1, 1, 'alice@example.com'),
+    (2, 2, 'bob@example.com');
+
+CREATE VIEW IF NOT EXISTS users_with_ssn AS
+    SELECT id, email FROM users WHERE ssn IS NOT NULL;
+
 -- Triggers
 
 CREATE TRIGGER IF NOT EXISTS users_before_insert

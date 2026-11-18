@@ -186,7 +186,8 @@ fn known_name(column: &OutputColumn) -> Option<String> {
 }
 
 /// Returns the rule whose key is `source`'s folded `catalog.schema.table.column`.
-fn rule<'a>(config: &'a PiiConfig, source: &SourceRef) -> Option<&'a ColumnRule> {
+#[must_use]
+pub fn rule<'a>(config: &'a PiiConfig, source: &SourceRef) -> Option<&'a ColumnRule> {
     let relation = &source.relation;
     let key = [
         ColumnRule::fold(&relation.catalog),
