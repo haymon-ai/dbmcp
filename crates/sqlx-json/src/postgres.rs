@@ -32,6 +32,10 @@ impl RowExt for PgRow {
     fn to_json(&self) -> Value {
         row_to_json(self)
     }
+
+    fn to_cells(&self) -> Vec<(String, Value)> {
+        row_to_cells(self)
+    }
 }
 
 impl DecodeCell for PgRow {

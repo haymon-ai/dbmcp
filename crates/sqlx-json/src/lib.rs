@@ -1,8 +1,8 @@
 //! Database-agnostic row-to-JSON conversion and query result traits for sqlx.
 //!
 //! Provides [`RowExt`] for converting a single database row into a
-//! [`Value::Object`] and [`QueryResult`] for extracting affected row
-//! counts.  Implementations are provided for
+//! [`Value::Object`] or into positional `(name, value)` cells, and
+//! [`QueryResult`] for extracting affected row counts.  Implementations are provided for
 //! [`SqliteRow`](sqlx::sqlite::SqliteRow),
 //! [`PgRow`](sqlx::postgres::PgRow), and
 //! [`MySqlRow`](sqlx::mysql::MySqlRow).
@@ -15,4 +15,5 @@ mod row;
 mod sqlite;
 mod traits;
 
+pub use row::cells_to_object;
 pub use traits::{QueryResult, RowExt};

@@ -11,6 +11,10 @@ impl RowExt for SqliteRow {
     fn to_json(&self) -> Value {
         row_to_json(self)
     }
+
+    fn to_cells(&self) -> Vec<(String, Value)> {
+        row_to_cells(self)
+    }
 }
 
 impl DecodeCell for SqliteRow {
@@ -42,7 +46,7 @@ mod tests {
 
     use super::*;
 
-    async fn fetch(setup: &'static str, query: &'static str) -> Value {
+    async fn fetch_row(setup: &'static str, query: &'static str) -> SqliteRow {
         let mut conn = SqliteConnection::connect("sqlite::memory:")
             .await
             .expect("in-memory database opens");
@@ -51,7 +55,43 @@ mod tests {
             .fetch_one(&mut conn)
             .await
             .expect("query returns a row")
-            .to_json()
+    }
+
+    async fn fetch(setup: &'static str, query: &'static str) -> Value {
+        fetch_row(setup, query).await.to_json()
+    }
+
+    #[tokio::test]
+    async fn cells_keep_duplicate_names_and_order() {
+        let row = fetch_row(
+            "CREATE TABLE t (a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'x');",
+            "SELECT b, a, a AS b, NULL AS z FROM t",
+        )
+        .await;
+
+        let cells = row.to_cells();
+
+        assert_eq!(
+            cells,
+            vec![
+                ("b".to_string(), json!("x")),
+                ("a".to_string(), json!(1)),
+                ("b".to_string(), json!(1)),
+                ("z".to_string(), Value::Null),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn object_from_cells_matches_to_json() {
+        let row = fetch_row(
+            "CREATE TABLE t (b BOOLEAN, i INTEGER, r REAL, bl BLOB, tx TEXT, n TEXT, j JSON, u, flag BOOLEAN);
+             INSERT INTO t VALUES (1, 'abc', 1.5, X'68690A', 'abc', NULL, X'00FF', X'68690A', 2);",
+            "SELECT * FROM t",
+        )
+        .await;
+
+        assert_eq!(crate::cells_to_object(row.to_cells()), row.to_json());
     }
 
     #[tokio::test]

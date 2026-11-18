@@ -15,6 +15,14 @@ pub trait RowExt {
     /// A [`Value::Object`] where keys are column names and values are
     /// type-appropriate JSON values.
     fn to_json(&self) -> Value;
+
+    /// Converts this row's columns to ordered `(name, value)` cells.
+    ///
+    /// Unlike [`Self::to_json`], keeps column order and duplicate names, so a
+    /// caller can work on values by position. Values have the same JSON
+    /// shapes as in [`Self::to_json`]; rebuild the object with
+    /// [`cells_to_object`](crate::cells_to_object).
+    fn to_cells(&self) -> Vec<(String, Value)>;
 }
 
 /// Extracts the affected row count and insert id from a backend query result.

@@ -5,4 +5,4 @@ pub(crate) use sqlx::Row;
 
 pub(crate) use crate::RowExt;
 pub(crate) use crate::cell::Cell;
-pub(crate) use crate::row::{DecodeCell, row_to_json};
+pub(crate) use crate::row::{DecodeCell, row_to_cells, row_to_json};
