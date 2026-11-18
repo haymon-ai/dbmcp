@@ -1,7 +1,9 @@
 //! `SQLite` built-in functions.
 //!
-//! Seeded from `pragma_function_list` (`builtin = 1`) on `SQLite` 3.54.0,
-//! reviewed by hand. Left out: `load_extension`, `sqlite_offset`,
+//! Seeded from `pragma_function_list` (`builtin = 1`) on the `SQLite` 3.51.3
+//! that `libsqlite3-sys` 0.37 bundles, reviewed by hand. That build has no
+//! math or percentile functions (`SQLITE_ENABLE_MATH_FUNCTIONS` and
+//! `SQLITE_ENABLE_PERCENTILE` are unset), so none are listed. Left out: `load_extension`, `sqlite_offset`,
 //! `sqlite_compileoption_*`, `sqlite_version`, `sqlite_source_id`, connection
 //! state (`changes`, `total_changes`, `last_insert_rowid`), `readfile` /
 //! `writefile`, `pragma_*` table functions, and nondeterministic ones
@@ -55,9 +57,8 @@ pub(super) const TABLE: Table = Table {
         "round",
         "rtrim",
         "sign",
-        "substr",
-        "substring",
-        "trim",
+        "soundex",
+        "subtype",
         "typeof",
         "unhex",
         "unicode",
@@ -66,36 +67,6 @@ pub(super) const TABLE: Table = Table {
         "unlikely",
         "upper",
         "zeroblob",
-        // Math.
-        "acos",
-        "acosh",
-        "asin",
-        "asinh",
-        "atan",
-        "atan2",
-        "atanh",
-        "ceil",
-        "ceiling",
-        "cos",
-        "cosh",
-        "degrees",
-        "exp",
-        "floor",
-        "ln",
-        "log",
-        "log10",
-        "log2",
-        "mod",
-        "pi",
-        "pow",
-        "power",
-        "radians",
-        "sin",
-        "sinh",
-        "sqrt",
-        "tan",
-        "tanh",
-        "trunc",
         // Date and time.
         "current_date",
         "current_time",
@@ -110,7 +81,6 @@ pub(super) const TABLE: Table = Table {
         // JSON.
         "json",
         "json_array",
-        "json_array_insert",
         "json_array_length",
         "json_error_position",
         "json_extract",
@@ -126,7 +96,6 @@ pub(super) const TABLE: Table = Table {
         "json_valid",
         "jsonb",
         "jsonb_array",
-        "jsonb_array_insert",
         "jsonb_extract",
         "jsonb_insert",
         "jsonb_object",
@@ -143,10 +112,6 @@ pub(super) const TABLE: Table = Table {
         "json_group_object",
         "jsonb_group_array",
         "jsonb_group_object",
-        "median",
-        "percentile",
-        "percentile_cont",
-        "percentile_disc",
         "string_agg",
         "sum",
         "total",

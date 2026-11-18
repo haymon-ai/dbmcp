@@ -1,4 +1,4 @@
-//! Per-dialect tables of built-in functions whose results depend only on their arguments.
+//! Per-dialect tables of built-in functions that expose nothing beyond their arguments.
 //!
 //! Each dialect has a hand-reviewed `const` table. A name it lists is
 //! recorded as a known [`FunctionUse`](crate::FunctionUse); a scalar,
@@ -7,10 +7,17 @@
 //! carry their output columns, since a table function in `FROM` takes its
 //! columns from the table.
 //!
-//! Built-ins that expose values the parser cannot see are deliberately left
-//! out: functions that run SQL text or read whole relations by name, read
-//! files, large objects or server settings, report session or server state,
-//! use error messages as a value channel, or have side effects.
+//! A listed function's result depends only on its arguments and the clock,
+//! and none of its error messages includes an argument value. Built-ins that
+//! expose values the parser cannot see are deliberately left out: functions
+//! that run SQL text or read whole relations by name, read files, large
+//! objects or server settings, report session or server state, put argument
+//! values in error messages, or have side effects.
+//!
+//! Calls the parser turns into their own expressions (`ceil`, `floor`,
+//! `extract`, `substr`, `substring`, `trim`, `overlay`, `position`,
+//! `interval`, `cast`, `convert`) never reach the lookup, so no table lists
+//! them.
 
 mod mariadb;
 mod mysql;
@@ -145,72 +152,110 @@ mod tests {
         }
     }
 
+    /// Built-ins that expose values, by dialect; none may be listed.
+    const ABSENT: &[(Dialect, &[&str])] = &[
+        (
+            Dialect::Postgres,
+            &[
+                "query_to_xml",
+                "table_to_xml",
+                "cursor_to_xml",
+                "schema_to_xml",
+                "database_to_xml",
+                "xmlelement",
+                "xpath",
+                "ts_stat",
+                "ts_rewrite",
+                "lo_get",
+                "loread",
+                "current_setting",
+                "set_config",
+                "pg_read_file",
+                "pg_sleep",
+                "nextval",
+                "dblink",
+                "parse_ident",
+                "to_date",
+                "to_timestamp",
+                "decode",
+                "convert_from",
+                "to_number",
+                "pg_size_bytes",
+                "jsonb_path_query",
+                "jsonb_path_exists",
+                "json_value",
+                "json_query",
+                "json_exists",
+                "jsonb_set",
+                "jsonb_insert",
+                "to_tsquery",
+                "plainto_tsquery",
+                "setweight",
+                "ts_filter",
+                "ts_headline",
+                "json_object_agg_unique",
+                "json_objectagg",
+                "date_trunc",
+                "date_part",
+                "timezone",
+                "make_date",
+                "chr",
+                "get_byte",
+                "regexp_replace",
+                "regexp_matches",
+                "format",
+                "encode",
+                "length",
+                "percentile_cont",
+                "power",
+            ],
+        ),
+        (
+            Dialect::Mysql,
+            &[
+                "extractvalue",
+                "updatexml",
+                "load_file",
+                "sleep",
+                "benchmark",
+                "gtid_subset",
+                "last_insert_id",
+                "user",
+                "uuid",
+                "rand",
+                "uuid_to_bin",
+                "bin_to_uuid",
+            ],
+        ),
+        (
+            Dialect::Mariadb,
+            &[
+                "extractvalue",
+                "updatexml",
+                "load_file",
+                "sleep",
+                "benchmark",
+                "nextval",
+                "lastval",
+            ],
+        ),
+        (
+            Dialect::Sqlite,
+            &[
+                "load_extension",
+                "sqlite_offset",
+                "changes",
+                "last_insert_rowid",
+                "random",
+                "readfile",
+                "sqlite_version",
+            ],
+        ),
+    ];
+
     #[test]
     fn value_exposing_built_ins_are_absent() {
-        let absent: &[(Dialect, &[&str])] = &[
-            (
-                Dialect::Postgres,
-                &[
-                    "query_to_xml",
-                    "table_to_xml",
-                    "cursor_to_xml",
-                    "schema_to_xml",
-                    "database_to_xml",
-                    "xmlelement",
-                    "xpath",
-                    "ts_stat",
-                    "ts_rewrite",
-                    "lo_get",
-                    "loread",
-                    "current_setting",
-                    "set_config",
-                    "pg_read_file",
-                    "pg_sleep",
-                    "nextval",
-                    "dblink",
-                ],
-            ),
-            (
-                Dialect::Mysql,
-                &[
-                    "extractvalue",
-                    "updatexml",
-                    "load_file",
-                    "sleep",
-                    "benchmark",
-                    "gtid_subset",
-                    "last_insert_id",
-                    "user",
-                    "uuid",
-                    "rand",
-                ],
-            ),
-            (
-                Dialect::Mariadb,
-                &[
-                    "extractvalue",
-                    "updatexml",
-                    "load_file",
-                    "sleep",
-                    "benchmark",
-                    "nextval",
-                    "lastval",
-                ],
-            ),
-            (
-                Dialect::Sqlite,
-                &[
-                    "load_extension",
-                    "sqlite_offset",
-                    "changes",
-                    "last_insert_rowid",
-                    "random",
-                    "readfile",
-                    "sqlite_version",
-                ],
-            ),
-        ];
-        for (dialect, names) in absent {
+        for (dialect, names) in ABSENT {
             for name in *names {
                 assert_eq!(lookup(*dialect, &[Ident::new(*name)]), None, "{dialect:?}: {name}");
             }
