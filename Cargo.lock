@@ -1180,6 +1180,7 @@ dependencies = [
  "dbmcp-pii",
  "dbmcp-server",
  "dbmcp-sql",
+ "dbmcp-sql-lineage",
  "futures-util",
  "rmcp",
  "schemars",
@@ -1188,6 +1189,7 @@ dependencies = [
  "sqlparser",
  "sqlx",
  "sqlx-json",
+ "thiserror",
  "tokio",
  "tracing",
 ]

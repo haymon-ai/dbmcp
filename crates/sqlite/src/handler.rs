@@ -14,6 +14,7 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::SqliteConnection;
+use crate::policy::ColumnPolicy;
 use crate::tools::{
     DropTableTool, ExplainQueryTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
 };
@@ -51,6 +52,8 @@ pub struct SqliteHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: SqliteConnection,
     pub(crate) redactor: Option<Redactor>,
+    /// Column rules; `None` keeps every query on the global-redaction path.
+    pub(crate) policy: Option<ColumnPolicy>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -59,6 +62,7 @@ impl std::fmt::Debug for SqliteHandler {
         f.debug_struct("SqliteHandler")
             .field("read_only", &self.config.read_only)
             .field("redact_pii", &self.redactor.is_some())
+            .field("column_rules", &self.policy.is_some())
             .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
@@ -74,10 +78,12 @@ impl SqliteHandler {
     /// Returns the [`dbmcp_pii::RedactorInitError`] from
     /// [`dbmcp_pii::Redactor::from_config`] (fail-closed startup).
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
+        let redactor = Redactor::from_config(config.pii.as_ref())?;
         Ok(Self {
             config: config.database.clone(),
             connection: SqliteConnection::new(&config.database),
-            redactor: Redactor::from_config(config.pii.as_ref())?,
+            policy: ColumnPolicy::new(config.pii.as_ref(), redactor.as_ref()),
+            redactor,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
         })
     }

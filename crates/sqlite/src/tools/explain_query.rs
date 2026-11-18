@@ -6,6 +6,7 @@ use dbmcp_server::types::QueryResponse;
 use dbmcp_sql::validation::validate_single_statement;
 
 use super::prelude::*;
+use crate::policy::Access;
 use crate::types::ExplainQueryRequest;
 
 const NAME: &str = "explainQuery";
@@ -61,7 +62,9 @@ impl SqliteHandler {
     /// Returns the execution plan for a query.
     ///
     /// Always uses `EXPLAIN QUERY PLAN` — `SQLite` does not support
-    /// `EXPLAIN ANALYZE`.
+    /// `EXPLAIN ANALYZE`. With column rules, the explain runs as a read
+    /// in every mode, and explaining a statement that touches a ruled
+    /// relation is rejected.
     ///
     /// # Errors
     ///
@@ -77,12 +80,24 @@ impl SqliteHandler {
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
 
         let mut window = truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
-        self.connection
-            .read_json(explain_sql.as_str(), None, self.config.query_timeout, |row| {
-                window.push(row);
-            })
-            .await?;
-        let rows = self.redactor.redact_rows(window.rows).await?;
+        let rows = if let Some(policy) = &self.policy {
+            self.enforce(
+                policy,
+                &explain_sql,
+                Access::Read,
+                self.config.query_timeout,
+                &mut window,
+            )
+            .await?
+            .rows
+        } else {
+            self.connection
+                .read_json(explain_sql.as_str(), None, self.config.query_timeout, |row| {
+                    window.push(row);
+                })
+                .await?;
+            self.redactor.redact_rows(window.rows).await?
+        };
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         fitted.omit(window.rest);
 
