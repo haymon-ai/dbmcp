@@ -74,9 +74,7 @@ impl<'c> Ctx<'c> {
         }
     }
 
-    /// Returns where the SQL being walked was written: the innermost view body, else the statement.
-    ///
-    /// Only the recording methods and the catalog lookup name in [`Ctx::named`] call it.
+    /// Returns where the SQL being walked was written.
     fn origin(&self) -> Origin {
         self.views.last().map_or(Origin::Query, |id| Origin::View(id.clone()))
     }
@@ -644,13 +642,9 @@ impl<'c> Ctx<'c> {
 
     /// Expands a view or materialized view body into the view's columns.
     ///
-    /// The body resolves on its own, without the query's scopes or CTEs, and
-    /// everything it records is tagged [`Origin::View`] of this view. Its
-    /// output columns take the catalog's names and visibility by position.
-    /// An open body yields the catalog's columns without sources, so the
-    /// outer query keeps binding; a pass with a missing name ends in
-    /// `Missing`, so no stale sources are ever returned. Each view expands once per pass, so views reusing views
-    /// stay linear.
+    /// The body resolves without the query's scopes or CTEs. Its output
+    /// columns take the catalog's names and visibility by position; an open
+    /// body yields them without sources. Each view expands once per pass.
     ///
     /// # Errors
     /// [`LineageError::Unsupported`] without a body or for a body that is not

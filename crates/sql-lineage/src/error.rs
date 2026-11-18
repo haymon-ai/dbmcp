@@ -75,7 +75,7 @@ pub enum LineageError {
     ColumnCountMismatch {
         /// The relation whose columns are being named.
         relation: String,
-        /// Number of columns available: an upper bound for alias lists, exact for a view body.
+        /// Number of columns available (an upper bound for alias lists).
         expected: usize,
         /// Number of columns supplied.
         found: usize,

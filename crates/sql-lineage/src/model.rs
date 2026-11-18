@@ -107,9 +107,7 @@ pub struct RelationUse {
     pub id: RelationId,
     /// Relation kind.
     pub kind: RelationKind,
-    /// Where it was named: the statement, or the view whose body names it.
-    ///
-    /// For a view, this is its parent-view edge; walk it to rebuild a chain.
+    /// Where it was named.
     pub origin: Origin,
 }
 

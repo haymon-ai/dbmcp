@@ -1129,8 +1129,6 @@ fn view_body_names_are_missing_in_the_view_context() {
 
 #[test]
 fn open_view_body_keeps_the_catalog_shape() {
-    // The body's `*` over a missing table would give no columns; the outer
-    // query still binds `id` and reports the outer missing name too.
     let catalog = with_view(fixture(), None, "v", &["id", "name"], "SELECT * FROM users");
     assert_eq!(
         analyze(
@@ -1156,9 +1154,6 @@ fn open_view_body_keeps_the_catalog_shape() {
 
 #[test]
 fn view_over_an_open_view_still_ends_in_missing() {
-    // `v2` reads a missing table, so it falls back to the catalog's
-    // column names; `v1` reads `v2` and looks complete. The outer query
-    // keeps binding and reports both missing names.
     let catalog = with_view(fixture(), None, "v1", &["id"], "SELECT id FROM v2");
     let catalog = with_view(catalog, Some("v1"), "v2", &["id"], "SELECT * FROM m1");
     assert_eq!(
