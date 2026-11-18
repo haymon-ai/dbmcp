@@ -171,15 +171,8 @@ impl Redactor {
 
     /// Returns the operator a column rule names, sharing this redactor's `hash` key.
     fn rule_operator(&self, operator: PiiOperator) -> Result<Operator, RedactionError> {
-        Ok(match operator {
-            PiiOperator::Replace => Operator::Replace,
-            PiiOperator::Mask => Operator::default_mask(),
-            PiiOperator::Redact => Operator::Redact,
-            PiiOperator::Hash => self
-                .hash
-                .clone()
-                .ok_or_else(|| RedactionError::Internal("column rule hashes without a hash key".into()))?,
-        })
+        crate::redact::operator(operator, self.hash.as_ref())
+            .ok_or_else(|| RedactionError::Internal("column rule hashes without a hash key".into()))
     }
 }
 

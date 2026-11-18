@@ -173,6 +173,10 @@ impl Redactor {
     /// enabled but fails to load, and [`RedactorInitError::Rng`] when the
     /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
     /// is fail-closed and never degrades to regex-only when NER was requested.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the `hash` key is built whenever `pii.operator` hashes.
     pub fn from_config(cfg: Option<&dbmcp_config::PiiConfig>) -> Result<Option<Self>, RedactorInitError> {
         let Some(cfg) = cfg else {
             return Ok(None);
@@ -180,13 +184,7 @@ impl Redactor {
         let hashing =
             cfg.operator == PiiOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PiiOperator::Hash);
         let hash = if hashing { Some(keyed_hash(cfg)?) } else { None };
-        let operator = match (cfg.operator, &hash) {
-            (PiiOperator::Replace, _) => Operator::Replace,
-            (PiiOperator::Mask, _) => Operator::default_mask(),
-            (PiiOperator::Redact, _) => Operator::Redact,
-            (PiiOperator::Hash, Some(hash)) => hash.clone(),
-            (PiiOperator::Hash, None) => keyed_hash(cfg)?,
-        };
+        let operator = operator(cfg.operator, hash.as_ref()).expect("hash is built whenever pii.operator hashes");
         let mut analyzer = crate::Analyzer::from_config(cfg);
         attach_ner(&mut analyzer, cfg)?;
         Ok(Some(Self::new(analyzer, operator, hash)))
@@ -498,6 +496,18 @@ fn apply_spans(s: &mut String, results: Vec<RecognizerResult>, operator: &Operat
         *stats.by_entity.entry(op.entity_type).or_insert(0) += 1;
     }
     *s = anon.text;
+}
+
+/// Maps a configured operator to the one it runs; `hash` uses the shared `hash` key.
+///
+/// `None` for `hash` when no key was built.
+pub(crate) fn operator(operator: PiiOperator, hash: Option<&Operator>) -> Option<Operator> {
+    Some(match operator {
+        PiiOperator::Replace => Operator::Replace,
+        PiiOperator::Mask => Operator::default_mask(),
+        PiiOperator::Redact => Operator::Redact,
+        PiiOperator::Hash => hash?.clone(),
+    })
 }
 
 /// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.

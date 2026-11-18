@@ -168,7 +168,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
     Ok(Plan { positions, names })
 }
 
-/// Returns the folded name a column must come back under, when the server keeps it.
+/// Returns the folded name a column comes back under, if the server keeps it.
 ///
 /// Known only for one source whose column name the output name repeats.
 fn known_name(column: &OutputColumn) -> Option<String> {
