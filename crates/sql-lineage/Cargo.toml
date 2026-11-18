@@ -1,6 +1,6 @@
 [package]
 name = "dbmcp-sql-lineage"
-description = "Column-level SQL lineage extraction for dbmcp"
+description = "Catalog-aware column-level SQL lineage for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
