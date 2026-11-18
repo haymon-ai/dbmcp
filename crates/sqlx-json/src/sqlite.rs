@@ -1,4 +1,4 @@
-//! [`RowExt`](crate::RowExt) implementation for `SQLite` rows.
+//! Cell decoder for `SQLite` rows.
 //!
 //! Decodes each value by its storage class, not its column's declared type.
 
@@ -7,42 +7,36 @@ use sqlx::{TypeInfo as _, ValueRef as _};
 
 use crate::prelude::*;
 
-impl RowExt for SqliteRow {
-    fn to_json(&self) -> Value {
-        row_to_json(self)
-    }
-}
-
 impl DecodeCell for SqliteRow {
-    fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
-        let Ok(value) = self.try_get_raw(idx) else {
-            return Cell::Null;
-        };
+    fn decode_cell(&self, idx: usize, type_name: &str) -> Option<Cell> {
+        let value = self.try_get_raw(idx).ok()?;
 
         let cell = match value.type_info().name() {
-            "INTEGER" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Int),
-            "REAL" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Float64),
-            "TEXT" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Text),
-            _ => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Bytes),
-        };
+            "INTEGER" => self.try_get_unchecked(idx).ok().map(Cell::Int),
+            "REAL" => self.try_get_unchecked(idx).ok().map(Cell::Float64),
+            "TEXT" => self.try_get_unchecked(idx).ok().map(Cell::Text),
+            _ => self.try_get_unchecked(idx).ok().map(Cell::Bytes),
+        }?;
 
-        match (type_name, cell) {
+        Some(match (type_name, cell) {
             ("BOOLEAN", Cell::Int(0)) => Cell::Bool(false),
             ("BOOLEAN", Cell::Int(1)) => Cell::Bool(true),
             ("BLOB", Cell::Text(text)) => Cell::Bytes(text.into_bytes()),
             (_, cell) => cell,
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
     use sqlx::{Connection as _, SqliteConnection};
+
+    use crate::RowExt as _;
 
     use super::*;
 
-    async fn fetch(setup: &'static str, query: &'static str) -> Value {
+    async fn fetch_row(setup: &'static str, query: &'static str) -> SqliteRow {
         let mut conn = SqliteConnection::connect("sqlite::memory:")
             .await
             .expect("in-memory database opens");
@@ -51,7 +45,32 @@ mod tests {
             .fetch_one(&mut conn)
             .await
             .expect("query returns a row")
-            .to_json()
+    }
+
+    async fn fetch(setup: &'static str, query: &'static str) -> Value {
+        fetch_row(setup, query).await.to_object()
+    }
+
+    #[tokio::test]
+    async fn entries_keep_duplicate_names_and_order() {
+        let row = fetch_row(
+            "CREATE TABLE t (a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'x');",
+            "SELECT b, a, a AS b, NULL AS z FROM t",
+        )
+        .await;
+
+        let entries = row.to_entries();
+
+        assert_eq!(
+            entries,
+            vec![
+                ("b".to_string(), json!("x")),
+                ("a".to_string(), json!(1)),
+                ("b".to_string(), json!(1)),
+                ("z".to_string(), Value::Null),
+            ]
+        );
+        assert_eq!(row.to_object(), json!({ "b": 1, "a": 1, "z": null }));
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@ One trait, three backends. Turn any [`sqlx`](https://crates.io/crates/sqlx) row 
 
 ## What you get
 
-- `RowExt::to_json()` for `SqliteRow`, `PgRow`, and `MySqlRow`
+- `RowExt::to_object()` and `RowExt::to_entries()` for `SqliteRow`, `PgRow`, and `MySqlRow`
 - Null-aware — `NULL` columns become `Value::Null`, never panic
 - Binary-safe — `BYTEA` / `BLOB` base64-encoded; MySQL `BINARY` / `VARBINARY` emitted as text when valid UTF-8
 - Precision-safe — numeric / decimal go through `BigDecimal`
