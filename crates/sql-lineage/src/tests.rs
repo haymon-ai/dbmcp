@@ -303,7 +303,66 @@ fn relations_and_functions_are_recorded() {
     assert_eq!(used, vec!["users"]);
     let function = lineage.functions.first().expect("function");
     assert_eq!(function.name, "lower");
-    assert!(!function.known);
+    assert!(function.known);
+}
+
+#[test]
+fn known_and_unknown_functions_both_carry_argument_sources() {
+    let lineage =
+        pg("SELECT lower(ssn), leak(ssn), pg_catalog.upper(email), public.lower(id) FROM users").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![
+            col("lower(ssn)", &["users.ssn"]),
+            col("leak(ssn)", &["users.ssn"]),
+            col("pg_catalog.upper(email)", &["users.email"]),
+            col("public.lower(id)", &["users.id"]),
+        ]
+    );
+    let known: Vec<_> = lineage.functions.iter().map(|f| (f.name.as_str(), f.known)).collect();
+    assert_eq!(
+        known,
+        vec![
+            ("leak", false),
+            ("lower", true),
+            ("pg_catalog.upper", true),
+            ("public.lower", false)
+        ]
+    );
+}
+
+#[test]
+fn value_exposing_built_ins_are_unknown() {
+    let cases: &[(&str, Dialect, &str)] = &[
+        ("SELECT xmlelement(ssn) FROM users", Dialect::Postgres, "xmlelement"),
+        (
+            "SELECT query_to_xml('SELECT ssn FROM users', true, false, '')",
+            Dialect::Postgres,
+            "query_to_xml",
+        ),
+        (
+            "SELECT current_setting('app.key')",
+            Dialect::Postgres,
+            "current_setting",
+        ),
+        (
+            "SELECT EXTRACTVALUE(ssn, '/a') FROM users",
+            Dialect::Mysql,
+            "extractvalue",
+        ),
+        (
+            "SELECT EXTRACTVALUE(ssn, '/a') FROM users",
+            Dialect::Mariadb,
+            "extractvalue",
+        ),
+        ("SELECT load_extension('x')", Dialect::Sqlite, "load_extension"),
+    ];
+    for (sql, dialect, name) in cases {
+        let lineage = analyze(sql, *dialect, &fixture()).expect(sql);
+        let function = lineage.functions.first().expect("function");
+        assert_eq!(function.name, *name, "{sql}");
+        assert!(!function.known, "{sql}");
+    }
 }
 
 #[test]

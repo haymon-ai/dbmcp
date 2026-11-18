@@ -13,6 +13,7 @@ use sqlparser::ast::{
 
 use crate::bind::{Clause, Level, Sources};
 use crate::error::LineageError;
+use crate::functions;
 use crate::model::{FunctionUse, Origin, Role};
 use crate::resolve::{Ctx, MAX_EXPR_DEPTH, idents, unsupported};
 
@@ -286,7 +287,7 @@ impl Ctx<'_> {
         }
         self.functions.insert(FunctionUse {
             name: self.function_name(name)?,
-            known: false,
+            known: functions::lookup(self.dialect, &idents(name)?).is_some(),
             origin: Origin::Query,
         });
         match args {
