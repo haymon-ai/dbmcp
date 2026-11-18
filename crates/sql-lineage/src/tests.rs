@@ -452,16 +452,11 @@ fn removed_fail_open_arms_now_error() {
 }
 
 #[test]
-fn wildcard_modifiers_are_rejected() {
-    for sql in [
-        "SELECT * EXCLUDE (ssn) FROM users",
-        "SELECT * REPLACE (1 AS ssn) FROM users",
-        "SELECT * RENAME (ssn AS s) FROM users",
-        "SELECT * EXCEPT (ssn) FROM users",
-    ] {
-        for dialect in [Dialect::Postgres, Dialect::Mysql, Dialect::Sqlite] {
-            assert!(analyze(sql, dialect, &fixture()).is_err(), "{sql} on {dialect:?}");
-        }
+fn wildcard_alias_is_unsupported() {
+    // PostgreSQL parses `* AS name`; the other modifiers fail in the parser.
+    for sql in ["SELECT * AS u FROM users", "SELECT users.* AS u FROM users"] {
+        let result = pg(sql);
+        assert!(matches!(result, Err(LineageError::Unsupported(_))), "{sql}: {result:?}");
     }
 }
 
@@ -524,16 +519,34 @@ fn parse_and_statement_count_errors() {
 }
 
 #[test]
-fn deep_nesting_does_not_panic() {
-    let mut sql = "SELECT id FROM users".to_string();
-    for _ in 0..40 {
-        sql = format!("SELECT id FROM ({sql}) AS d");
-    }
-    let result = pg(&sql);
-    assert!(
-        matches!(result, Ok(_) | Err(LineageError::DepthLimit | LineageError::Parse(_))),
-        "{result:?}"
+fn nesting_resolves_up_to_the_parser_recursion_limit() {
+    let nested = |levels| {
+        let mut sql = "SELECT id FROM users".to_string();
+        for _ in 0..levels {
+            sql = format!("SELECT id FROM ({sql}) AS d");
+        }
+        sql
+    };
+    let lineage = pg(&nested(20)).expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![("id".to_string(), vec!["users.id".to_string()])]
     );
+
+    let result = pg(&nested(25));
+    assert!(matches!(result, Err(LineageError::Parse(_))), "{result:?}");
+}
+
+#[test]
+fn long_set_operation_chain_does_not_overflow() {
+    let sql = vec!["SELECT id FROM users"; 2_000].join(" UNION ");
+    let lineage = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || pg(&sql).map(|lineage| columns(&lineage)))
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow");
+    assert_eq!(lineage, Ok(vec![("id".to_string(), vec!["users.id".to_string()])]));
 }
 
 #[test]

@@ -159,10 +159,20 @@ impl<'c> Ctx<'c> {
         let mut cols = match body {
             SetExpr::Select(select) => return self.select(select, level.correlated(), order_by),
             SetExpr::Query(query) => self.query(query, level.correlated())?,
-            SetExpr::SetOperation { left, right, .. } => {
-                let left = self.set_expr(left, level, None)?;
-                let right = self.set_expr(right, level, None)?;
-                left.union(right)?
+            SetExpr::SetOperation { .. } => {
+                // `a UNION b UNION c …` nests leftward once per operand, so walk
+                // the left spine in a loop; right operands nest only by precedence.
+                let mut rights = Vec::new();
+                let mut leftmost = body;
+                while let SetExpr::SetOperation { left, right, .. } = leftmost {
+                    rights.push(right);
+                    leftmost = left;
+                }
+                let mut cols = self.set_expr(leftmost, level, None)?;
+                for right in rights.into_iter().rev() {
+                    cols = cols.union(self.set_expr(right, level, None)?)?;
+                }
+                cols
             }
             SetExpr::Values(values) => self.values(values, level)?,
             SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => {
