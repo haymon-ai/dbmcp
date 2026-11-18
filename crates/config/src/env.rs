@@ -300,7 +300,7 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
+const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
 const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);

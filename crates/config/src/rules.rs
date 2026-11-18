@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::database::{DatabaseBackend, DatabaseConfig};
-use crate::env::{self, PII_OPERATOR_NAMES, Setting, choose, unsupported_tag};
+use crate::env::{self, Setting, choose, unsupported_tag};
 use crate::error::{ConfigError, Diagnostic};
 use crate::node::Node;
 use crate::pii::{ColumnRule, PiiOperator};
@@ -36,8 +36,8 @@ pub(crate) struct Rule {
     pub(crate) columns: Vec<[String; 4]>,
     /// The entity name, one of [`ColumnRule::ENTITIES`].
     pub(crate) entity: &'static str,
-    /// The rule's operator name, one of `pii.operator`'s; `None` inherits `pii.operator`.
-    pub(crate) operator: Option<&'static str>,
+    /// The rule's operator; `None` inherits `pii.operator`.
+    pub(crate) operator: Option<PiiOperator>,
 }
 
 /// Casts a `pii.rules` mapping or sequence, one [`Rule`] per entry.
@@ -103,13 +103,7 @@ pub(crate) fn flatten(rules: &[Rule], default_operator: PiiOperator) -> Vec<Colu
                 name: rule.name.clone(),
                 key: key.clone(),
                 entity: rule.entity,
-                operator: rule.operator.map_or(default_operator, |name| {
-                    PiiOperator::CHOICES
-                        .iter()
-                        .find(|(choice, _)| *choice == name)
-                        .map(|&(_, operator)| operator)
-                        .expect("cast checked the operator name")
-                }),
+                operator: rule.operator.unwrap_or(default_operator),
             })
         })
         .collect()
@@ -202,9 +196,16 @@ fn rule(name: Option<&str>, node: &Node) -> Result<Rule, String> {
     };
     let operator = match field("operator") {
         None | Some(Node::Null) => None,
-        Some(Node::Str(text)) => {
-            Some(choose(&PII_OPERATOR_NAMES, text).map_err(|reason| format!("operator: {reason}"))?)
-        }
+        Some(Node::Str(text)) => Some(
+            PiiOperator::CHOICES
+                .iter()
+                .find(|(name, _)| name == text)
+                .map(|&(_, operator)| operator)
+                .ok_or_else(|| {
+                    let names: Vec<&str> = PiiOperator::CHOICES.iter().map(|&(name, _)| name).collect();
+                    format!("operator: expected one of {}", names.join(", "))
+                })?,
+        ),
         Some(other) => return Err(format!("operator: {}", unexpected(other, "string"))),
     };
     Ok(Rule {
@@ -298,7 +299,7 @@ mod tests {
                     name: Some("names".into()),
                     columns: vec![key_of("def.shop.users.name")],
                     entity: "PERSON",
-                    operator: Some("mask"),
+                    operator: Some(PiiOperator::Mask),
                 },
             ]
         );
@@ -447,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn flatten_maps_every_operator_name() {
+    fn rules_cast_every_operator_name() {
         let magento = cast_yaml(
             "emails:\n  columns:\n    - def.magento.customer_entity.email\n    - def.magento.sales_order.customer_email\n  \
              entity: EMAIL_ADDRESS\n\
@@ -458,20 +459,15 @@ mod tests {
              tokens:\n  columns: [def.magento.oauth_token.secret]\n  entity: API_KEY\n  operator: hash\n",
         )
         .expect("valid rules");
-        let operators: Vec<_> = flatten(&magento, PiiOperator::Hash)
-            .iter()
-            .map(|rule| rule.operator)
-            .collect();
+        let operators: Vec<_> = magento.iter().map(|rule| rule.operator).collect();
         assert_eq!(
             operators,
             [
-                PiiOperator::Hash,
-                PiiOperator::Hash,
-                PiiOperator::Replace,
-                PiiOperator::Replace,
-                PiiOperator::Mask,
-                PiiOperator::Redact,
-                PiiOperator::Hash,
+                None,
+                Some(PiiOperator::Replace),
+                Some(PiiOperator::Mask),
+                Some(PiiOperator::Redact),
+                Some(PiiOperator::Hash),
             ]
         );
     }
@@ -514,7 +510,7 @@ mod tests {
                     name: None,
                     columns: vec![key_of("def.shop.users.name")],
                     entity: "PERSON",
-                    operator: Some("mask"),
+                    operator: Some(PiiOperator::Mask),
                 },
             ]
         );
