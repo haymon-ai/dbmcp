@@ -548,7 +548,6 @@ fn unsupported_constructs_fail_closed() {
         ("SELECT * FROM UNNEST(ARRAY[1, 2])", Dialect::Postgres),
         ("SELECT * FROM users, LATERAL (SELECT 1) l", Dialect::Postgres),
         ("WITH RECURSIVE r AS (SELECT 1) SELECT * FROM r", Dialect::Postgres),
-        ("SELECT id INTO t2 FROM users", Dialect::Postgres),
     ];
     for (sql, dialect) in cases {
         assert_unsupported(sql, *dialect, &fixture());
@@ -1329,11 +1328,30 @@ fn views_using_a_view_twice_expand_it_once_per_pass() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
 
-/// The fixture plus a vacant `t2`, the name a `CREATE TABLE` can claim.
+/// The fixture plus `archive` (shaped like `users`) and vacant `t2`, `v2`.
 fn create_fixture() -> Catalog {
     let mut catalog = fixture();
-    catalog.insert(WrittenName::query(vec![NamePart::bare("t2")]), Entry::Vacant(id("t2")));
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("archive")]),
+        Entry::Resolved(relation(
+            "archive",
+            RelationKind::Table,
+            &["id", "email", "ssn", "~note"],
+        )),
+    );
+    for name in ["t2", "v2"] {
+        catalog.insert(WrittenName::query(vec![NamePart::bare(name)]), Entry::Vacant(id(name)));
+    }
     catalog
+}
+
+/// Renders writes as `(target column, sources)`.
+fn writes(lineage: &Lineage) -> Vec<(String, Vec<String>)> {
+    lineage
+        .writes
+        .iter()
+        .map(|w| (w.name.clone(), names(&w.sources)))
+        .collect()
 }
 
 /// Analyzes against [`create_fixture`].
@@ -1414,12 +1432,129 @@ fn create_table_target_goes_through_the_missing_loop() {
 }
 
 #[test]
-fn create_table_as_is_unsupported_until_writes_land() {
-    assert_unsupported(
+fn create_table_as_writes_new_columns() {
+    let lineage = on(
+        "CREATE TABLE t2 AS SELECT ssn, email AS mail, 1 AS one FROM users",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateTableAs);
+    assert_eq!(target(&lineage), Some("t2"));
+    assert_eq!(
+        writes(&lineage),
+        vec![
+            col("ssn", &["users.ssn"]),
+            col("mail", &["users.email"]),
+            col("one", &[])
+        ]
+    );
+    assert!(lineage.columns.is_empty());
+    assert!(relations(&lineage).contains(&("t2".to_string(), RelationKind::Table)));
+}
+
+#[test]
+fn postgres_select_into_is_a_create_table_as() {
+    let lineage = on("SELECT ssn INTO t2 FROM users", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateTableAs);
+    assert_eq!(target(&lineage), Some("t2"));
+    assert_eq!(writes(&lineage), vec![col("ssn", &["users.ssn"])]);
+    assert!(lineage.columns.is_empty());
+
+    assert_unsupported("SELECT ssn INTO @x FROM users", Dialect::Mysql, &create_fixture());
+}
+
+#[test]
+fn select_into_outside_the_top_level_select_is_unsupported() {
+    for sql in [
+        "SELECT ssn INTO t2 FROM users UNION SELECT email FROM users",
+        "SELECT ssn INTO TEMP t2 FROM users",
+        "SELECT * FROM (SELECT ssn INTO t2 FROM users) s",
+    ] {
+        assert_unsupported(sql, Dialect::Postgres, &create_fixture());
+    }
+}
+
+#[test]
+fn create_view_body_feeds_view_columns() {
+    let lineage = on("CREATE VIEW v2 (a) AS SELECT ssn FROM users", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateView);
+    assert_eq!(target(&lineage), Some("v2"));
+    assert_eq!(writes(&lineage), vec![col("a", &["users.ssn"])]);
+    assert!(relations(&lineage).contains(&("v2".to_string(), RelationKind::View)));
+
+    let lineage = on(
+        "CREATE MATERIALIZED VIEW v2 AS SELECT email FROM users",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateMaterializedView);
+    assert_eq!(writes(&lineage), vec![col("email", &["users.email"])]);
+    assert!(relations(&lineage).contains(&("v2".to_string(), RelationKind::MatView)));
+}
+
+#[test]
+fn create_target_goes_through_the_missing_loop() {
+    let result = analyze(
         "CREATE TABLE t2 AS SELECT id FROM users",
         Dialect::Postgres,
-        &create_fixture(),
+        &Catalog::new(),
     );
+    let Err(LineageError::Missing(missing)) = result else {
+        panic!("expected Missing, got {result:?}");
+    };
+    let missing: Vec<String> = missing.iter().map(ToString::to_string).collect();
+    assert_eq!(missing, vec!["t2", "users"]);
+}
+
+#[test]
+fn ctas_star_writes_only_star_visible_columns() {
+    let lineage = on("CREATE TABLE t2 AS SELECT * FROM archive", Dialect::Postgres).expect("analyze");
+    assert_eq!(
+        writes(&lineage),
+        vec![
+            col("id", &["archive.id"]),
+            col("email", &["archive.email"]),
+            col("ssn", &["archive.ssn"])
+        ]
+    );
+    let lineage = on("SELECT ssn INTO UNLOGGED t2 FROM users", Dialect::Postgres).expect("unlogged is permanent");
+    assert_eq!(lineage.statement, StatementKind::CreateTableAs);
+}
+
+#[test]
+fn ctas_with_column_definitions_is_unsupported() {
+    let result = analyze(
+        "CREATE TABLE t2 (uid INT) AS SELECT id FROM users",
+        Dialect::Postgres,
+        &Catalog::new(),
+    );
+    assert!(matches!(result, Err(LineageError::Unsupported(_))), "{result:?}");
+    for dialect in [Dialect::Postgres, Dialect::Mysql] {
+        assert_unsupported(
+            "CREATE TABLE t2 (uid INT, mail TEXT) AS SELECT id, email FROM users",
+            dialect,
+            &create_fixture(),
+        );
+    }
+}
+
+#[test]
+fn create_checks_guard_ctas_and_views() {
+    let cases: &[(&str, Dialect)] = &[
+        (
+            "CREATE TABLE t2 ENGINE=FEDERATED AS SELECT ssn FROM users",
+            Dialect::Mysql,
+        ),
+        ("CREATE TEMPORARY TABLE t2 AS SELECT ssn FROM users", Dialect::Postgres),
+        (
+            "CREATE ALGORITHM=MERGE VIEW v2 AS SELECT ssn FROM users",
+            Dialect::Mysql,
+        ),
+        ("CREATE TEMPORARY VIEW v2 AS SELECT ssn FROM users", Dialect::Postgres),
+    ];
+    for (sql, dialect) in cases {
+        assert_unsupported(sql, *dialect, &create_fixture());
+    }
 }
 
 #[test]

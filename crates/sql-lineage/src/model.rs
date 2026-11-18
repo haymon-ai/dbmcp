@@ -141,6 +141,12 @@ pub enum StatementKind {
     Query,
     /// `CREATE TABLE` without a query.
     CreateTable,
+    /// `CREATE TABLE … AS` or `PostgreSQL` `SELECT … INTO`.
+    CreateTableAs,
+    /// `CREATE VIEW`.
+    CreateView,
+    /// `CREATE MATERIALIZED VIEW`.
+    CreateMaterializedView,
     /// `DROP TABLE`, `VIEW`, `MATERIALIZED VIEW`, or `INDEX`.
     Drop,
     /// `TRUNCATE`.
@@ -178,9 +184,9 @@ pub struct Lineage {
     pub relations: BTreeSet<RelationUse>,
     /// Functions called.
     pub functions: BTreeSet<FunctionUse>,
-    /// The relation created, dropped, truncated, or indexed; `None` for a query.
+    /// The relation written, created, dropped, truncated, or indexed; `None` for a query.
     pub target: Option<RelationId>,
-    /// Columns of `target` written, in first-write order; empty until writes are modeled.
+    /// Columns of `target` written, in first-write order, sources merged.
     pub writes: Vec<TargetColumn>,
     /// The statement kind.
     pub statement: StatementKind,

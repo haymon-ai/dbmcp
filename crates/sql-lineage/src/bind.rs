@@ -96,7 +96,7 @@ impl Columns {
     /// [`LineageError::ColumnCountMismatch`] when a complete list is shorter
     /// than the aliases; [`LineageError::Unsupported`] for `AT` or typed
     /// column definitions.
-    fn rename(&mut self, dialect: Dialect, alias: &TableAlias) -> Result<(), LineageError> {
+    pub(crate) fn rename(&mut self, dialect: Dialect, alias: &TableAlias) -> Result<(), LineageError> {
         if alias.at.is_some() {
             return Err(unsupported("table alias AT clause"));
         }

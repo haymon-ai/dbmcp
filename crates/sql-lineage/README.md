@@ -15,7 +15,7 @@ Catalog-aware, column-level SQL lineage powering [dbmcp](https://dbmcp.haymon.ai
 - Per-dialect identifier rules for PostgreSQL, MySQL, MariaDB, and SQLite
 - Expands `*` / `t.*` from the catalog (skipping invisible columns), merges `USING` / `NATURAL` keys, follows CTEs, derived tables, and correlated subqueries
 - Expands views and materialized views (and views over views) in place; names, references, relations, and functions written in a view body are tagged with that view
-- Statement tiers: `DROP`, `TRUNCATE`, `CREATE INDEX`, and `CREATE TABLE` without a query report their target; `SHOW`, `DESCRIBE`, and `EXPLAIN` (carrying the inner statement's lineage) are recognized; DDL with expressions or `CHECK` / `REFERENCES` constraints, writes, and every other statement are rejected
+- Statement tiers: `DROP`, `TRUNCATE`, `CREATE INDEX`, and `CREATE TABLE` without a query report their target; `CREATE TABLE … AS`, PostgreSQL `SELECT … INTO`, and `CREATE [MATERIALIZED] VIEW` also report each new column's sources; `SHOW`, `DESCRIBE`, and `EXPLAIN` (carrying the inner statement's lineage) are recognized; DDL with expressions or `CHECK` / `REFERENCES` constraints, `INSERT` / `UPDATE` / `DELETE` / `MERGE`, and every other statement are rejected
 - Per-dialect built-in function tables mark each `name(...)` call as known or unknown, by name only; built-ins that run SQL text, read files or settings, or quote arguments in errors are left out, and casts and other special forms are not looked up
 - Fail-closed — unknown or ambiguous columns and any construct it does not model abort the whole analysis
 - Never connects to or executes against a database — analyzes SQL text only

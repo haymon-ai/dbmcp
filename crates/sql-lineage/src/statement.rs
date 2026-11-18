@@ -11,17 +11,24 @@
 //! `REFERENCES` constraints, and `MySQL` engines that serve other tables'
 //! or servers' rows (`MERGE`, `FEDERATED`, …). Only constraints that name
 //! columns pass.
-//! Every other statement, writes included, is [`LineageError::Unsupported`].
+//! Creates are writes: `CREATE TABLE … AS`, `PostgreSQL` `SELECT … INTO`,
+//! and `CREATE [MATERIALIZED] VIEW` name their target and feed each new
+//! column from the query's output. `CREATE TABLE … AS` runs every
+//! `CREATE TABLE` check first. Every other statement,
+//! `INSERT`/`UPDATE`/`DELETE`/`MERGE` included, is
+//! [`LineageError::Unsupported`].
 
 use sqlparser::ast::{
-    CascadeOption, ColumnOption, CreateIndex, CreateTable, CreateTableOptions, Expr, IndexColumn, ObjectName,
-    ObjectType, SqlOption, Statement, TableConstraint, Truncate,
+    CascadeOption, ColumnOption, CreateIndex, CreateTable, CreateTableOptions, CreateView, Expr, Ident, IndexColumn,
+    ObjectName, ObjectType, Query, SetExpr, SqlOption, Statement, TableAlias, TableAliasColumnDef, TableConstraint,
+    Truncate,
 };
 
-use crate::bind::{Columns, Level};
+use crate::bind::{Col, Columns, Level};
 use crate::catalog::Entry;
+use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{RelationId, RelationKind, StatementKind};
+use crate::model::{RelationId, RelationKind, StatementKind, TargetColumn};
 use crate::resolve::{Ctx, idents, unsupported};
 
 /// What a statement resolves to, before output positions are numbered.
@@ -29,8 +36,10 @@ use crate::resolve::{Ctx, idents, unsupported};
 pub(crate) struct Analysis {
     /// Output columns: the query's, or the explained statement's.
     pub columns: Columns,
-    /// The relation created, dropped, truncated, or indexed.
+    /// The relation written, created, dropped, truncated, or indexed.
     pub target: Option<RelationId>,
+    /// Target columns written, in first-write order.
+    pub writes: Vec<TargetColumn>,
     /// The statement kind.
     pub kind: StatementKind,
 }
@@ -41,6 +50,7 @@ impl Analysis {
         Self {
             columns: Columns::known(Vec::new()),
             target,
+            writes: Vec::new(),
             kind,
         }
     }
@@ -54,15 +64,9 @@ impl Ctx<'_> {
     /// any resolution error of the statement's parts.
     pub(crate) fn statement(&mut self, statement: &Statement) -> Result<Analysis, LineageError> {
         match statement {
-            Statement::Query(query) => {
-                let columns = self.query(query, Level::root(self.dialect))?;
-                Ok(Analysis {
-                    columns,
-                    target: None,
-                    kind: StatementKind::Query,
-                })
-            }
+            Statement::Query(query) => self.query_statement(query),
             Statement::CreateTable(create) => self.create_table(create),
+            Statement::CreateView(create) => self.create_view(create),
             Statement::CreateIndex(create) => self.create_index(create),
             Statement::Truncate(Truncate {
                 table_names,
@@ -136,10 +140,49 @@ impl Ctx<'_> {
         }
     }
 
-    /// Resolves `CREATE TABLE` without a query: the new name is the target.
+    /// Resolves a query, or a `PostgreSQL` `SELECT … INTO` as a create.
+    ///
+    /// `INTO` counts only on the top-level `SELECT`; anywhere else the query
+    /// walk rejects it.
+    fn query_statement(&mut self, query: &Query) -> Result<Analysis, LineageError> {
+        let into = match query.body.as_ref() {
+            SetExpr::Select(select) => select.into.as_ref(),
+            _ => None,
+        };
+        let Some(into) = into else {
+            let columns = self.query(query, Level::root(self.dialect))?;
+            return Ok(Analysis {
+                columns,
+                ..Analysis::bare(StatementKind::Query, None)
+            });
+        };
+        if self.dialect != Dialect::Postgres {
+            return Err(unsupported("SELECT INTO"));
+        }
+        if into.temporary {
+            return Err(unsupported("temporary relation"));
+        }
+        let name = match into.targets.as_slice() {
+            [Expr::Identifier(ident)] => vec![ident.clone()],
+            [Expr::CompoundIdentifier(parts)] => parts.clone(),
+            _ => return Err(unsupported("SELECT INTO target")),
+        };
+        let target = self.create_target(&name, RelationKind::Table)?;
+        let mut body = query.clone();
+        if let SetExpr::Select(select) = body.body.as_mut() {
+            select.into = None;
+        }
+        let cols = self.query(&body, Level::root(self.dialect))?;
+        Ok(Analysis {
+            writes: created(cols.cols),
+            ..Analysis::bare(StatementKind::CreateTableAs, target)
+        })
+    }
+
+    /// Resolves `CREATE TABLE`: the new name is the target, and a query feeds its columns.
     fn create_table(&mut self, create: &CreateTable) -> Result<Analysis, LineageError> {
-        if create.query.is_some() {
-            return Err(unsupported("CREATE TABLE AS"));
+        if create.query.is_some() && !create.columns.is_empty() {
+            return Err(unsupported("CREATE TABLE AS with column definitions"));
         }
         if create.like.is_some()
             || create.clone.is_some()
@@ -189,7 +232,56 @@ impl Ctx<'_> {
             bare_columns(keys)?;
         }
         let target = self.create_target(&idents(&create.name)?, RelationKind::Table)?;
-        Ok(Analysis::bare(StatementKind::CreateTable, target))
+        let Some(query) = &create.query else {
+            return Ok(Analysis::bare(StatementKind::CreateTable, target));
+        };
+        let cols = self.query(query, Level::root(self.dialect))?;
+        Ok(Analysis {
+            writes: created(cols.cols),
+            ..Analysis::bare(StatementKind::CreateTableAs, target)
+        })
+    }
+
+    /// Resolves `CREATE [MATERIALIZED] VIEW`: the body feeds the view's columns.
+    fn create_view(&mut self, create: &CreateView) -> Result<Analysis, LineageError> {
+        if create.or_alter || create.to.is_some() || create.params.is_some() {
+            return Err(unsupported("CREATE VIEW clause outside the modeled dialects"));
+        }
+        if create.temporary {
+            return Err(unsupported("temporary relation"));
+        }
+        if create
+            .columns
+            .iter()
+            .any(|c| c.data_type.is_some() || c.options.is_some())
+        {
+            return Err(unsupported("view column definition"));
+        }
+        let (kind, relation) = if create.materialized {
+            (StatementKind::CreateMaterializedView, RelationKind::MatView)
+        } else {
+            (StatementKind::CreateView, RelationKind::View)
+        };
+        let target = self.create_target(&idents(&create.name)?, relation)?;
+        let mut cols = self.query(&create.query, Level::root(self.dialect))?;
+        let alias = TableAlias {
+            explicit: false,
+            name: Ident::new(create.name.to_string()),
+            columns: create
+                .columns
+                .iter()
+                .map(|c| TableAliasColumnDef {
+                    name: c.name.clone(),
+                    data_type: None,
+                })
+                .collect(),
+            at: None,
+        };
+        cols.rename(self.dialect, &alias)?;
+        Ok(Analysis {
+            writes: created(cols.cols),
+            ..Analysis::bare(kind, target)
+        })
     }
 
     /// Resolves `CREATE INDEX` over plain columns: the indexed table is the target.
@@ -270,6 +362,21 @@ fn bare_columns(keys: &[IndexColumn]) -> Result<(), LineageError> {
         }
     }
     Ok(())
+}
+
+/// Turns a created relation's query columns into writes, one per column name.
+fn created(cols: Vec<Col>) -> Vec<TargetColumn> {
+    let mut writes: Vec<TargetColumn> = Vec::new();
+    for col in cols {
+        match writes.iter_mut().find(|w| w.name == col.name) {
+            Some(existing) => existing.sources.extend(col.sources),
+            None => writes.push(TargetColumn {
+                name: col.name,
+                sources: col.sources,
+            }),
+        }
+    }
+    writes
 }
 
 /// Builds a `SHOW` analysis.

@@ -121,7 +121,7 @@ impl<'c> Ctx<'c> {
             relations: self.relations,
             functions: self.functions,
             target: analysis.target,
-            writes: Vec::new(),
+            writes: analysis.writes,
             statement: analysis.kind,
         })
     }
