@@ -482,18 +482,51 @@ impl Level<'_> {
         })
     }
 
+    /// Binds a `PostgreSQL` whole-row reference to the relation `qualifier` names.
+    ///
+    /// The value carries every column, star-invisible ones included.
+    ///
+    /// # Errors
+    /// As [`Level::star_of`].
+    pub(crate) fn whole_row(&self, qualifier: &[Ident]) -> Result<Sources, LineageError> {
+        for at in self.visible() {
+            if let Some(rel) = at.relation_here(qualifier)? {
+                return Ok(rel
+                    .columns
+                    .cols
+                    .iter()
+                    .flat_map(|c| c.sources.iter().cloned())
+                    .collect());
+            }
+        }
+        Err(LineageError::ColumnNotFound {
+            column: format!("{}.*", dotted(qualifier)),
+        })
+    }
+
     /// Binds a column reference written in `clause`.
     ///
     /// Searches the `FROM` relations innermost level first; where `clause`
     /// allows it, an unqualified name also binds to this level's outputs,
-    /// and a reference matching both takes both sources.
+    /// and a reference matching both takes both sources. On `PostgreSQL`, an
+    /// unqualified name no level's columns bind is a whole-row reference to
+    /// the relation it names, if any.
     ///
     /// # Errors
     /// [`LineageError::AmbiguousColumn`] when more than one candidate binds
     /// at the first level that has any; [`LineageError::ColumnNotFound`] when
     /// no level binds it.
     pub(crate) fn column(&self, clause: Clause, qualifier: &[Ident], name: &Ident) -> Result<Sources, LineageError> {
-        let found = self.input(qualifier, name);
+        let mut found = self.input(qualifier, name);
+        if self.dialect == Dialect::Postgres
+            && qualifier.is_empty()
+            && matches!(found, Err(LineageError::ColumnNotFound { .. }))
+        {
+            match self.whole_row(std::slice::from_ref(name)) {
+                Err(LineageError::ColumnNotFound { .. }) => {}
+                whole_row => found = whole_row,
+            }
+        }
         let alias = if qualifier.is_empty() && clause.sees_outputs(self.dialect) {
             self.output_named(name)
         } else {

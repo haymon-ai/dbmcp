@@ -548,7 +548,6 @@ fn unsupported_constructs_fail_closed() {
         ("SELECT * FROM UNNEST(ARRAY[1, 2])", Dialect::Postgres),
         ("SELECT * FROM users, LATERAL (SELECT 1) l", Dialect::Postgres),
         ("WITH RECURSIVE r AS (SELECT 1) SELECT * FROM r", Dialect::Postgres),
-        ("SELECT row_to_json(u.*) FROM users u", Dialect::Postgres),
         ("SELECT id INTO t2 FROM users", Dialect::Postgres),
     ];
     for (sql, dialect) in cases {
@@ -967,5 +966,49 @@ fn nested_join_alias_hides_inner_relations() {
             }),
             "{sql}"
         );
+    }
+}
+
+const ALL_USERS: &[&str] = &["users.email", "users.id", "users.secret", "users.ssn"];
+
+#[test]
+fn postgres_whole_row_references_cover_every_column() {
+    for sql in [
+        "SELECT row_to_json(u) FROM users u",
+        "SELECT (u).ssn FROM users u",
+        "SELECT f(u.*) FROM users u",
+        "SELECT ROW(u.*) FROM users u",
+        "SELECT users FROM users",
+    ] {
+        let lineage = pg(sql).expect(sql);
+        assert_eq!(lineage.columns.len(), 1, "{sql}");
+        assert_eq!(names(&lineage.columns[0].sources), ALL_USERS, "{sql}");
+    }
+    let lineage = pg("SELECT 1 FROM users u WHERE u IS NOT NULL").expect("analyze");
+    let filtered: Vec<_> = refs(&lineage).into_iter().map(|(s, _)| s).collect();
+    assert_eq!(filtered, ALL_USERS);
+}
+
+#[test]
+fn postgres_column_name_wins_over_relation_name() {
+    let catalog = catalog(&[("t", &["t", "x"])]);
+    let lineage = analyze("SELECT row_to_json(t) FROM t", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(names(&lineage.columns[0].sources), vec!["t.t"]);
+}
+
+#[test]
+fn whole_row_references_are_postgres_only() {
+    for dialect in [Dialect::Mysql, Dialect::Mariadb, Dialect::Sqlite] {
+        for sql in [
+            "SELECT row_to_json(u) FROM users u",
+            "SELECT (u).ssn FROM users u",
+            "SELECT f(u.*) FROM users u",
+        ] {
+            let result = analyze(sql, dialect, &fixture());
+            assert!(
+                matches!(result, Err(LineageError::ColumnNotFound { .. })),
+                "{sql} on {dialect:?}: {result:?}"
+            );
+        }
     }
 }

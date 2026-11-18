@@ -5,6 +5,10 @@
 //! [`Role::Window`] references; everything else (including `CASE`
 //! conditions, aggregate arguments, and subquery outputs) flows into the
 //! caller's source set.
+//!
+//! `PostgreSQL` whole-row references (`u`, `u.*` as an argument, `(u).f`)
+//! stand for every column of `u`, star-invisible ones included; a column of
+//! the same name wins. Other dialects have no whole-row values.
 
 use sqlparser::ast::{
     AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, Query,
@@ -12,6 +16,7 @@ use sqlparser::ast::{
 };
 
 use crate::bind::{Clause, Level, Sources};
+use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::functions;
 use crate::model::Role;
@@ -207,6 +212,8 @@ impl Ctx<'_> {
                 self.expr(root, level, clause, acc)?;
                 for access in access_chain {
                     match access {
+                        // A field of the root value; the root's sources cover it.
+                        AccessExpr::Dot(Expr::Identifier(_)) => {}
                         AccessExpr::Dot(_) => return Err(unsupported("composite field access")),
                         AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, level, clause, acc)?,
                         AccessExpr::Subscript(Subscript::Slice {
@@ -343,7 +350,15 @@ impl Ctx<'_> {
         match arg {
             FunctionArgExpr::Expr(expr) => self.expr(expr, level, clause, acc),
             FunctionArgExpr::Wildcard => Ok(()),
-            FunctionArgExpr::QualifiedWildcard(_) => Err(unsupported("whole-row reference")),
+            FunctionArgExpr::QualifiedWildcard(name) => {
+                if self.dialect != Dialect::Postgres {
+                    return Err(LineageError::ColumnNotFound {
+                        column: format!("{name}.*"),
+                    });
+                }
+                acc.extend(level.whole_row(&idents(name)?)?);
+                Ok(())
+            }
             FunctionArgExpr::WildcardWithOptions(_) => Err(unsupported("wildcard modifier in function argument")),
         }
     }
