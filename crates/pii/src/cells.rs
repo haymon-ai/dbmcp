@@ -17,7 +17,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use dbmcp_config::{ColumnRule, PiiOperator};
+use dbmcp_config::ColumnRule;
 use serde_json::Value;
 
 use crate::policy::{Plan, Position};
@@ -117,9 +117,8 @@ impl Redactor {
     ///
     /// Returns [`RedactionError::Shape`] when the columns or a row do not fit
     /// `plan` (see [`check_columns`]), before any cell is touched, and
-    /// [`RedactionError::Internal`] when the pipeline panics, the NER pass
-    /// fails, or a rule hashes without a `hash` operator. The request must
-    /// fail without returning any row (fail-closed).
+    /// [`RedactionError::Internal`] when the pipeline panics or the NER pass
+    /// fails. The request must fail without returning any row (fail-closed).
     pub(crate) fn apply_cells(&self, cells: &mut Cells, plan: &Plan) -> Result<RedactionStats, RedactionError> {
         let Cells { columns, rows } = cells;
         if !rows.is_empty() {
@@ -136,10 +135,10 @@ impl Redactor {
             .columns
             .iter()
             .map(|column| match column.position {
-                Position::Global => Ok(None),
-                Position::Action(operator, entity) => Ok(Some((self.rule_operator(operator)?, entity))),
+                Position::Global => None,
+                Position::Action(operator, entity) => Some((self.operator(operator), entity)),
             })
-            .collect::<Result<Vec<_>, RedactionError>>()?;
+            .collect::<Vec<_>>();
 
         let row_count = rows.len();
         let mut stats = RedactionStats::default();
@@ -182,9 +181,8 @@ impl Redactor {
     /// whose name the plan knows ([`PlannedColumn::name`](crate::policy::PlannedColumn::name)) must come back under it,
     /// compared folded by [`ColumnRule::fold`]. An empty result is not
     /// checked. Returns [`RedactionError::Internal`] when the pipeline or the
-    /// offloaded task panics, the NER pass fails, or a rule hashes without a
-    /// `hash` operator. The request must fail without returning any row
-    /// (fail-closed).
+    /// offloaded task panics or the NER pass fails. The request must fail
+    /// without returning any row (fail-closed).
     pub async fn redact_cells(&self, mut cells: Cells, plan: &Plan) -> Result<Vec<Value>, RedactionError> {
         if self.uses_ner() && plan.columns.iter().any(|column| column.position == Position::Global) {
             let redactor = self.clone();
@@ -200,12 +198,6 @@ impl Redactor {
             .into_iter()
             .map(|row| Value::Object(columns.iter().cloned().zip(row).collect()))
             .collect())
-    }
-
-    /// Returns the operator a column rule names, sharing this redactor's `hash` key.
-    fn rule_operator(&self, operator: PiiOperator) -> Result<Operator, RedactionError> {
-        crate::redact::operator(operator, self.hash.as_ref())
-            .ok_or_else(|| RedactionError::Internal("column rule hashes without a hash key".into()))
     }
 }
 
@@ -225,7 +217,7 @@ fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::PiiConfig;
+    use dbmcp_config::{PiiConfig, PiiOperator};
     use serde_json::json;
 
     use super::*;
@@ -461,18 +453,6 @@ mod tests {
             values[0].as_str().is_some_and(|t| t.starts_with("<EMAIL_ADDRESS_")),
             "{values:?}"
         );
-    }
-
-    #[test]
-    fn a_hashing_position_without_a_key_fails_closed() {
-        let mut cells = cells(vec![vec![json!(EMAIL)]]);
-        let err = Redactor::with_defaults()
-            .apply_cells(
-                &mut cells,
-                &plan(vec![Position::Action(PiiOperator::Hash, Entity::EmailAddress)]),
-            )
-            .expect_err("no hash key");
-        assert!(matches!(err, RedactionError::Internal(_)), "{err}");
     }
 
     #[tokio::test]

@@ -102,38 +102,40 @@ struct LeafSlot<'a> {
 #[derive(Debug, Clone)]
 pub struct Redactor {
     analyzer: Arc<Analyzer>,
-    operator: Operator,
+    /// The operator global detection applies to every span.
+    global: PiiOperator,
     /// The keyed `hash` operator, shared by global detection and column rules.
-    ///
-    /// Set when `pii.operator` or any rule hashes, so a ruled column's token
-    /// equals global detection's token for the same value.
-    pub(crate) hash: Option<Operator>,
+    hash: Operator,
     opts: AnalyzeOptions,
 }
+
+/// The fixed `hash` key of test redactors, so tokens are deterministic.
+#[cfg(test)]
+const TEST_KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
 impl Redactor {
     /// Builds a `Replace` redactor over the built-in recognizer set.
     #[cfg(test)]
     pub(crate) fn with_defaults() -> Self {
-        Self::new(Analyzer::with_defaults(), Operator::Replace, None)
+        Self::with_analyzer(Analyzer::with_defaults())
     }
 
     /// Builds a `Replace` redactor over `analyzer`.
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self::new(analyzer, Operator::Replace, None)
+        Self::new(analyzer, PiiOperator::Replace, Operator::hash(TEST_KEY))
     }
 
-    /// Builds a redactor from an analyzer and the operator every span gets.
+    /// Builds a redactor from an analyzer, the global operator, and the `hash` operator.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
-    fn new(analyzer: Analyzer, operator: Operator, hash: Option<Operator>) -> Self {
+    fn new(analyzer: Analyzer, global: PiiOperator, hash: Operator) -> Self {
         let settings = crate::context::ContextSettings::default();
         let min_score = settings.min_score_with_context;
         Self {
             analyzer: Arc::new(analyzer),
-            operator,
+            global,
             hash,
             opts: AnalyzeOptions {
                 min_score,
@@ -161,11 +163,10 @@ impl Redactor {
     /// AWS secret, bank account, …) surface only when a nearby keyword
     /// lifts them.
     ///
-    /// The `hash` operator, built when `cfg.operator` or any column rule
-    /// hashes, is keyed with `cfg.key`, or, when unset, with
+    /// The `hash` operator is keyed with `cfg.key`, or, when unset, with
     /// [`PiiConfig::MIN_KEY_BYTES`](dbmcp_config::PiiConfig::MIN_KEY_BYTES)
     /// bytes drawn from the OS random source (a per-process key), logging a
-    /// warning.
+    /// warning when `cfg.operator` or any column rule hashes.
     ///
     /// # Errors
     ///
@@ -173,21 +174,24 @@ impl Redactor {
     /// enabled but fails to load, and [`RedactorInitError::Rng`] when the
     /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
     /// is fail-closed and never degrades to regex-only when NER was requested.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: the `hash` key is built whenever `pii.operator` hashes.
     pub fn from_config(cfg: Option<&dbmcp_config::PiiConfig>) -> Result<Option<Self>, RedactorInitError> {
         let Some(cfg) = cfg else {
             return Ok(None);
         };
-        let hashing =
-            cfg.operator == PiiOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PiiOperator::Hash);
-        let hash = if hashing { Some(keyed_hash(cfg)?) } else { None };
-        let operator = operator(cfg.operator, hash.as_ref()).expect("hash is built whenever pii.operator hashes");
+        let hash = keyed_hash(cfg)?;
         let mut analyzer = crate::Analyzer::from_config(cfg);
         attach_ner(&mut analyzer, cfg)?;
-        Ok(Some(Self::new(analyzer, operator, hash)))
+        Ok(Some(Self::new(analyzer, cfg.operator, hash)))
+    }
+
+    /// Returns the operator `operator` names; `hash` uses this redactor's key.
+    pub(crate) fn operator(&self, operator: PiiOperator) -> Operator {
+        match operator {
+            PiiOperator::Replace => Operator::Replace,
+            PiiOperator::Mask => Operator::default_mask(),
+            PiiOperator::Redact => Operator::Redact,
+            PiiOperator::Hash => self.hash.clone(),
+        }
     }
 
     /// Reports whether an ML/NER engine is attached.
@@ -232,6 +236,7 @@ impl Redactor {
     ///
     /// See [`Self::apply`].
     pub(crate) fn walk(&self, roots: Vec<Frame<'_>>, stats: &mut RedactionStats) -> Result<(), RedactionError> {
+        let operator = self.operator(self.global);
         let mut infer_err: Option<String> = None;
         let result = catch_unwind(AssertUnwindSafe(|| {
             // When NER is attached, defer inference: collect every leaf during the
@@ -273,7 +278,7 @@ impl Redactor {
                             let text = std::mem::take(s);
                             slots.push(LeafSlot { slot: s, text, regex });
                         } else if !regex.is_empty() {
-                            apply_spans(s, regex, &self.operator, stats);
+                            apply_spans(s, regex, &operator, stats);
                         }
                     }
                     Value::Object(map) => {
@@ -308,7 +313,7 @@ impl Redactor {
                             *leaf.slot = leaf.text;
                             let results = merge_spans(leaf.regex, ner, self.opts.min_score);
                             if !results.is_empty() {
-                                apply_spans(leaf.slot, results, &self.operator, stats);
+                                apply_spans(leaf.slot, results, &operator, stats);
                             }
                         }
                     }
@@ -362,9 +367,10 @@ impl Redactor {
     pub fn redact_text(&self, text: &str) -> Result<String, RedactionError> {
         let mut stats = RedactionStats::default();
         let mut out = text.to_owned();
+        let operator = self.operator(self.global);
         catch_unwind(AssertUnwindSafe(|| {
             let results = self.analyzer.analyze(&out, &self.opts);
-            apply_spans(&mut out, results, &self.operator, &mut stats);
+            apply_spans(&mut out, results, &operator, &mut stats);
         }))
         .map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
         log_redactions(&stats, None);
@@ -498,19 +504,9 @@ fn apply_spans(s: &mut String, results: Vec<RecognizerResult>, operator: &Operat
     *s = anon.text;
 }
 
-/// Maps a configured operator to the one it runs; `hash` uses the shared `hash` key.
-///
-/// `None` for `hash` when no key was built.
-pub(crate) fn operator(operator: PiiOperator, hash: Option<&Operator>) -> Option<Operator> {
-    Some(match operator {
-        PiiOperator::Replace => Operator::Replace,
-        PiiOperator::Mask => Operator::default_mask(),
-        PiiOperator::Redact => Operator::Redact,
-        PiiOperator::Hash => hash?.clone(),
-    })
-}
-
 /// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.
+///
+/// Warns about the random key only when `pii.operator` or a rule hashes.
 ///
 /// # Errors
 ///
@@ -521,9 +517,11 @@ fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitErr
     }
     let mut key = [0u8; dbmcp_config::PiiConfig::MIN_KEY_BYTES];
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
-    tracing::warn!(
-        "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
-    );
+    if cfg.operator == PiiOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PiiOperator::Hash) {
+        tracing::warn!(
+            "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
+        );
+    }
     Ok(Operator::hash(&key))
 }
 
@@ -814,7 +812,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::new(Analyzer::with_defaults(), Operator::Redact, None);
+        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Redact, Operator::hash(TEST_KEY));
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -825,7 +823,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), Operator::default_mask(), None);
+        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Mask, Operator::hash(TEST_KEY));
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -835,7 +833,11 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), Operator::hash(KEY.as_bytes()), None);
+        let r = Redactor::new(
+            Analyzer::with_defaults(),
+            PiiOperator::Hash,
+            Operator::hash(KEY.as_bytes()),
+        );
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -917,7 +919,7 @@ mod tests {
 
     #[test]
     fn redact_object_with_phone_column_boosts_via_key() {
-        let r = Redactor::new(weak_phone_analyzer(), Operator::Replace, None).with_analyze_options(AnalyzeOptions {
+        let r = Redactor::with_analyzer(weak_phone_analyzer()).with_analyze_options(AnalyzeOptions {
             min_score: Score::from_static(0.4),
             context: Some(ctx_settings()),
         });
@@ -929,7 +931,7 @@ mod tests {
 
     #[test]
     fn redact_nested_object_accumulates_parent_keys() {
-        let r = Redactor::new(weak_phone_analyzer(), Operator::Replace, None).with_analyze_options(AnalyzeOptions {
+        let r = Redactor::with_analyzer(weak_phone_analyzer()).with_analyze_options(AnalyzeOptions {
             min_score: Score::from_static(0.4),
             context: Some(ctx_settings()),
         });
@@ -941,7 +943,7 @@ mod tests {
 
     #[test]
     fn redact_array_does_not_leak_sibling_keys() {
-        let r = Redactor::new(weak_phone_analyzer(), Operator::Replace, None).with_analyze_options(AnalyzeOptions {
+        let r = Redactor::with_analyzer(weak_phone_analyzer()).with_analyze_options(AnalyzeOptions {
             min_score: Score::from_static(0.4),
             context: Some(ctx_settings()),
         });
@@ -963,7 +965,7 @@ mod tests {
     fn redact_off_when_context_disabled_byte_identical() {
         // SC-002: with context disabled the redactor output is unchanged
         // from the no-context baseline.
-        let r_off = Redactor::new(weak_phone_analyzer(), Operator::Replace, None);
+        let r_off = Redactor::with_analyzer(weak_phone_analyzer());
         let mut rows = vec![json!({"customer_phone": "415 555 0142"})];
         let stats = r_off.apply(&mut rows).expect("apply ok");
         // No boost → candidate stays at score 0.1 → below 0.0 floor irrelevant,
@@ -1220,10 +1222,14 @@ mod tests {
             operator,
             ..dbmcp_config::PiiConfig::default()
         };
-        assert!(matches!(build(&cfg(PiiOperator::Replace)).operator, Operator::Replace));
-        assert!(matches!(build(&cfg(PiiOperator::Mask)).operator, Operator::Mask { .. }));
-        assert!(matches!(build(&cfg(PiiOperator::Redact)).operator, Operator::Redact));
-        assert!(matches!(build(&cfg(PiiOperator::Hash)).operator, Operator::Hash { .. }));
+        let global = |operator| {
+            let r = build(&cfg(operator));
+            r.operator(r.global)
+        };
+        assert!(matches!(global(PiiOperator::Replace), Operator::Replace));
+        assert!(matches!(global(PiiOperator::Mask), Operator::Mask { .. }));
+        assert!(matches!(global(PiiOperator::Redact), Operator::Redact));
+        assert!(matches!(global(PiiOperator::Hash), Operator::Hash { .. }));
     }
 
     #[test]
