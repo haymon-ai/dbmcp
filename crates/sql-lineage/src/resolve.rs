@@ -4,22 +4,27 @@
 //! its `FROM` list, then resolves the projection into output columns and
 //! records every other column use as a [`Reference`] with its [`Role`].
 //! Relation names not in the catalog are collected in `missing` so one pass
-//! reports them all; each enters its level as an open relation.
+//! reports them all; each enters its level as an open relation. A view or
+//! materialized view expands its body through the same walk, with everything
+//! it records tagged [`Origin::View`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sqlparser::ast::{
     Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
     NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Values,
+    SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Values,
     WildcardAdditionalOptions,
 };
 
 use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
-use crate::catalog::{Catalog, Entry, NamePart, WrittenName};
+use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{FunctionUse, Origin, Reference, RelationKind, RelationUse, Role, SourceRef};
+use crate::model::{
+    FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
+    StatementKind,
+};
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -36,17 +41,21 @@ pub(crate) struct Ctx<'c> {
     pub dialect: Dialect,
     catalog: &'c Catalog,
     /// Names absent from the snapshot, in discovery order.
-    pub missing: Vec<WrittenName>,
+    missing: Vec<WrittenName>,
     /// Column uses outside the projection.
-    pub references: BTreeSet<Reference>,
+    references: BTreeSet<Reference>,
     /// Catalog relations touched.
-    pub relations: BTreeSet<RelationUse>,
+    relations: BTreeSet<RelationUse>,
     /// Functions called.
-    pub functions: BTreeSet<FunctionUse>,
+    functions: BTreeSet<FunctionUse>,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
     pub expr_depth: usize,
+    /// Views whose bodies are being expanded, outermost first.
+    views: Vec<RelationId>,
+    /// Columns of views already expanded in this pass.
+    expanded: BTreeMap<RelationId, Vec<Col>>,
 }
 
 impl<'c> Ctx<'c> {
@@ -60,7 +69,59 @@ impl<'c> Ctx<'c> {
             functions: BTreeSet::new(),
             depth: 0,
             expr_depth: 0,
+            views: Vec::new(),
+            expanded: BTreeMap::new(),
         }
+    }
+
+    /// Returns where the SQL being walked was written.
+    fn origin(&self) -> Origin {
+        self.views.last().map_or(Origin::Query, |id| Origin::View(id.clone()))
+    }
+
+    /// Records a catalog relation named in the SQL being walked.
+    fn use_relation(&mut self, relation: &Relation) {
+        self.relations.insert(RelationUse {
+            id: relation.id.clone(),
+            kind: relation.kind,
+            origin: self.origin(),
+        });
+    }
+
+    /// Records a function called in the SQL being walked.
+    pub(crate) fn call(&mut self, name: String, known: bool) {
+        self.functions.insert(FunctionUse {
+            name,
+            known,
+            origin: self.origin(),
+        });
+    }
+
+    /// Ends the pass: the lineage of `cols`, unless a name was missing.
+    ///
+    /// # Errors
+    /// Returns [`LineageError::Missing`] with every name absent from the snapshot.
+    pub(crate) fn finish(self, cols: Columns) -> Result<Lineage, LineageError> {
+        if !self.missing.is_empty() {
+            return Err(LineageError::Missing(self.missing));
+        }
+        Ok(Lineage {
+            columns: cols
+                .cols
+                .into_iter()
+                .enumerate()
+                .map(|(position, col)| OutputColumn {
+                    name: col.name,
+                    position,
+                    sources: col.sources,
+                })
+                .collect(),
+            references: self.references,
+            relations: self.relations,
+            functions: self.functions,
+            target: None,
+            statement: StatementKind::Query,
+        })
     }
 
     /// Records each source as a reference with `role`.
@@ -69,7 +130,7 @@ impl<'c> Ctx<'c> {
             self.references.insert(Reference {
                 source,
                 role,
-                origin: Origin::Query,
+                origin: self.origin(),
             });
         }
     }
@@ -538,15 +599,16 @@ impl<'c> Ctx<'c> {
             return Tree::single(self.dialect, path, cols, alias);
         }
 
-        let written = WrittenName::query(
-            parts
+        let written = WrittenName {
+            parts: parts
                 .iter()
                 .map(|p| NamePart {
                     value: p.value.clone(),
                     quoted: p.quote_style.is_some(),
                 })
                 .collect(),
-        );
+            context: self.origin(),
+        };
         let catalog = self.catalog;
         let relation = match catalog.get(&written) {
             None => {
@@ -562,24 +624,91 @@ impl<'c> Ctx<'c> {
             }
             Some(Entry::Resolved(relation)) => relation,
         };
-        if relation.kind == RelationKind::View {
-            return Err(unsupported("view expansion"));
+        self.use_relation(relation);
+        let cols = match relation.kind {
+            RelationKind::View | RelationKind::MatView => self.view(relation)?,
+            _ => relation
+                .columns
+                .iter()
+                .map(|c| Col {
+                    name: c.name.clone(),
+                    sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                    visible: c.star_visible,
+                })
+                .collect(),
+        };
+        Tree::single(self.dialect, path, Columns::known(cols), alias)
+    }
+
+    /// Expands a view or materialized view body into the view's columns.
+    ///
+    /// The body resolves without the query's scopes or CTEs. Its output
+    /// columns take the catalog's names and visibility by position; an open
+    /// body yields them without sources. Each view expands once per pass.
+    ///
+    /// # Errors
+    /// [`LineageError::Unsupported`] without a body or for a body that is not
+    /// one query; [`LineageError::CircularReference`] when the view is
+    /// already being expanded; [`LineageError::Parse`] for an unparsable
+    /// body; [`LineageError::ColumnCountMismatch`] when a complete body's
+    /// column count differs from the catalog's.
+    fn view(&mut self, relation: &Relation) -> Result<Vec<Col>, LineageError> {
+        if let Some(cols) = self.expanded.get(&relation.id) {
+            return Ok(cols.clone());
         }
-        self.relations.insert(RelationUse {
-            id: relation.id.clone(),
-            kind: relation.kind,
-            origin: Origin::Query,
-        });
-        let cols = relation
+        let Some(sql) = relation.view_sql.as_deref() else {
+            return Err(unsupported("view without a body"));
+        };
+        if self.views.contains(&relation.id) {
+            return Err(LineageError::CircularReference {
+                name: relation.id.name.clone(),
+            });
+        }
+        let statements = self
+            .dialect
+            .parse(sql)
+            .map_err(|e| LineageError::Parse(format!("view `{}`: {e}", relation.id.name)))?;
+        let [Statement::Query(query)] = statements.as_slice() else {
+            return Err(unsupported("view body other than one query"));
+        };
+
+        self.views.push(relation.id.clone());
+        let body = self.query(query, Level::root(self.dialect));
+        self.views.pop();
+        let body = body?;
+
+        if body.open {
+            let cols: Vec<Col> = relation
+                .columns
+                .iter()
+                .map(|c| Col {
+                    name: c.name.clone(),
+                    sources: Sources::new(),
+                    visible: c.star_visible,
+                })
+                .collect();
+            self.expanded.insert(relation.id.clone(), cols.clone());
+            return Ok(cols);
+        }
+        if body.cols.len() != relation.columns.len() {
+            return Err(LineageError::ColumnCountMismatch {
+                relation: relation.id.name.clone(),
+                expected: relation.columns.len(),
+                found: body.cols.len(),
+            });
+        }
+        let cols: Vec<Col> = relation
             .columns
             .iter()
-            .map(|c| Col {
+            .zip(body.cols)
+            .map(|(c, b)| Col {
                 name: c.name.clone(),
-                sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                sources: b.sources,
                 visible: c.star_visible,
             })
             .collect();
-        Tree::single(self.dialect, path, Columns::known(cols), alias)
+        self.expanded.insert(relation.id.clone(), cols.clone());
+        Ok(cols)
     }
 }
 

@@ -53,7 +53,7 @@ impl SourceRef {
 pub enum Origin {
     /// The analyzed statement itself.
     Query,
-    /// The body of this view.
+    /// The body of this view, the innermost one when views nest.
     View(RelationId),
 }
 

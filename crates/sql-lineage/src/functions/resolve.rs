@@ -5,7 +5,6 @@ use sqlparser::ast::{Ident, ObjectName};
 use super::{mariadb, mysql, postgres, sqlite};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{FunctionUse, Origin};
 use crate::resolve::idents;
 
 /// Returns the dialect's built-in function names.
@@ -26,7 +25,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
     }
 }
 
-/// Resolves a called function name to its recorded use.
+/// Resolves a called function name to its recorded name and whether it is known.
 ///
 /// Known when the dialect lists the unqualified (or, on `PostgreSQL`,
 /// `pg_catalog.`-qualified) name. Matching is by name only, so a same-named
@@ -35,7 +34,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
 /// # Errors
 ///
 /// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
-pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse, LineageError> {
+pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<(String, bool), LineageError> {
     let parts: Vec<String> = idents(name)?.iter().map(|p| fold(dialect, p)).collect();
     let known = match parts.as_slice() {
         [name] => names(dialect).contains(&name.as_str()),
@@ -44,11 +43,7 @@ pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse
         }
         _ => false,
     };
-    Ok(FunctionUse {
-        name: parts.join("."),
-        known,
-        origin: Origin::Query,
-    })
+    Ok((parts.join("."), known))
 }
 
 #[cfg(test)]
@@ -176,8 +171,7 @@ mod tests {
 
     /// Resolves a name written as `parts`, returning its recorded name and verdict.
     fn call(dialect: Dialect, parts: &[Ident]) -> (String, bool) {
-        let used = resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve");
-        (used.name, used.known)
+        resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve")
     }
 
     #[test]

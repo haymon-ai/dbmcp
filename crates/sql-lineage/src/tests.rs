@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Relation, RelationId,
+    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
     RelationKind, Role, SourceRef, WrittenName, analyze,
 };
 
@@ -597,16 +597,6 @@ fn star_without_from_errors() {
 }
 
 #[test]
-fn view_is_rejected_until_expansion_lands() {
-    let mut catalog = fixture();
-    catalog.insert(
-        WrittenName::query(vec![NamePart::bare("v")]),
-        Entry::Resolved(relation("v", RelationKind::View, &["id"]).with_view_sql("SELECT id FROM users")),
-    );
-    assert_unsupported("SELECT * FROM v", Dialect::Postgres, &catalog);
-}
-
-#[test]
 fn parse_and_statement_count_errors() {
     assert!(matches!(pg("SELEC 1"), Err(LineageError::Parse(_))));
     assert!(matches!(pg(""), Err(LineageError::Parse(_))));
@@ -1048,4 +1038,293 @@ fn ambiguous_whole_row_name_falls_back_to_output_alias() {
     .expect("analyze");
     let grouped: Vec<_> = refs(&lineage).into_iter().map(|(s, _)| s).collect();
     assert_eq!(grouped, vec!["users.id"]);
+}
+
+/// Returns the identity of fixture relation `name`.
+fn id(name: &str) -> RelationId {
+    RelationId::new("db", "public", name)
+}
+
+/// Inserts a view `name` with `columns` and `body`, written unqualified in `context`.
+fn with_view(mut catalog: Catalog, context: Option<&str>, name: &str, columns: &[&str], body: &str) -> Catalog {
+    catalog.insert(
+        WrittenName {
+            parts: vec![NamePart::bare(name)],
+            context: context.map_or(Origin::Query, |view| Origin::View(id(view))),
+        },
+        Entry::Resolved(relation(name, RelationKind::View, columns).with_view_sql(body)),
+    );
+    catalog
+}
+
+/// Inserts the fixture's `users` as written inside view `view`.
+fn users_in_view(mut catalog: Catalog, view: &str) -> Catalog {
+    catalog.insert(
+        WrittenName {
+            parts: vec![NamePart::bare("users")],
+            context: Origin::View(id(view)),
+        },
+        Entry::Resolved(relation(
+            "users",
+            RelationKind::Table,
+            &["id", "email", "ssn", "~secret"],
+        )),
+    );
+    catalog
+}
+
+#[test]
+fn view_over_view_expands_to_base_columns() {
+    let catalog = with_view(fixture(), None, "v2", &["mail"], "SELECT email FROM v1");
+    let catalog = with_view(
+        catalog,
+        Some("v2"),
+        "v1",
+        &["email"],
+        "SELECT email FROM users WHERE ssn <> ''",
+    );
+    let catalog = users_in_view(catalog, "v1");
+    let lineage = analyze("SELECT * FROM v2", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("mail", &["users.email"])]);
+
+    let reference = lineage.references.first().expect("reference");
+    assert_eq!(reference.role, Role::Filter);
+    assert_eq!(reference.origin, Origin::View(id("v1")));
+}
+
+#[test]
+fn nested_views_tag_the_innermost_view() {
+    let catalog = with_view(fixture(), None, "w", &["id"], "SELECT id FROM v");
+    let catalog = with_view(catalog, Some("w"), "v", &["id"], "SELECT id FROM users");
+    let catalog = users_in_view(catalog, "v");
+    let lineage = analyze("SELECT * FROM w", Dialect::Postgres, &catalog).expect("analyze");
+    let used: Vec<_> = lineage
+        .relations
+        .iter()
+        .map(|r| (r.id.name.as_str(), r.kind, r.origin.clone()))
+        .collect();
+    assert_eq!(
+        used,
+        vec![
+            ("users", RelationKind::Table, Origin::View(id("v"))),
+            ("v", RelationKind::View, Origin::View(id("w"))),
+            ("w", RelationKind::View, Origin::Query),
+        ]
+    );
+}
+
+#[test]
+fn view_body_names_are_missing_in_the_view_context() {
+    let catalog = with_view(fixture(), None, "v", &["id"], "SELECT id FROM users");
+    assert_eq!(
+        analyze("SELECT * FROM v", Dialect::Postgres, &catalog),
+        Err(LineageError::Missing(vec![WrittenName {
+            parts: vec![NamePart::bare("users")],
+            context: Origin::View(id("v")),
+        }]))
+    );
+    let lineage = analyze("SELECT * FROM v", Dialect::Postgres, &users_in_view(catalog, "v")).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("id", &["users.id"])]);
+}
+
+#[test]
+fn open_view_body_keeps_the_catalog_shape() {
+    let catalog = with_view(fixture(), None, "v", &["id", "name"], "SELECT * FROM users");
+    assert_eq!(
+        analyze(
+            "SELECT v.id FROM v JOIN m1 ON v.name = m1.k",
+            Dialect::Postgres,
+            &catalog
+        ),
+        Err(LineageError::Missing(vec![
+            WrittenName {
+                parts: vec![NamePart::bare("users")],
+                context: Origin::View(id("v")),
+            },
+            WrittenName::query(vec![NamePart::bare("m1")]),
+        ]))
+    );
+    assert_eq!(
+        analyze("SELECT v.nope FROM v", Dialect::Postgres, &catalog),
+        Err(LineageError::ColumnNotFound {
+            column: "v.nope".to_string()
+        })
+    );
+}
+
+#[test]
+fn view_over_an_open_view_still_ends_in_missing() {
+    let catalog = with_view(fixture(), None, "v1", &["id"], "SELECT id FROM v2");
+    let catalog = with_view(catalog, Some("v1"), "v2", &["id"], "SELECT * FROM m1");
+    assert_eq!(
+        analyze(
+            "SELECT v1.id FROM v1 JOIN m2 ON v1.id = m2.k",
+            Dialect::Postgres,
+            &catalog
+        ),
+        Err(LineageError::Missing(vec![
+            WrittenName {
+                parts: vec![NamePart::bare("m1")],
+                context: Origin::View(id("v2")),
+            },
+            WrittenName::query(vec![NamePart::bare("m2")]),
+        ]))
+    );
+}
+
+#[test]
+fn view_body_column_count_must_match_the_catalog() {
+    let catalog = users_in_view(
+        with_view(fixture(), None, "v", &["id"], "SELECT id, email FROM users"),
+        "v",
+    );
+    assert_eq!(
+        analyze("SELECT * FROM v", Dialect::Postgres, &catalog),
+        Err(LineageError::ColumnCountMismatch {
+            relation: "v".to_string(),
+            expected: 1,
+            found: 2,
+        })
+    );
+}
+
+#[test]
+fn view_chain_past_the_depth_limit_errors_without_overflow() {
+    /// Builds `v1 → v2 → … → v{depth}` with the last over `users`.
+    fn chain(depth: usize) -> Catalog {
+        let mut catalog = users_in_view(fixture(), &format!("v{depth}"));
+        for i in 1..=depth {
+            let context = (i > 1).then(|| format!("v{}", i - 1));
+            let body = if i == depth {
+                "SELECT id FROM users".to_string()
+            } else {
+                format!("SELECT id FROM v{}", i + 1)
+            };
+            catalog = with_view(catalog, context.as_deref(), &format!("v{i}"), &["id"], &body);
+        }
+        catalog
+    }
+    let (within, past) = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let within = analyze("SELECT * FROM v1", Dialect::Postgres, &chain(63)).is_ok();
+            let past = analyze("SELECT * FROM v1", Dialect::Postgres, &chain(64));
+            (within, matches!(past, Err(LineageError::DepthLimit)))
+        })
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow");
+    assert!(within);
+    assert!(past);
+}
+
+#[test]
+fn self_referencing_view_is_circular() {
+    let catalog = with_view(fixture(), None, "v", &["id"], "SELECT id FROM v");
+    let catalog = with_view(catalog, Some("v"), "v", &["id"], "SELECT id FROM v");
+    assert_eq!(
+        analyze("SELECT * FROM v", Dialect::Postgres, &catalog),
+        Err(LineageError::CircularReference { name: "v".to_string() })
+    );
+}
+
+#[test]
+fn view_without_body_or_query_body_is_rejected() {
+    let mut catalog = fixture();
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("v")]),
+        Entry::Resolved(relation("v", RelationKind::View, &["id"])),
+    );
+    assert_unsupported("SELECT * FROM v", Dialect::Postgres, &catalog);
+    let catalog = with_view(fixture(), None, "v", &["id"], "DELETE FROM users");
+    assert_unsupported("SELECT * FROM v", Dialect::Postgres, &catalog);
+    let catalog = with_view(fixture(), None, "v", &["id"], "SELEC id");
+    assert!(matches!(
+        analyze("SELECT * FROM v", Dialect::Postgres, &catalog),
+        Err(LineageError::Parse(message)) if message.starts_with("view `v`: ")
+    ));
+}
+
+#[test]
+fn materialized_view_expands_and_needs_a_body() {
+    let mut catalog = fixture();
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("mv")]),
+        Entry::Resolved(relation("mv", RelationKind::MatView, &["s"])),
+    );
+    assert_unsupported("SELECT * FROM mv", Dialect::Postgres, &catalog);
+    let mut catalog = users_in_view(fixture(), "mv");
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("mv")]),
+        Entry::Resolved(relation("mv", RelationKind::MatView, &["s"]).with_view_sql("SELECT ssn FROM users")),
+    );
+    let lineage = analyze("SELECT * FROM mv", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("s", &["users.ssn"])]);
+}
+
+#[test]
+fn view_referenced_twice_resolves_both_uses() {
+    let catalog = users_in_view(with_view(fixture(), None, "v", &["s"], "SELECT ssn FROM users"), "v");
+    let lineage = analyze(
+        "SELECT a.s, b.s FROM v a JOIN v b ON a.s = b.s",
+        Dialect::Postgres,
+        &catalog,
+    )
+    .expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("s", &["users.ssn"]), col("s", &["users.ssn"])]
+    );
+    assert_eq!(refs(&lineage), vec![r("users.ssn", Role::Join)]);
+}
+
+#[test]
+fn whole_row_over_a_view_covers_its_base_sources() {
+    let catalog = users_in_view(
+        with_view(fixture(), None, "v", &["id", "~s"], "SELECT id, ssn FROM users"),
+        "v",
+    );
+    let lineage = analyze("SELECT row_to_json(v) FROM v", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(names(&lineage.columns[0].sources), ["users.id", "users.ssn"]);
+}
+
+#[test]
+fn view_body_functions_carry_the_view_origin() {
+    let catalog = users_in_view(
+        with_view(fixture(), None, "v", &["e"], "SELECT lower(email) FROM users"),
+        "v",
+    );
+    let lineage = analyze("SELECT upper(e) FROM v", Dialect::Postgres, &catalog).expect("analyze");
+    let used: Vec<_> = lineage
+        .functions
+        .iter()
+        .map(|f| (f.name.as_str(), f.origin.clone()))
+        .collect();
+    assert_eq!(used, vec![("lower", Origin::View(id("v"))), ("upper", Origin::Query)]);
+}
+
+#[test]
+fn views_using_a_view_twice_expand_it_once_per_pass() {
+    // `v{i}` reads `v{i+1}` twice; the last reads a table the catalog lacks.
+    // Re-expanding per use would walk 2^30 bodies before reporting `Missing`.
+    let depth = 30;
+    let mut catalog = fixture();
+    for i in 1..=depth {
+        let context = (i > 1).then(|| format!("v{}", i - 1));
+        let body = if i == depth {
+            "SELECT k FROM m1".to_string()
+        } else {
+            format!("SELECT a.id FROM v{n} a JOIN v{n} b ON a.id = b.id", n = i + 1)
+        };
+        catalog = with_view(catalog, context.as_deref(), &format!("v{i}"), &["id"], &body);
+    }
+    let started = std::time::Instant::now();
+    assert_eq!(
+        analyze("SELECT * FROM v1", Dialect::Postgres, &catalog),
+        Err(LineageError::Missing(vec![WrittenName {
+            parts: vec![NamePart::bare("m1")],
+            context: Origin::View(id(&format!("v{depth}"))),
+        }]))
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

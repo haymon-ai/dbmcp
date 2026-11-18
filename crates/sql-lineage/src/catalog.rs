@@ -120,7 +120,7 @@ pub struct Relation {
     pub kind: RelationKind,
     /// Columns in ordinal order.
     pub columns: Vec<CatalogColumn>,
-    /// The view body, for views.
+    /// The view's query, without `CREATE VIEW`, for views.
     pub view_sql: Option<String>,
 }
 
