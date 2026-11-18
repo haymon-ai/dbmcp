@@ -591,3 +591,131 @@ fn errors_independent_of_missing_relations_surface_at_once() {
         );
     }
 }
+
+/// One expression per pass-through arm, with the exact sources it must keep.
+///
+/// Each operand reads a different column, so an arm that drops a child
+/// loses a source (the fail-open direction for redaction).
+const PASS_THROUGH: &[(Dialect, &str, &[&str])] = &[
+    (Dialect::Postgres, "CAST(u.ssn AS TEXT)", &["users.ssn"]),
+    (Dialect::Postgres, "(u.ssn)", &["users.ssn"]),
+    (Dialect::Postgres, "-u.id", &["users.id"]),
+    (Dialect::Postgres, "u.ssn IS NULL", &["users.ssn"]),
+    (Dialect::Postgres, "EXTRACT(YEAR FROM u.ssn)", &["users.ssn"]),
+    (Dialect::Postgres, "u.email COLLATE \"C\"", &["users.email"]),
+    (Dialect::Postgres, "CEIL(o.total)", &["orders.total"]),
+    (Dialect::Postgres, "u.email || u.ssn", &["users.email", "users.ssn"]),
+    (
+        Dialect::Postgres,
+        "u.email IS DISTINCT FROM u.ssn",
+        &["users.email", "users.ssn"],
+    ),
+    (Dialect::Postgres, "u.id = ANY(o.total)", &["orders.total", "users.id"]),
+    (
+        Dialect::Postgres,
+        "POSITION(u.email IN u.ssn)",
+        &["users.email", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "u.ssn AT TIME ZONE u.email",
+        &["users.email", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "u.email LIKE u.ssn ESCAPE '!'",
+        &["users.email", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "u.id IN (u.ssn, o.total)",
+        &["orders.total", "users.id", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "u.id IN (SELECT o2.total FROM orders o2)",
+        &["orders.total", "users.id"],
+    ),
+    (
+        Dialect::Postgres,
+        "u.id BETWEEN u.ssn AND o.total",
+        &["orders.total", "users.id", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "SUBSTRING(u.email FROM u.id FOR o.total)",
+        &["orders.total", "users.email", "users.id"],
+    ),
+    (
+        Dialect::Postgres,
+        "TRIM(BOTH u.ssn FROM u.email)",
+        &["users.email", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "OVERLAY(u.email PLACING u.ssn FROM u.id FOR o.total)",
+        &["orders.total", "users.email", "users.id", "users.ssn"],
+    ),
+    (Dialect::Postgres, "(u.id, u.ssn)", &["users.id", "users.ssn"]),
+    (
+        Dialect::Postgres,
+        "ARRAY[u.email, u.ssn]",
+        &["users.email", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "(ARRAY[u.email])[u.id]",
+        &["users.email", "users.id"],
+    ),
+    (
+        Dialect::Postgres,
+        "(ARRAY[u.email])[u.id:o.total]",
+        &["orders.total", "users.email", "users.id"],
+    ),
+    (
+        Dialect::Postgres,
+        "EXISTS (SELECT o2.total FROM orders o2)",
+        &["orders.total"],
+    ),
+    (
+        Dialect::Postgres,
+        "count(u.id) FILTER (WHERE u.ssn IS NULL)",
+        &["users.id", "users.ssn"],
+    ),
+    (
+        Dialect::Postgres,
+        "percentile_cont(0.5) WITHIN GROUP (ORDER BY o.total)",
+        &["orders.total"],
+    ),
+    (
+        Dialect::Postgres,
+        "string_agg(u.email, ',' ORDER BY u.ssn)",
+        &["users.email", "users.ssn"],
+    ),
+    (Dialect::Postgres, "u.email ->> u.ssn", &["users.email", "users.ssn"]),
+    (Dialect::Sqlite, "u.email ->> u.ssn", &["users.email", "users.ssn"]),
+    (Dialect::Mysql, "u.email ->> '$.a'", &["users.email"]),
+    (
+        Dialect::Mysql,
+        "JSON_EXTRACT(u.email, u.ssn)",
+        &["users.email", "users.ssn"],
+    ),
+    (Dialect::Mysql, "u.email RLIKE u.ssn", &["users.email", "users.ssn"]),
+    (Dialect::Mysql, "u.id MEMBER OF (u.ssn)", &["users.id", "users.ssn"]),
+    (
+        Dialect::Mysql,
+        "MATCH (u.email, u.ssn) AGAINST ('x')",
+        &["users.email", "users.ssn"],
+    ),
+    (Dialect::Mysql, "u.ssn + INTERVAL u.id DAY", &["users.id", "users.ssn"]),
+    (Dialect::Mysql, "CONVERT(u.ssn, CHAR)", &["users.ssn"]),
+];
+
+#[test]
+fn pass_through_expressions_keep_every_operand_source() {
+    for (dialect, expr, sources) in PASS_THROUGH {
+        let sql = format!("SELECT {expr} AS v FROM users u, orders o");
+        let lineage = analyze(&sql, *dialect, &fixture()).unwrap_or_else(|e| panic!("{expr} on {dialect:?}: {e}"));
+        assert_eq!(columns(&lineage), vec![col("v", sources)], "{expr} on {dialect:?}");
+    }
+}
