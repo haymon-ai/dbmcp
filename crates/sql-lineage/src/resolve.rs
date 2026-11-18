@@ -395,7 +395,12 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves one projection item into output columns.
-    fn select_item(&mut self, item: &SelectItem, level: &Level<'_>, out: &mut Columns) -> Result<(), LineageError> {
+    pub(crate) fn select_item(
+        &mut self,
+        item: &SelectItem,
+        level: &Level<'_>,
+        out: &mut Columns,
+    ) -> Result<(), LineageError> {
         let (expr, name) = match item {
             SelectItem::UnnamedExpr(expr) => (expr, self.output_name(expr)),
             SelectItem::ExprWithAlias { expr, alias } => (expr, self.dialect.normalize(alias)),
@@ -476,7 +481,7 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
-    fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
+    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
         let mut tree = self.factor(&twj.relation, level)?;
         for join in &twj.joins {
             let right = self.factor(&join.relation, level)?;
@@ -524,7 +529,7 @@ impl<'c> Ctx<'c> {
         Ok(on.into_tree())
     }
 
-    fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
+    pub(crate) fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
         match factor {
             TableFactor::Table {
                 name,
@@ -586,7 +591,9 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a named relation: a visible CTE, else a catalog entry.
-    fn named(
+    ///
+    /// A catalog table keeps its identity, so a write may target it.
+    pub(crate) fn named(
         &mut self,
         name: &ObjectName,
         alias: Option<&TableAlias>,
@@ -605,19 +612,20 @@ impl<'c> Ctx<'c> {
             return Tree::single(self.dialect, path, Columns::pending(), alias);
         };
         self.use_relation(relation);
-        let cols = match relation.kind {
-            RelationKind::View | RelationKind::MatView => self.view(relation)?,
-            _ => relation
-                .columns
-                .iter()
-                .map(|c| Col {
-                    name: c.name.clone(),
-                    sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
-                    visible: c.star_visible,
-                })
-                .collect(),
-        };
-        Tree::single(self.dialect, path, Columns::known(cols), alias)
+        if matches!(relation.kind, RelationKind::View | RelationKind::MatView) {
+            let cols = self.view(relation)?;
+            return Tree::single(self.dialect, path, Columns::known(cols), alias);
+        }
+        let cols = relation
+            .columns
+            .iter()
+            .map(|c| Col {
+                name: c.name.clone(),
+                sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                visible: c.star_visible,
+            })
+            .collect();
+        Ok(Tree::single(self.dialect, path, Columns::known(cols), alias)?.with_table(relation.id.clone()))
     }
 
     /// Looks up a written relation name in the catalog.

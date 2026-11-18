@@ -8,9 +8,9 @@
 //! [`StatementKind`] says which tier the statement is in: queries, `EXPLAIN`
 //! of a modeled statement, `SHOW` and `DESCRIBE`, and relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`),
-//! which names its target. Creates (`CREATE TABLE … AS`, `PostgreSQL`
-//! `SELECT … INTO`, `CREATE [MATERIALIZED] VIEW`) are writes: they also list
-//! each new column's sources as a [`TargetColumn`]. DML is not modeled yet.
+//! which names its target. Writes (`INSERT`, `UPDATE`, `DELETE`, `MERGE`,
+//! `CREATE TABLE … AS`, `PostgreSQL` `SELECT … INTO`, `CREATE [MATERIALIZED]
+//! VIEW`) also list each written column's sources as a [`TargetColumn`].
 //!
 //! The crate never connects to a database. Names missing from the catalog
 //! come back together as [`LineageError::Missing`]; the caller resolves them

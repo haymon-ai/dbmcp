@@ -11,20 +11,26 @@
 //! `REFERENCES` constraints, and `MySQL` engines that serve other tables'
 //! or servers' rows (`MERGE`, `FEDERATED`, …). Only constraints that name
 //! columns pass.
-//! Creates are writes: `CREATE TABLE … AS`, `PostgreSQL` `SELECT … INTO`,
-//! and `CREATE [MATERIALIZED] VIEW` name their target and feed each new
-//! column from the query's output. `CREATE TABLE … AS` runs every
-//! `CREATE TABLE` check first. Every other statement,
-//! `INSERT`/`UPDATE`/`DELETE`/`MERGE` included, is
-//! [`LineageError::Unsupported`].
+//! Creates and DML are writes. `CREATE TABLE … AS`, `PostgreSQL`
+//! `SELECT … INTO`, and `CREATE [MATERIALIZED] VIEW` feed each new column
+//! from the query's output; `CREATE TABLE … AS` runs every `CREATE TABLE`
+//! check first. `INSERT`, `UPDATE`, `DELETE`, and `MERGE` name the table
+//! they write: a `SET` right-hand side or an inserted value flows into its
+//! target column, DML `WHERE` and `MERGE … ON` / `WHEN` are filters, and
+//! `RETURNING` is the output. Writes through views or derived tables, and
+//! every other statement, are [`LineageError::Unsupported`].
+
+use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    CascadeOption, ColumnOption, CreateIndex, CreateTable, CreateTableOptions, CreateView, Expr, Ident, IndexColumn,
-    ObjectName, ObjectType, Query, SetExpr, SqlOption, Statement, TableAlias, TableAliasColumnDef, TableConstraint,
-    Truncate,
+    Assignment, AssignmentTarget, CascadeOption, ColumnOption, CreateIndex, CreateTable, CreateTableOptions,
+    CreateView, Delete, DoUpdate, Expr, FromTable, Ident, IndexColumn, Insert, Merge, MergeAction, MergeInsertKind,
+    MergeUpdateKind, ObjectName, ObjectNamePart, ObjectType, OnConflict, OnConflictAction, OnInsert, OrderByExpr,
+    Query, SelectItem, SetExpr, SqlOption, Statement, TableAlias, TableAliasColumnDef, TableConstraint, TableFactor,
+    TableObject, TableWithJoins, Truncate, Update, UpdateTableFromKind, visit_expressions,
 };
 
-use crate::bind::{Col, Columns, Level};
+use crate::bind::{Clause, Col, Columns, Level, Sources, Tree};
 use crate::catalog::Entry;
 use crate::dialect::Dialect;
 use crate::error::LineageError;
@@ -67,6 +73,10 @@ impl Ctx<'_> {
             Statement::Query(query) => self.query_statement(query),
             Statement::CreateTable(create) => self.create_table(create),
             Statement::CreateView(create) => self.create_view(create),
+            Statement::Insert(insert) => self.insert(insert),
+            Statement::Update(update) => self.update(update),
+            Statement::Delete(delete) => self.delete(delete),
+            Statement::Merge(merge) => self.merge(merge),
             Statement::CreateIndex(create) => self.create_index(create),
             Statement::Truncate(Truncate {
                 table_names,
@@ -294,6 +304,446 @@ impl Ctx<'_> {
         Ok(Analysis::bare(StatementKind::CreateIndex, target))
     }
 
+    /// Resolves `INSERT`: positional target columns, conflict actions, `RETURNING`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one destructure over every Insert field, each accepted or rejected"
+    )]
+    fn insert(&mut self, insert: &Insert) -> Result<Analysis, LineageError> {
+        let Insert {
+            insert_token: _,
+            optimizer_hints: _,
+            or: _,
+            ignore: _,
+            into: _,
+            table,
+            table_alias,
+            columns,
+            overwrite,
+            source,
+            assignments,
+            partitioned,
+            after_columns,
+            has_table_keyword: _,
+            on,
+            returning,
+            output,
+            replace_into: _,
+            priority: _,
+            insert_alias,
+            settings,
+            format_clause,
+            multi_table_insert_type,
+            multi_table_into_clauses,
+            multi_table_when_clauses,
+            multi_table_else_clause,
+        } = insert;
+        if *overwrite
+            || partitioned.is_some()
+            || !after_columns.is_empty()
+            || output.is_some()
+            || insert_alias.is_some()
+            || settings.is_some()
+            || format_clause.is_some()
+            || multi_table_insert_type.is_some()
+            || !multi_table_into_clauses.is_empty()
+            || !multi_table_when_clauses.is_empty()
+            || multi_table_else_clause.is_some()
+        {
+            return Err(unsupported("INSERT clause outside the modeled dialects"));
+        }
+        let TableObject::TableName(name) = table else {
+            return Err(unsupported("INSERT into a table function"));
+        };
+        let alias = table_alias.as_ref().map(|a| TableAlias {
+            explicit: a.explicit,
+            name: a.alias.clone(),
+            columns: Vec::new(),
+            at: None,
+        });
+        let tree = self.named(name, alias.as_ref(), &Level::root(self.dialect))?;
+        let target = tree.written(self.dialect, &[])?;
+
+        let mut writes = Vec::new();
+        let (names, names_open) = self.insert_columns(&tree, columns)?;
+        if let Some(source) = source {
+            let (values, values_open) = self.insert_source(source)?;
+            if !names_open && !values_open && values.len() != names.len() {
+                return Err(LineageError::ColumnCountMismatch {
+                    relation: name.to_string(),
+                    expected: names.len(),
+                    found: values.len(),
+                });
+            }
+            for (column, sources) in names.iter().zip(values) {
+                write(&mut writes, column, sources);
+            }
+        }
+        let level = Level::dml(self.dialect, vec![tree.clone()]);
+        for assignment in assignments {
+            self.assign(assignment, &tree, &level, &mut None, &mut writes)?;
+        }
+
+        match on {
+            None => {}
+            Some(OnInsert::DuplicateKeyUpdate(assignments)) => {
+                for assignment in assignments {
+                    if calls_values(&assignment.value) {
+                        return Err(unsupported("VALUES() in ON DUPLICATE KEY UPDATE"));
+                    }
+                    self.assign(assignment, &tree, &level, &mut None, &mut writes)?;
+                }
+            }
+            Some(OnInsert::OnConflict(OnConflict {
+                conflict_target: _,
+                action,
+            })) => match action {
+                OnConflictAction::DoNothing => {}
+                OnConflictAction::DoUpdate(DoUpdate { assignments, selection }) => {
+                    let upsert = Level::upsert(self.dialect, tree.clone(), &writes);
+                    for assignment in assignments {
+                        self.assign(assignment, &tree, &upsert, &mut None, &mut writes)?;
+                    }
+                    if let Some(selection) = selection {
+                        self.clause(selection, &upsert, Clause::Where)?;
+                    }
+                }
+            },
+            Some(_) => return Err(unsupported("INSERT conflict clause")),
+        }
+
+        let columns = self.returning(returning.as_deref(), &level)?;
+        Ok(Analysis {
+            columns,
+            writes,
+            ..Analysis::bare(StatementKind::Insert, target)
+        })
+    }
+
+    /// Returns the stored names an `INSERT` column list writes, in order.
+    ///
+    /// An empty list means every star-visible column in ordinal order. The
+    /// flag is set when the target is open, so the names may be incomplete.
+    fn insert_columns(&self, tree: &Tree, columns: &[ObjectName]) -> Result<(Vec<String>, bool), LineageError> {
+        if columns.is_empty() {
+            let level = Level::dml(self.dialect, vec![tree.clone()]);
+            let star = level.star()?;
+            return Ok((star.cols.into_iter().map(|c| c.name).collect(), star.open));
+        }
+        let mut names = Vec::new();
+        let mut open = false;
+        for column in columns {
+            match tree.target(self.dialect, &idents(column)?)? {
+                Some((_, name)) => names.push(name),
+                None => open = true,
+            }
+        }
+        Ok((names, open))
+    }
+
+    /// Resolves an `INSERT` source into per-position sources, with its openness.
+    ///
+    /// A bare `VALUES` list accepts `DEFAULT`, which has no source; any other
+    /// query resolves as usual.
+    fn insert_source(&mut self, source: &Query) -> Result<(Vec<Sources>, bool), LineageError> {
+        let plain = source.with.is_none()
+            && source.order_by.is_none()
+            && source.limit_clause.is_none()
+            && source.fetch.is_none()
+            && source.locks.is_empty()
+            && source.for_clause.is_none()
+            && source.settings.is_none()
+            && source.format_clause.is_none()
+            && source.pipe_operators.is_empty();
+        let (true, SetExpr::Values(values)) = (plain, source.body.as_ref()) else {
+            let cols = self.query(source, Level::root(self.dialect))?;
+            return Ok((cols.cols.into_iter().map(|c| c.sources).collect(), cols.open));
+        };
+        let level = Level::root(self.dialect);
+        let mut out: Vec<Sources> = Vec::new();
+        for (r, row) in values.rows.iter().enumerate() {
+            if r > 0 && row.content.len() != out.len() {
+                return Err(LineageError::ColumnCountMismatch {
+                    relation: "VALUES".to_string(),
+                    expected: out.len(),
+                    found: row.content.len(),
+                });
+            }
+            for (i, expr) in row.content.iter().enumerate() {
+                let sources = self.value(expr, &level)?;
+                match out.get_mut(i) {
+                    Some(acc) => acc.extend(sources),
+                    None => out.push(sources),
+                }
+            }
+        }
+        Ok((out, false))
+    }
+
+    /// Resolves `UPDATE`: `SET` into target columns, `WHERE` as a filter.
+    fn update(&mut self, update: &Update) -> Result<Analysis, LineageError> {
+        let Update {
+            update_token: _,
+            optimizer_hints: _,
+            table,
+            assignments,
+            from,
+            selection,
+            returning,
+            output,
+            or: _,
+            order_by,
+            limit,
+        } = update;
+        if output.is_some() {
+            return Err(unsupported("OUTPUT clause"));
+        }
+        let root = Level::root(self.dialect);
+        let targets = self.tree(table, &root)?;
+        let mut items = vec![targets.clone()];
+        match from {
+            None => {}
+            Some(UpdateTableFromKind::AfterSet(from)) => {
+                for item in from {
+                    items.push(self.tree(item, &root)?);
+                }
+            }
+            Some(UpdateTableFromKind::BeforeSet(_)) => return Err(unsupported("UPDATE FROM before SET")),
+        }
+        let level = Level::dml(self.dialect, items);
+        let mut target = None;
+        let mut writes = Vec::new();
+        for assignment in assignments {
+            self.assign(assignment, &targets, &level, &mut target, &mut writes)?;
+        }
+        self.dml_clauses(selection.as_ref(), order_by, limit.as_ref(), &level)?;
+        let columns = self.returning(returning.as_deref(), &level)?;
+        Ok(Analysis {
+            columns,
+            writes,
+            ..Analysis::bare(StatementKind::Update, target)
+        })
+    }
+
+    /// Resolves `DELETE`, including `USING` and `MySQL` multi-table forms.
+    fn delete(&mut self, delete: &Delete) -> Result<Analysis, LineageError> {
+        let Delete {
+            delete_token: _,
+            optimizer_hints: _,
+            tables,
+            from,
+            using,
+            selection,
+            returning,
+            output,
+            order_by,
+            limit,
+        } = delete;
+        if output.is_some() {
+            return Err(unsupported("OUTPUT clause"));
+        }
+        let (FromTable::WithFromKeyword(from) | FromTable::WithoutKeyword(from)) = from;
+        let mysql = matches!(self.dialect, Dialect::Mysql | Dialect::Mariadb);
+        // `MySQL` names targets before `FROM`, or in `FROM` ahead of `USING`.
+        let (names, items): (Vec<Vec<Ident>>, Vec<&TableWithJoins>) = match (tables.is_empty(), using) {
+            (false, None) if mysql => (
+                tables.iter().map(idents).collect::<Result<_, _>>()?,
+                from.iter().collect(),
+            ),
+            (true, Some(using)) if mysql => (
+                from.iter().map(written_table).collect::<Result<_, _>>()?,
+                using.iter().collect(),
+            ),
+            (true, using) => (
+                from.iter().map(written_table).collect::<Result<_, _>>()?,
+                from.iter().chain(using.iter().flatten()).collect(),
+            ),
+            _ => return Err(unsupported("DELETE form")),
+        };
+        let [name] = names.as_slice() else {
+            return Err(unsupported("DELETE from several tables"));
+        };
+        let root = Level::root(self.dialect);
+        let mut trees = Vec::new();
+        for item in items {
+            trees.push(self.tree(item, &root)?);
+        }
+        let level = Level::dml(self.dialect, trees);
+        let target = level.written(name)?;
+        self.dml_clauses(selection.as_ref(), order_by, limit.as_ref(), &level)?;
+        let columns = self.returning(returning.as_deref(), &level)?;
+        Ok(Analysis {
+            columns,
+            ..Analysis::bare(StatementKind::Delete, target)
+        })
+    }
+
+    /// Resolves `MERGE`: `ON` and `WHEN` conditions filter, actions write.
+    ///
+    /// Every clause sees both the target and the source.
+    fn merge(&mut self, merge: &Merge) -> Result<Analysis, LineageError> {
+        let Merge {
+            merge_token: _,
+            optimizer_hints: _,
+            into: _,
+            table,
+            source,
+            on,
+            clauses,
+            output,
+        } = merge;
+        if output.is_some() {
+            return Err(unsupported("MERGE output clause"));
+        }
+        let root = Level::root(self.dialect);
+        let targets = self.factor(table, &root)?;
+        let source = self.factor(source, &root)?;
+        let target = targets.written(self.dialect, &[])?;
+        let level = Level::dml(self.dialect, vec![targets.clone(), source]);
+
+        self.clause(on, &level, Clause::Where)?;
+        let mut writes = Vec::new();
+        for clause in clauses {
+            if let Some(predicate) = &clause.predicate {
+                self.clause(predicate, &level, Clause::Where)?;
+            }
+            match &clause.action {
+                MergeAction::Insert(insert) => {
+                    if insert.insert_predicate.is_some() {
+                        return Err(unsupported("MERGE INSERT predicate"));
+                    }
+                    let MergeInsertKind::Values(values) = &insert.kind else {
+                        return Err(unsupported("MERGE INSERT ROW or *"));
+                    };
+                    let [row] = values.rows.as_slice() else {
+                        return Err(unsupported("MERGE INSERT of several rows"));
+                    };
+                    let (names, open) = self.insert_columns(&targets, &insert.columns)?;
+                    if !open && names.len() != row.content.len() {
+                        return Err(LineageError::ColumnCountMismatch {
+                            relation: table.to_string(),
+                            expected: names.len(),
+                            found: row.content.len(),
+                        });
+                    }
+                    for (column, expr) in names.iter().zip(&row.content) {
+                        let sources = self.value(expr, &level)?;
+                        write(&mut writes, column, sources);
+                    }
+                }
+                MergeAction::Update(update) => {
+                    if update.update_predicate.is_some() || update.delete_predicate.is_some() {
+                        return Err(unsupported("MERGE UPDATE predicate"));
+                    }
+                    let MergeUpdateKind::Set(assignments) = &update.kind else {
+                        return Err(unsupported("MERGE UPDATE SET *"));
+                    };
+                    for assignment in assignments {
+                        self.assign(assignment, &targets, &level, &mut None, &mut writes)?;
+                    }
+                }
+                MergeAction::Delete { .. } | MergeAction::DoNothing { .. } => {}
+            }
+        }
+        Ok(Analysis {
+            writes,
+            ..Analysis::bare(StatementKind::Merge, target)
+        })
+    }
+
+    /// Resolves one written value; `DEFAULT` has no sources.
+    fn value(&mut self, expr: &Expr, level: &Level<'_>) -> Result<Sources, LineageError> {
+        let mut sources = Sources::new();
+        if !is_default(expr) {
+            self.expr(expr, level, Clause::Projection, &mut sources)?;
+        }
+        Ok(sources)
+    }
+
+    /// Resolves one `SET` assignment into target-column writes.
+    ///
+    /// The target column binds among `targets`; the value among `level`. A
+    /// tuple target takes a row of values or a subquery, by position.
+    /// `target` collects the written table; a second one is rejected.
+    fn assign(
+        &mut self,
+        assignment: &Assignment,
+        targets: &Tree,
+        level: &Level<'_>,
+        target: &mut Option<RelationId>,
+        writes: &mut Vec<TargetColumn>,
+    ) -> Result<(), LineageError> {
+        let (columns, values): (Vec<&ObjectName>, Vec<Sources>) = match (&assignment.target, &assignment.value) {
+            (AssignmentTarget::ColumnName(column), value) => (vec![column], vec![self.value(value, level)?]),
+            (AssignmentTarget::Tuple(columns), Expr::Tuple(values)) if columns.len() == values.len() => {
+                let mut all = Vec::new();
+                for value in values {
+                    all.push(self.value(value, level)?);
+                }
+                (columns.iter().collect(), all)
+            }
+            (AssignmentTarget::Tuple(columns), Expr::Subquery(query)) => {
+                let cols = self.query(query, level.correlated())?;
+                if !cols.open && cols.cols.len() != columns.len() {
+                    return Err(LineageError::ColumnCountMismatch {
+                        relation: "SET".to_string(),
+                        expected: columns.len(),
+                        found: cols.cols.len(),
+                    });
+                }
+                (
+                    columns.iter().collect(),
+                    cols.cols.into_iter().map(|c| c.sources).collect(),
+                )
+            }
+            (AssignmentTarget::Tuple(_), _) => return Err(unsupported("tuple assignment")),
+        };
+        for (column, sources) in columns.into_iter().zip(values) {
+            let Some((id, name)) = targets.target(self.dialect, &idents(column)?)? else {
+                continue;
+            };
+            match target {
+                Some(existing) if *existing != id => return Err(unsupported("UPDATE of several tables")),
+                Some(_) => {}
+                None => *target = Some(id),
+            }
+            write(writes, &name, sources);
+        }
+        Ok(())
+    }
+
+    /// Records DML `WHERE`, `ORDER BY`, and `LIMIT` uses.
+    fn dml_clauses(
+        &mut self,
+        selection: Option<&Expr>,
+        order_by: &[OrderByExpr],
+        limit: Option<&Expr>,
+        level: &Level<'_>,
+    ) -> Result<(), LineageError> {
+        if let Some(selection) = selection {
+            self.clause(selection, level, Clause::Where)?;
+        }
+        for item in order_by {
+            if item.with_fill.is_some() {
+                return Err(unsupported("ORDER BY WITH FILL"));
+            }
+            self.clause(&item.expr, level, Clause::OrderBy)?;
+        }
+        if let Some(limit) = limit {
+            self.clause(limit, level, Clause::Limit)?;
+        }
+        Ok(())
+    }
+
+    /// Resolves a `RETURNING` list into output columns.
+    fn returning(&mut self, returning: Option<&[SelectItem]>, level: &Level<'_>) -> Result<Columns, LineageError> {
+        let mut out = Columns::default();
+        for item in returning.unwrap_or_default() {
+            self.select_item(item, level, &mut out)?;
+        }
+        Ok(out)
+    }
+
     /// Resolves an existing relation a statement drops, truncates, or indexes.
     ///
     /// With `if_exists`, a vacant name is no target rather than an error; an
@@ -366,17 +816,65 @@ fn bare_columns(keys: &[IndexColumn]) -> Result<(), LineageError> {
 
 /// Turns a created relation's query columns into writes, one per column name.
 fn created(cols: Vec<Col>) -> Vec<TargetColumn> {
-    let mut writes: Vec<TargetColumn> = Vec::new();
+    let mut writes = Vec::new();
     for col in cols {
-        match writes.iter_mut().find(|w| w.name == col.name) {
-            Some(existing) => existing.sources.extend(col.sources),
-            None => writes.push(TargetColumn {
-                name: col.name,
-                sources: col.sources,
-            }),
-        }
+        write(&mut writes, &col.name, col.sources);
     }
     writes
+}
+
+/// Merges sources into the write of `name`, appending it when new.
+fn write(writes: &mut Vec<TargetColumn>, name: &str, sources: Sources) {
+    match writes.iter_mut().find(|w| w.name == name) {
+        Some(existing) => existing.sources.extend(sources),
+        None => writes.push(TargetColumn {
+            name: name.to_string(),
+            sources,
+        }),
+    }
+}
+
+/// Returns the name a `FROM` item answers to, for a `DELETE` target.
+fn written_table(twj: &TableWithJoins) -> Result<Vec<Ident>, LineageError> {
+    match (&twj.relation, twj.joins.is_empty()) {
+        (
+            TableFactor::Table {
+                name,
+                alias,
+                args: None,
+                ..
+            },
+            true,
+        ) => match alias {
+            Some(alias) => Ok(vec![alias.name.clone()]),
+            None => idents(name),
+        },
+        _ => Err(unsupported("DELETE target")),
+    }
+}
+
+/// Returns whether an expression calls `VALUES()` or `MariaDB`'s `VALUE()`.
+///
+/// Both read the value being inserted, which lineage does not model.
+fn calls_values(expr: &Expr) -> bool {
+    visit_expressions(expr, |e| match e {
+        Expr::Function(f)
+            if f.name
+                .0
+                .last()
+                .and_then(ObjectNamePart::as_ident)
+                .is_some_and(|i| i.value.eq_ignore_ascii_case("values") || i.value.eq_ignore_ascii_case("value")) =>
+        {
+            ControlFlow::Break(())
+        }
+        _ => ControlFlow::Continue(()),
+    })
+    .is_break()
+}
+
+/// Returns whether a value is the `DEFAULT` keyword.
+fn is_default(expr: &Expr) -> bool {
+    matches!(expr, Expr::Identifier(ident) if ident.quote_style.is_none() && ident.value.eq_ignore_ascii_case("default"))
 }
 
 /// Builds a `SHOW` analysis.

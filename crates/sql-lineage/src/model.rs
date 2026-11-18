@@ -139,6 +139,14 @@ pub struct OutputColumn {
 pub enum StatementKind {
     /// A query: `SELECT`, set operation, or `VALUES`.
     Query,
+    /// `INSERT` (or `REPLACE`), with `VALUES`, a query, or `SET`.
+    Insert,
+    /// `UPDATE`, including `PostgreSQL` `FROM` and `MySQL` joined tables.
+    Update,
+    /// `DELETE`, including `USING` and `MySQL` joined tables.
+    Delete,
+    /// `MERGE`.
+    Merge,
     /// `CREATE TABLE` without a query.
     CreateTable,
     /// `CREATE TABLE … AS` or `PostgreSQL` `SELECT … INTO`.
@@ -176,7 +184,7 @@ pub struct TargetColumn {
 /// The lineage of a single statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lineage {
-    /// Output columns in result order; for `EXPLAIN`, the explained statement's.
+    /// Output columns in result order; for writes, the `RETURNING` list; for `EXPLAIN`, the explained statement's.
     pub columns: Vec<OutputColumn>,
     /// Columns used outside the projection, by role.
     pub references: BTreeSet<Reference>,

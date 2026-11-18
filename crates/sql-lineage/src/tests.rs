@@ -542,7 +542,6 @@ fn lexical_mismatch_rejects() {
 #[test]
 fn unsupported_constructs_fail_closed() {
     let cases: &[(&str, Dialect)] = &[
-        ("INSERT INTO users (id) VALUES (1)", Dialect::Postgres),
         ("SELECT * FROM users TABLESAMPLE BERNOULLI (10)", Dialect::Postgres),
         ("SELECT * FROM generate_series(1, 3)", Dialect::Postgres),
         ("SELECT * FROM UNNEST(ARRAY[1, 2])", Dialect::Postgres),
@@ -1559,7 +1558,7 @@ fn create_checks_guard_ctas_and_views() {
 
 #[test]
 fn vacant_name_is_unknown_outside_a_create() {
-    for sql in ["SELECT * FROM t2", "DROP TABLE t2"] {
+    for sql in ["SELECT * FROM t2", "DROP TABLE t2", "INSERT INTO t2 VALUES (1)"] {
         let result = on(sql, Dialect::Postgres);
         assert!(
             matches!(result, Err(LineageError::UnknownRelation { .. })),
@@ -1713,8 +1712,6 @@ fn explain_carries_inner_lineage() {
     let lineage = on("EXPLAIN DROP TABLE users", Dialect::Postgres).expect("analyze");
     assert_eq!(lineage.statement, explain(StatementKind::Drop));
     assert_eq!(target(&lineage), Some("users"));
-
-    assert_unsupported("EXPLAIN UPDATE users SET email = ssn", Dialect::Postgres, &fixture());
 }
 
 #[test]
@@ -1774,8 +1771,6 @@ fn unmodeled_statements_are_unsupported() {
         ("DROP SCHEMA public CASCADE", Dialect::Postgres),
         ("DROP DATABASE app", Dialect::Mysql),
         ("TRUNCATE users CASCADE", Dialect::Postgres),
-        ("UPDATE users SET email = ssn", Dialect::Postgres),
-        ("DELETE FROM users", Dialect::Postgres),
     ];
     for (sql, dialect) in cases {
         assert_unsupported(sql, *dialect, &fixture);
@@ -1947,4 +1942,360 @@ fn qualified_star_over_cte_expands_its_columns() {
         columns(&lineage),
         vec![col("id", &["users.id"]), col("email", &["users.email"])]
     );
+}
+
+#[test]
+fn insert_values_maps_listed_columns_positionally() {
+    let lineage = on(
+        "INSERT INTO archive (ssn, email) VALUES ((SELECT ssn FROM users WHERE id = 1), DEFAULT), ('x', 'y')",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::Insert);
+    assert_eq!(target(&lineage), Some("archive"));
+    assert_eq!(writes(&lineage), vec![col("ssn", &["users.ssn"]), col("email", &[])]);
+    assert_eq!(refs(&lineage), vec![r("users.id", Role::Filter)]);
+    assert!(lineage.columns.is_empty());
+}
+
+#[test]
+fn insert_select_star_without_column_list_maps_by_catalog_order() {
+    let lineage = on(
+        "INSERT INTO archive SELECT * FROM users WHERE id > 1",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(
+        writes(&lineage),
+        vec![
+            col("id", &["users.id"]),
+            col("email", &["users.email"]),
+            col("ssn", &["users.ssn"])
+        ]
+    );
+    assert_eq!(refs(&lineage), vec![r("users.id", Role::Filter)]);
+    assert_eq!(
+        relations(&lineage),
+        vec![
+            ("archive".to_string(), RelationKind::Table),
+            ("users".to_string(), RelationKind::Table)
+        ]
+    );
+}
+
+#[test]
+fn insert_value_count_must_match_target_columns() {
+    let result = on("INSERT INTO archive SELECT id, email FROM users", Dialect::Postgres);
+    assert!(
+        matches!(result, Err(LineageError::ColumnCountMismatch { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn insert_returning_is_the_output() {
+    let lineage = on(
+        "INSERT INTO archive AS a (id) VALUES (1) RETURNING a.ssn, id",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("ssn", &["archive.ssn"]), col("id", &["archive.id"])]
+    );
+}
+
+#[test]
+fn insert_on_conflict_excluded_carries_inserted_sources() {
+    let lineage = on(
+        "INSERT INTO users (id, ssn) SELECT user_id, total FROM orders \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.ssn WHERE users.id > 0",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(
+        writes(&lineage),
+        vec![
+            col("id", &["orders.user_id"]),
+            col("ssn", &["orders.total"]),
+            col("email", &["orders.total"])
+        ]
+    );
+    assert_eq!(refs(&lineage), vec![r("users.id", Role::Filter)]);
+}
+
+#[test]
+fn mysql_insert_set_and_on_duplicate_key_update_write_target_columns() {
+    let lineage = on(
+        "INSERT INTO users SET email = 'x' ON DUPLICATE KEY UPDATE ssn = email",
+        Dialect::Mysql,
+    )
+    .expect("analyze");
+    assert_eq!(target(&lineage), Some("users"));
+    assert_eq!(writes(&lineage), vec![col("email", &[]), col("ssn", &["users.email"])]);
+}
+
+#[test]
+fn update_set_projects_into_target_and_where_filters() {
+    let lineage = on("UPDATE users SET email = ssn WHERE id = 1", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::Update);
+    assert_eq!(target(&lineage), Some("users"));
+    assert_eq!(writes(&lineage), vec![col("email", &["users.ssn"])]);
+    assert_eq!(refs(&lineage), vec![r("users.id", Role::Filter)]);
+    assert!(lineage.columns.is_empty());
+}
+
+#[test]
+fn update_returning_output_column_is_sourced() {
+    let lineage = on("UPDATE users SET email = 'x' RETURNING ssn", Dialect::Postgres).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])]);
+}
+
+#[test]
+fn postgres_update_from_binds_set_to_target_only() {
+    let lineage = on(
+        "UPDATE users SET id = o.total FROM orders o WHERE o.user_id = users.id",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(target(&lineage), Some("users"));
+    assert_eq!(writes(&lineage), vec![col("id", &["orders.total"])]);
+    assert_eq!(
+        refs(&lineage),
+        vec![r("orders.user_id", Role::Filter), r("users.id", Role::Filter)]
+    );
+}
+
+#[test]
+fn update_tuple_takes_subquery_columns_by_position() {
+    let lineage = on(
+        "UPDATE users SET (email, ssn) = (SELECT total, user_id FROM orders WHERE orders.user_id = users.id)",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(
+        writes(&lineage),
+        vec![col("email", &["orders.total"]), col("ssn", &["orders.user_id"])]
+    );
+}
+
+#[test]
+fn mysql_multi_table_update_writes_the_assigned_table() {
+    let lineage = on(
+        "UPDATE users u JOIN orders o ON o.user_id = u.id SET u.email = o.total WHERE o.total > 0",
+        Dialect::Mysql,
+    )
+    .expect("analyze");
+    assert_eq!(target(&lineage), Some("users"));
+    assert_eq!(writes(&lineage), vec![col("email", &["orders.total"])]);
+    assert_eq!(
+        refs(&lineage),
+        vec![
+            r("orders.total", Role::Filter),
+            r("orders.user_id", Role::Join),
+            r("users.id", Role::Join)
+        ]
+    );
+
+    let result = on(
+        "UPDATE users u JOIN orders o ON o.user_id = u.id SET u.email = 1, o.total = 2",
+        Dialect::Mysql,
+    );
+    assert!(matches!(result, Err(LineageError::Unsupported(_))), "{result:?}");
+}
+
+#[test]
+fn delete_using_filters_and_returns() {
+    let lineage = on(
+        "DELETE FROM users USING orders WHERE orders.user_id = users.id RETURNING users.ssn",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::Delete);
+    assert_eq!(target(&lineage), Some("users"));
+    assert!(lineage.writes.is_empty());
+    assert_eq!(
+        refs(&lineage),
+        vec![r("orders.user_id", Role::Filter), r("users.id", Role::Filter)]
+    );
+    assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])]);
+}
+
+#[test]
+fn mysql_multi_table_delete_targets_named_table() {
+    for sql in [
+        "DELETE u FROM users u JOIN orders o ON o.user_id = u.id WHERE o.total > 0",
+        "DELETE FROM users USING users JOIN orders ON orders.user_id = users.id WHERE orders.total > 0",
+    ] {
+        let lineage = on(sql, Dialect::Mysql).expect(sql);
+        assert_eq!(target(&lineage), Some("users"), "{sql}");
+        assert_eq!(
+            refs(&lineage),
+            vec![
+                r("orders.total", Role::Filter),
+                r("orders.user_id", Role::Join),
+                r("users.id", Role::Join)
+            ],
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn merge_on_filters_and_actions_write() {
+    let lineage = on(
+        "MERGE INTO users u USING orders o ON u.id = o.user_id \
+         WHEN MATCHED AND o.total > 0 THEN UPDATE SET email = o.total \
+         WHEN NOT MATCHED THEN INSERT (id, ssn) VALUES (o.user_id, o.total)",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::Merge);
+    assert_eq!(target(&lineage), Some("users"));
+    assert_eq!(
+        writes(&lineage),
+        vec![
+            col("email", &["orders.total"]),
+            col("id", &["orders.user_id"]),
+            col("ssn", &["orders.total"])
+        ]
+    );
+    assert_eq!(
+        refs(&lineage),
+        vec![
+            r("orders.total", Role::Filter),
+            r("orders.user_id", Role::Filter),
+            r("users.id", Role::Filter)
+        ]
+    );
+}
+
+#[test]
+fn writes_through_views_and_derived_tables_are_rejected() {
+    let catalog = with_view(fixture(), None, "v", &["a"], "SELECT ssn FROM users");
+    for sql in [
+        "INSERT INTO v VALUES (1)",
+        "UPDATE v SET a = 1",
+        "DELETE FROM v",
+        "MERGE INTO v USING orders o ON true WHEN MATCHED THEN DELETE",
+        "UPDATE (SELECT id FROM users) d SET id = 1",
+    ] {
+        assert_unsupported(sql, Dialect::Postgres, &catalog);
+    }
+}
+
+#[test]
+fn insert_column_list_shorter_than_select_errors() {
+    let result = pg("INSERT INTO users (id) SELECT id, user_id FROM orders");
+    assert!(
+        matches!(result, Err(LineageError::ColumnCountMismatch { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn data_modifying_statements_inside_queries_are_unsupported() {
+    for sql in [
+        "WITH x AS (DELETE FROM users RETURNING ssn) INSERT INTO archive (ssn) SELECT ssn FROM x",
+        "INSERT INTO archive (ssn) WITH x AS (DELETE FROM users RETURNING ssn) SELECT ssn FROM x",
+        "WITH x AS (SELECT 1) UPDATE users SET id = 1",
+    ] {
+        assert_unsupported(sql, Dialect::Postgres, &create_fixture());
+    }
+}
+
+#[test]
+fn values_in_on_duplicate_key_update_is_unsupported() {
+    for (sql, dialect) in [
+        (
+            "INSERT INTO users (id) VALUES (1) ON DUPLICATE KEY UPDATE ssn = VALUES(email)",
+            Dialect::Mysql,
+        ),
+        (
+            "INSERT INTO users (id) VALUES (1) ON DUPLICATE KEY UPDATE ssn = VALUE(email)",
+            Dialect::Mariadb,
+        ),
+        (
+            "INSERT INTO users (id) VALUES (1) ON DUPLICATE KEY UPDATE ssn = (SELECT VALUES(email))",
+            Dialect::Mysql,
+        ),
+    ] {
+        assert_unsupported(sql, dialect, &create_fixture());
+    }
+}
+
+#[test]
+fn merge_returning_is_unsupported() {
+    assert_unsupported(
+        "MERGE INTO users u USING orders o ON u.id = o.user_id WHEN MATCHED THEN DELETE RETURNING u.ssn",
+        Dialect::Postgres,
+        &create_fixture(),
+    );
+}
+
+#[test]
+fn write_targets_bind_strictly() {
+    let cases: &[(&str, Dialect, &str)] = &[
+        (
+            "UPDATE users SET email = ssn RETURNING old.email",
+            Dialect::Postgres,
+            "column",
+        ),
+        ("UPDATE users SET email.x = 1", Dialect::Postgres, "column"),
+        (
+            "UPDATE users u JOIN orders o ON o.user_id = u.id SET id = 1",
+            Dialect::Mysql,
+            "ambiguous",
+        ),
+        ("DELETE x FROM users", Dialect::Mysql, "unknown"),
+    ];
+    for (sql, dialect, kind) in cases {
+        let result = on(sql, *dialect);
+        let ok = match *kind {
+            "column" => matches!(result, Err(LineageError::ColumnNotFound { .. })),
+            "ambiguous" => matches!(result, Err(LineageError::AmbiguousColumn { .. })),
+            _ => matches!(result, Err(LineageError::UnknownRelation { .. })),
+        };
+        assert!(ok, "{sql}: {result:?}");
+    }
+}
+
+#[test]
+fn an_open_write_target_defers_to_missing() {
+    let result = on("INSERT INTO nope (a) SELECT id, email FROM users", Dialect::Postgres);
+    assert_eq!(
+        result,
+        Err(LineageError::Missing(vec![WrittenName::query(vec![NamePart::bare(
+            "nope"
+        )])]))
+    );
+}
+
+#[test]
+fn dml_order_by_and_limit_are_recorded() {
+    let lineage = on("UPDATE users SET email = 'x' ORDER BY ssn LIMIT 1", Dialect::Mysql).expect("analyze");
+    assert_eq!(refs(&lineage), vec![r("users.ssn", Role::Sort)]);
+}
+
+#[test]
+fn excluded_column_not_inserted_has_no_sources() {
+    let lineage = on(
+        "INSERT INTO users (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET ssn = excluded.email",
+        Dialect::Postgres,
+    )
+    .expect("analyze");
+    assert_eq!(writes(&lineage), vec![col("id", &[]), col("ssn", &[])]);
+}
+
+#[test]
+fn qualified_insert_column_binds_like_set() {
+    let lineage = on("INSERT INTO users (users.email) VALUES ('x')", Dialect::Mysql).expect("analyze");
+    assert_eq!(writes(&lineage), vec![col("email", &[])]);
+}
+
+#[test]
+fn explain_of_an_update_carries_its_writes() {
+    let lineage = on("EXPLAIN UPDATE users SET email = ssn", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, explain(StatementKind::Update));
+    assert_eq!(writes(&lineage), vec![col("email", &["users.ssn"])]);
 }
