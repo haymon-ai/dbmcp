@@ -1012,3 +1012,40 @@ fn whole_row_references_are_postgres_only() {
         }
     }
 }
+
+#[test]
+fn subscripted_qualified_column_binds_the_column() {
+    let catalog = catalog(&[("orders", &["id", "tags"]), ("events", &["o", "id"])]);
+    let lineage = analyze(
+        "SELECT o.tags[1] FROM orders o JOIN events e ON e.o = o.id",
+        Dialect::Postgres,
+        &catalog,
+    )
+    .expect("analyze");
+    assert_eq!(names(&lineage.columns[0].sources), vec!["orders.tags"]);
+    let result = analyze("SELECT o.nosuch[1] FROM orders o", Dialect::Postgres, &catalog);
+    assert!(matches!(result, Err(LineageError::ColumnNotFound { .. })), "{result:?}");
+}
+
+#[test]
+fn ambiguous_whole_row_name_falls_back_to_output_alias() {
+    let mut catalog = Catalog::new();
+    for schema in ["s1", "s2"] {
+        catalog.insert(
+            WrittenName::query(vec![NamePart::bare(schema), NamePart::bare("users")]),
+            Entry::Resolved(Relation::new(
+                RelationId::new("db", schema, "users"),
+                RelationKind::Table,
+                vec![CatalogColumn::new("id")],
+            )),
+        );
+    }
+    let lineage = analyze(
+        "SELECT s1.users.id AS users FROM s1.users, s2.users GROUP BY users",
+        Dialect::Postgres,
+        &catalog,
+    )
+    .expect("analyze");
+    let grouped: Vec<_> = refs(&lineage).into_iter().map(|(s, _)| s).collect();
+    assert_eq!(grouped, vec!["users.id"]);
+}

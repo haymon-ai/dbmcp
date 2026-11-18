@@ -5,10 +5,6 @@
 //! [`Role::Window`] references; everything else (including `CASE`
 //! conditions, aggregate arguments, and subquery outputs) flows into the
 //! caller's source set.
-//!
-//! `PostgreSQL` whole-row references (`u`, `u.*` as an argument, `(u).f`)
-//! stand for every column of `u`, star-invisible ones included; a column of
-//! the same name wins. Other dialects have no whole-row values.
 
 use sqlparser::ast::{
     AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, Query,
@@ -16,7 +12,6 @@ use sqlparser::ast::{
 };
 
 use crate::bind::{Clause, Level, Sources};
-use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::functions;
 use crate::model::Role;
@@ -209,11 +204,27 @@ impl Ctx<'_> {
                 Ok(())
             }
             Expr::CompoundFieldAccess { root, access_chain } => {
-                self.expr(root, level, clause, acc)?;
-                for access in access_chain {
+                // `o.tags[1]` parses as root `o` with chain `.tags`, `[1]`.
+                let mut chain = access_chain.as_slice();
+                let path = match root.as_ref() {
+                    Expr::Identifier(id) => Some(vec![id.clone()]),
+                    Expr::CompoundIdentifier(parts) => Some(parts.clone()),
+                    _ => None,
+                };
+                match path {
+                    Some(mut parts) => {
+                        while let [AccessExpr::Dot(Expr::Identifier(id)), rest @ ..] = chain {
+                            parts.push(id.clone());
+                            chain = rest;
+                        }
+                        self.expr(&Expr::CompoundIdentifier(parts), level, clause, acc)?;
+                    }
+                    None => self.expr(root, level, clause, acc)?,
+                }
+                for access in chain {
                     match access {
-                        // A field of the root value; the root's sources cover it.
-                        AccessExpr::Dot(Expr::Identifier(_)) => {}
+                        // A field of a parenthesized value, `(u).f`; the value's sources cover it.
+                        AccessExpr::Dot(Expr::Identifier(_)) if matches!(root.as_ref(), Expr::Nested(_)) => {}
                         AccessExpr::Dot(_) => return Err(unsupported("composite field access")),
                         AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, level, clause, acc)?,
                         AccessExpr::Subscript(Subscript::Slice {
@@ -351,12 +362,12 @@ impl Ctx<'_> {
             FunctionArgExpr::Expr(expr) => self.expr(expr, level, clause, acc),
             FunctionArgExpr::Wildcard => Ok(()),
             FunctionArgExpr::QualifiedWildcard(name) => {
-                if self.dialect != Dialect::Postgres {
-                    return Err(LineageError::ColumnNotFound {
+                let sources = level
+                    .whole_row(&idents(name)?)?
+                    .ok_or_else(|| LineageError::ColumnNotFound {
                         column: format!("{name}.*"),
-                    });
-                }
-                acc.extend(level.whole_row(&idents(name)?)?);
+                    })?;
+                acc.extend(sources);
                 Ok(())
             }
             FunctionArgExpr::WildcardWithOptions(_) => Err(unsupported("wildcard modifier in function argument")),

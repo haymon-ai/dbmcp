@@ -472,36 +472,41 @@ impl Level<'_> {
     /// [`LineageError::AmbiguousColumn`] when several relations answer;
     /// [`LineageError::ColumnNotFound`] when none does.
     pub(crate) fn star_of(&self, qualifier: &[Ident]) -> Result<Columns, LineageError> {
-        for at in self.visible() {
-            if let Some(rel) = at.relation_here(qualifier)? {
-                return Ok(rel.columns.star());
-            }
-        }
-        Err(LineageError::ColumnNotFound {
-            column: format!("{}.*", dotted(qualifier)),
-        })
+        self.relation(qualifier)?
+            .map(|rel| rel.columns.star())
+            .ok_or_else(|| LineageError::ColumnNotFound {
+                column: format!("{}.*", dotted(qualifier)),
+            })
     }
 
     /// Binds a `PostgreSQL` whole-row reference to the relation `qualifier` names.
     ///
-    /// The value carries every column, star-invisible ones included.
+    /// The value carries every column, star-invisible ones included. `None`
+    /// when no relation answers or the dialect has no whole-row values.
     ///
     /// # Errors
-    /// As [`Level::star_of`].
-    pub(crate) fn whole_row(&self, qualifier: &[Ident]) -> Result<Sources, LineageError> {
+    /// [`LineageError::AmbiguousColumn`] when several relations answer.
+    pub(crate) fn whole_row(&self, qualifier: &[Ident]) -> Result<Option<Sources>, LineageError> {
+        if self.dialect != Dialect::Postgres {
+            return Ok(None);
+        }
+        Ok(self.relation(qualifier)?.map(|rel| {
+            rel.columns
+                .cols
+                .iter()
+                .flat_map(|c| c.sources.iter().cloned())
+                .collect()
+        }))
+    }
+
+    /// Finds the relation a qualifier names, innermost level first.
+    fn relation(&self, qualifier: &[Ident]) -> Result<Option<&Rel>, LineageError> {
         for at in self.visible() {
             if let Some(rel) = at.relation_here(qualifier)? {
-                return Ok(rel
-                    .columns
-                    .cols
-                    .iter()
-                    .flat_map(|c| c.sources.iter().cloned())
-                    .collect());
+                return Ok(Some(rel));
             }
         }
-        Err(LineageError::ColumnNotFound {
-            column: format!("{}.*", dotted(qualifier)),
-        })
+        Ok(None)
     }
 
     /// Binds a column reference written in `clause`.
@@ -518,14 +523,11 @@ impl Level<'_> {
     /// no level binds it.
     pub(crate) fn column(&self, clause: Clause, qualifier: &[Ident], name: &Ident) -> Result<Sources, LineageError> {
         let mut found = self.input(qualifier, name);
-        if self.dialect == Dialect::Postgres
-            && qualifier.is_empty()
+        if qualifier.is_empty()
             && matches!(found, Err(LineageError::ColumnNotFound { .. }))
+            && let Some(whole_row) = self.whole_row(std::slice::from_ref(name)).transpose()
         {
-            match self.whole_row(std::slice::from_ref(name)) {
-                Err(LineageError::ColumnNotFound { .. }) => {}
-                whole_row => found = whole_row,
-            }
+            found = whole_row;
         }
         let alias = if qualifier.is_empty() && clause.sees_outputs(self.dialect) {
             self.output_named(name)
