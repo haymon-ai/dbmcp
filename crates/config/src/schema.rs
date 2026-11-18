@@ -2,8 +2,8 @@
 //!
 //! The schema is hand-written in `assets/dbmcp.schema.json` and embedded in
 //! the binary. Editors use all of it; the loader uses only its structure.
-//! [`validate`] strips the value keywords (`type`, `enum`, `minimum`,
-//! `maximum`, `minLength`, `items`) from every setting, then checks the file's keys and
+//! [`validate`] strips every setting down to its annotations (`title`,
+//! `description`, `default`), so any value passes, then checks the file's keys and
 //! the shape of the root and each section. Setting values are checked by
 //! their [`Kind`] instead. Errors are rendered here, value-free; `boon`'s own
 //! messages echo values and are never shown.
@@ -29,8 +29,9 @@ pub(crate) const URL: &str =
 /// The schema text.
 pub(crate) const SCHEMA: &str = include_str!("../assets/dbmcp.schema.json");
 
-/// Keywords that check a setting's value; [`Kind`](crate::env::Kind) owns these rules.
-const VALUE_KEYWORDS: [&str; 6] = ["type", "enum", "minimum", "maximum", "minLength", "items"];
+/// The keywords a setting keeps in the loader's schema; the rest check values,
+/// which [`Kind`](crate::env::Kind) owns.
+const ANNOTATIONS: [&str; 3] = ["title", "description", "default"];
 
 /// Validates the structure of the config file at `file` against the config schema.
 ///
@@ -51,10 +52,10 @@ pub(crate) fn validate(root: &SpannedNode, file: &Path) -> Vec<InputError> {
     errors
 }
 
-/// The embedded schema without its value keywords, compiled on first use.
+/// The embedded schema with settings stripped to annotations, compiled on first use.
 static COMPILED: LazyLock<(Schemas, SchemaIndex)> = LazyLock::new(compile);
 
-/// Compiles the embedded schema without its value keywords.
+/// Compiles the embedded schema with settings stripped to annotations.
 fn compile() -> (Schemas, SchemaIndex) {
     let mut document: Value = serde_json::from_str(SCHEMA).expect("embedded schema is valid JSON");
     strip_values(&mut document);
@@ -65,7 +66,7 @@ fn compile() -> (Schemas, SchemaIndex) {
     (schemas, index)
 }
 
-/// Removes [`VALUE_KEYWORDS`] from every leaf property: one without `properties`.
+/// Keeps only [`ANNOTATIONS`] on every leaf property: one without `properties`.
 fn strip_values(schema: &mut Value) {
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return;
@@ -74,9 +75,7 @@ fn strip_values(schema: &mut Value) {
         if property.get("properties").is_some() {
             strip_values(property);
         } else if let Some(property) = property.as_object_mut() {
-            for keyword in VALUE_KEYWORDS {
-                property.remove(keyword);
-            }
+            property.retain(|keyword, _| ANNOTATIONS.contains(&keyword.as_str()));
         }
     }
 }
@@ -287,6 +286,15 @@ pub(crate) mod tests {
                     let names = choices.map(|choices| choices.iter().map(|name| Value::from(*name)).collect());
                     assert_eq!(schema["items"].get("enum"), names.as_ref(), "{path}");
                 }
+                Kind::Rules => {
+                    assert_eq!(types(schema), ["object", "null"], "{path}");
+                    let rule = &schema["additionalProperties"];
+                    assert_eq!(rule["required"], serde_json::json!(["columns", "entity"]), "{path}");
+                    let Kind::Enum { choices } = crate::env::PII_OPERATOR.kind else {
+                        panic!("pii.operator is an enum");
+                    };
+                    assert_eq!(rule["properties"]["operator"]["enum"], nullable(choices), "{path}");
+                }
             }
         }
     }
@@ -348,13 +356,19 @@ pub(crate) mod tests {
         assert!(unmapped.is_empty(), "add a reason for {unmapped:?}");
     }
 
+    /// Compiles the full embedded schema, value keywords included.
+    fn full_schema() -> (Schemas, SchemaIndex) {
+        let mut compiler = Compiler::new();
+        compiler.add_resource(URL, document()).expect("absolute");
+        let mut schemas = Schemas::new();
+        let index = compiler.compile(URL, &mut schemas).expect("compiles");
+        (schemas, index)
+    }
+
     #[test]
     fn defaults_validate_against_the_full_schema() {
         let document = document();
-        let mut compiler = Compiler::new();
-        compiler.add_resource(URL, document.clone()).expect("absolute");
-        let mut schemas = Schemas::new();
-        let index = compiler.compile(URL, &mut schemas).expect("compiles");
+        let (schemas, index) = full_schema();
         for setting in SETTINGS {
             let Some(default) = property(&document, setting.path).and_then(|s| s.get("default")) else {
                 continue;
@@ -420,5 +434,35 @@ pub(crate) mod tests {
     #[test]
     fn setting_values_are_not_checked() {
         assert!(check("transport: 1\ndatabase:\n  port: -5\n  host: [a]\n").is_empty());
+        assert!(check("pii:\n  rules: [1]\n").is_empty());
+        assert!(check("pii:\n  rules:\n    Bad: 1\n").is_empty());
+    }
+
+    #[test]
+    fn full_schema_checks_rule_shapes() {
+        let (schemas, index) = full_schema();
+        let valid = |rules: Value| {
+            schemas
+                .validate(&serde_json::json!({ "pii": { "rules": rules } }), index)
+                .is_ok()
+        };
+        assert!(valid(serde_json::json!({
+            "emails": { "columns": ["def.shop.users.email"], "entity": "EMAIL_ADDRESS" },
+            "names": { "columns": ["def.shop.users.name"], "entity": "PERSON", "operator": "mask" },
+        })));
+        assert!(valid(serde_json::json!({})));
+        for rules in [
+            serde_json::json!({ "Emails": { "columns": ["a.b.c.d"], "entity": "URL" } }),
+            serde_json::json!({ "r": { "columns": ["a.b.c.d"] } }),
+            serde_json::json!({ "r": { "columns": ["a.b.c"], "entity": "URL" } }),
+            serde_json::json!({ "r": { "columns": ["a.b.*.d"], "entity": "URL" } }),
+            serde_json::json!({ "r": { "columns": ["a.b.c. d"], "entity": "URL" } }),
+            serde_json::json!({ "r": { "columns": [], "entity": "URL" } }),
+            serde_json::json!({ "r": { "columns": ["a.b.c.d"], "entity": "URL", "allow": ["join"] } }),
+            serde_json::json!({ "r": { "columns": ["a.b.c.d"], "entity": "URL", "operator": "scramble" } }),
+            serde_json::json!([{ "columns": ["a.b.c.d"], "entity": "URL" }]),
+        ] {
+            assert!(!valid(rules.clone()), "{rules}");
+        }
     }
 }

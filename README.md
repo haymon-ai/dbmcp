@@ -164,7 +164,7 @@ From an MCP client, pass `"args": ["--config-file", "~/path/to/dbmcp.yaml"]` or 
 
 ## Configuration ⚙️
 
-Every setting has a `DBMCP_*` environment variable and a YAML key. Each setting is resolved with clear precedence:
+Every setting has a YAML key and, except the YAML-only `pii.rules`, a `DBMCP_*` environment variable. Each setting is resolved with clear precedence:
 
 **process environment > env files (`--env-file`) > config files (`--config-file`) > defaults**
 

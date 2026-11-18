@@ -2,11 +2,13 @@
 //!
 //! Every setting is one constant here, and the loader reads it through that
 //! constant, so a misspelt setting is a compile error. Env names are
-//! hand-picked, not derived from key paths. Every leaf setting has exactly
-//! one name and every name maps to exactly one setting. The [`Kind`] carries
+//! hand-picked, not derived from key paths. Every leaf setting has at most
+//! one name and every name maps to exactly one setting; a YAML-only setting
+//! (`pii.rules`) has none. The [`Kind`] carries
 //! every rule a value must meet: integer ranges, enum choices, and path
 //! rules are stated here and nowhere else, and [`Kind::check`] applies them
-//! to values from every source.
+//! to values from every source. The one exception is `pii.rules`, whose
+//! value rules live in the `rules` module.
 
 use std::path::{Path, PathBuf};
 
@@ -14,6 +16,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::log::LogLevel;
 use crate::node::Node;
 use crate::pii::{PiiCategory, PiiOperator};
+use crate::rules::{self, Rule};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
 
@@ -28,8 +31,8 @@ pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
 pub struct Setting {
     /// Dotted YAML key path, e.g. `database.host`.
     pub path: &'static str,
-    /// Env var name, e.g. `DBMCP_DB_HOST`.
-    pub env: &'static str,
+    /// Env var name, e.g. `DBMCP_DB_HOST`; `None` for a YAML-only setting.
+    pub env: Option<&'static str>,
     /// How the value is cast and checked.
     pub kind: Kind,
 }
@@ -67,6 +70,8 @@ pub enum Kind {
         /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
+    /// The `pii.rules` mapping of rule names to column rules.
+    Rules,
 }
 
 /// A raw setting value: process env or env-file text, or a YAML node.
@@ -105,6 +110,8 @@ pub(crate) enum Value {
     Choice(&'static str),
     /// A [`Kind::List`] value, each item one of its choices if any.
     List(Vec<String>),
+    /// A [`Kind::Rules`] value, one entry per rule in file order.
+    Rules(Vec<Rule>),
 }
 
 impl Kind {
@@ -205,13 +212,17 @@ impl Kind {
                 }
                 Value::List(items.into_iter().map(str::to_owned).collect())
             }
+            Self::Rules => match node {
+                Some(Node::Map(entries)) => Value::Rules(rules::cast(entries)?),
+                _ => return Err(format!("expected mapping, found {}", found())),
+            },
         };
         Ok(Some(value))
     }
 }
 
 /// Returns the entry of `choices` equal to `text`.
-fn choose(choices: &'static [&'static str], text: &str) -> Result<&'static str, String> {
+pub(crate) fn choose(choices: &'static [&'static str], text: &str) -> Result<&'static str, String> {
     choices
         .iter()
         .find(|name| **name == text)
@@ -289,7 +300,7 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
+pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
 const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);
@@ -304,7 +315,16 @@ const FILE_PATH: Kind = Kind::Path { home_from_env: false };
 const HOME_PATH: Kind = Kind::Path { home_from_env: true };
 
 const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
-    Setting { path, env, kind }
+    Setting {
+        path,
+        env: Some(env),
+        kind,
+    }
+}
+
+/// A setting set only in config files; it has no env var.
+const fn yaml_only(path: &'static str, kind: Kind) -> Setting {
+    Setting { path, env: None, kind }
 }
 
 /// `transport` / `DBMCP_TRANSPORT`.
@@ -409,6 +429,8 @@ pub const PII_CATEGORIES: Setting = setting(
 pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
 /// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
 pub const PII_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
+/// `pii.rules`, YAML only.
+pub const PII_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
 /// `ssh.host` / `DBMCP_SSH_HOST`.
 pub const SSH_HOST: Setting = setting("ssh.host", "DBMCP_SSH_HOST", Kind::Text);
 /// `ssh.port` / `DBMCP_SSH_PORT`.
@@ -474,6 +496,7 @@ pub const SETTINGS: &[Setting] = &[
     PII_CATEGORIES,
     PII_NER_ENABLE,
     PII_NER_MODEL,
+    PII_RULES,
     SSH_HOST,
     SSH_PORT,
     SSH_USER,
@@ -495,20 +518,17 @@ mod tests {
     #[test]
     fn paths_and_env_names_are_unique() {
         let paths: HashSet<_> = SETTINGS.iter().map(|s| s.path).collect();
-        let envs: HashSet<_> = SETTINGS.iter().map(|s| s.env).collect();
+        let envs: Vec<_> = SETTINGS.iter().filter_map(|s| s.env).collect();
+        let unique: HashSet<_> = envs.iter().collect();
         assert_eq!(paths.len(), SETTINGS.len(), "duplicate YAML path");
-        assert_eq!(envs.len(), SETTINGS.len(), "duplicate env name");
+        assert_eq!(unique.len(), envs.len(), "duplicate env name");
     }
 
     #[test]
     fn env_names_use_the_dbmcp_prefix_and_skip_loader_inputs() {
-        for setting in SETTINGS {
-            assert!(setting.env.starts_with("DBMCP_"), "{}", setting.env);
-            assert!(
-                ![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&setting.env),
-                "{}",
-                setting.env
-            );
+        for env in SETTINGS.iter().filter_map(|s| s.env) {
+            assert!(env.starts_with("DBMCP_"), "{env}");
+            assert!(![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&env), "{env}");
         }
     }
 
@@ -619,7 +639,7 @@ mod tests {
             assert_eq!(text(kind, ""), Ok(None), "{kind:?}");
             assert_eq!(yaml(kind, "\"\""), Ok(None), "{kind:?}");
         }
-        for kind in [int(0, 1), Kind::Bool, LIST, Kind::Text, COLORS] {
+        for kind in [int(0, 1), Kind::Bool, LIST, Kind::Text, COLORS, Kind::Rules] {
             assert_eq!(yaml(kind, "~"), Ok(None), "{kind:?}");
         }
         assert_eq!(text(Kind::Text, ""), Ok(Some(Value::Text(String::new()))));
@@ -664,6 +684,9 @@ mod tests {
             (yaml(COLORS, "1"), "expected string, found integer"),
             (yaml(LIST, "{a: b}"), "expected string or sequence, found mapping"),
             (yaml(LIST, "[a, 1]"), "item 1: expected string, found integer"),
+            (yaml(Kind::Rules, "[a]"), "expected mapping, found sequence"),
+            (yaml(Kind::Rules, "\"\""), "expected mapping, found string"),
+            (yaml(Kind::Rules, "!x {}"), "YAML tag !x is not supported"),
         ];
         for (result, reason) in cases {
             assert_eq!(result, Err(reason.into()));
@@ -673,7 +696,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 44);
+        assert_eq!(SETTINGS.len(), 45);
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {

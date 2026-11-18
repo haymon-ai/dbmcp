@@ -13,7 +13,8 @@ The config file is a YAML mapping. Top-level keys are `transport` and `log_level
 - **Null** (`key:`, `key: null`, `key: ~`) means unset, as does an empty section (`ssh:`). An empty string at an integer, boolean, or list key (`port: ""`, or an unset `${PORT}`) also means unset, just like an empty `DBMCP_*` variable.
 - **Lists** are YAML sequences, or a comma-separated string (useful with `${}`: `allowed_hosts: ${HOSTS}`), and replace the default wholesale. `http.allowed_origins: []` disables server-side `Origin` validation; this is only expressible in YAML. `http.allowed_hosts: []` and `pii.categories: []` are rejected.
 - **Tags** other than the YAML core tags (`!!str`, `!!int`, …) are an error wherever they appear. Docker Compose's `!reset` and `!override` are not supported.
-- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true. Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env files.
+- **`pii.rules`** is the one YAML-only setting: it has no `DBMCP_*` variable. It is a mapping of rule names to rules (see [Column rules](/privacy/column-rules)); `""` there is an error, not unset.
+- The `http` section is ignored unless `transport` is `http`; the other `pii` keys are ignored unless `pii.enabled` is true, except `pii.rules`, which is an error unless `pii.enabled` is true (`pii.rules: {}` is fine). Ignored values must still be valid: every value in the file is checked, as is every `DBMCP_*` value in the environment and env files.
 
 A full annotated example:
 

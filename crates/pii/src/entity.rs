@@ -395,6 +395,12 @@ mod tests {
     }
 
     #[test]
+    fn config_entity_names_mirror_entity() {
+        let names: Vec<&str> = Entity::ALL.iter().map(|e| e.as_str()).collect();
+        assert_eq!(dbmcp_config::ColumnRule::ENTITIES.as_slice(), names.as_slice());
+    }
+
+    #[test]
     fn all_has_51_variants() {
         assert_eq!(Entity::ALL.len(), 51);
     }

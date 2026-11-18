@@ -26,7 +26,8 @@ use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::log::LogLevel;
 use crate::options::LoadOptions;
-use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
+use crate::pii::{ColumnRule, PiiCategory, PiiConfig, PiiOperator};
+use crate::rules::{self, Rule};
 use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
 use crate::ssh::{SshConfig, StrictHostKeyChecking};
@@ -194,6 +195,15 @@ impl Resolver<'_> {
         Some(self.list(setting)?.iter().map(|item| choose(choices, item)).collect())
     }
 
+    /// Returns the `pii.rules` value, one entry per rule in file order.
+    fn rules(&self) -> &[Rule] {
+        match self.settings.get(env::PII_RULES) {
+            None => &[],
+            Some(Value::Rules(rules)) => rules,
+            Some(_) => unreachable!("pii.rules is a rules setting"),
+        }
+    }
+
     /// Returns a path setting, already resolved by its [`Kind::Path`] rule.
     fn path(&self, setting: Setting) -> Option<PathBuf> {
         match self.settings.get(setting)? {
@@ -205,7 +215,8 @@ impl Resolver<'_> {
     /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
     ///
     /// Activation rules run here: a section exists only when its trigger is
-    /// set, and SSH settings without `ssh.host` are an error.
+    /// set, SSH settings without `ssh.host` are an error, and so are column
+    /// rules without `pii.enabled`.
     fn build(&self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
             .enumeration(env::TRANSPORT, Transport::CHOICES)
@@ -237,6 +248,7 @@ impl Resolver<'_> {
                     .missing(&[env::SSH_HOST]),
             );
         }
+        diagnostics.extend(rules::check(self.rules(), config.pii.is_some(), &config.database));
         if !diagnostics.is_empty() {
             return Err(diagnostics);
         }
@@ -323,14 +335,28 @@ impl Resolver<'_> {
         let operator = self
             .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
             .unwrap_or(PiiConfig::DEFAULT_OPERATOR);
+        let rules: Vec<ColumnRule> = self
+            .rules()
+            .iter()
+            .flat_map(|rule| {
+                rule.columns.iter().map(|key| ColumnRule {
+                    name: rule.name.clone(),
+                    key: key.clone(),
+                    entity: rule.entity,
+                    operator: rule
+                        .operator
+                        .map_or(operator, |name| choose(PiiOperator::CHOICES, name)),
+                })
+            })
+            .collect();
+        let hashes = operator == PiiOperator::Hash || rules.iter().any(|rule| rule.operator == PiiOperator::Hash);
         PiiConfig {
             operator,
-            key: (operator == PiiOperator::Hash)
-                .then(|| self.string(env::PII_KEY).map(Into::into))
-                .flatten(),
+            key: hashes.then(|| self.string(env::PII_KEY).map(Into::into)).flatten(),
             categories: self.enum_list(env::PII_CATEGORIES, PiiCategory::CHOICES),
             ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
             ner_model: self.path(env::PII_NER_MODEL),
+            rules,
         }
     }
 
@@ -1244,6 +1270,265 @@ mod tests {
         );
         let debug = format!("{pii:?}");
         assert!(!debug.contains(&env_key), "key leaked: {debug}");
+    }
+
+    /// Builds only the PII section, skipping validation.
+    ///
+    /// Column rules fail validation on every backend until enforcement lands,
+    /// so tests of the cast rules read the section directly.
+    #[track_caller]
+    fn pii_section(fixture: &Fixture) -> PiiConfig {
+        let settings = settings::read(&fixture.options, &mut Vec::new()).unwrap_or_else(|e| panic!("read failed: {e}"));
+        Resolver {
+            settings: &settings,
+            home: fixture.options.home.as_deref(),
+        }
+        .pii()
+    }
+
+    /// Returns the rule name and key of each column rule.
+    fn ruled(pii: &PiiConfig) -> Vec<(&str, String)> {
+        pii.rules
+            .iter()
+            .map(|rule| (rule.name.as_str(), rule.key.join(".")))
+            .collect()
+    }
+
+    const RULES: &str = "pii:\n  enabled: true\n  operator: mask\n  rules:\n    \
+                         emails:\n      columns: [def.shop.users.email, def.shop.orders.Email]\n      entity: EMAIL_ADDRESS\n    \
+                         names:\n      columns: [def.shop.users.name]\n      entity: PERSON\n      operator: redact\n";
+
+    #[test]
+    fn rules_flatten_one_column_rule_per_listed_column() {
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", RULES));
+        let flat: Vec<_> = pii
+            .rules
+            .iter()
+            .map(|rule| (rule.name.as_str(), rule.key.join("."), rule.entity, rule.operator))
+            .collect();
+        assert_eq!(
+            flat,
+            [
+                (
+                    "emails",
+                    "def.shop.users.email".to_owned(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Mask
+                ),
+                (
+                    "emails",
+                    "def.shop.orders.Email".to_owned(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Mask
+                ),
+                ("names", "def.shop.users.name".to_owned(), "PERSON", PiiOperator::Redact),
+            ]
+        );
+        let pii = pii_section(&Fixture::new().config(
+            "dbmcp.yaml",
+            "pii:\n  enabled: true\n  rules:\n    r:\n      columns: [def.a.b.c]\n      entity: URL\n",
+        ));
+        assert_eq!(
+            pii.rules[0].operator,
+            PiiOperator::Hash,
+            "inherits the default pii.operator"
+        );
+    }
+
+    #[test]
+    fn rule_value_errors_are_located_in_the_declaring_file() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "pii:\n  enabled: true\n  rules:\n    r:\n      columns: [def.a.b.secret_col]\n      entity: NOPE\n",
+        );
+        let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+        let error = fixture.err();
+        assert_eq!(
+            error,
+            format!("invalid settings:\n  - {file}:4:5: pii.rules: r: entity: unknown entity type")
+        );
+        assert!(!error.contains("secret_col") && !error.contains("NOPE"), "{error}");
+        let error = Fixture::new().config("dbmcp.yaml", "pii:\n  rules: \"\"\n").err();
+        assert!(
+            error.ends_with(":2:10: pii.rules: expected mapping, found string"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_rule_name_is_a_parse_error() {
+        let fixture = Fixture::new().config(
+            "a.yaml",
+            "pii:\n  rules:\n    r:\n      columns: [def.a.b.c]\n      entity: URL\n    r:\n      columns: [def.a.b.d]\n      entity: URL\n",
+        );
+        let a = fixture.dir.path().join("a.yaml").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!("failed to parse config file {a}:\n  - {a}:6:5: duplicate mapping key `r` is not allowed here")
+        );
+    }
+
+    #[test]
+    fn later_rules_replace_earlier_ones_whole() {
+        let fixture = Fixture::new().config("a.yaml", RULES).config(
+            "b.yaml",
+            "pii:\n  rules:\n    phones:\n      columns: [def.shop.users.phone]\n      entity: PHONE_NUMBER\n",
+        );
+        assert_eq!(
+            ruled(&pii_section(&fixture)),
+            [("phones", "def.shop.users.phone".to_owned())]
+        );
+    }
+
+    #[test]
+    fn null_rules_keep_earlier_ones_and_empty_clears() {
+        for null in ["pii:\n  rules:\n", "pii:\n  rules: ~\n"] {
+            let fixture = Fixture::new().config("a.yaml", RULES).config("b.yaml", null);
+            assert_eq!(pii_section(&fixture).rules.len(), 3, "{null}");
+        }
+        let fixture = Fixture::new()
+            .config("a.yaml", RULES)
+            .config("b.yaml", "pii:\n  rules: {}\n");
+        assert!(pii_section(&fixture).rules.is_empty());
+        assert!(fixture.ok().config.pii.expect("pii").rules.is_empty());
+    }
+
+    #[test]
+    fn a_broken_rule_in_an_overridden_file_still_fails() {
+        let fixture = Fixture::new()
+            .config(
+                "a.yaml",
+                "pii:\n  rules:\n    r:\n      columns: []\n      entity: URL\n",
+            )
+            .config("b.yaml", "pii:\n  rules: {}\n");
+        let a = fixture.dir.path().join("a.yaml").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!("invalid settings:\n  - {a}:3:5: pii.rules: r: columns: must not be empty")
+        );
+    }
+
+    #[test]
+    fn pii_rules_has_no_env_var() {
+        let loaded = Fixture::new()
+            .env("DBMCP_PII_ENABLE", "true")
+            .env("DBMCP_PII_RULES", "garbage")
+            .env_file(".env", "DBMCP_PII_RULES=garbage\n")
+            .ok();
+        assert!(loaded.config.pii.expect("pii").rules.is_empty());
+    }
+
+    #[test]
+    fn rules_require_pii_enabled() {
+        let rules = "pii:\n  rules:\n    r:\n      columns: [def.a.b.c]\n      entity: URL\n";
+        let fixture = Fixture::new().config("dbmcp.yaml", rules);
+        let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!("configuration validation failed:\n  - pii.rules requires pii.enabled (pii.rules from {file}:3:5)")
+        );
+
+        let fixture = Fixture::new()
+            .config("dbmcp.yaml", rules)
+            .env("DBMCP_PII_ENABLE", "false");
+        let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+        let error = fixture.err();
+        assert!(
+            error.ends_with(&format!(
+                "pii.rules requires pii.enabled (pii.rules from {file}:3:5; pii.enabled from DBMCP_PII_ENABLE)"
+            )),
+            "{error}"
+        );
+
+        Fixture::new().config("dbmcp.yaml", "pii:\n  rules: {}\n").ok();
+        Fixture::new()
+            .config("a.yaml", rules)
+            .config("b.yaml", "pii:\n  rules: {}\n")
+            .ok();
+    }
+
+    #[test]
+    fn pii_key_is_kept_when_a_rule_hashes() {
+        let rules = |operator: &str| {
+            format!(
+                "pii:\n  enabled: true\n  operator: mask\n  key: {PII_KEY_32}\n  rules:\n    r:\n      columns: [def.a.b.c]\n      entity: URL\n{operator}"
+            )
+        };
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &rules("      operator: hash\n")));
+        assert_eq!(pii.key.as_ref().map(ExposeSecret::expose_secret), Some(PII_KEY_32));
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &rules("")));
+        assert!(pii.key.is_none(), "every rule inherits mask");
+    }
+
+    #[test]
+    fn column_rules_are_not_yet_supported_on_any_backend() {
+        for (backend, catalog) in [
+            ("mysql", "def"),
+            ("mariadb", "def"),
+            ("postgres", "app"),
+            ("sqlite", "main"),
+        ] {
+            let fixture = Fixture::new()
+                .config(
+                    "dbmcp.yaml",
+                    &format!(
+                        "pii:\n  enabled: true\n  rules:\n    r:\n      columns: [{catalog}.a.b.c]\n      entity: URL\n"
+                    ),
+                )
+                .env("DBMCP_DB_BACKEND", backend)
+                .env("DBMCP_DB_NAME", "app");
+            let error = fixture.load().expect_err("rules are gated");
+            let [diagnostic] = diagnostics(&error) else {
+                panic!("one diagnostic on {backend}: {error}");
+            };
+            assert!(
+                matches!(diagnostic.error, ConfigError::PiiRulesUnsupported(_)),
+                "{error}"
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("pii.rules: column rules are not yet supported on {backend}")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_catalog_segment_is_reported_beside_the_gate() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "pii:\n  enabled: true\n  rules:\n    r:\n      columns: [def.a.b.c, shop.a.b.d, Shop.a.b.e]\n      entity: URL\n",
+        );
+        let error = fixture.err();
+        assert!(
+            error.contains("pii.rules: r: columns items 1, 2: the catalog segment must be def on mysql"),
+            "{error}"
+        );
+        assert!(!error.contains("shop"), "{error}");
+    }
+
+    #[test]
+    fn a_magento_rule_body_fails_only_with_the_backend_gate() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "pii:\n  enabled: true\n  operator: hash\n  key: \"prototype-magento-key-0123456789abcdef\"\n  rules:\n    \
+             emails:\n      columns:\n        - def.magento.customer_entity.email\n        - def.magento.sales_order.customer_email\n      \
+             entity: EMAIL_ADDRESS\n    \
+             names:\n      columns:\n        - def.magento.customer_entity.firstname\n        - def.magento.customer_entity.lastname\n      \
+             entity: PERSON\n      operator: replace\n    \
+             phones:\n      columns: [def.magento.sales_order_address.telephone]\n      entity: PHONE_NUMBER\n      operator: mask\n    \
+             cards:\n      columns: [def.magento.sales_order_payment.cc_number_enc]\n      entity: CREDIT_CARD\n      operator: redact\n",
+        );
+        assert_eq!(pii_section(&fixture).rules.len(), 6);
+        let error = fixture.load().expect_err("rules are gated");
+        let [diagnostic] = diagnostics(&error) else {
+            panic!("only the gate: {error}");
+        };
+        assert!(matches!(
+            diagnostic.error,
+            ConfigError::PiiRulesUnsupported(DatabaseBackend::Mysql)
+        ));
     }
 
     #[test]

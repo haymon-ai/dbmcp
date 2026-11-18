@@ -382,6 +382,54 @@
             "string",
             "null"
           ]
+        },
+        "rules": {
+          "description": "Column rules (YAML only; requires pii.enabled): named groups of exact catalog.schema.table.column keys, each with an entity and an optional operator. The last file that sets it wins whole; {} clears.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "propertyNames": {
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "columns",
+              "entity"
+            ],
+            "properties": {
+              "columns": {
+                "description": "Exact column keys: catalog.schema.table.column.",
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^.*\\s]+\\.[^.*\\s]+\\.[^.*\\s]+\\.[^.*\\s]+$"
+                }
+              },
+              "entity": {
+                "description": "Entity the columns hold, e.g. EMAIL_ADDRESS; labels the output.",
+                "type": "string"
+              },
+              "operator": {
+                "description": "Operator that rewrites the whole value; defaults to pii.operator.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "replace",
+                  "mask",
+                  "redact",
+                  "hash",
+                  null
+                ]
+              }
+            }
+          }
         }
       }
     },

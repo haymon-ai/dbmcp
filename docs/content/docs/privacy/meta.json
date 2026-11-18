@@ -3,6 +3,7 @@
     "index",
     "redaction",
     "machine-learning",
+    "column-rules",
     "data-types"
   ]
 }

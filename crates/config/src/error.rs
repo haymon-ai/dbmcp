@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::database::DatabaseBackend;
 use crate::env::Setting;
 use crate::source::Source;
 
@@ -72,6 +73,27 @@ pub enum ConfigError {
     /// NER was enabled without a model path.
     #[error("pii.ner_model (model directory) is required when pii.ner_enabled is set")]
     PiiNerModelMissing,
+
+    /// `pii.rules` was set while PII redaction is off.
+    #[error("pii.rules requires pii.enabled")]
+    PiiRulesWithoutPii,
+
+    /// Column rules are not yet enforced on this backend.
+    #[error("pii.rules: column rules are not yet supported on {0}")]
+    PiiRulesUnsupported(DatabaseBackend),
+
+    /// A rule's column keys name a catalog the backend never uses.
+    #[error("pii.rules: {rule}: columns {items}: the catalog segment must be {expected} on {backend}")]
+    PiiRuleCatalog {
+        /// The rule's name.
+        rule: String,
+        /// The offending item indices, e.g. `item 0` or `items 0, 2`.
+        items: String,
+        /// What the catalog segment must be, e.g. `def`.
+        expected: &'static str,
+        /// The configured backend.
+        backend: DatabaseBackend,
+    },
 
     /// SSH tunnelling was requested for the `SQLite` backend.
     #[error("ssh.host: not supported with the sqlite backend")]
@@ -164,11 +186,17 @@ impl fmt::Display for Diagnostic {
         write!(f, "{}", self.error)?;
         match self.missing.as_slice() {
             [] => {}
-            [setting] => write!(f, "; set {} or {} in the config file", setting.env, setting.path)?,
+            [setting] => match setting.env {
+                Some(env) => write!(f, "; set {env} or {} in the config file", setting.path)?,
+                None => write!(f, "; set {} in the config file", setting.path)?,
+            },
             many => {
                 let routes: Vec<String> = many
                     .iter()
-                    .map(|setting| format!("{} ({})", setting.env, setting.path))
+                    .map(|setting| match setting.env {
+                        Some(env) => format!("{env} ({})", setting.path),
+                        None => setting.path.to_owned(),
+                    })
                     .collect();
                 write!(f, "; set one of {}", routes.join(", "))?;
             }
@@ -239,6 +267,15 @@ mod tests {
         assert_eq!(
             diagnostic.to_string(),
             "database.name (file path) is required for sqlite; set DBMCP_DB_NAME or database.name in the config file"
+        );
+    }
+
+    #[test]
+    fn a_missing_yaml_only_setting_names_only_the_key() {
+        let diagnostic = Diagnostic::new(ConfigError::PiiRulesWithoutPii).missing(&[env::PII_RULES]);
+        assert_eq!(
+            diagnostic.to_string(),
+            "pii.rules requires pii.enabled; set pii.rules in the config file"
         );
     }
 
