@@ -9,7 +9,7 @@
 //! and nondeterministic ones (`RAND`, `UUID`, `RANDOM_BYTES`). `JSON_TABLE`
 //! is modeled by its own syntax, so the table-function list is empty.
 
-use super::Table;
+use super::table::Table;
 
 /// The `MySQL` function table.
 pub(super) const TABLE: Table = Table {

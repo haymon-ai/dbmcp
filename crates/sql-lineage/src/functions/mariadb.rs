@@ -11,7 +11,7 @@
 //! `JSON_TABLE` is modeled by its own syntax, so the table-function list is
 //! empty.
 
-use super::Table;
+use super::table::Table;
 
 /// The `MariaDB` function table.
 pub(super) const TABLE: Table = Table {

@@ -9,10 +9,10 @@
 //! `writefile`, `pragma_*` table functions, and nondeterministic ones
 //! (`random`, `randomblob`).
 
-use super::{Output, Table, col, hidden};
+use super::table::{Column, Output, Table, col, hidden};
 
 /// Columns of `json_each` / `json_tree`, hidden arguments last.
-const JSON_EACH: &[super::Column] = &[
+const JSON_EACH: &[Column] = &[
     col("key"),
     col("value"),
     col("type"),

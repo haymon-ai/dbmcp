@@ -17,7 +17,7 @@
 //! session-state functions, and nondeterministic ones (`random`,
 //! `gen_random_uuid`).
 
-use super::{Output, Table, col};
+use super::table::{Output, Table, col};
 
 /// The `PostgreSQL` function table.
 pub(super) const TABLE: Table = Table {
