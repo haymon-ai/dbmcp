@@ -1,11 +1,9 @@
 name: Docs
 
+# Deploys only for a release tag; pull requests build without deploying.
 on:
   push:
-    branches: ["master", "docs"]  # TODO: remove "docs" after merge
-    paths:
-      - "docs/**"
-      - ".github/workflows/docs.yml"
+    tags: ["v*"]
   pull_request:
     paths:
       - "docs/**"
@@ -51,14 +49,14 @@ jobs:
           PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
 
       - name: Upload artifact
-        if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/docs') && github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/out
           include-hidden-files: true
 
   deploy:
-    if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/docs') && github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
