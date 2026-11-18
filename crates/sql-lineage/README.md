@@ -14,7 +14,7 @@ Catalog-aware, column-level SQL lineage powering [dbmcp](https://dbmcp.haymon.ai
 - Catalog loop: names the catalog lacks come back together as `LineageError::Missing`; resolve them on your own connection, insert, call again
 - Per-dialect identifier rules for PostgreSQL, MySQL, MariaDB, and SQLite
 - Expands `*` / `t.*` from the catalog (skipping invisible columns), merges `USING` / `NATURAL` keys, follows CTEs, derived tables, and correlated subqueries
-- Per-dialect built-in function tables mark each call as known or unknown; built-ins that expose values the parser cannot see (XML export, settings, file reads, error channels) are absent
+- Per-dialect built-in function tables mark each `name(...)` call as known or unknown, by name only; built-ins that run SQL text, read files or settings, or quote arguments in errors are left out, and casts and other special forms are not looked up
 - Fail-closed — unknown or ambiguous columns and any construct it does not model abort the whole analysis
 - Never connects to or executes against a database — analyzes SQL text only
 

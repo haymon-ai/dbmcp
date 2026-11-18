@@ -1,4 +1,4 @@
-//! Per-dialect tables of built-in functions that expose nothing beyond their arguments.
+//! Per-dialect tables of built-in functions that expose nothing beyond their arguments and the clock.
 //!
 //! Left out on purpose: built-ins that run SQL text, read relations, files or
 //! settings, report session state, quote arguments in errors, or have side
