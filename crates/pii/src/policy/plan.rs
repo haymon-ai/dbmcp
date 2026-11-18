@@ -28,11 +28,8 @@ pub struct PlannedColumn {
     pub position: Position,
     /// The folded name the column must come back under, where known.
     ///
-    /// `Some` only for a column with one source whose output name is that
-    /// source's column name (`*`, a bare column, or a same-name alias): the
-    /// server returns it under that name, so a mismatch means the result
-    /// shifted since the plan was made. Expression names are engine-specific
-    /// and stay `None`.
+    /// `Some` only for a single source under its own name (`*`, a bare
+    /// column, or a same-name alias).
     pub name: Option<String>,
 }
 
@@ -178,17 +175,14 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
     Ok(Plan { columns })
 }
 
-/// Returns the folded name a column comes back under, if the server keeps it.
-///
-/// Known only for one source whose column name the output name repeats.
+/// Computes [`PlannedColumn::name`].
 fn known_name(column: &OutputColumn) -> Option<String> {
     let mut sources = column.sources.iter();
-    match (sources.next(), sources.next()) {
-        (Some(source), None) if ColumnRule::fold(&column.name) == ColumnRule::fold(&source.column) => {
-            Some(ColumnRule::fold(&source.column))
-        }
-        _ => None,
-    }
+    let (Some(source), None) = (sources.next(), sources.next()) else {
+        return None;
+    };
+    let folded = ColumnRule::fold(&source.column);
+    (ColumnRule::fold(&column.name) == folded).then_some(folded)
 }
 
 /// Returns the rule whose key is `source`'s folded `catalog.schema.table.column`.

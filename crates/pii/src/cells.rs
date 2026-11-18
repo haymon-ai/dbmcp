@@ -1,8 +1,6 @@
 //! Positional redaction of result cells under a column plan.
 //!
-//! With column rules active, a backend collects a result as [`Cells`]
-//! (column names once, then value rows) and redacts cell `i` of every row by
-//! the plan's position `i`:
+//! Cell `i` of every row is redacted by the plan's position `i`:
 //!
 //! - `Global`: global detection over every string leaf, with the column name
 //!   as context, exactly like [`Redactor::apply`] on the row object.
@@ -11,9 +9,8 @@
 //!   else (numbers, booleans, `json`/`jsonb`, keys included) from its compact
 //!   JSON text. `NULL` stays `null`.
 //!
-//! Before any of it runs, the cells must fit the plan; an empty result has
-//! nothing to check. Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not
-//! positional; redact them with [`Redactor::redact_rows`].
+//! Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not positional; redact them
+//! with [`Redactor::redact_rows`].
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -52,23 +49,14 @@ pub enum ShapeError {
 /// [`Redactor::redact_cells`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Cells {
-    /// Column names, from the first pushed row.
     columns: Vec<String>,
-    /// Row values, in column order.
     rows: Vec<Vec<Value>>,
 }
 
 impl Cells {
-    /// Creates an empty result.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Appends one row of ordered `(name, value)` entries.
     ///
-    /// The first row sets the column names; later rows keep only their
-    /// values, since every row of one result shares its columns.
+    /// The first row sets the column names; later rows add only values.
     pub fn push(&mut self, entries: Vec<(String, Value)>) {
         if self.rows.is_empty() {
             let (columns, values): (Vec<String>, Vec<Value>) = entries.into_iter().unzip();
@@ -80,23 +68,8 @@ impl Cells {
     }
 }
 
-/// Checks that result columns named `names` fit `plan`.
-///
-/// The column count must equal the plan's length, and every column with a
-/// known name ([`PlannedColumn::name`](crate::policy::PlannedColumn::name)) must come back under it, compared folded by
-/// [`ColumnRule::fold`]. Duplicate names are allowed.
-///
-/// # Errors
-///
-/// Returns [`ShapeError::ColumnCount`] on a count mismatch and
-/// [`ShapeError::NameMismatch`] for the first position whose name differs.
-fn check_columns(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
-    if names.len() != plan.columns.len() {
-        return Err(ShapeError::ColumnCount {
-            expected: plan.columns.len(),
-            actual: names.len(),
-        });
-    }
+/// Checks that every known planned name matches its result column, folded.
+fn check_names(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
     for (position, (name, column)) in names.iter().zip(&plan.columns).enumerate() {
         if let Some(expected) = &column.name
             && ColumnRule::fold(name) != *expected
@@ -110,19 +83,14 @@ fn check_columns(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
 impl Redactor {
     /// Redacts `cells` in place, cell `i` of every row by `plan` position `i`.
     ///
-    /// Whole-value rewrites count into the stats under the rule's entity.
-    /// Emits one `tracing::info!` event when anything was rewritten.
-    ///
     /// # Errors
     ///
-    /// Returns [`RedactionError::Shape`] when the columns or a row do not fit
-    /// `plan` (see [`check_columns`]), before any cell is touched, and
-    /// [`RedactionError::Internal`] when the pipeline panics or the NER pass
-    /// fails. The request must fail without returning any row (fail-closed).
+    /// Returns [`RedactionError::Shape`] before any cell changes, and
+    /// [`RedactionError::Internal`] on a panic or NER failure.
     pub(crate) fn apply_cells(&self, cells: &mut Cells, plan: &Plan) -> Result<RedactionStats, RedactionError> {
         let Cells { columns, rows } = cells;
-        if !rows.is_empty() {
-            check_columns(plan, columns)?;
+        if rows.is_empty() {
+            return Ok(RedactionStats::default());
         }
         if let Some(row) = rows.iter().find(|row| row.len() != plan.columns.len()) {
             return Err(ShapeError::ColumnCount {
@@ -131,6 +99,7 @@ impl Redactor {
             }
             .into());
         }
+        check_names(plan, columns)?;
         let actions = plan
             .columns
             .iter()
@@ -141,24 +110,24 @@ impl Redactor {
             .collect::<Vec<_>>();
 
         let row_count = rows.len();
-        let mut stats = RedactionStats::default();
-        let mut roots = Vec::new();
-        let mut rewrites = Vec::new();
-        for row in rows.iter_mut() {
-            for ((value, name), action) in row.iter_mut().zip(columns.iter()).zip(&actions) {
-                match action {
-                    Some((operator, entity)) => rewrites.push((value, operator, *entity)),
-                    None => roots.push(Frame::KeyedChild(value, name.as_str())),
+        let columns = &*columns;
+        let (mut roots, mut stats) = catch_unwind(AssertUnwindSafe(move || {
+            let mut stats = RedactionStats::default();
+            let mut roots = Vec::new();
+            for row in rows {
+                for ((value, name), action) in row.iter_mut().zip(columns).zip(&actions) {
+                    match action {
+                        Some((operator, entity)) => {
+                            if rewrite_whole(value, operator, *entity) {
+                                stats.total += 1;
+                                *stats.by_entity.entry(*entity).or_insert(0) += 1;
+                            }
+                        }
+                        None => roots.push(Frame::KeyedChild(value, name.as_str())),
+                    }
                 }
             }
-        }
-        catch_unwind(AssertUnwindSafe(|| {
-            for (value, operator, entity) in rewrites {
-                if rewrite_whole(value, operator, entity) {
-                    stats.total += 1;
-                    *stats.by_entity.entry(entity).or_insert(0) += 1;
-                }
-            }
+            (roots, stats)
         }))
         .map_err(|_| RedactionError::Internal("operator panicked".into()))?;
         roots.reverse();
@@ -169,20 +138,14 @@ impl Redactor {
 
     /// Redacts `cells` by `plan` and returns its rows as JSON objects.
     ///
-    /// Runs inline, or on a blocking thread when a `Global` position runs the
-    /// NER pass. Each row becomes an object, as the unruled path builds it; a
-    /// repeated name keeps its last value, already redacted by its own
-    /// position.
+    /// Offloads to a blocking thread when a `Global` position needs NER. A
+    /// repeated name keeps its last value.
     ///
     /// # Errors
     ///
-    /// Returns [`RedactionError::Shape`] when the columns or a row do not fit
-    /// `plan`: the column count must equal the plan's length, and a column
-    /// whose name the plan knows ([`PlannedColumn::name`](crate::policy::PlannedColumn::name)) must come back under it,
-    /// compared folded by [`ColumnRule::fold`]. An empty result is not
-    /// checked. Returns [`RedactionError::Internal`] when the pipeline or the
-    /// offloaded task panics or the NER pass fails. The request must fail
-    /// without returning any row (fail-closed).
+    /// Returns [`RedactionError::Shape`] when the result does not fit `plan`
+    /// (an empty result is not checked), and [`RedactionError::Internal`]
+    /// when redaction panics or NER fails (fail-closed).
     pub async fn redact_cells(&self, mut cells: Cells, plan: &Plan) -> Result<Vec<Value>, RedactionError> {
         if self.uses_ner() && plan.columns.iter().any(|column| column.position == Position::Global) {
             let redactor = self.clone();
@@ -201,10 +164,7 @@ impl Redactor {
     }
 }
 
-/// Replaces a non-null `value` whole with `operator`'s output for `entity`.
-///
-/// A string is rewritten from its text; any other value from its compact
-/// JSON text. Returns whether the value was rewritten (`NULL` is not).
+/// Rewrites a non-null `value` whole; returns `false` for `NULL`.
 fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool {
     let text = match &mut *value {
         Value::Null => return false,
@@ -235,14 +195,9 @@ mod tests {
         Plan { columns }
     }
 
-    /// Column names as the result reports them.
-    fn names<const N: usize>(names: [&str; N]) -> Vec<String> {
-        names.map(String::from).to_vec()
-    }
-
     /// A result of value rows, its columns named `c0`, `c1`, ….
     fn cells(rows: Vec<Vec<Value>>) -> Cells {
-        let mut cells = Cells::new();
+        let mut cells = Cells::default();
         for values in rows {
             cells.push(
                 values
@@ -265,42 +220,24 @@ mod tests {
     }
 
     /// A redactor from a config with `operator` and a fixed key.
-    fn keyed(operator: PiiOperator, rules: Vec<ColumnRule>) -> Redactor {
+    fn keyed(operator: PiiOperator) -> Redactor {
         let config = PiiConfig {
             operator,
             key: Some(KEY.to_string().into()),
-            rules,
             ..PiiConfig::default()
         };
         Redactor::from_config(Some(&config)).expect("builds").expect("enabled")
-    }
-
-    /// A hashing rule, as the loader resolves it.
-    fn hash_rule() -> ColumnRule {
-        ColumnRule {
-            name: "emails".into(),
-            item: 0,
-            key: ["shop", "public", "users", "email"].map(String::from),
-            entity: "EMAIL_ADDRESS",
-            operator: PiiOperator::Hash,
-        }
     }
 
     const MASKED: Position = Position::Action(PiiOperator::Mask, Entity::UsSsn);
 
     #[test]
     fn push_keeps_the_first_row_names_and_later_values() {
-        let mut cells = Cells::new();
+        let mut cells = Cells::default();
         cells.push(vec![("a".into(), json!(1)), ("b".into(), json!(2))]);
         cells.push(vec![("x".into(), json!(3)), ("y".into(), json!(4))]);
-        assert_eq!(cells.columns, names(["a", "b"]));
+        assert_eq!(cells.columns, ["a", "b"]);
         assert_eq!(cells.rows, [vec![json!(1), json!(2)], vec![json!(3), json!(4)]]);
-    }
-
-    #[test]
-    fn count_mismatch_is_rejected() {
-        let err = check_columns(&plan(vec![Position::Global]), &names(["a", "b"])).expect_err("count differs");
-        assert_eq!(err, ShapeError::ColumnCount { expected: 1, actual: 2 });
     }
 
     #[test]
@@ -317,14 +254,14 @@ mod tests {
                 },
             ],
         };
-        check_columns(&plan, &names(["EMAIL", "?column?"])).expect("folded match, unknown skipped");
-        let err = check_columns(&plan, &names(["ssn", "x"])).expect_err("name differs");
+        check_names(&plan, &["EMAIL", "?column?"].map(String::from)).expect("folded match, unknown skipped");
+        let err = check_names(&plan, &["ssn", "x"].map(String::from)).expect_err("name differs");
         assert_eq!(err, ShapeError::NameMismatch { position: 0 });
     }
 
     #[test]
     fn duplicate_names_are_allowed() {
-        check_columns(&plan(vec![MASKED, Position::Global]), &names(["a", "a"])).expect("duplicates allowed");
+        check_names(&plan(vec![MASKED, Position::Global]), &["a", "a"].map(String::from)).expect("duplicates allowed");
     }
 
     #[test]
@@ -354,7 +291,7 @@ mod tests {
 
     #[test]
     fn empty_result_is_not_checked() {
-        let mut cells = Cells::new();
+        let mut cells = Cells::default();
         let stats = Redactor::with_defaults()
             .apply_cells(&mut cells, &plan(vec![MASKED, Position::Global]))
             .expect("nothing to check");
@@ -412,7 +349,7 @@ mod tests {
     #[test]
     fn global_matches_row_redaction_with_the_column_name_as_context() {
         let redactor = Redactor::with_defaults();
-        let mut cells = Cells::new();
+        let mut cells = Cells::default();
         cells.push(vec![("contact".to_string(), json!(EMAIL))]);
         redactor
             .apply_cells(&mut cells, &plan(vec![Position::Global]))
@@ -425,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_hashing_rule_token_equals_global_detection_token() {
-        let redactor = keyed(PiiOperator::Hash, vec![hash_rule()]);
+        let redactor = keyed(PiiOperator::Hash);
         let values = redact(
             &redactor,
             vec![
@@ -442,8 +379,8 @@ mod tests {
     }
 
     #[test]
-    fn a_hashing_rule_under_another_global_operator_still_gets_a_key() {
-        let redactor = keyed(PiiOperator::Mask, vec![hash_rule()]);
+    fn a_hashing_rule_under_another_global_operator_hashes() {
+        let redactor = keyed(PiiOperator::Mask);
         let values = redact(
             &redactor,
             vec![Position::Action(PiiOperator::Hash, Entity::EmailAddress)],
@@ -457,7 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn redact_cells_returns_objects_and_the_last_duplicate_wins() {
-        let mut cells = Cells::new();
+        let mut cells = Cells::default();
         cells.push(vec![
             ("x".to_string(), json!("123-45-6789")),
             ("note".to_string(), json!("plain")),

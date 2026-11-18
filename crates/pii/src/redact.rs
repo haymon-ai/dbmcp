@@ -126,7 +126,7 @@ impl Redactor {
         Self::new(analyzer, PiiOperator::Replace, Operator::hash(TEST_KEY))
     }
 
-    /// Builds a redactor from an analyzer, the global operator, and the `hash` operator.
+    /// Builds a redactor.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
@@ -229,8 +229,7 @@ impl Redactor {
     /// Runs global detection over every string leaf under `roots`.
     ///
     /// `roots` is a stack: the last frame is walked first. A
-    /// [`Frame::KeyedChild`] root contributes its key as context, as a
-    /// column name does for its value.
+    /// [`Frame::KeyedChild`] root contributes its key as context.
     ///
     /// # Errors
     ///
@@ -505,12 +504,6 @@ fn apply_spans(s: &mut String, results: Vec<RecognizerResult>, operator: &Operat
 }
 
 /// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.
-///
-/// Warns about the random key only when `pii.operator` or a rule hashes.
-///
-/// # Errors
-///
-/// Returns [`RedactorInitError::Rng`] when the OS random source fails.
 fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitError> {
     if let Some(key) = &cfg.key {
         return Ok(Operator::hash(key.expose_secret().as_bytes()));
@@ -719,8 +712,7 @@ mod tests {
                 assert_eq!(stats.total, 0);
                 assert_eq!(stats.string_leaves_scanned, 1);
             }
-            Err(RedactionError::Internal(_)) => {}
-            Err(RedactionError::Shape(e)) => panic!("unexpected shape error: {e}"),
+            Err(e) => assert!(matches!(e, RedactionError::Internal(_)), "{e}"),
         }
     }
 
@@ -874,10 +866,10 @@ mod tests {
         let r = Redactor::with_analyzer(analyzer);
         let mut rows = vec![json!({"msg": "anything"})];
         let err = r.apply(&mut rows).expect_err("must fail-closed");
-        match err {
-            RedactionError::Internal(msg) => assert!(msg.contains("panicked")),
-            RedactionError::Shape(e) => panic!("unexpected shape error: {e}"),
-        }
+        assert!(
+            matches!(&err, RedactionError::Internal(msg) if msg.contains("panicked")),
+            "{err}"
+        );
     }
 
     #[test]
@@ -888,10 +880,10 @@ mod tests {
         // PII-bearing string lives 4 levels deep.
         let mut rows = vec![json!({"a": {"b": {"c": {"d": "anything"}}}})];
         let err = r.apply(&mut rows).expect_err("must fail-closed at any depth");
-        match err {
-            RedactionError::Internal(msg) => assert!(msg.contains("panicked")),
-            RedactionError::Shape(e) => panic!("unexpected shape error: {e}"),
-        }
+        assert!(
+            matches!(&err, RedactionError::Internal(msg) if msg.contains("panicked")),
+            "{err}"
+        );
     }
 
     fn ctx_settings() -> ContextSettings {
