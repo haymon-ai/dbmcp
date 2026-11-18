@@ -1,13 +1,20 @@
-//! Error type for lineage extraction.
+//! Error type for lineage analysis.
 
 use thiserror::Error;
 
-/// Failure raised while extracting column lineage from SQL.
+use crate::catalog::WrittenName;
+
+/// Failure raised while analyzing column lineage from SQL.
 ///
-/// Resolution is fail-closed: any projected column that cannot be bound to a
-/// concrete source aborts the whole extraction (see [`LineageError::UnresolvedColumn`]).
+/// Analysis is fail-closed: any name, column, or construct that cannot be
+/// bound to a concrete source aborts the whole analysis.
+/// [`LineageError::Missing`] is not a failure but the catalog-loop signal.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LineageError {
+    /// Relation names absent from the catalog snapshot; insert them and call again.
+    #[error("relations missing from the catalog: {}", join(.0))]
+    Missing(Vec<WrittenName>),
+
     /// The SQL string could not be parsed by the selected dialect.
     #[error("SQL parse error: {0}")]
     Parse(String),
@@ -16,41 +23,65 @@ pub enum LineageError {
     #[error("multi-statement SQL is not supported")]
     MultiStatement,
 
-    /// A projected column could not be resolved to a concrete source column.
-    #[error("unresolved column `{column}`: {reason}")]
-    UnresolvedColumn {
-        /// The column reference that could not be resolved.
+    /// A relation the catalog marks as absent.
+    #[error("unknown relation `{name}`")]
+    UnknownRelation {
+        /// The relation name as written.
+        name: String,
+    },
+
+    /// A column reference that no visible relation provides.
+    #[error("column `{column}` not found")]
+    ColumnNotFound {
+        /// The column reference as written.
         column: String,
-        /// Why it could not be resolved (e.g. ambiguous, no catalog).
-        reason: String,
     },
 
-    /// A referenced table is not present in the supplied schema catalog.
-    #[error("unknown table `{table}`")]
-    UnknownTable {
-        /// The table name that could not be found.
-        table: String,
+    /// A column reference that more than one visible relation provides.
+    #[error("column reference `{column}` is ambiguous")]
+    AmbiguousColumn {
+        /// The column reference as written.
+        column: String,
     },
 
-    /// Query nesting exceeded the recursion-depth guard.
-    #[error("query nesting depth limit exceeded")]
-    DepthLimitExceeded,
+    /// A table function in `FROM` that the dialect's function table lacks.
+    #[error("unknown table function `{name}`")]
+    UnknownTableFunction {
+        /// The function name as written.
+        name: String,
+    },
 
-    /// A CTE references itself directly or transitively; lineage is undefined.
-    #[error("circular CTE reference: `{cte}`")]
+    /// A statement, clause, or expression kind that lineage does not model.
+    #[error("unsupported SQL: {0}")]
+    Unsupported(String),
+
+    /// The server tokenizes SQL differently from the parser.
+    #[error("server SQL lexing differs from the parser: {0}")]
+    LexicalMismatch(String),
+
+    /// Nesting exceeded the depth guard.
+    #[error("nesting depth limit exceeded")]
+    DepthLimit,
+
+    /// A relation references itself directly or transitively.
+    #[error("circular reference: `{name}`")]
     CircularReference {
-        /// The CTE name that re-entered resolution.
-        cte: String,
+        /// The relation that re-entered resolution.
+        name: String,
     },
 
-    /// A write target's column list does not match its source projection.
-    #[error("column count mismatch for `{target}`: expected {expected}, found {found}")]
+    /// A column list does not match the columns it names.
+    #[error("column count mismatch for `{relation}`: expected {expected}, found {found}")]
     ColumnCountMismatch {
-        /// The write target table name.
-        target: String,
-        /// Number of explicit target columns.
+        /// The relation whose columns are being named.
+        relation: String,
+        /// Number of columns available (an upper bound for alias lists).
         expected: usize,
-        /// Number of source-projection columns.
+        /// Number of columns supplied.
         found: usize,
     },
+}
+
+fn join(names: &[WrittenName]) -> String {
+    names.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }
