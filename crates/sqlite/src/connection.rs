@@ -125,7 +125,7 @@ impl Connection for SqliteConnection {
         }
         let mut rows = conn.fetch(query);
         while let Some(row) = rows.try_next().await? {
-            sink(row.to_json());
+            sink(row.to_object());
         }
         Ok(())
     }

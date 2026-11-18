@@ -156,7 +156,7 @@ where
         {
             let mut rows = (&mut *tx).fetch(query);
             while let Some(row) = rows.try_next().await? {
-                sink(row.to_json());
+                sink(row.to_object());
             }
         }
         tx.rollback().await?;
@@ -235,7 +235,7 @@ where
             while let Some(item) = stream.try_next().await? {
                 match item {
                     Either::Left(result) => results.push(result),
-                    Either::Right(row) => sink(row.to_json()),
+                    Either::Right(row) => sink(row.to_object()),
                 }
             }
             Ok(Self::counts(sql.as_str(), &results))

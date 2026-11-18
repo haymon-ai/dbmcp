@@ -1,4 +1,4 @@
-//! [`RowExt`](crate::RowExt) implementation for `SQLite` rows.
+//! Cell decoder for `SQLite` rows.
 //!
 //! Decodes each value by its storage class, not its column's declared type.
 
@@ -7,42 +7,32 @@ use sqlx::{TypeInfo as _, ValueRef as _};
 
 use crate::prelude::*;
 
-impl RowExt for SqliteRow {
-    fn to_json(&self) -> Value {
-        row_to_json(self)
-    }
-
-    fn to_cells(&self) -> Vec<(String, Value)> {
-        row_to_cells(self)
-    }
-}
-
 impl DecodeCell for SqliteRow {
-    fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
-        let Ok(value) = self.try_get_raw(idx) else {
-            return Cell::Null;
-        };
+    fn decode_cell(&self, idx: usize, type_name: &str) -> Option<Cell> {
+        let value = self.try_get_raw(idx).ok()?;
 
         let cell = match value.type_info().name() {
-            "INTEGER" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Int),
-            "REAL" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Float64),
-            "TEXT" => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Text),
-            _ => self.try_get_unchecked(idx).map_or(Cell::Null, Cell::Bytes),
-        };
+            "INTEGER" => self.try_get_unchecked(idx).ok().map(Cell::Int),
+            "REAL" => self.try_get_unchecked(idx).ok().map(Cell::Float64),
+            "TEXT" => self.try_get_unchecked(idx).ok().map(Cell::Text),
+            _ => self.try_get_unchecked(idx).ok().map(Cell::Bytes),
+        }?;
 
-        match (type_name, cell) {
+        Some(match (type_name, cell) {
             ("BOOLEAN", Cell::Int(0)) => Cell::Bool(false),
             ("BOOLEAN", Cell::Int(1)) => Cell::Bool(true),
             ("BLOB", Cell::Text(text)) => Cell::Bytes(text.into_bytes()),
             (_, cell) => cell,
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
     use sqlx::{Connection as _, SqliteConnection};
+
+    use crate::RowExt as _;
 
     use super::*;
 
@@ -58,21 +48,21 @@ mod tests {
     }
 
     async fn fetch(setup: &'static str, query: &'static str) -> Value {
-        fetch_row(setup, query).await.to_json()
+        fetch_row(setup, query).await.to_object()
     }
 
     #[tokio::test]
-    async fn cells_keep_duplicate_names_and_order() {
+    async fn entries_keep_duplicate_names_and_order() {
         let row = fetch_row(
             "CREATE TABLE t (a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'x');",
             "SELECT b, a, a AS b, NULL AS z FROM t",
         )
         .await;
 
-        let cells = row.to_cells();
+        let entries = row.to_entries();
 
         assert_eq!(
-            cells,
+            entries,
             vec![
                 ("b".to_string(), json!("x")),
                 ("a".to_string(), json!(1)),
@@ -80,18 +70,7 @@ mod tests {
                 ("z".to_string(), Value::Null),
             ]
         );
-    }
-
-    #[tokio::test]
-    async fn object_from_cells_matches_to_json() {
-        let row = fetch_row(
-            "CREATE TABLE t (b BOOLEAN, i INTEGER, r REAL, bl BLOB, tx TEXT, n TEXT, j JSON, u, flag BOOLEAN);
-             INSERT INTO t VALUES (1, 'abc', 1.5, X'68690A', 'abc', NULL, X'00FF', X'68690A', 2);",
-            "SELECT * FROM t",
-        )
-        .await;
-
-        assert_eq!(crate::cells_to_object(row.to_cells()), row.to_json());
+        assert_eq!(row.to_object(), json!({ "b": 1, "a": 1, "z": null }));
     }
 
     #[tokio::test]

@@ -1,28 +1,37 @@
 //! Row-to-JSON conversion and query-result traits.
 
 use serde_json::Value;
+use sqlx::ColumnIndex;
 
-/// Converts a single database row into a JSON object.
+use crate::row::{DecodeCell, entries};
+
+/// Converts a database row into JSON.
 pub trait RowExt {
     /// Converts this row's columns to a JSON object.
     ///
     /// Each column becomes a key in the returned object, with values
     /// converted to the most appropriate JSON type. `NULL` columns
     /// produce [`Value::Null`].
-    ///
-    /// # Returns
-    ///
-    /// A [`Value::Object`] where keys are column names and values are
-    /// type-appropriate JSON values.
-    fn to_json(&self) -> Value;
+    fn to_object(&self) -> Value;
 
-    /// Converts this row's columns to ordered `(name, value)` cells.
+    /// Converts this row's columns to ordered `(name, value)` entries.
     ///
-    /// Unlike [`Self::to_json`], keeps column order and duplicate names, so a
-    /// caller can work on values by position. Values have the same JSON
-    /// shapes as in [`Self::to_json`]; rebuild the object with
-    /// [`cells_to_object`](crate::cells_to_object).
-    fn to_cells(&self) -> Vec<(String, Value)>;
+    /// Keeps column order and duplicate names; values match [`Self::to_object`].
+    fn to_entries(&self) -> Vec<(String, Value)>;
+}
+
+impl<R> RowExt for R
+where
+    R: DecodeCell,
+    usize: ColumnIndex<R>,
+{
+    fn to_object(&self) -> Value {
+        Value::Object(entries(self).collect())
+    }
+
+    fn to_entries(&self) -> Vec<(String, Value)> {
+        entries(self).collect()
+    }
 }
 
 /// Extracts the affected row count and insert id from a backend query result.

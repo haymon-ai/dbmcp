@@ -10,11 +10,9 @@ use bigdecimal::{BigDecimal, ToPrimitive};
 use serde_json::Value;
 use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
-/// A single decoded column value, independent of the backend it came from.
+/// A single decoded, non-`NULL` column value, independent of its backend.
 #[derive(Debug)]
-pub(crate) enum Cell {
-    /// SQL `NULL`, or a value the adapter could not decode.
-    Null,
+pub enum Cell {
     /// Boolean.
     Bool(bool),
     /// Signed integer.
@@ -51,7 +49,6 @@ pub(crate) enum Cell {
 /// only for UTC date-times.
 pub(crate) fn encode(cell: Cell) -> Value {
     match cell {
-        Cell::Null => Value::Null,
         Cell::Bool(v) => Value::Bool(v),
         Cell::Int(v) => Value::from(v),
         Cell::UInt(v) => i64::try_from(v).map_or_else(|_| Value::String(v.to_string()), Value::from),
@@ -319,8 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_null_bool_int() {
-        assert_eq!(encode(Cell::Null), Value::Null);
+    fn encode_bool_int() {
         assert_eq!(encode(Cell::Bool(true)), Value::Bool(true));
         assert_eq!(encode(Cell::Int(-7)), Value::from(-7));
     }
