@@ -69,12 +69,4 @@ impl Dialect {
             Self::Postgres | Self::Sqlite => format!("column{}", index + 1),
         }
     }
-
-    /// Returns a function name case-folded the way the server resolves it.
-    pub(crate) fn function_name(self, ident: &Ident) -> String {
-        match self {
-            Self::Postgres => self.normalize(ident),
-            Self::Mysql | Self::Mariadb | Self::Sqlite => ident.value.to_lowercase(),
-        }
-    }
 }
