@@ -72,6 +72,7 @@ DBMCP_CONFIG_FILE=base.yaml,local.yaml dbmcp
 
 - Files are read in list order. Each file is parsed, `${}`-interpolated, and checked against the schema on its own, so every file must be valid by itself; any file may be partial.
 - Sections merge key by key. Each setting is taken whole from the last file that sets it.
+- `pii.rules` is taken whole from the last file that sets it: rules from different files never merge, and `{}` clears them.
 - Lists (`http.allowed_origins`, `http.allowed_hosts`, `pii.categories`) **replace**, they never append (Docker Compose appends; these lists are allow-lists and filters, so appending could only widen them).
 - A later file overrides only where it sets a value. `key:` / `null` / `~`, and `""` at an integer, boolean, or list key, are no-ops: the earlier file shows through. `[]` and `""` at a string or path key win; a later `http.allowed_origins: []` disables Origin validation.
 - There is no `!reset` / `!override`, so **a later file cannot unset a value an earlier file set** (for example `ssh.host`, a pinned `database.name`, or TLS / SSH paths). Keep such optional values out of the shared file and set them only in the files that need them.

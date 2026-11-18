@@ -124,8 +124,10 @@ fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Re
     for &setting in SETTINGS {
         let Setting { path, env, kind } = setting;
         // Each candidate is checked; only an eligible one may win.
-        let candidates = layers
-            .candidates(env)
+        // A YAML-only setting has no env candidates.
+        let candidates = env
+            .into_iter()
+            .flat_map(|env| layers.candidates(env))
             .map(|(text, dir, source, eligible)| {
                 let raw = dir.map_or(Raw::Text(text), |dir| Raw::EnvFile { text, dir });
                 (raw, source, eligible)

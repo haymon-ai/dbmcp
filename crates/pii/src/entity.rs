@@ -382,6 +382,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn config_entity_names_mirror_entity() {
+        let names: Vec<&str> = Entity::ALL.iter().map(|e| e.as_str()).collect();
+        assert_eq!(names, dbmcp_config::ColumnRule::ENTITIES);
+    }
+
+    #[test]
     fn all_round_trips_through_as_str() {
         for &e in Entity::ALL {
             let s = e.as_str();

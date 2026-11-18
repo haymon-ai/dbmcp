@@ -2,8 +2,9 @@
 //!
 //! Every setting is one constant here, and the loader reads it through that
 //! constant, so a misspelt setting is a compile error. Env names are
-//! hand-picked, not derived from key paths. Every leaf setting has exactly
-//! one name and every name maps to exactly one setting. The [`Kind`] carries
+//! hand-picked, not derived from key paths. Every leaf setting has at most
+//! one name and every name maps to exactly one setting; a YAML-only setting
+//! has none. The [`Kind`] carries
 //! every rule a value must meet: integer ranges, enum choices, and path
 //! rules are stated here and nowhere else, and [`Kind::check`] applies them
 //! to values from every source.
@@ -14,6 +15,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::log::LogLevel;
 use crate::node::Node;
 use crate::pii::{PiiCategory, PiiOperator};
+use crate::rules::{self, Rule};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
 
@@ -28,8 +30,8 @@ pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
 pub struct Setting {
     /// Dotted YAML key path, e.g. `database.host`.
     pub path: &'static str,
-    /// Env var name, e.g. `DBMCP_DB_HOST`.
-    pub env: &'static str,
+    /// Env var name, e.g. `DBMCP_DB_HOST`; `None` for a YAML-only setting.
+    pub env: Option<&'static str>,
     /// How the value is cast and checked.
     pub kind: Kind,
 }
@@ -67,6 +69,8 @@ pub enum Kind {
         /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
+    /// The `pii.rules` map of named column rules (YAML only).
+    Rules,
 }
 
 /// A raw setting value: process env or env-file text, or a YAML node.
@@ -105,6 +109,8 @@ pub(crate) enum Value {
     Choice(&'static str),
     /// A [`Kind::List`] value, each item one of its choices if any.
     List(Vec<String>),
+    /// A [`Kind::Rules`] value, in file order.
+    Rules(Vec<Rule>),
 }
 
 impl Kind {
@@ -178,6 +184,10 @@ impl Kind {
                 let text = text.ok_or_else(|| format!("expected string, found {}", found()))?;
                 Value::Choice(choose(choices, text)?)
             }
+            Self::Rules => match node {
+                Some(Node::Map(entries)) => Value::Rules(rules::cast(entries)?),
+                _ => return Err(format!("expected mapping, found {}", found())),
+            },
             Self::List { choices } => {
                 let items: Vec<&str> = match (node, text) {
                     (Some(Node::Seq(items)), _) => items
@@ -289,7 +299,7 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
+pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
 const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);
@@ -304,7 +314,16 @@ const FILE_PATH: Kind = Kind::Path { home_from_env: false };
 const HOME_PATH: Kind = Kind::Path { home_from_env: true };
 
 const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
-    Setting { path, env, kind }
+    Setting {
+        path,
+        env: Some(env),
+        kind,
+    }
+}
+
+/// A setting set only in config files, for values with no sensible env form.
+const fn yaml_only(path: &'static str, kind: Kind) -> Setting {
+    Setting { path, env: None, kind }
 }
 
 /// `transport` / `DBMCP_TRANSPORT`.
@@ -409,6 +428,8 @@ pub const PII_CATEGORIES: Setting = setting(
 pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
 /// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
 pub const PII_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
+/// `pii.rules` (YAML only).
+pub const PII_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
 /// `ssh.host` / `DBMCP_SSH_HOST`.
 pub const SSH_HOST: Setting = setting("ssh.host", "DBMCP_SSH_HOST", Kind::Text);
 /// `ssh.port` / `DBMCP_SSH_PORT`.
@@ -474,6 +495,7 @@ pub const SETTINGS: &[Setting] = &[
     PII_CATEGORIES,
     PII_NER_ENABLE,
     PII_NER_MODEL,
+    PII_RULES,
     SSH_HOST,
     SSH_PORT,
     SSH_USER,
@@ -495,20 +517,17 @@ mod tests {
     #[test]
     fn paths_and_env_names_are_unique() {
         let paths: HashSet<_> = SETTINGS.iter().map(|s| s.path).collect();
-        let envs: HashSet<_> = SETTINGS.iter().map(|s| s.env).collect();
+        let envs: Vec<_> = SETTINGS.iter().filter_map(|s| s.env).collect();
+        let unique: HashSet<_> = envs.iter().collect();
         assert_eq!(paths.len(), SETTINGS.len(), "duplicate YAML path");
-        assert_eq!(envs.len(), SETTINGS.len(), "duplicate env name");
+        assert_eq!(unique.len(), envs.len(), "duplicate env name");
     }
 
     #[test]
     fn env_names_use_the_dbmcp_prefix_and_skip_loader_inputs() {
-        for setting in SETTINGS {
-            assert!(setting.env.starts_with("DBMCP_"), "{}", setting.env);
-            assert!(
-                ![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&setting.env),
-                "{}",
-                setting.env
-            );
+        for env in SETTINGS.iter().filter_map(|s| s.env) {
+            assert!(env.starts_with("DBMCP_"), "{env}");
+            assert!(![CONFIG_FILE_VAR, ENV_FILE_VAR].contains(&env), "{env}");
         }
     }
 
@@ -673,7 +692,19 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 44);
+        assert_eq!(SETTINGS.len(), 45);
+    }
+
+    #[test]
+    fn rules_cast_through_yaml() {
+        assert_eq!(yaml(Kind::Rules, "~"), Ok(None));
+        assert_eq!(yaml(Kind::Rules, "{}"), Ok(Some(Value::Rules(Vec::new()))));
+        assert_eq!(yaml(Kind::Rules, "[]"), Err("expected mapping, found sequence".into()));
+        assert_eq!(yaml(Kind::Rules, "''"), Err("expected mapping, found string".into()));
+        assert_eq!(
+            yaml(Kind::Rules, "!reset {}"),
+            Err("YAML tag !reset is not supported".into())
+        );
     }
     fn path(result: Result<Option<Value>, String>) -> PathBuf {
         match result {
