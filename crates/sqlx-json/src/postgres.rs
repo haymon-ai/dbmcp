@@ -1,4 +1,4 @@
-//! [`RowExt`](crate::RowExt) implementation for `PostgreSQL` rows.
+//! Cell decoder for `PostgreSQL` rows.
 //!
 //! Maps each column's type name to a [`Cell`]; JSON shapes are owned by
 //! [`encode`](crate::cell::encode). Type names are normalized to uppercase
@@ -28,63 +28,47 @@ fn parse_pg_money_text(text: &str) -> Option<BigDecimal> {
     BigDecimal::from_str(&cleaned).ok()
 }
 
-impl RowExt for PgRow {
-    fn to_json(&self) -> Value {
-        row_to_json(self)
-    }
-}
-
 impl DecodeCell for PgRow {
-    fn decode_cell(&self, idx: usize, type_name: &str) -> Cell {
-        let cell = match type_name.to_ascii_uppercase().as_str() {
-            "BOOL" => self.try_get(idx).map_or(Cell::Null, Cell::Bool),
+    fn decode_cell(&self, idx: usize, type_name: &str) -> Option<Cell> {
+        match type_name.to_ascii_uppercase().as_str() {
+            "BOOL" => self.try_get(idx).ok().map(Cell::Bool),
 
-            "INT8" => self.try_get(idx).map_or(Cell::Null, Cell::Int),
+            "INT8" => self.try_get(idx).ok().map(Cell::Int),
 
-            "INT4" => self.try_get(idx).map_or(Cell::Null, |v: i32| Cell::Int(v.into())),
+            "INT4" => self.try_get(idx).ok().map(|v: i32| Cell::Int(v.into())),
 
-            "OID" => self.try_get(idx).map_or(Cell::Null, |v: Oid| Cell::UInt(v.0.into())),
+            "OID" => self.try_get(idx).ok().map(|v: Oid| Cell::UInt(v.0.into())),
 
-            "INT2" => self.try_get(idx).map_or(Cell::Null, |v: i16| Cell::Int(v.into())),
+            "INT2" => self.try_get(idx).ok().map(|v: i16| Cell::Int(v.into())),
 
-            "NUMERIC" => self.try_get(idx).map_or(Cell::Null, Cell::Decimal),
+            "NUMERIC" => self.try_get(idx).ok().map(Cell::Decimal),
 
             // dbmcp passes raw `&str` queries → sqlx uses Postgres' simple-query
             // (text) protocol, where `PgMoney` errors out (binary-only). Parse the
             // locale-formatted text form ($1,234.56, -$99.99) directly — assumes the
             // en_US.UTF-8 lc_monetary default (`$` symbol, `.` decimal).
-            "MONEY" => text_value(self, idx)
-                .and_then(parse_pg_money_text)
-                .map_or(Cell::Null, Cell::Decimal),
+            "MONEY" => text_value(self, idx).and_then(parse_pg_money_text).map(Cell::Decimal),
 
-            "FLOAT4" => self.try_get(idx).map_or(Cell::Null, Cell::Float32),
+            "FLOAT4" => self.try_get(idx).ok().map(Cell::Float32),
 
-            "FLOAT8" => self.try_get(idx).map_or(Cell::Null, Cell::Float64),
+            "FLOAT8" => self.try_get(idx).ok().map(Cell::Float64),
 
-            "BYTEA" => self.try_get(idx).map_or(Cell::Null, Cell::Bytes),
+            "BYTEA" => self.try_get(idx).ok().map(Cell::Bytes),
 
-            "JSON" | "JSONB" => self.try_get(idx).map_or(Cell::Null, Cell::Json),
+            "JSON" | "JSONB" => self.try_get(idx).ok().map(Cell::Json),
 
-            "DATE" => self.try_get(idx).map_or(Cell::Null, Cell::Date),
+            "DATE" => self.try_get(idx).ok().map(Cell::Date),
 
-            "TIME" => self.try_get(idx).map_or(Cell::Null, Cell::Time),
+            "TIME" => self.try_get(idx).ok().map(Cell::Time),
 
-            "TIMESTAMP" => self.try_get(idx).map_or(Cell::Null, Cell::DateTime),
+            "TIMESTAMP" => self.try_get(idx).ok().map(Cell::DateTime),
 
-            "TIMESTAMPTZ" => self.try_get(idx).map_or(Cell::Null, Cell::DateTimeUtc),
+            "TIMESTAMPTZ" => self.try_get(idx).ok().map(Cell::DateTimeUtc),
 
-            // sqlx refuses `String` for most types it knows (UUID, arrays, …).
-            _ => text_value(self, idx).map_or_else(
-                || self.try_get(idx).map_or(Cell::Null, Cell::Text),
-                |text| Cell::Text(text.to_owned()),
-            ),
-        };
-
-        // `infinity`, BC dates, `NaN` numerics, …: keep the text form.
-        match cell {
-            Cell::Null => text_value(self, idx).map_or(Cell::Null, |text| Cell::Text(text.to_owned())),
-            cell => cell,
+            _ => self.try_get(idx).ok().map(Cell::Text),
         }
+        // UUID, arrays, `infinity`, BC dates, `NaN` numerics, …: keep the text form.
+        .or_else(|| text_value(self, idx).map(|text| Cell::Text(text.to_owned())))
     }
 }
 
