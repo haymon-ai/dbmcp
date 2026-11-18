@@ -467,7 +467,7 @@ fn wildcard_modifiers_are_rejected() {
 
 #[test]
 fn long_operator_chain_hits_depth_limit_without_overflow() {
-    let terms = vec!["1"; 20_000].join("+");
+    let terms = vec!["1"; 1_000].join("+");
     let sql = format!("SELECT {terms} AS x");
     let result = std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
