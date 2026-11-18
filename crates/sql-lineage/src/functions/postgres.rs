@@ -62,7 +62,6 @@ pub(super) const NAMES: &[&str] = &[
     "character_length",
     "concat",
     "concat_ws",
-    "convert_to",
     "initcap",
     "left",
     "lower",
@@ -92,7 +91,6 @@ pub(super) const NAMES: &[&str] = &[
     "to_oct",
     "translate",
     "unicode_assigned",
-    "unistr",
     "upper",
     // Formatting.
     "pg_size_pretty",
