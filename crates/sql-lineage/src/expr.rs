@@ -204,23 +204,7 @@ impl Ctx<'_> {
                 Ok(())
             }
             Expr::CompoundFieldAccess { root, access_chain } => {
-                self.expr(root, level, clause, acc)?;
-                for access in access_chain {
-                    match access {
-                        AccessExpr::Dot(_) => return Err(unsupported("composite field access")),
-                        AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, level, clause, acc)?,
-                        AccessExpr::Subscript(Subscript::Slice {
-                            lower_bound,
-                            upper_bound,
-                            stride,
-                        }) => {
-                            self.opt(lower_bound.as_ref(), level, clause, acc)?;
-                            self.opt(upper_bound.as_ref(), level, clause, acc)?;
-                            self.opt(stride.as_ref(), level, clause, acc)?;
-                        }
-                    }
-                }
-                Ok(())
+                self.field_access(root, access_chain, level, clause, acc)
             }
             Expr::Wildcard(_) | Expr::QualifiedWildcard(..) => Err(unsupported("wildcard expression")),
             Expr::JsonAccess { .. } => Err(unsupported("JSON path access")),
@@ -232,6 +216,57 @@ impl Ctx<'_> {
             Expr::Prior(_) => Err(unsupported("PRIOR")),
             Expr::Lambda(_) => Err(unsupported("lambda")),
         }
+    }
+
+    /// Adds the sources of a field access or subscript chain.
+    ///
+    /// Kept out of [`Ctx::expr_inner`] so its locals do not grow every
+    /// recursion frame.
+    fn field_access(
+        &mut self,
+        root: &Expr,
+        access_chain: &[AccessExpr],
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
+        // `o.tags[1]` parses as root `o` with chain `.tags`, `[1]`.
+        let mut chain = access_chain;
+        let mut parts = match root {
+            Expr::Identifier(id) => vec![id.clone()],
+            Expr::CompoundIdentifier(parts) => parts.clone(),
+            _ => Vec::new(),
+        };
+        if parts.is_empty() {
+            self.expr(root, level, clause, acc)?;
+        } else {
+            while let [AccessExpr::Dot(Expr::Identifier(id)), rest @ ..] = chain {
+                parts.push(id.clone());
+                chain = rest;
+            }
+            let Some((name, qualifier)) = parts.split_last() else {
+                return Err(unsupported("empty identifier"));
+            };
+            acc.extend(level.column(clause, qualifier, name)?);
+        }
+        for access in chain {
+            match access {
+                // A field of a parenthesized value, `(u).f`; the value's sources cover it.
+                AccessExpr::Dot(Expr::Identifier(_)) if matches!(root, Expr::Nested(_)) => {}
+                AccessExpr::Dot(_) => return Err(unsupported("composite field access")),
+                AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, level, clause, acc)?,
+                AccessExpr::Subscript(Subscript::Slice {
+                    lower_bound,
+                    upper_bound,
+                    stride,
+                }) => {
+                    self.opt(lower_bound.as_ref(), level, clause, acc)?;
+                    self.opt(upper_bound.as_ref(), level, clause, acc)?;
+                    self.opt(stride.as_ref(), level, clause, acc)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn all(
@@ -343,7 +378,15 @@ impl Ctx<'_> {
         match arg {
             FunctionArgExpr::Expr(expr) => self.expr(expr, level, clause, acc),
             FunctionArgExpr::Wildcard => Ok(()),
-            FunctionArgExpr::QualifiedWildcard(_) => Err(unsupported("whole-row reference")),
+            FunctionArgExpr::QualifiedWildcard(name) => {
+                let sources = level
+                    .whole_row(&idents(name)?)?
+                    .ok_or_else(|| LineageError::ColumnNotFound {
+                        column: format!("{name}.*"),
+                    })?;
+                acc.extend(sources);
+                Ok(())
+            }
             FunctionArgExpr::WildcardWithOptions(_) => Err(unsupported("wildcard modifier in function argument")),
         }
     }
