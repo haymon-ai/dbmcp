@@ -1,20 +1,9 @@
-//! `MariaDB` built-in functions, kept separate from `MySQL`'s.
+//! `MariaDB` built-in functions.
 //!
-//! Seeded by hand from the `MariaDB` 11.8 function reference and
-//! `mysql.help_topic` on `MariaDB` 11.8.9. Left out: `LOAD_FILE`, `SLEEP`,
-//! `BENCHMARK`, locks, replication waits, session and server state
-//! (`LAST_INSERT_ID`, `FOUND_ROWS`, `CONNECTION_ID`, the `USER()` family,
-//! `VERSION`, …), error-channel functions (`EXTRACTVALUE`, `UPDATEXML`),
-//! sequences (`NEXTVAL`, `LASTVAL`, `SETVAL`), dynamic columns, encryption
-//! with keys, and nondeterministic ones (`RAND`, `UUID`, `SYS_GUID`).
-//! Warnings are not a channel: `readQuery` rejects `SHOW WARNINGS`.
-//! `JSON_TABLE` is modeled by its own syntax, so no table function is
-//! listed.
+//! Seeded from the `MariaDB` 11.8 function reference and `mysql.help_topic`.
 
 /// The `MariaDB` built-in function names, lowercase.
 pub(super) const NAMES: &[&str] = &[
-    // Scalar functions.
-
     // String.
     "ascii",
     "bin",

@@ -28,27 +28,24 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
 
 /// Resolves a called function name to its recorded use.
 ///
-/// The recorded name is the written name with each part case-folded per
-/// dialect, joined with `.`. The use is known when the dialect lists the
-/// name: only unqualified names match, plus `pg_catalog.`-qualified ones on
-/// `PostgreSQL`; a call qualified with any other schema is never known.
-/// Matching is by name only: an unqualified call that overload resolution
-/// sends to a same-named user function is still reported known, so callers
-/// that rely on `known` must rule out such user functions themselves.
+/// Known when the dialect lists the unqualified (or, on `PostgreSQL`,
+/// `pg_catalog.`-qualified) name. Matching is by name only, so a same-named
+/// user function is still reported known.
 ///
 /// # Errors
 ///
 /// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
 pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse, LineageError> {
-    let parts = idents(name)?;
+    let parts: Vec<String> = idents(name)?.iter().map(|p| fold(dialect, p)).collect();
     let known = match parts.as_slice() {
-        [name] => Some(name),
-        [schema, name] if dialect == Dialect::Postgres && dialect.normalize(schema) == "pg_catalog" => Some(name),
-        _ => None,
-    }
-    .is_some_and(|name| names(dialect).contains(&fold(dialect, name).as_str()));
+        [name] => names(dialect).contains(&name.as_str()),
+        [schema, name] if dialect == Dialect::Postgres && schema == "pg_catalog" => {
+            names(dialect).contains(&name.as_str())
+        }
+        _ => false,
+    };
     Ok(FunctionUse {
-        name: parts.iter().map(|p| fold(dialect, p)).collect::<Vec<_>>().join("."),
+        name: parts.join("."),
         known,
         origin: Origin::Query,
     })
@@ -58,7 +55,6 @@ pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse
 mod tests {
     use super::*;
 
-    /// Every dialect's table.
     const DIALECTS: [Dialect; 4] = [Dialect::Postgres, Dialect::Mysql, Dialect::Mariadb, Dialect::Sqlite];
 
     #[test]
@@ -186,7 +182,7 @@ mod tests {
     fn value_exposing_built_ins_are_absent() {
         for (dialect, names) in ABSENT {
             for name in *names {
-                assert!(!call(*dialect, &[Ident::new(*name)]).1, "{dialect:?}: {name}");
+                assert!(!super::names(*dialect).contains(name), "{dialect:?}: {name}");
             }
         }
     }
@@ -209,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn quoted_postgres_name_matches_exactly() {
+    fn quoted_name_folds_per_dialect() {
         assert_eq!(
             call(Dialect::Postgres, &[Ident::new("LOWER")]),
             ("lower".to_string(), true)

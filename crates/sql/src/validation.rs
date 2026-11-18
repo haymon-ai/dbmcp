@@ -24,8 +24,7 @@ pub enum StatementKind {
 /// 1. Exactly one statement (multi-statement injection blocked)
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN); `USE`
 ///    is rejected because it would leak to later queries on a pooled connection;
-///    `SHOW WARNINGS` / `SHOW ERRORS` are rejected because a warning can quote
-///    a value the previous query on the pooled connection read
+///    `SHOW WARNINGS` / `SHOW ERRORS` are rejected because warnings quote values
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
 /// 5. No dangerous functions (file access, large objects, sequences, extensions,
@@ -91,12 +90,8 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
 
 /// Returns whether a `SHOW` names the warnings or errors list.
 ///
-/// The parser reads `SHOW WARNINGS`, `SHOW ERRORS`, and `SHOW COUNT(*)
-/// WARNINGS` (as `COUNT WARNINGS`) as a `SHOW` of a variable. Their rows are
-/// the conditions the previous statement on the connection raised, and a
-/// conversion warning such as `Truncated incorrect DOUBLE value: '...'`
-/// quotes the value read. Only the leading words count: `SHOW INDEX FROM
-/// errors` names a table, not the list.
+/// Only the leading words count (`SHOW COUNT(*) WARNINGS` parses as
+/// `COUNT WARNINGS`); `SHOW INDEX FROM errors` names a table.
 fn is_diagnostics(variable: &[Ident]) -> bool {
     let list = |part: &Ident| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors");
     match variable {

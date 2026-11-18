@@ -1,18 +1,10 @@
 //! `SQLite` built-in functions.
 //!
-//! Seeded from `pragma_function_list` (`builtin = 1`) on the `SQLite` 3.51.3
-//! that `libsqlite3-sys` 0.37 bundles, reviewed by hand. That build has no
-//! math or percentile functions (`SQLITE_ENABLE_MATH_FUNCTIONS` and
-//! `SQLITE_ENABLE_PERCENTILE` are unset), so none are listed. Left out: `load_extension`, `sqlite_offset`,
-//! `sqlite_compileoption_*`, `sqlite_version`, `sqlite_source_id`, connection
-//! state (`changes`, `total_changes`, `last_insert_rowid`), `readfile` /
-//! `writefile`, `pragma_*` table functions, and nondeterministic ones
-//! (`random`, `randomblob`).
+//! Seeded from `pragma_function_list` on the bundled `SQLite` 3.51.3, which
+//! has no math or percentile functions.
 
 /// The `SQLite` built-in function names, lowercase.
 pub(super) const NAMES: &[&str] = &[
-    // Scalar functions.
-
     // Core.
     "abs",
     "char",

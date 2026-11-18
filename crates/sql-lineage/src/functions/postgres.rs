@@ -1,26 +1,11 @@
 //! `PostgreSQL` built-in functions.
 //!
-//! Seeded from `pg_proc` (`pg_catalog`) on `PostgreSQL` 17.11, reviewed by
-//! hand. Grammar-level calls the parser reports as functions (`coalesce`,
-//! `greatest`, `row`, `current_date`, …) are listed too. Left out: the XML
-//! family (`*_to_xml`, `xpath`, `xmlelement`), `ts_stat` / `ts_rewrite`, large
-//! objects, settings (`current_setting`, `set_config`), server files,
-//! error-channel functions (`parse_ident`, `to_date`, `to_timestamp`,
-//! `to_number`, `decode`, `convert_from`, `pg_size_bytes`, the `jsonb_path_*`
-//! and SQL/JSON query functions, `jsonb_set` / `jsonb_insert`, the
-//! `to_tsquery` family, `setweight`, `ts_filter`, `ts_headline`,
-//! `json_object_agg_unique`), functions whose errors echo a control
-//! argument such as a unit, zone, flag, format, encoding, index, or field
-//! (`date_part`, `date_trunc`, `timezone`, `make_date`, `regexp_*`, `format`,
-//! `encode`, `length`, `chr`, `get_byte`, `percentile_cont`, `power`, …),
-//! sequences, sleeps and notifications, `dblink`, statistics and
-//! session-state functions, and nondeterministic ones (`random`,
-//! `gen_random_uuid`).
+//! Seeded from `pg_proc` on `PostgreSQL` 17.11. Grammar-level calls the
+//! parser reports as functions (`coalesce`, `row`, `current_date`, …) are
+//! listed too.
 
 /// The `PostgreSQL` built-in function names, lowercase.
 pub(super) const NAMES: &[&str] = &[
-    // Scalar functions.
-
     // Mathematical.
     "abs",
     "acos",

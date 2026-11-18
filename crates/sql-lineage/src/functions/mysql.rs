@@ -1,18 +1,9 @@
 //! `MySQL` built-in functions.
 //!
-//! Seeded by hand from the `MySQL` 8.4 built-in function reference and
-//! `mysql.help_topic` on `MySQL` 8.4.11. Left out: `LOAD_FILE`, `SLEEP`,
-//! `BENCHMARK`, locks, replication waits, session and server state
-//! (`LAST_INSERT_ID`, `FOUND_ROWS`, `CONNECTION_ID`, the `USER()` family,
-//! `VERSION`, …), error-channel functions (`EXTRACTVALUE`, `UPDATEXML`,
-//! `GTID_SUBSET`, `GTID_SUBTRACT`, `UUID_TO_BIN`, `BIN_TO_UUID`), internal functions, encryption with keys,
-//! and nondeterministic ones (`RAND`, `UUID`, `RANDOM_BYTES`). `JSON_TABLE`
-//! is modeled by its own syntax, so no table function is listed.
+//! Seeded from the `MySQL` 8.4 function reference and `mysql.help_topic`.
 
 /// The `MySQL` built-in function names, lowercase.
 pub(super) const NAMES: &[&str] = &[
-    // Scalar functions.
-
     // String.
     "ascii",
     "bin",
