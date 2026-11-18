@@ -6,14 +6,13 @@
 //! before anything runs; reads under `PRAGMA query_only`) and under one
 //! deadline, it:
 //!
-//! 1. lists the attached schemas (`pragma_database_list`),
-//! 2. analyzes the statement's lineage, fetching the relations it reports
-//!    missing (`pragma_table_list(name)`, `pragma_table_xinfo`, view bodies
-//!    from `sqlite_schema`) for at most [`CATALOG_ROUNDS`] rounds,
-//! 3. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
-//! 4. executes the statement, refusing a result whose server-reported column
-//!    origin is a ruled column the plan does not rewrite, and commits a write
-//!    or rolls a read back.
+//! 1. analyzes the statement's lineage, fetching the relations it reports
+//!    missing (`pragma_table_list`, `pragma_table_xinfo`, view bodies from
+//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`] rounds,
+//! 2. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//! 3. executes it, refusing a result that does not fit the plan before any
+//!    row is kept or a write commits,
+//! 4. commits a write or rolls a read back.
 //!
 //! The rows are then redacted by position. When the statement touched a
 //! ruled relation, database errors whose extended code may echo a value are
@@ -21,14 +20,14 @@
 
 use std::mem;
 
-use dbmcp_config::{ColumnRule, PiiConfig};
+use dbmcp_config::PiiConfig;
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, touches_ruled};
+use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_sql_lineage::{
     Catalog, CatalogColumn, Dialect, Entry, Lineage, LineageError, Origin, Relation, RelationId, RelationKind,
-    StatementKind, WrittenName, analyze,
+    SourceRef, StatementKind, WrittenName, analyze,
 };
 use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
@@ -43,7 +42,7 @@ use sqlx_json::RowExt as _;
 use crate::SqliteHandler;
 use crate::connection::{SqliteConnection, quote_ident};
 
-/// Catalog name of every `SQLite` relation in rule keys.
+/// Catalog segment of every `SQLite` rule key.
 const CATALOG: &str = "main";
 
 /// Lists the relations named by the JSON array of names in `?1`, `temp` first.
@@ -57,7 +56,6 @@ const LOOKUP_SQL: &str = "SELECT t.schema, t.name, t.type \
      JOIN pragma_database_list AS d ON d.name = t.schema \
      ORDER BY t.schema <> 'temp', d.seq";
 
-/// Lists the attached schemas, in `pragma_database_list` order.
 const SCHEMAS_SQL: &str = "SELECT name FROM pragma_database_list ORDER BY seq";
 
 /// Lists the columns of each `[schema, name]` pair of the JSON array in `?1`.
@@ -79,20 +77,17 @@ const VALUE_FREE_JSON: &[&str] = &["malformed JSON", "JSON cannot hold BLOB valu
 /// Whether the statement may write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
-    /// A read under `query_only`, rolled back afterwards.
+    /// Runs under `query_only` and rolls back.
     Read,
-    /// A write, committed afterwards; refused in read-only mode.
+    /// Commits; refused in read-only mode.
     Write,
 }
 
-/// Rows and counts of a statement run under the column rules.
+/// Redacted rows and write counts of a statement run under the column rules.
 #[derive(Debug)]
 pub(crate) struct Enforced {
-    /// The window's rows, redacted, as JSON objects.
     pub(crate) rows: Vec<Value>,
-    /// Rows changed by a write.
     pub(crate) rows_affected: u64,
-    /// Rowid of the last inserted row.
     pub(crate) last_insert_id: Option<u64>,
 }
 
@@ -102,67 +97,54 @@ enum Stop {
     /// The planner refused the statement; nothing ran.
     #[error(transparent)]
     Rejected(#[from] Rejection),
-    /// The result does not fit the plan, or puts a ruled column where the
-    /// plan does not rewrite it; nothing was committed.
+    /// The result does not fit the plan; nothing was committed.
     #[error(transparent)]
     Shape(#[from] ShapeError),
+    /// A ruled column came back where the plan does not rewrite it; nothing was committed.
+    #[error("column policy: result column {0} carries a ruled column the plan does not rewrite")]
+    Unplanned(usize),
     /// The statement failed with an error that may echo a ruled value.
     #[error("query failed (SQLite code {0}): error detail withheld under column policy")]
     Withheld(String),
+    /// Any other database error, reported as without column rules.
+    #[error(transparent)]
+    Sql(#[from] sqlx::Error),
 }
 
-/// What one run produced besides the rows it fed to the window.
 struct Run {
-    /// The statement kind, deciding positional or global redaction.
-    statement: StatementKind,
-    /// The plan of the statement's output columns.
-    plan: Plan,
-    /// The result's column names, from its first row.
+    /// The plan when the result columns are the planned ones; `EXPLAIN`,
+    /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
+    plan: Option<Plan>,
     names: Vec<String>,
-    /// Rows changed by a write.
     rows_affected: u64,
-    /// Rowid of the last inserted row.
     last_insert_id: Option<u64>,
 }
 
-/// What executing the statement produced besides its rows.
 struct Executed {
-    /// The result's column names, from its first row.
     names: Vec<String>,
-    /// Per-statement results, for the counts.
     results: Vec<SqliteQueryResult>,
-    /// Why the first row does not fit the plan; the stream stopped there.
-    shape: Option<ShapeError>,
 }
 
 /// A table or view the catalog lists.
 struct Listed {
-    /// The schema: `main`, `temp`, or an attached alias.
     schema: String,
-    /// The relation's actual name.
     name: String,
-    /// What kind of relation it is; `None` for a type this module does not know.
+    /// `None` for a type this module does not know: it exists, but cannot be described.
     kind: Option<RelationKind>,
 }
 
 impl SqliteHandler {
     /// Plans `sql` under `policy`'s rules, runs it into `window`, and redacts the kept rows.
     ///
-    /// `policy` holds at least one column rule; the handler's redactor
-    /// applies the plan, and its absence refuses the statement before it
-    /// runs. `sql` is the text that runs: a paged query keeps the output positions
-    /// of the query it pages. The whole exchange runs on one connection
-    /// within `timeout_secs`. The window holds each row as a JSON array of
-    /// its values; the returned rows are the window's, redacted, as objects,
-    /// and `window.rows` is left empty.
+    /// `sql` is the text that runs. The window holds each row as a JSON
+    /// array of its values; the kept rows come back redacted, as objects.
     ///
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] for a write in read-only
-    /// mode, the planner's rejection, a refusal when a result column comes
-    /// from a ruled column the plan does not rewrite, a generic message for
-    /// a withheld database error, the [`SqlError`] of anything else that
-    /// failed, or the redaction error when the rows do not fit the plan.
+    /// mode, a refusal when the handler has no redactor, the reason the
+    /// column rules stopped the statement, or the [`SqlError`] of anything
+    /// else that failed.
     pub(crate) async fn enforce(
         &self,
         policy: &PiiConfig,
@@ -184,25 +166,20 @@ impl SqliteHandler {
         let run = self
             .connection
             .with_connection(sql, None, timeout_secs, async |conn| {
-                run(conn, read_only, policy, sql, access, &mut |row| {
-                    window.push(row);
-                })
-                .await
+                match run(conn, read_only, policy, sql, access, &mut |row| window.push(row)).await {
+                    Err(Stop::Sql(error)) => Err(error),
+                    other => Ok(other),
+                }
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows = mem::take(&mut window.rows);
-        let rows = if positional(&run.statement) {
-            let mut cells = Cells::default();
-            for row in rows {
-                cells.push(entries(&run.names, row));
-            }
-            redactor.redact_cells(cells, &run.plan).await?
+        let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = if let Some(plan) = run.plan {
+            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
         } else {
-            // Plan text and metadata are not the planned columns: detect globally.
             let rows = rows
                 .into_iter()
-                .map(|row| Value::Object(entries(&run.names, row).into_iter().collect()))
+                .map(|values| Value::Object(run.names.iter().cloned().zip(values).collect()))
                 .collect();
             redactor.redact_rows(rows).await?
         };
@@ -214,26 +191,15 @@ impl SqliteHandler {
     }
 }
 
-/// Reports whether the result columns are the planned output columns.
-fn positional(statement: &StatementKind) -> bool {
-    !matches!(
-        statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    )
-}
-
-/// Pairs a window row's values with the result's column names.
-fn entries(names: &[String], row: Value) -> Vec<(String, Value)> {
-    let values = match row {
+/// Unwraps a window row, which `execute` always pushes as an array.
+fn values(row: Value) -> Vec<Value> {
+    match row {
         Value::Array(values) => values,
         other => vec![other],
-    };
-    names.iter().cloned().zip(values).collect()
+    }
 }
 
 /// Plans and executes one statement inside a transaction on `conn`.
-///
-/// Rows reach `sink` as JSON arrays of their values, in result order.
 async fn run(
     conn: &mut sqlx::SqliteConnection,
     read_only: bool,
@@ -241,7 +207,7 @@ async fn run(
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Result<Run, Stop>, sqlx::Error> {
+) -> Result<Run, Stop> {
     let begin = match access {
         Access::Read => {
             // A file opened read-only needs no pragma; `before_acquire` switches it off again.
@@ -253,61 +219,57 @@ async fn run(
         Access::Write => "BEGIN IMMEDIATE",
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
-    let lineage = match resolve(&mut tx, sql).await? {
-        Ok(lineage) => lineage,
-        Err(rejection) => return Ok(Err(rejection.into())),
-    };
+    let lineage = resolve(&mut tx, sql).await?;
     // `CREATE TABLE x AS` creates `main.x` even when a bare `x` resolved to a
     // `temp` or attached table, so its rules would check the wrong target.
     if lineage.statement == StatementKind::CreateTableAs
         && lineage.target.as_ref().is_some_and(|target| target.schema != "main")
     {
-        return Ok(Err(Rejection::Lineage(LineageClass::Unsupported).logged().into()));
+        return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
     }
-    let plan = match dbmcp_pii::policy::plan(&lineage, Dialect::Sqlite, config) {
-        Ok(plan) => plan,
-        Err(rejection) => return Ok(Err(rejection.into())),
-    };
-    let expected = positional(&lineage.statement).then_some(&plan);
-    let executed = match execute(&mut tx, sql, expected, &config.rules, sink).await {
+    let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Sqlite, config)?;
+    let plan = (!matches!(
+        lineage.statement,
+        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
+    ))
+    .then_some(plan);
+    let executed = match execute(&mut tx, sql, plan.as_ref(), config, sink).await {
         Ok(executed) => executed,
-        Err(error) => {
-            return match withheld(&error) {
-                Some(code) if touches_ruled(&lineage, config) => Ok(Err(Stop::Withheld(code))),
-                _ => Err(error),
-            };
+        Err(Stop::Sql(error)) => {
+            return Err(match withheld(&error) {
+                Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+                _ => Stop::Sql(error),
+            });
+        }
+        Err(stop) => {
+            tx.rollback().await?;
+            return Err(stop);
         }
     };
-    if let Some(shape) = executed.shape {
-        tx.rollback().await?;
-        return Ok(Err(shape.into()));
-    }
     match access {
         Access::Read => tx.rollback().await?,
         Access::Write => tx.commit().await?,
     }
     let (rows_affected, last_insert_id) = SqliteConnection::counts(sql, &executed.results);
-    Ok(Ok(Run {
-        statement: lineage.statement,
+    Ok(Run {
         plan,
         names: executed.names,
         rows_affected,
         last_insert_id,
-    }))
+    })
 }
 
 /// Runs `sql`, feeding each row's values to `sink` and collecting its results.
 ///
-/// With `expected`, the first row's column origins, count, and names are
-/// checked against it first, so a write that does not fit is never
-/// committed; on a mismatch nothing reaches `sink` and the stream stops.
+/// With `plan`, the first row's column origins, count, and names are checked
+/// before any row reaches `sink`, so a write that does not fit never commits.
 async fn execute(
     conn: &mut sqlx::SqliteConnection,
     sql: &str,
-    expected: Option<&Plan>,
-    rules: &[ColumnRule],
+    plan: Option<&Plan>,
+    config: &PiiConfig,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Executed, sqlx::Error> {
+) -> Result<Executed, Stop> {
     let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
     let mut stream = conn.fetch_many(query);
     let mut names = None;
@@ -318,19 +280,12 @@ async fn execute(
             Either::Right(row) => {
                 let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
                 if names.is_none()
-                    && let Some(plan) = expected
+                    && let Some(plan) = plan
                 {
-                    let fits = match unplanned_ruled(row.columns(), plan, rules) {
-                        Some(position) => Err(ShapeError::NameMismatch { position }),
-                        None => check_columns(plan, &row_names),
-                    };
-                    if let Err(shape) = fits {
-                        return Ok(Executed {
-                            names: Vec::new(),
-                            results,
-                            shape: Some(shape),
-                        });
+                    if let Some(position) = unplanned_ruled(row.columns(), plan, config) {
+                        return Err(Stop::Unplanned(position));
                     }
+                    check_columns(plan, &row_names)?;
                 }
                 names.get_or_insert(row_names);
                 sink(Value::Array(values));
@@ -340,7 +295,6 @@ async fn execute(
     Ok(Executed {
         names: names.unwrap_or_default(),
         results,
-        shape: None,
     })
 }
 
@@ -349,20 +303,14 @@ async fn execute(
 /// `SQLite` reports a column's origin through views and subqueries down to
 /// its base table, as `table` in `main` and `schema.table` elsewhere. A
 /// table name holding a `.` reads both ways; either reading counts.
-fn unplanned_ruled(columns: &[SqliteColumn], plan: &Plan, rules: &[ColumnRule]) -> Option<usize> {
+fn unplanned_ruled(columns: &[SqliteColumn], plan: &Plan, config: &PiiConfig) -> Option<usize> {
     columns.iter().position(|column| {
         let ColumnOrigin::Table(origin) = column.origin() else {
             return false;
         };
-        let name = ColumnRule::fold(&origin.name);
         let is_ruled = readings(&origin.table).any(|(schema, table)| {
-            let key = [
-                CATALOG.to_owned(),
-                ColumnRule::fold(schema),
-                ColumnRule::fold(table),
-                name.clone(),
-            ];
-            rules.iter().any(|rule| rule.key == key)
+            let source = SourceRef::new(RelationId::new(CATALOG, schema, table), &*origin.name);
+            rule(config, &source).is_some()
         });
         is_ruled
             && !matches!(
@@ -382,26 +330,24 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
 }
 
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
-async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Result<Lineage, Rejection>, sqlx::Error> {
+async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Lineage, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
     let mut catalog = Catalog::new();
     let mut rounds = 0;
     loop {
         match analyze(sql, Dialect::Sqlite, &catalog) {
-            Ok(lineage) => return Ok(Ok(lineage)),
+            Ok(lineage) => return Ok(lineage),
             Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Ok(Err(Rejection::CatalogRounds.logged()));
+                return Err(Rejection::CatalogRounds.logged().into());
             }
             Err(LineageError::Missing(names)) => fetch(conn, &schemas, names, &mut catalog).await?,
-            Err(error) => return Ok(Err(reject_lineage(&error))),
+            Err(error) => return Err(reject_lineage(&error).into()),
         }
         rounds += 1;
     }
 }
 
 /// Lists the relations named `tables` in any schema, in name-resolution order.
-///
-/// A relation of a type this module does not know lists with no kind.
 async fn lookup(conn: &mut sqlx::SqliteConnection, tables: &[&str]) -> Result<Vec<Listed>, sqlx::Error> {
     let tables = Value::from(tables.to_vec()).to_string();
     let rows: Vec<(String, String, String)> = sqlx::query_as(LOOKUP_SQL).bind(tables).fetch_all(conn).await?;
@@ -415,8 +361,6 @@ async fn lookup(conn: &mut sqlx::SqliteConnection, tables: &[&str]) -> Result<Ve
         .collect())
 }
 
-/// Maps a `pragma_table_list` type to a relation kind.
-///
 /// Shadow tables hold raw copies of virtual-table data, so they count as
 /// virtual. Any other type is unknown: it lists, but cannot be described.
 fn relation_kind(kind: &str) -> Option<RelationKind> {
@@ -539,7 +483,6 @@ async fn view_body(conn: &mut sqlx::SqliteConnection, view: &Listed) -> Result<O
     Ok(create.flatten().as_deref().and_then(view_query))
 }
 
-/// Extracts the query from a `CREATE VIEW` statement.
 fn view_query(create: &str) -> Option<String> {
     match Parser::parse_sql(&SQLiteDialect {}, create).ok()?.as_slice() {
         [Statement::CreateView(view)] => Some(view.query.to_string()),
@@ -551,7 +494,7 @@ fn view_query(create: &str) -> Option<String> {
 ///
 /// Timeouts and non-database errors are never withheld.
 fn withheld(error: &sqlx::Error) -> Option<String> {
-    if <SqliteConnection as dbmcp_sql::Connection>::is_timeout(error) {
+    if SqliteConnection::is_timeout(error) {
         return None;
     }
     let error = error.as_database_error()?;
@@ -564,19 +507,18 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiOperator, Transport};
+    use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiOperator, Transport};
     use dbmcp_pii::Entity;
     use dbmcp_pii::policy::PlannedColumn;
     use dbmcp_sql_lineage::NamePart;
     use sqlx::Connection as _;
 
     use super::*;
-    use crate::types::{ExplainQueryRequest, QueryRequest, ReadQueryRequest};
+    use crate::types::{QueryRequest, ReadQueryRequest};
 
-    /// HMAC key for the `hash` operator, 32 bytes.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
-    /// Tables the handler tests read: `users.email` and `users.ssn` are ruled.
+    /// `users.email` and `users.ssn` are ruled by [`rules_config`].
     const SETUP: &str = "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, name TEXT, ssn TEXT);
          INSERT INTO users (email, name, ssn) VALUES
              ('alice@example.com', 'Alice', '123-45-6789'),
@@ -606,7 +548,7 @@ mod tests {
         locate(&listed(), name).map(|relation| format!("{}.{}", relation.schema, relation.name))
     }
 
-    fn rule(key: [&str; 4], entity: &'static str) -> ColumnRule {
+    fn column_rule(key: [&str; 4], entity: &'static str) -> ColumnRule {
         ColumnRule {
             name: "rule".into(),
             item: 0,
@@ -620,15 +562,15 @@ mod tests {
         PiiConfig {
             key: Some(KEY.into()),
             rules: vec![
-                rule(["main", "main", "users", "email"], "EMAIL_ADDRESS"),
-                rule(["main", "main", "users", "ssn"], "US_SSN"),
+                column_rule(["main", "main", "users", "email"], "EMAIL_ADDRESS"),
+                column_rule(["main", "main", "users", "ssn"], "US_SSN"),
             ],
             ..PiiConfig::default()
         }
     }
 
-    /// Builds a handler with column rules on a fresh in-memory database holding [`SETUP`].
-    async fn handler(read_only: bool) -> SqliteHandler {
+    /// Builds a handler on a fresh in-memory database holding [`SETUP`] when writable.
+    async fn handler(read_only: bool, pii: PiiConfig) -> SqliteHandler {
         let handler = SqliteHandler::new(&Config {
             transport: Transport::Stdio,
             database: DatabaseConfig {
@@ -638,7 +580,7 @@ mod tests {
                 ..DatabaseConfig::default()
             },
             http: None,
-            pii: Some(rules_config()),
+            pii: Some(pii),
             ssh: None,
         })
         .expect("handler builds");
@@ -669,15 +611,6 @@ mod tests {
             .map(|response| response.rows)
     }
 
-    async fn count(handler: &SqliteHandler, table: &str) -> i64 {
-        let pool = handler.connection.pool(None).await.expect("pool");
-        sqlx::query_scalar(AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
-            .fetch_one(&pool)
-            .await
-            .expect("count")
-    }
-
-    /// Opens a raw in-memory connection holding `setup`.
     async fn memory(setup: &str) -> sqlx::SqliteConnection {
         let mut conn = sqlx::SqliteConnection::connect(":memory:").await.expect("connect");
         sqlx::raw_sql(AssertSqlSafe(setup.to_owned()))
@@ -770,7 +703,6 @@ mod tests {
         );
     }
 
-    /// Runs `sql` on a fresh in-memory database and returns its error.
     async fn error_of(setup: &str, sql: &str) -> sqlx::Error {
         let mut conn = memory(setup).await;
         sqlx::raw_sql(AssertSqlSafe(sql.to_owned()))
@@ -861,7 +793,7 @@ mod tests {
             .expect("row");
         let planned = |position| PlannedColumn { position, name: None };
         let action = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
-        let rules = rules_config().rules;
+        let rules = rules_config();
         let global = Plan {
             columns: vec![planned(Position::Global), planned(Position::Global)],
         };
@@ -887,22 +819,26 @@ mod tests {
             }],
         };
         let mut sunk = 0;
-        let executed = execute(
+        let stop = execute(
             &mut tx,
             "UPDATE audit SET note = 'x' WHERE id = 1 RETURNING id, note",
             Some(&one),
-            &[],
+            &rules_config(),
             &mut |_| sunk += 1,
         )
         .await
-        .expect("execute");
-        assert_eq!(executed.shape, Some(ShapeError::ColumnCount { expected: 1, actual: 2 }));
+        .err()
+        .expect("shape refused");
+        assert!(
+            matches!(stop, Stop::Shape(ShapeError::ColumnCount { expected: 1, actual: 2 })),
+            "{stop}"
+        );
         assert_eq!(sunk, 0);
     }
 
     #[tokio::test]
     async fn rules_without_a_redactor_refuse_every_statement() {
-        let mut handler = handler(false).await;
+        let mut handler = handler(false, rules_config()).await;
         handler.redactor = None;
         let error = read(&handler, "SELECT note FROM audit").await.expect_err("fail closed");
         assert!(error.message.contains("column policy"), "{}", error.message);
@@ -926,66 +862,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ruled_columns_are_hashed_by_position() {
-        let handler = handler(false).await;
-        let rows = read(&handler, "SELECT id, email AS email, name FROM users ORDER BY id")
-            .await
-            .expect("read");
-        assert_eq!(rows.len(), 3);
-        let email = rows[0]["email"].as_str().expect("email string");
-        assert!(email.starts_with("<EMAIL_ADDRESS_"), "{email}");
-        assert_eq!(rows[0]["name"], "Alice");
-        let star = read(&handler, "SELECT * FROM users WHERE id = 2").await.expect("star");
-        assert!(
-            star[0]["email"]
-                .as_str()
-                .is_some_and(|v| v.starts_with("<EMAIL_ADDRESS_"))
-        );
-        assert_eq!(star[0]["ssn"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn ruled_columns_outside_the_output_are_refused() {
-        let handler = handler(false).await;
-        let error = read(&handler, "SELECT id FROM users WHERE email LIKE 'a%'")
-            .await
-            .expect_err("filter on a ruled column");
-        assert!(error.message.contains("column policy"), "{}", error.message);
-    }
-
-    #[tokio::test]
-    async fn rejected_writes_change_nothing() {
-        let handler = handler(false).await;
-        let error = write(&handler, "INSERT INTO audit (note) SELECT email FROM users")
-            .await
-            .expect_err("laundering");
-        assert!(error.message.contains("column policy"), "{}", error.message);
-        assert_eq!(count(&handler, "audit").await, 2);
-    }
-
-    #[tokio::test]
-    async fn returning_rows_are_redacted_and_the_write_commits() {
-        let handler = handler(false).await;
-        let rows = write(
-            &handler,
-            "UPDATE users SET name = 'Al' WHERE id = 1 RETURNING id, email",
-        )
-        .await
-        .expect("update");
-        assert!(
-            rows[0]["email"]
-                .as_str()
-                .is_some_and(|v| v.starts_with("<EMAIL_ADDRESS_"))
-        );
-        let names = read(&handler, "SELECT name FROM users WHERE id = 1")
-            .await
-            .expect("read");
-        assert_eq!(names[0]["name"], "Al");
-    }
-
-    #[tokio::test]
     async fn ctas_into_a_temp_shadowed_name_is_unsupported() {
-        let handler = handler(false).await;
+        let handler = handler(false, rules_config()).await;
         let pool = handler.connection.pool(None).await.expect("pool");
         sqlx::raw_sql("CREATE TEMP TABLE copy (id INTEGER)")
             .execute(&pool)
@@ -1002,22 +880,13 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_a_missing_table_if_exists_plans() {
-        let handler = handler(false).await;
+        let handler = handler(false, rules_config()).await;
         write(&handler, "DROP TABLE IF EXISTS nope").await.expect("no target");
     }
 
     #[tokio::test]
-    async fn explain_reads_and_refuses_ruled_relations() {
-        let handler = handler(false).await;
-        let explain = |query: &str| handler.explain_query(ExplainQueryRequest { query: query.into() });
-        explain("SELECT note FROM audit").await.expect("unruled explain");
-        let error = explain("SELECT email FROM users").await.expect_err("ruled explain");
-        assert!(error.message.contains("EXPLAIN"), "{}", error.message);
-    }
-
-    #[tokio::test]
     async fn timeouts_under_rules_still_report_query_timeout() {
-        let handler = handler(false).await;
+        let handler = handler(false, rules_config()).await;
         let pool = handler.connection.pool(None).await.expect("pool");
         sqlx::raw_sql(
             "CREATE TABLE n (x INTEGER);
@@ -1040,26 +909,14 @@ mod tests {
 
     #[tokio::test]
     async fn writes_are_refused_in_read_only_mode() {
-        let handler = handler(true).await;
+        let handler = handler(true, rules_config()).await;
         let error = write(&handler, "CREATE TABLE t (a)").await.expect_err("read-only");
         assert_eq!(error.message, SqlError::ReadOnlyViolation.to_string());
     }
 
     #[tokio::test]
     async fn policy_exists_only_with_rules() {
-        assert!(handler(false).await.policy.is_some());
-        let plain = SqliteHandler::new(&Config {
-            transport: Transport::Stdio,
-            database: DatabaseConfig {
-                backend: DatabaseBackend::Sqlite,
-                name: Some(":memory:".into()),
-                ..DatabaseConfig::default()
-            },
-            http: None,
-            pii: Some(PiiConfig::default()),
-            ssh: None,
-        })
-        .expect("handler builds");
-        assert!(plain.policy.is_none());
+        assert!(handler(false, rules_config()).await.policy.is_some());
+        assert!(handler(false, PiiConfig::default()).await.policy.is_none());
     }
 }

@@ -51,7 +51,7 @@ pub struct SqliteHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: SqliteConnection,
     pub(crate) redactor: Option<Redactor>,
-    /// PII settings holding column rules; `None` keeps every query on the global-redaction path.
+    /// PII settings with column rules; `None` without rules.
     pub(crate) policy: Option<PiiConfig>,
     tool_router: ToolRouter<Self>,
 }

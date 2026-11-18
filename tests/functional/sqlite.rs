@@ -2715,7 +2715,6 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
 
 // Column rules (`pii.rules`)
 
-/// Builds a rule for one `main.main.<table>.<column>` key.
 fn column_rule(table: &str, column: &str, entity: &'static str, operator: PiiOperator) -> dbmcp_config::ColumnRule {
     dbmcp_config::ColumnRule {
         name: format!("{table}_{column}"),

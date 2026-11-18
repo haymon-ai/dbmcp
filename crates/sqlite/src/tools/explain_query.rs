@@ -62,9 +62,8 @@ impl SqliteHandler {
     /// Returns the execution plan for a query.
     ///
     /// Always uses `EXPLAIN QUERY PLAN` — `SQLite` does not support
-    /// `EXPLAIN ANALYZE`. With column rules, the explain runs as a read
-    /// in every mode, and explaining a statement that touches a ruled
-    /// relation is rejected.
+    /// `EXPLAIN ANALYZE`. With column rules, explaining a statement that
+    /// touches a ruled relation is rejected.
     ///
     /// # Errors
     ///

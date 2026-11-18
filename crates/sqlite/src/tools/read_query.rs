@@ -75,9 +75,6 @@ impl SqliteHandler {
     /// before this method is called, which rmcp reports as a tool result
     /// with `isError: true`.
     ///
-    /// With column rules, the text that runs is planned and its rows are
-    /// redacted by position (see `crate::policy`).
-    ///
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not

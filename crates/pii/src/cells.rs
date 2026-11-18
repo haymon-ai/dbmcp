@@ -54,6 +54,12 @@ pub struct Cells {
 }
 
 impl Cells {
+    /// Creates cells from column names and value rows, each in result order.
+    #[must_use]
+    pub fn new(columns: Vec<String>, rows: Vec<Vec<Value>>) -> Self {
+        Self { columns, rows }
+    }
+
     /// Appends one row of ordered `(name, value)` entries.
     ///
     /// The first row sets the column names; later rows add only values.
