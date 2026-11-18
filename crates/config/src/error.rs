@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::database::DatabaseBackend;
 use crate::env::Setting;
 use crate::source::Source;
 
@@ -72,6 +73,27 @@ pub enum ConfigError {
     /// NER was enabled without a model path.
     #[error("pii.ner_model (model directory) is required when pii.ner_enabled is set")]
     PiiNerModelMissing,
+
+    /// `pii.rules` is set while PII redaction is off.
+    #[error("pii.rules requires pii.enabled")]
+    PiiRulesWithoutPii,
+
+    /// The backend cannot enforce column rules yet.
+    #[error("pii.rules: column rules are not yet supported on {0}")]
+    PiiRulesUnsupported(DatabaseBackend),
+
+    /// A rule's catalog segment does not fit the backend.
+    #[error("pii.rules: {rule}: columns: {items}: catalog segment must be {expected} on {backend}")]
+    PiiRuleCatalog {
+        /// The rule's name.
+        rule: String,
+        /// The offending items, e.g. `item 0, item 2`.
+        items: String,
+        /// What the segment must be: `def`, `main`, or `database.name`.
+        expected: &'static str,
+        /// The configured backend.
+        backend: DatabaseBackend,
+    },
 
     /// SSH tunnelling was requested for the `SQLite` backend.
     #[error("ssh.host: not supported with the sqlite backend")]
@@ -164,11 +186,17 @@ impl fmt::Display for Diagnostic {
         write!(f, "{}", self.error)?;
         match self.missing.as_slice() {
             [] => {}
-            [setting] => write!(f, "; set {} or {} in the config file", setting.env, setting.path)?,
+            [setting] => match setting.env {
+                Some(env) => write!(f, "; set {env} or {} in the config file", setting.path)?,
+                None => write!(f, "; set {} in the config file", setting.path)?,
+            },
             many => {
                 let routes: Vec<String> = many
                     .iter()
-                    .map(|setting| format!("{} ({})", setting.env, setting.path))
+                    .map(|setting| match setting.env {
+                        Some(env) => format!("{env} ({})", setting.path),
+                        None => format!("{} in the config file", setting.path),
+                    })
                     .collect();
                 write!(f, "; set one of {}", routes.join(", "))?;
             }

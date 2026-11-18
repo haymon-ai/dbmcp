@@ -4,7 +4,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::http::HttpConfig;
-use crate::pii::PiiConfig;
+use crate::pii::{ColumnRule, PiiConfig};
 use crate::ssh::SshConfig;
 use crate::transport::Transport;
 
@@ -38,7 +38,10 @@ impl Config {
     /// Validates every section and the rules spanning sections.
     ///
     /// Rules enforced, besides each present section's own `validate()`:
-    /// - an SSH tunnel is not supported with the `SQLite` backend.
+    /// - an SSH tunnel is not supported with the `SQLite` backend;
+    /// - column rules are not yet supported on any backend;
+    /// - a column rule's catalog segment must be `def` on `MySQL`/`MariaDB`,
+    ///   `main` on `SQLite`, and the pinned `database.name` on `PostgreSQL`.
     ///
     /// # Errors
     ///
@@ -51,6 +54,13 @@ impl Config {
         }
         if let Some(pii) = &self.pii {
             errors.extend(pii.validate().err().into_iter().flatten());
+            errors.extend(self.rule_catalogs(&pii.rules));
+            if !pii.rules.is_empty() {
+                errors.push(
+                    Diagnostic::new(ConfigError::PiiRulesUnsupported(self.database.backend))
+                        .involving(&[env::PII_RULES, env::DB_BACKEND]),
+                );
+            }
         }
         if let Some(ssh) = &self.ssh {
             if self.database.backend == DatabaseBackend::Sqlite {
@@ -61,6 +71,43 @@ impl Config {
             errors.extend(ssh.validate().err().into_iter().flatten());
         }
         into_result(errors)
+    }
+
+    /// Checks each rule's catalog segment against the backend, one diagnostic per rule.
+    ///
+    /// On `PostgreSQL` the diagnostic also names where `database.name` came from.
+    pub(crate) fn rule_catalogs(&self, rules: &[ColumnRule]) -> Vec<Diagnostic> {
+        let (catalog, expected) = match self.database.backend {
+            DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ("def".to_owned(), "def"),
+            DatabaseBackend::Sqlite => ("main".to_owned(), "main"),
+            DatabaseBackend::Postgres => match self.database.name.as_deref() {
+                Some(name) if !name.is_empty() => (ColumnRule::fold(name), "database.name"),
+                _ => return Vec::new(),
+            },
+        };
+        rules
+            .chunk_by(|a, b| a.name == b.name)
+            .filter_map(|rule| {
+                let items: Vec<String> = rule
+                    .iter()
+                    .filter(|column| column.key[0] != catalog)
+                    .map(|column| format!("item {}", column.item))
+                    .collect();
+                (!items.is_empty()).then(|| {
+                    let involved: &[_] = match self.database.backend {
+                        DatabaseBackend::Postgres => &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME],
+                        _ => &[env::PII_RULES, env::DB_BACKEND],
+                    };
+                    Diagnostic::new(ConfigError::PiiRuleCatalog {
+                        rule: rule[0].name.clone(),
+                        items: items.join(", "),
+                        expected,
+                        backend: self.database.backend,
+                    })
+                    .involving(involved)
+                })
+            })
+            .collect()
     }
 }
 

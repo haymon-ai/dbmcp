@@ -18,7 +18,7 @@ use sqlparser::ast::{Expr, Ident, TableAlias, Value};
 
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{Role, SourceRef};
+use crate::model::{RelationId, Role, SourceRef, TargetColumn};
 use crate::resolve::unsupported;
 
 /// Physical sources of a value.
@@ -33,6 +33,8 @@ pub(crate) struct Col {
     pub sources: Sources,
     /// Whether `*` expands to the column.
     pub visible: bool,
+    /// Whether `name` is the name the server keeps (not engine-specific expression text).
+    pub named: bool,
 }
 
 /// A column list that may still be incomplete.
@@ -96,7 +98,7 @@ impl Columns {
     /// [`LineageError::ColumnCountMismatch`] when a complete list is shorter
     /// than the aliases; [`LineageError::Unsupported`] for `AT` or typed
     /// column definitions.
-    fn rename(&mut self, dialect: Dialect, alias: &TableAlias) -> Result<(), LineageError> {
+    pub(crate) fn rename(&mut self, dialect: Dialect, alias: &TableAlias) -> Result<(), LineageError> {
         if alias.at.is_some() {
             return Err(unsupported("table alias AT clause"));
         }
@@ -113,6 +115,7 @@ impl Columns {
         }
         for (col, def) in self.cols.iter_mut().filter(|c| c.visible).zip(&alias.columns) {
             col.name = dialect.normalize(&def.name);
+            col.named = true;
         }
         Ok(())
     }
@@ -133,9 +136,28 @@ struct Rel {
     path: Vec<String>,
     /// The relation's columns.
     columns: Columns,
+    /// The catalog table behind the name, which a write may target.
+    ///
+    /// `None` for views, CTEs, derived tables, aliased joins, and names the
+    /// catalog lacks: none of them can be written.
+    table: Option<RelationId>,
 }
 
 impl Rel {
+    /// Returns the table a write into this relation targets.
+    ///
+    /// `None` while the relation is open (missing from the catalog).
+    ///
+    /// # Errors
+    /// [`LineageError::Unsupported`] for a view or derived relation.
+    fn writable(&self) -> Result<Option<RelationId>, LineageError> {
+        match &self.table {
+            Some(id) => Ok(Some(id.clone())),
+            None if self.columns.open => Ok(None),
+            None => Err(unsupported("write into a view or derived relation")),
+        }
+    }
+
     /// Returns whether a written qualifier names this relation.
     fn answers(&self, dialect: Dialect, qualifier: &[Ident]) -> bool {
         qualifier.len() <= self.path.len()
@@ -157,7 +179,7 @@ pub(crate) enum Keys {
 }
 
 /// One `FROM` item: the relations a qualifier can name and the combined columns.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Tree {
     rels: Vec<Rel>,
     /// Combined columns for `*` and unqualified lookups, merged keys first.
@@ -188,9 +210,99 @@ impl Tree {
             rels: vec![Rel {
                 path,
                 columns: columns.clone(),
+                table: None,
             }],
             cols: columns,
         })
+    }
+
+    /// Marks this single-relation tree as the catalog table `id`, so writes may target it.
+    pub(crate) fn with_table(mut self, id: RelationId) -> Self {
+        if let [rel] = self.rels.as_mut_slice() {
+            rel.table = Some(id);
+        }
+        self
+    }
+
+    /// Returns the table a write names with `qualifier`; empty names the only relation.
+    ///
+    /// `None` while that relation is open.
+    ///
+    /// # Errors
+    /// [`LineageError::UnknownRelation`] when no relation answers;
+    /// [`LineageError::Unsupported`] when several do, or for a view or
+    /// derived relation.
+    pub(crate) fn written(&self, dialect: Dialect, qualifier: &[Ident]) -> Result<Option<RelationId>, LineageError> {
+        let mut hits = self.rels.iter().filter(|r| r.answers(dialect, qualifier));
+        match (hits.next(), hits.next()) {
+            (Some(rel), None) => rel.writable(),
+            (None, _) => Err(LineageError::UnknownRelation {
+                name: dotted(qualifier),
+            }),
+            (Some(_), Some(_)) => Err(unsupported("ambiguous write target")),
+        }
+    }
+
+    /// Binds a written column (`SET` or `INSERT` list) to its table and catalog name.
+    ///
+    /// `column` may carry a qualifier naming one of this tree's relations.
+    /// The name is the one the catalog stores, even under an alias column
+    /// list. `None` while the relation that would hold it is open.
+    ///
+    /// # Errors
+    /// [`LineageError::UnknownRelation`] when the qualifier names no relation;
+    /// [`LineageError::ColumnNotFound`] or [`LineageError::AmbiguousColumn`]
+    /// when the column binds to no or several columns;
+    /// [`LineageError::Unsupported`] for a column of a view or derived relation.
+    pub(crate) fn target(
+        &self,
+        dialect: Dialect,
+        column: &[Ident],
+    ) -> Result<Option<(RelationId, String)>, LineageError> {
+        let Some((name, qualifier)) = column.split_last() else {
+            return Err(unsupported("empty column name"));
+        };
+        let rels: Vec<&Rel> = self
+            .rels
+            .iter()
+            .filter(|r| qualifier.is_empty() || r.answers(dialect, qualifier))
+            .collect();
+        if rels.is_empty() {
+            return Err(LineageError::UnknownRelation {
+                name: dotted(qualifier),
+            });
+        }
+        let mut hits = rels.iter().flat_map(|rel| {
+            rel.columns
+                .cols
+                .iter()
+                .filter(|c| dialect.matches(name, &c.name))
+                .map(move |c| (*rel, c))
+        });
+        let (rel, col) = match (hits.next(), hits.next()) {
+            (Some(hit), None) => hit,
+            (None, _) if rels.iter().any(|r| r.columns.open) => return Ok(None),
+            (None, _) => return Err(not_found(qualifier, name)),
+            (Some(_), Some(_)) => {
+                return Err(LineageError::AmbiguousColumn {
+                    column: written(qualifier, name),
+                });
+            }
+        };
+        let Some(id) = rel.writable()? else {
+            return Ok(None);
+        };
+        let mut sources = col.sources.iter();
+        let stored = match (sources.next(), sources.next()) {
+            (Some(source), None) => source.column.clone(),
+            _ => col.name.clone(),
+        };
+        Ok(Some((id, stored)))
+    }
+
+    /// Returns the star-visible columns, keeping openness.
+    pub(crate) fn star(&self) -> Columns {
+        self.cols.star()
     }
 
     /// Wraps the whole tree as one relation, as `(a JOIN b) AS x` does.
@@ -378,6 +490,61 @@ impl Level<'_> {
         self.child(true)
     }
 
+    /// Creates the scope of a write's values, filters, and `RETURNING`.
+    ///
+    /// The written table(s) and the `FROM` / `USING` / `MERGE … USING` items
+    /// sit side by side as one `FROM` list with no outputs, as in `UPDATE …
+    /// FROM`, `DELETE … USING`, `MERGE`, `INSERT … SET` / `ON DUPLICATE KEY
+    /// UPDATE`, and every `RETURNING`. Each item was resolved alone, so items
+    /// never see each other. For an `INSERT` the list is the target alone;
+    /// its source query does not see it.
+    ///
+    /// A written column read back (`RETURNING`, a later `MySQL` `SET`)
+    /// binds to the stored column, not the value written into it. That is
+    /// safe only while every write lands in a column ruled like its sources.
+    pub(crate) fn dml(dialect: Dialect, items: Vec<Tree>) -> Level<'static> {
+        let mut level = Level::root(dialect);
+        for item in items {
+            level.add(item);
+        }
+        level
+    }
+
+    /// Creates the scope of `ON CONFLICT … DO UPDATE` over the `INSERT` target.
+    ///
+    /// `SET` values and `WHERE` see the existing row under the target's
+    /// name or alias, and the proposed row as `excluded`, qualified only.
+    /// Each `excluded` column carries the sources the `INSERT` writes into
+    /// it; a column the `INSERT` does not write has none.
+    pub(crate) fn upsert(dialect: Dialect, target: Tree, writes: &[TargetColumn]) -> Level<'static> {
+        let cols = target
+            .cols
+            .cols
+            .iter()
+            .map(|c| Col {
+                name: c.name.clone(),
+                sources: writes
+                    .iter()
+                    .find(|w| w.name == c.name)
+                    .map(|w| w.sources.clone())
+                    .unwrap_or_default(),
+                visible: c.visible,
+                named: true,
+            })
+            .collect();
+        let excluded = Rel {
+            path: vec!["excluded".to_string()],
+            columns: Columns {
+                cols,
+                open: target.cols.open,
+            },
+            table: None,
+        };
+        let mut level = Level::dml(dialect, vec![target]);
+        level.from.rels.push(excluded);
+        level
+    }
+
     /// Creates the scope of a `JOIN … ON` condition over `tree`.
     ///
     /// `ON` sees its own join tree and the outer levels, not the `FROM`
@@ -451,6 +618,14 @@ impl Level<'_> {
             level = at.parent;
         }
         Ok(None)
+    }
+
+    /// Returns the table a write names with `qualifier` among this level's `FROM` relations.
+    ///
+    /// # Errors
+    /// See [`Tree::written`].
+    pub(crate) fn written(&self, qualifier: &[Ident]) -> Result<Option<RelationId>, LineageError> {
+        self.from.written(self.dialect, qualifier)
     }
 
     /// Expands `*` over this level's `FROM` list.

@@ -2,7 +2,9 @@
 //!
 //! The crate never reads a database. The caller fills a [`Catalog`] with one
 //! [`Entry`] per name that [`LineageError::Missing`](crate::LineageError::Missing)
-//! reported, keyed by the name exactly as written, and calls again.
+//! reported, keyed by the name exactly as written, and calls again: a
+//! [`Entry::Resolved`] relation, [`Entry::Vacant`] when nothing exists under
+//! the name, or [`Entry::Absent`] when something exists that it cannot describe.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -149,8 +151,16 @@ impl Relation {
 pub enum Entry {
     /// The name resolves to this relation.
     Resolved(Relation),
-    /// The name resolves to nothing the backend can describe.
+    /// Something exists under the name that the backend cannot describe.
+    ///
+    /// Always an error, even under `IF EXISTS`; use [`Entry::Vacant`] for a
+    /// free name.
     Absent,
+    /// Nothing exists under the name; a relation created under it gets this id.
+    ///
+    /// A `CREATE` target takes the id; `DROP`/`TRUNCATE … IF EXISTS` has no
+    /// target; anywhere else it is an unknown relation, like [`Entry::Absent`].
+    Vacant(RelationId),
 }
 
 /// A snapshot of relations keyed by written name.

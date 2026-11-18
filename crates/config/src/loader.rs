@@ -26,7 +26,8 @@ use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::log::LogLevel;
 use crate::options::LoadOptions;
-use crate::pii::{PiiCategory, PiiConfig, PiiOperator};
+use crate::pii::{ColumnRule, PiiCategory, PiiConfig, PiiOperator};
+use crate::rules::Rule;
 use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
 use crate::ssh::{SshConfig, StrictHostKeyChecking};
@@ -221,6 +222,7 @@ impl Resolver<'_> {
             .collect();
         let ssh = ssh_set.contains(&env::SSH_HOST).then(|| self.ssh());
         let missing_ssh_host = ssh.is_none() && !ssh_set.is_empty();
+        let rules_without_pii = pii.is_none() && !self.rules().is_empty();
 
         let config = Config {
             transport,
@@ -236,6 +238,12 @@ impl Resolver<'_> {
                     .involving(&ssh_set)
                     .missing(&[env::SSH_HOST]),
             );
+        }
+        if rules_without_pii {
+            diagnostics
+                .push(Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE]));
+            // Report wrong catalog segments now, not only once PII is enabled.
+            diagnostics.extend(config.rule_catalogs(&self.pii().rules));
         }
         if !diagnostics.is_empty() {
             return Err(diagnostics);
@@ -319,15 +327,37 @@ impl Resolver<'_> {
         }
     }
 
+    /// Returns the winning `pii.rules` value; unset is no rules.
+    fn rules(&self) -> &[Rule] {
+        match self.settings.get(env::PII_RULES) {
+            None => &[],
+            Some(Value::Rules(rules)) => rules,
+            Some(_) => unreachable!("pii.rules is not a rules setting"),
+        }
+    }
+
     fn pii(&self) -> PiiConfig {
         let operator = self
             .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
             .unwrap_or(PiiConfig::DEFAULT_OPERATOR);
+        let rules: Vec<ColumnRule> = self
+            .rules()
+            .iter()
+            .flat_map(|rule| {
+                rule.columns.iter().enumerate().map(move |(item, key)| ColumnRule {
+                    name: rule.name.clone(),
+                    item,
+                    key: key.clone(),
+                    entity: rule.entity,
+                    operator: rule.operator.unwrap_or(operator),
+                })
+            })
+            .collect();
+        let hashing = operator == PiiOperator::Hash || rules.iter().any(|rule| rule.operator == PiiOperator::Hash);
         PiiConfig {
             operator,
-            key: (operator == PiiOperator::Hash)
-                .then(|| self.string(env::PII_KEY).map(Into::into))
-                .flatten(),
+            key: hashing.then(|| self.string(env::PII_KEY).map(Into::into)).flatten(),
+            rules,
             categories: self.enum_list(env::PII_CATEGORIES, PiiCategory::CHOICES),
             ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
             ner_model: self.path(env::PII_NER_MODEL),
@@ -1405,5 +1435,429 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("12345"));
+    }
+
+    /// Resolves only the PII section, skipping validation and so the per-backend gate.
+    fn pii_section(fixture: &Fixture) -> PiiConfig {
+        let mut warnings = Vec::new();
+        let settings = settings::read(&fixture.options, &mut warnings).unwrap_or_else(|e| panic!("read failed: {e}"));
+        Resolver {
+            settings: &settings,
+            home: fixture.options.home.as_deref(),
+        }
+        .pii()
+    }
+
+    /// Two rules on `MySQL` keys; `cards` sets its own operator.
+    const RULES: &str = "pii:
+  enabled: true
+  rules:
+    emails:
+      columns:
+        - def.Shop.Users.Email
+        - def.shop.orders.email
+      entity: EMAIL_ADDRESS
+    cards:
+      columns: [def.shop.payments.pan]
+      entity: CREDIT_CARD
+      operator: mask
+";
+
+    /// Renders rules as `(name, item, key, entity, operator)`.
+    fn rule_rows(pii: &PiiConfig) -> Vec<(String, usize, String, &'static str, PiiOperator)> {
+        pii.rules
+            .iter()
+            .map(|r| (r.name.clone(), r.item, r.key.join("."), r.entity, r.operator))
+            .collect()
+    }
+
+    #[test]
+    fn rules_flatten_one_column_rule_per_listed_column() {
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", RULES));
+        assert_eq!(
+            rule_rows(&pii),
+            vec![
+                (
+                    "emails".into(),
+                    0,
+                    "def.shop.users.email".into(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Hash
+                ),
+                (
+                    "emails".into(),
+                    1,
+                    "def.shop.orders.email".into(),
+                    "EMAIL_ADDRESS",
+                    PiiOperator::Hash
+                ),
+                (
+                    "cards".into(),
+                    0,
+                    "def.shop.payments.pan".into(),
+                    "CREDIT_CARD",
+                    PiiOperator::Mask
+                ),
+            ]
+        );
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &format!("{RULES}  operator: redact\n")));
+        assert_eq!(pii.rules[0].operator, PiiOperator::Redact);
+        let inherit = RULES.replace("      operator: mask\n", "      operator: ~\n");
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &inherit));
+        assert_eq!(pii.rules[2].operator, PiiOperator::Hash);
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table with a row per rule error")]
+    fn rule_value_errors_are_located_in_the_declaring_file() {
+        let rule = "      columns: [a.b.c.d]\n      entity: URL\n";
+        let cases: Vec<(String, &str)> = vec![
+            (
+                format!("    Emails:\n{rule}"),
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
+            ),
+            (
+                format!("    a b:\n{rule}"),
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
+            ),
+            (
+                format!("    emails:\n{rule}    def.shop.users.secret:\n{rule}"),
+                "rule 1: rule name must use only a-z, 0-9, _ and -",
+            ),
+            (
+                format!("    '':\n{rule}"),
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
+            ),
+            ("    emails:\n".into(), "emails: expected mapping, found null"),
+            (
+                "    emails: [a.b.c.d]\n".into(),
+                "emails: expected mapping, found sequence",
+            ),
+            (
+                "    emails:\n      columns:\n      entity: URL\n".into(),
+                "emails: columns: required",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n      entity: ~\n".into(),
+                "emails: entity: required",
+            ),
+            (
+                "    emails:\n      columns: a.b.c.d\n      entity: URL\n".into(),
+                "emails: columns: expected sequence, found string",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d, 1]\n      entity: URL\n".into(),
+                "emails: columns: item 1: expected string, found integer",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n      entity: [URL]\n".into(),
+                "emails: entity: expected string, found sequence",
+            ),
+            ("    emails: 1\n".into(), "emails: expected mapping, found integer"),
+            (
+                format!("    emails:\n{rule}      allow: [join]\n"),
+                "emails: allow: unknown field; expected one of columns, entity, operator",
+            ),
+            ("    emails:\n      entity: URL\n".into(), "emails: columns: required"),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n".into(),
+                "emails: entity: required",
+            ),
+            (
+                "    emails:\n      columns: []\n      entity: URL\n".into(),
+                "emails: columns: must not be empty",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c]\n      entity: URL\n".into(),
+                "emails: columns: item 0: expected 4 dot-separated segments (catalog.schema.table.column), found 3",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d, a.b.c.d.e]\n      entity: URL\n".into(),
+                "emails: columns: item 1: expected 4 dot-separated segments (catalog.schema.table.column), found 5",
+            ),
+            (
+                "    emails:\n      columns: ['a..c.d']\n      entity: URL\n".into(),
+                "emails: columns: item 0: empty segment",
+            ),
+            (
+                "    emails:\n      columns: ['a.b.*.d']\n      entity: URL\n".into(),
+                "emails: columns: item 0: * is not supported",
+            ),
+            (
+                "    emails:\n      columns: ['a.b. c.d']\n      entity: URL\n".into(),
+                "emails: columns: item 0: whitespace in a segment",
+            ),
+            (
+                "    emails:\n      columns: ['a.`b`.c.d']\n      entity: URL\n".into(),
+                "emails: columns: item 0: quotes are not supported; write the name as the catalog stores it",
+            ),
+            (
+                format!("    emails:\n{rule}      operator: 1\n"),
+                "emails: operator: expected string, found integer",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n      entity: NOPE\n".into(),
+                "emails: entity: unknown entity type; see the data types page",
+            ),
+            (
+                format!("    emails:\n{rule}      operator: shred\n"),
+                "emails: operator: expected one of replace, mask, redact, hash",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d, A.B.C.D]\n      entity: URL\n".into(),
+                "emails: columns: item 1 repeats item 0",
+            ),
+            (
+                format!("    emails:\n{rule}    cards:\n      columns: [A.b.c.D]\n      entity: URL\n"),
+                "cards: columns: item 0 is also in rule emails",
+            ),
+            (
+                "    emails: !reset {}\n".into(),
+                "emails: YAML tag !reset is not supported",
+            ),
+        ];
+        for (body, reason) in cases {
+            let fixture = Fixture::new().config("dbmcp.yaml", &format!("pii:\n  rules:\n{body}"));
+            let file = fixture.dir.path().join("dbmcp.yaml").display().to_string();
+            assert_eq!(
+                fixture.err(),
+                format!("invalid settings:\n  - {file}:3:5: pii.rules: {reason}"),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn rule_errors_never_echo_column_keys() {
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [s3cr3t.b.c]\n      entity: URL\n",
+            )
+            .err();
+        assert!(!error.contains("s3cr3t"), "key leaked: {error}");
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [a.b.c.d]\n      entity: S3CR3T_ENTITY\n",
+            )
+            .err();
+        assert!(!error.contains("S3CR3T_ENTITY"), "entity leaked: {error}");
+    }
+
+    #[test]
+    fn a_duplicate_rule_name_is_a_parse_error() {
+        let rule = "      columns: [a.b.c.d]\n      entity: URL\n";
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                &format!("pii:\n  rules:\n    emails:\n{rule}    emails:\n{rule}"),
+            )
+            .err();
+        assert!(error.starts_with("failed to parse config file"), "{error}");
+        assert!(
+            error.contains(":6:5: duplicate mapping key `emails` is not allowed here"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn later_rules_replace_earlier_ones_whole() {
+        let fixture = Fixture::new().config("a.yaml", RULES).config(
+            "b.yaml",
+            "pii:\n  rules:\n    phones:\n      columns: [def.shop.users.phone]\n      entity: PHONE_NUMBER\n",
+        );
+        let names: Vec<String> = pii_section(&fixture).rules.into_iter().map(|r| r.name).collect();
+        assert_eq!(names, ["phones"]);
+    }
+
+    #[test]
+    fn null_rules_keep_earlier_ones_and_empty_clears() {
+        for null in ["pii:\n  rules:\n", "pii:\n  rules: ~\n"] {
+            let fixture = Fixture::new().config("a.yaml", RULES).config("b.yaml", null);
+            assert_eq!(pii_section(&fixture).rules.len(), 3, "{null:?}");
+        }
+        let fixture = Fixture::new()
+            .config("a.yaml", RULES)
+            .config("b.yaml", "pii:\n  rules: {}\n");
+        assert!(pii_section(&fixture).rules.is_empty());
+        assert!(fixture.ok().config.pii.expect("pii").rules.is_empty());
+    }
+
+    #[test]
+    fn a_broken_rule_in_an_overridden_file_still_fails() {
+        let fixture = Fixture::new()
+            .config(
+                "a.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [a.b.c]\n      entity: URL\n",
+            )
+            .config("b.yaml", "pii:\n  rules: {}\n");
+        let a = fixture.dir.path().join("a.yaml").display().to_string();
+        assert_eq!(
+            fixture.err(),
+            format!(
+                "invalid settings:\n  - {a}:3:5: pii.rules: emails: columns: item 0: \
+                 expected 4 dot-separated segments (catalog.schema.table.column), found 3"
+            )
+        );
+    }
+
+    #[test]
+    fn pii_rules_has_no_env_var() {
+        let loaded = Fixture::new().env("DBMCP_PII_RULES", "garbage").ok();
+        assert!(loaded.config.pii.is_none());
+        let pii = Fixture::new()
+            .env_file(".env", "DBMCP_PII_RULES=garbage\nDBMCP_PII_ENABLE=true\n")
+            .ok()
+            .config
+            .pii
+            .expect("pii");
+        assert!(pii.rules.is_empty());
+    }
+
+    #[test]
+    fn catalog_errors_show_beside_a_missing_pii_enabled() {
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [main.s.t.c]\n      entity: URL\n",
+            )
+            .err();
+        assert!(error.contains("pii.rules requires pii.enabled"), "{error}");
+        assert!(error.contains("catalog segment must be def on mysql"), "{error}");
+    }
+
+    #[test]
+    fn rules_require_pii_enabled() {
+        let body = RULES.replace("  enabled: true\n", "");
+        for yaml in [body.clone(), body.replace("pii:\n", "pii:\n  enabled: false\n")] {
+            let error = Fixture::new().config("dbmcp.yaml", &yaml).err();
+            assert!(error.contains("pii.rules requires pii.enabled"), "{error}");
+            assert!(error.contains("pii.rules from"), "{error}");
+        }
+        assert!(
+            Fixture::new()
+                .config("dbmcp.yaml", "pii:\n  rules: {}\n")
+                .ok()
+                .config
+                .pii
+                .is_none()
+        );
+        Fixture::new()
+            .config("a.yaml", &body)
+            .config("b.yaml", "pii:\n  rules: {}\n")
+            .ok();
+    }
+
+    #[test]
+    fn pii_key_is_kept_when_a_rule_hashes() {
+        let hashing = "  rules:\n    emails:\n      columns: [def.shop.users.email]\n      entity: EMAIL_ADDRESS\n";
+        let fixture = pii_fixture("mask")
+            .env("DBMCP_PII_KEY", PII_KEY_32)
+            .config("dbmcp.yaml", &format!("pii:\n{hashing}      operator: hash\n"));
+        let pii = pii_section(&fixture);
+        assert_eq!(pii.key.as_ref().map(ExposeSecret::expose_secret), Some(PII_KEY_32));
+
+        let fixture = pii_fixture("mask")
+            .env("DBMCP_PII_KEY", PII_KEY_32)
+            .config("dbmcp.yaml", &format!("pii:\n{hashing}"));
+        assert!(pii_section(&fixture).key.is_none());
+    }
+
+    #[test]
+    fn column_rules_are_not_yet_supported_on_any_backend() {
+        for (backend, name, catalog) in [
+            ("mysql", "app", "def"),
+            ("mariadb", "app", "def"),
+            ("postgres", "app", "app"),
+            ("sqlite", "app.db", "main"),
+        ] {
+            let fixture = Fixture::new()
+                .env("DBMCP_DB_BACKEND", backend)
+                .env("DBMCP_DB_NAME", name)
+                .config(
+                    "dbmcp.yaml",
+                    &format!(
+                        "pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{catalog}.s.t.c]\n      entity: URL\n"
+                    ),
+                );
+            let error = fixture.load().expect_err("gate");
+            let messages: Vec<String> = diagnostics(&error).iter().map(ToString::to_string).collect();
+            let gate = format!("pii.rules: column rules are not yet supported on {backend}");
+            assert!(
+                messages.len() == 1 && messages[0].starts_with(&gate),
+                "{backend}: {messages:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rule_catalog_must_fit_the_backend() {
+        let catalogs = |backend: &str, name: Option<&str>, keys: &str| {
+            let mut fixture = Fixture::new().env("DBMCP_DB_BACKEND", backend);
+            if let Some(name) = name {
+                fixture = fixture.env("DBMCP_DB_NAME", name);
+            }
+            let fixture = fixture.config(
+                "dbmcp.yaml",
+                &format!("pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{keys}]\n      entity: URL\n"),
+            );
+            let error = fixture.load().expect_err("gate");
+            diagnostics(&error)
+                .iter()
+                .map(ToString::to_string)
+                .filter(|m| m.contains("catalog segment"))
+                .map(|m| m.split(" (").next().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(catalogs("mysql", None, "DEF.s.t.c").is_empty());
+        assert_eq!(
+            catalogs("mariadb", None, "def.s.t.a, main.s.t.b, x.s.t.c"),
+            ["pii.rules: emails: columns: item 1, item 2: catalog segment must be def on mariadb"]
+        );
+        assert!(catalogs("sqlite", Some("app.db"), "Main.s.t.c").is_empty());
+        assert_eq!(
+            catalogs("sqlite", Some("app.db"), "def.s.t.c"),
+            ["pii.rules: emails: columns: item 0: catalog segment must be main on sqlite"]
+        );
+        assert!(catalogs("postgres", Some("Shop"), "shop.public.t.c").is_empty());
+        assert_eq!(
+            catalogs("postgres", Some("shop"), "other.public.t.c"),
+            ["pii.rules: emails: columns: item 0: catalog segment must be database.name on postgres"]
+        );
+        assert!(catalogs("postgres", None, "anything.public.t.c").is_empty());
+    }
+
+    #[test]
+    fn trimmed_magento_rules_fail_only_on_the_gate() {
+        let fixture = Fixture::new().config(
+            "dbmcp.yaml",
+            "pii:
+  enabled: true
+  operator: hash
+  key: prototype-magento-key-0123456789abcdef
+  rules:
+    emails:
+      columns:
+        - def.magento.customer_entity.email
+        - def.magento.sales_order.customer_email
+      entity: EMAIL_ADDRESS
+    names:
+      columns:
+        - def.magento.customer_entity.firstname
+        - def.magento.customer_entity.lastname
+      entity: PERSON
+      operator: replace
+    phones:
+      columns: [def.magento.sales_order_address.telephone]
+      entity: PHONE_NUMBER
+      operator: mask
+",
+        );
+        assert_eq!(pii_section(&fixture).rules.len(), 5);
+        let error = fixture.load().expect_err("gate");
+        let messages: Vec<String> = diagnostics(&error).iter().map(ToString::to_string).collect();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].starts_with("pii.rules: column rules are not yet supported on mysql"));
     }
 }

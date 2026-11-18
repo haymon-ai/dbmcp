@@ -5,6 +5,12 @@
 //! [`Catalog`]. The [`Lineage`] lists each output column's sources, every
 //! other column use with its [`Role`] (`JOIN`, filter, `GROUP BY`, `ORDER BY`,
 //! window), the relations touched, and the functions called.
+//! [`StatementKind`] says which tier the statement is in: queries, `EXPLAIN`
+//! of a modeled statement, `SHOW` and `DESCRIBE`, and relations-only DDL
+//! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`),
+//! which names its target. Writes (`INSERT`, `UPDATE`, `DELETE`, `MERGE`,
+//! `CREATE TABLE … AS`, `PostgreSQL` `SELECT … INTO`, `CREATE [MATERIALIZED]
+//! VIEW`) also list each written column's sources as a [`TargetColumn`].
 //!
 //! The crate never connects to a database. Names missing from the catalog
 //! come back together as [`LineageError::Missing`]; the caller resolves them
@@ -49,6 +55,7 @@ mod expr;
 mod functions;
 mod model;
 mod resolve;
+mod statement;
 #[cfg(test)]
 mod tests;
 
@@ -58,5 +65,5 @@ pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
 pub use crate::model::{
     FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
-    StatementKind,
+    StatementKind, TargetColumn,
 };

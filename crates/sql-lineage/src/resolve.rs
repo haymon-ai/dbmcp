@@ -23,8 +23,8 @@ use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{
     FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
-    StatementKind,
 };
+use crate::statement::Analysis;
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -80,7 +80,7 @@ impl<'c> Ctx<'c> {
     }
 
     /// Records a catalog relation named in the SQL being walked.
-    fn use_relation(&mut self, relation: &Relation) {
+    pub(crate) fn use_relation(&mut self, relation: &Relation) {
         self.relations.insert(RelationUse {
             id: relation.id.clone(),
             kind: relation.kind,
@@ -97,16 +97,17 @@ impl<'c> Ctx<'c> {
         });
     }
 
-    /// Ends the pass: the lineage of `cols`, unless a name was missing.
+    /// Ends the pass: the lineage of `analysis`, unless a name was missing.
     ///
     /// # Errors
     /// Returns [`LineageError::Missing`] with every name absent from the snapshot.
-    pub(crate) fn finish(self, cols: Columns) -> Result<Lineage, LineageError> {
+    pub(crate) fn finish(self, analysis: Analysis) -> Result<Lineage, LineageError> {
         if !self.missing.is_empty() {
             return Err(LineageError::Missing(self.missing));
         }
         Ok(Lineage {
-            columns: cols
+            columns: analysis
+                .columns
                 .cols
                 .into_iter()
                 .enumerate()
@@ -119,8 +120,9 @@ impl<'c> Ctx<'c> {
             references: self.references,
             relations: self.relations,
             functions: self.functions,
-            target: None,
-            statement: StatementKind::Query,
+            target: analysis.target,
+            writes: analysis.writes,
+            statement: analysis.kind,
         })
     }
 
@@ -269,6 +271,7 @@ impl<'c> Ctx<'c> {
                         name: self.dialect.values_column(i),
                         sources,
                         visible: true,
+                        named: false,
                     }),
                 }
             }
@@ -393,7 +396,12 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves one projection item into output columns.
-    fn select_item(&mut self, item: &SelectItem, level: &Level<'_>, out: &mut Columns) -> Result<(), LineageError> {
+    pub(crate) fn select_item(
+        &mut self,
+        item: &SelectItem,
+        level: &Level<'_>,
+        out: &mut Columns,
+    ) -> Result<(), LineageError> {
         let (expr, name) = match item {
             SelectItem::UnnamedExpr(expr) => (expr, self.output_name(expr)),
             SelectItem::ExprWithAlias { expr, alias } => (expr, self.dialect.normalize(alias)),
@@ -412,12 +420,15 @@ impl<'c> Ctx<'c> {
                 return Err(unsupported("wildcard on an expression"));
             }
         };
+        let named = !matches!(item, SelectItem::UnnamedExpr(expr)
+            if !matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_)));
         let mut sources = BTreeSet::new();
         self.expr(expr, level, Clause::Projection, &mut sources)?;
         out.cols.push(Col {
             name,
             sources,
             visible: true,
+            named,
         });
         Ok(())
     }
@@ -474,7 +485,7 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
-    fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
+    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
         let mut tree = self.factor(&twj.relation, level)?;
         for join in &twj.joins {
             let right = self.factor(&join.relation, level)?;
@@ -522,7 +533,7 @@ impl<'c> Ctx<'c> {
         Ok(on.into_tree())
     }
 
-    fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
+    pub(crate) fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
         match factor {
             TableFactor::Table {
                 name,
@@ -584,7 +595,9 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a named relation: a visible CTE, else a catalog entry.
-    fn named(
+    ///
+    /// A catalog table keeps its identity, so a write may target it.
+    pub(crate) fn named(
         &mut self,
         name: &ObjectName,
         alias: Option<&TableAlias>,
@@ -599,7 +612,92 @@ impl<'c> Ctx<'c> {
             return Tree::single(self.dialect, path, cols, alias);
         }
 
-        let written = WrittenName {
+        let Some(relation) = self.lookup(&parts)? else {
+            return Tree::single(self.dialect, path, Columns::pending(), alias);
+        };
+        self.use_relation(relation);
+        if matches!(relation.kind, RelationKind::View | RelationKind::MatView) {
+            let cols = self.view(relation)?;
+            return Tree::single(self.dialect, path, Columns::known(cols), alias);
+        }
+        let cols = relation
+            .columns
+            .iter()
+            .map(|c| Col {
+                name: c.name.clone(),
+                sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                visible: c.star_visible,
+                named: true,
+            })
+            .collect();
+        Ok(Tree::single(self.dialect, path, Columns::known(cols), alias)?.with_table(relation.id.clone()))
+    }
+
+    /// Looks up a written relation name in the catalog.
+    ///
+    /// A name the catalog lacks is queued in `missing` and yields `None`.
+    ///
+    /// # Errors
+    /// [`LineageError::UnknownRelation`] for an absent or vacant entry.
+    pub(crate) fn lookup(&mut self, parts: &[Ident]) -> Result<Option<&'c Relation>, LineageError> {
+        match self.entry(parts) {
+            None => Ok(None),
+            Some((written, Entry::Absent | Entry::Vacant(_))) => Err(LineageError::UnknownRelation {
+                name: written.to_string(),
+            }),
+            Some((_, Entry::Resolved(relation))) => Ok(Some(relation)),
+        }
+    }
+
+    /// Looks up the name a statement creates a relation of `kind` under.
+    ///
+    /// Returns the id of the existing relation or the one the name would
+    /// get, and records it as touched with its kind, or `kind` when vacant.
+    /// A name the catalog lacks is queued in `missing` and yields `None`.
+    ///
+    /// # Errors
+    /// [`LineageError::UnknownRelation`] for an absent entry.
+    pub(crate) fn create_target(
+        &mut self,
+        parts: &[Ident],
+        kind: RelationKind,
+    ) -> Result<Option<RelationId>, LineageError> {
+        let (id, kind) = match self.entry(parts) {
+            None => return Ok(None),
+            Some((written, Entry::Absent)) => {
+                return Err(LineageError::UnknownRelation {
+                    name: written.to_string(),
+                });
+            }
+            Some((_, Entry::Vacant(id))) => (id.clone(), kind),
+            Some((_, Entry::Resolved(relation))) => (relation.id.clone(), relation.kind),
+        };
+        self.relations.insert(RelationUse {
+            id: id.clone(),
+            kind,
+            origin: self.origin(),
+        });
+        Ok(Some(id))
+    }
+
+    /// Returns the catalog entry for a written name.
+    ///
+    /// A name the catalog lacks is queued in `missing` and yields `None`.
+    pub(crate) fn entry(&mut self, parts: &[Ident]) -> Option<(WrittenName, &'c Entry)> {
+        let written = self.written(parts);
+        let catalog = self.catalog;
+        if let Some(entry) = catalog.get(&written) {
+            return Some((written, entry));
+        }
+        if !self.missing.contains(&written) {
+            self.missing.push(written);
+        }
+        None
+    }
+
+    /// Builds the catalog key for a name written in the SQL being walked.
+    fn written(&self, parts: &[Ident]) -> WrittenName {
+        WrittenName {
             parts: parts
                 .iter()
                 .map(|p| NamePart {
@@ -608,36 +706,7 @@ impl<'c> Ctx<'c> {
                 })
                 .collect(),
             context: self.origin(),
-        };
-        let catalog = self.catalog;
-        let relation = match catalog.get(&written) {
-            None => {
-                if !self.missing.contains(&written) {
-                    self.missing.push(written);
-                }
-                return Tree::single(self.dialect, path, Columns::pending(), alias);
-            }
-            Some(Entry::Absent) => {
-                return Err(LineageError::UnknownRelation {
-                    name: written.to_string(),
-                });
-            }
-            Some(Entry::Resolved(relation)) => relation,
-        };
-        self.use_relation(relation);
-        let cols = match relation.kind {
-            RelationKind::View | RelationKind::MatView => self.view(relation)?,
-            _ => relation
-                .columns
-                .iter()
-                .map(|c| Col {
-                    name: c.name.clone(),
-                    sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
-                    visible: c.star_visible,
-                })
-                .collect(),
-        };
-        Tree::single(self.dialect, path, Columns::known(cols), alias)
+        }
     }
 
     /// Expands a view or materialized view body into the view's columns.
@@ -685,6 +754,7 @@ impl<'c> Ctx<'c> {
                     name: c.name.clone(),
                     sources: Sources::new(),
                     visible: c.star_visible,
+                    named: true,
                 })
                 .collect();
             self.expanded.insert(relation.id.clone(), cols.clone());
@@ -705,6 +775,7 @@ impl<'c> Ctx<'c> {
                 name: c.name.clone(),
                 sources: b.sources,
                 visible: c.star_visible,
+                named: true,
             })
             .collect();
         self.expanded.insert(relation.id.clone(), cols.clone());

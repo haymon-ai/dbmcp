@@ -1096,6 +1096,7 @@ dependencies = [
  "bs58",
  "criterion",
  "dbmcp-config",
+ "dbmcp-sql-lineage",
  "fancy-regex 0.20.0",
  "getrandom 0.4.3",
  "hmac",

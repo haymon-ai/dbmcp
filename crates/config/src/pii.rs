@@ -1,4 +1,4 @@
-//! PII redaction settings and operator enum.
+//! PII redaction settings, operator enum, and column rules.
 
 use std::path::PathBuf;
 
@@ -92,6 +92,89 @@ impl std::fmt::Display for PiiCategory {
     }
 }
 
+/// One ruled column, flattened from a named `pii.rules` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnRule {
+    /// The rule's name, for messages only.
+    pub name: String,
+    /// The column's position in its rule's `columns` list, for messages only.
+    pub item: usize,
+    /// `catalog.schema.table.column`, each segment folded by [`ColumnRule::fold`].
+    pub key: [String; 4],
+    /// The entity the column holds, one of [`ColumnRule::ENTITIES`].
+    pub entity: &'static str,
+    /// The operator: the rule's own, else `pii.operator`.
+    pub operator: PiiOperator,
+}
+
+impl ColumnRule {
+    /// Entity names a rule may use, in `dbmcp_pii::Entity::ALL` order.
+    ///
+    /// Mirrors `dbmcp_pii::Entity::as_str`; a test in `dbmcp-pii` ties the two.
+    pub const ENTITIES: [&'static str; 51] = [
+        "EMAIL_ADDRESS",
+        "CREDIT_CARD",
+        "IBAN_CODE",
+        "IP_ADDRESS",
+        "URL",
+        "PHONE_NUMBER",
+        "CRYPTO",
+        "US_SSN",
+        "API_KEY",
+        "BANK_ACCOUNT_UK",
+        "CVV",
+        "ITIN",
+        "JWT_TOKEN",
+        "MAC_ADDRESS",
+        "NHS_NUMBER",
+        "NINO_UK",
+        "PASSPORT_UK",
+        "PASSPORT_US",
+        "PRIVATE_KEY",
+        "ROUTING_NUMBER_US",
+        "SIN_CA",
+        "SORT_CODE_UK",
+        "TAX_ID_EIN",
+        "VAT_NUMBER",
+        "MEDICAL_LICENSE_US",
+        "BANK_ACCOUNT_US",
+        "DRIVER_LICENSE_US",
+        "MBI_US",
+        "NPI_US",
+        "DRIVING_LICENCE_UK",
+        "POSTCODE_UK",
+        "VEHICLE_REGISTRATION_UK",
+        "MEDICAL_PRACTICE_ID_DE",
+        "DRIVING_LICENCE_DE",
+        "COMMERCIAL_REGISTER_DE",
+        "HEALTH_INSURANCE_DE",
+        "ID_CARD_DE",
+        "LICENSE_PLATE_DE",
+        "LIFETIME_PHYSICIAN_NUMBER_DE",
+        "PASSPORT_DE",
+        "POSTCODE_DE",
+        "SOCIAL_SECURITY_DE",
+        "TAX_ID_DE",
+        "TAX_NUMBER_DE",
+        "DATE_OF_BIRTH",
+        "PASSWORD_HASH",
+        "PERSON",
+        "LOCATION",
+        "ORGANIZATION",
+        "NATIONALITY_RELIGION_POLITICS",
+        "FACILITY",
+    ];
+
+    /// Folds a key segment for matching; the only fold rule keys use.
+    ///
+    /// Keys match case-insensitively, so the loader folds rule keys with it
+    /// and a caller must fold catalog names the same way before comparing.
+    #[must_use]
+    pub fn fold(segment: &str) -> String {
+        segment.to_lowercase()
+    }
+}
+
 /// PII redaction settings for query tool responses.
 ///
 /// Present in [`crate::Config`] only when redaction is enabled.
@@ -101,7 +184,7 @@ pub struct PiiConfig {
     pub operator: PiiOperator,
     /// HMAC key for the `hash` operator, at least 32 bytes; never logged.
     ///
-    /// Set only when [`Self::operator`] is [`PiiOperator::Hash`].
+    /// Set only when [`Self::operator`] or a rule's operator is [`PiiOperator::Hash`].
     pub key: Option<SecretString>,
     /// Optional explicit category set; routes the analyzer through
     /// `dbmcp_pii::Analyzer::builder().categories(...)`.
@@ -113,6 +196,8 @@ pub struct PiiConfig {
     /// Filesystem path to the NER model directory; required when
     /// [`Self::ner_enabled`] is set.
     pub ner_model: Option<PathBuf>,
+    /// Column rules, in file order, one per listed column (YAML-only `pii.rules`).
+    pub rules: Vec<ColumnRule>,
 }
 
 impl PiiConfig {
@@ -164,6 +249,12 @@ impl PiiConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fold_lowercases_every_character() {
+        assert_eq!(ColumnRule::fold("Shop_Users"), "shop_users");
+        assert_eq!(ColumnRule::fold("ÄRZTE"), "ärzte");
+    }
 
     #[test]
     fn pii_config_default_operator_is_hash() {

@@ -134,26 +134,74 @@ pub struct OutputColumn {
 }
 
 /// The kind of statement analyzed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum StatementKind {
     /// A query: `SELECT`, set operation, or `VALUES`.
     Query,
+    /// `INSERT` (or `REPLACE`), with `VALUES`, a query, or `SET`.
+    Insert,
+    /// `UPDATE`, including `PostgreSQL` `FROM` and `MySQL` joined tables.
+    Update,
+    /// `DELETE`, including `USING` and `MySQL` joined tables.
+    Delete,
+    /// `MERGE`.
+    Merge,
+    /// `CREATE TABLE` without a query.
+    CreateTable,
+    /// `CREATE TABLE … AS` or `PostgreSQL` `SELECT … INTO`.
+    CreateTableAs,
+    /// `CREATE VIEW`.
+    CreateView,
+    /// `CREATE MATERIALIZED VIEW`.
+    CreateMaterializedView,
+    /// `DROP TABLE`, `VIEW`, `MATERIALIZED VIEW`, or `INDEX`.
+    Drop,
+    /// `TRUNCATE`.
+    Truncate,
+    /// `CREATE INDEX`.
+    CreateIndex,
+    /// `SHOW`; holds the first keyword or name after `SHOW`, ASCII-uppercased.
+    Show(String),
+    /// `DESCRIBE`, `DESC`, or `EXPLAIN` of a table.
+    Describe,
+    /// `EXPLAIN` of the inner statement, whose lineage this one carries.
+    ///
+    /// The lineage's columns are the explained statement's, not the plan's
+    /// result set, so they do not match output positions.
+    Explain(Box<StatementKind>),
+}
+
+/// A column a statement writes, with the physical columns feeding it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetColumn {
+    /// The target column's actual name, or the new column's name on create.
+    pub name: String,
+    /// Physical columns whose values flow into the target column.
+    pub sources: BTreeSet<SourceRef>,
+    /// Whether `name` is the name the server stores.
+    ///
+    /// `false` only for a created column from an unaliased expression or a
+    /// `VALUES` list, whose stored name is engine-specific: a rule cannot
+    /// name it reliably.
+    pub named: bool,
 }
 
 /// The lineage of a single statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lineage {
-    /// Output columns in result order.
+    /// Output columns in result order; for writes, the `RETURNING` list; for `EXPLAIN`, the explained statement's.
     pub columns: Vec<OutputColumn>,
     /// Columns used outside the projection, by role.
     pub references: BTreeSet<Reference>,
-    /// Catalog relations touched.
+    /// Catalog relations touched, the target included.
     pub relations: BTreeSet<RelationUse>,
     /// Functions called.
     pub functions: BTreeSet<FunctionUse>,
-    /// Write target; `None` for a query.
+    /// The relation written, created, dropped, truncated, or indexed; `None` for a query.
     pub target: Option<RelationId>,
+    /// Columns of `target` written, in first-write order, sources merged.
+    pub writes: Vec<TargetColumn>,
     /// The statement kind.
     pub statement: StatementKind,
 }
