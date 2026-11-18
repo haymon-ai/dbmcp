@@ -5,7 +5,7 @@
 //! `ServerHandler` surface and one thin delegator method that the
 //! per-tool implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseConfig, PiiConfig};
 use dbmcp_pii::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
@@ -14,7 +14,6 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::SqliteConnection;
-use crate::policy::ColumnPolicy;
 use crate::tools::{
     DropTableTool, ExplainQueryTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
 };
@@ -52,8 +51,8 @@ pub struct SqliteHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: SqliteConnection,
     pub(crate) redactor: Option<Redactor>,
-    /// Column rules; `None` keeps every query on the global-redaction path.
-    pub(crate) policy: Option<ColumnPolicy>,
+    /// PII settings holding column rules; `None` keeps every query on the global-redaction path.
+    pub(crate) policy: Option<PiiConfig>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -78,12 +77,11 @@ impl SqliteHandler {
     /// Returns the [`dbmcp_pii::RedactorInitError`] from
     /// [`dbmcp_pii::Redactor::from_config`] (fail-closed startup).
     pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
-        let redactor = Redactor::from_config(config.pii.as_ref())?;
         Ok(Self {
             config: config.database.clone(),
             connection: SqliteConnection::new(&config.database),
-            policy: ColumnPolicy::new(config.pii.as_ref(), redactor.as_ref()),
-            redactor,
+            redactor: Redactor::from_config(config.pii.as_ref())?,
+            policy: config.pii.clone().filter(|pii| !pii.rules.is_empty()),
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
         })
     }

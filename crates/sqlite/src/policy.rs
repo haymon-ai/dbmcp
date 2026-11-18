@@ -22,8 +22,7 @@
 use std::mem;
 
 use dbmcp_config::{ColumnRule, PiiConfig};
-use dbmcp_pii::Redactor;
-use dbmcp_pii::cells::{Cells, ShapeError};
+use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, touches_ruled};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -77,29 +76,6 @@ const VALUE_FREE_CODES: &[i32] = &[275, 787, 1299, 1555, 2067, 2579, 3091];
 /// `SQLITE_ERROR` messages of the JSON functions that carry no value.
 const VALUE_FREE_JSON: &[&str] = &["malformed JSON", "JSON cannot hold BLOB values"];
 
-/// Column rules and the redactor that applies their plans.
-#[derive(Clone)]
-pub(crate) struct ColumnPolicy {
-    /// PII settings holding at least one column rule.
-    pub(crate) config: PiiConfig,
-    /// Redactor built from `config`.
-    pub(crate) redactor: Redactor,
-}
-
-impl ColumnPolicy {
-    /// Returns the policy when `config` holds column rules and `redactor` exists.
-    ///
-    /// `redactor` is the one built from `config`, which exists whenever
-    /// `config` does.
-    pub(crate) fn new(config: Option<&PiiConfig>, redactor: Option<&Redactor>) -> Option<Self> {
-        config
-            .filter(|config| !config.rules.is_empty())
-            .cloned()
-            .zip(redactor.cloned())
-            .map(|(config, redactor)| Self { config, redactor })
-    }
-}
-
 /// Whether the statement may write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Access {
@@ -126,7 +102,8 @@ enum Stop {
     /// The planner refused the statement; nothing ran.
     #[error(transparent)]
     Rejected(#[from] Rejection),
-    /// The result put a ruled column where the plan does not rewrite it.
+    /// The result does not fit the plan, or puts a ruled column where the
+    /// plan does not rewrite it; nothing was committed.
     #[error(transparent)]
     Shape(#[from] ShapeError),
     /// The statement failed with an error that may echo a ruled value.
@@ -154,8 +131,8 @@ struct Executed {
     names: Vec<String>,
     /// Per-statement results, for the counts.
     results: Vec<SqliteQueryResult>,
-    /// The first position holding a ruled column the plan does not rewrite.
-    unplanned: Option<usize>,
+    /// Why the first row does not fit the plan; the stream stopped there.
+    shape: Option<ShapeError>,
 }
 
 /// A table or view the catalog lists.
@@ -169,9 +146,11 @@ struct Listed {
 }
 
 impl SqliteHandler {
-    /// Plans `sql` under `policy`, runs it into `window`, and redacts the kept rows.
+    /// Plans `sql` under `policy`'s rules, runs it into `window`, and redacts the kept rows.
     ///
-    /// `sql` is the text that runs: a paged query keeps the output positions
+    /// `policy` holds at least one column rule; the handler's redactor
+    /// applies the plan, and its absence refuses the statement before it
+    /// runs. `sql` is the text that runs: a paged query keeps the output positions
     /// of the query it pages. The whole exchange runs on one connection
     /// within `timeout_secs`. The window holds each row as a JSON array of
     /// its values; the returned rows are the window's, redacted, as objects,
@@ -186,12 +165,18 @@ impl SqliteHandler {
     /// failed, or the redaction error when the rows do not fit the plan.
     pub(crate) async fn enforce(
         &self,
-        policy: &ColumnPolicy,
+        policy: &PiiConfig,
         sql: &str,
         access: Access,
         timeout_secs: u64,
         window: &mut Window,
     ) -> Result<Enforced, ErrorData> {
+        let Some(redactor) = &self.redactor else {
+            return Err(ErrorData::internal_error(
+                "column policy: column rules need PII redaction enabled",
+                None,
+            ));
+        };
         let read_only = self.connection.read_only();
         if access == Access::Write && read_only {
             return Err(SqlError::ReadOnlyViolation.into());
@@ -199,7 +184,7 @@ impl SqliteHandler {
         let run = self
             .connection
             .with_connection(sql, None, timeout_secs, async |conn| {
-                run(conn, read_only, &policy.config, sql, access, &mut |row| {
+                run(conn, read_only, policy, sql, access, &mut |row| {
                     window.push(row);
                 })
                 .await
@@ -212,14 +197,14 @@ impl SqliteHandler {
             for row in rows {
                 cells.push(entries(&run.names, row));
             }
-            policy.redactor.redact_cells(cells, &run.plan).await?
+            redactor.redact_cells(cells, &run.plan).await?
         } else {
             // Plan text and metadata are not the planned columns: detect globally.
             let rows = rows
                 .into_iter()
                 .map(|row| Value::Object(entries(&run.names, row).into_iter().collect()))
                 .collect();
-            policy.redactor.redact_rows(rows).await?
+            redactor.redact_rows(rows).await?
         };
         Ok(Enforced {
             rows,
@@ -293,9 +278,9 @@ async fn run(
             };
         }
     };
-    if let Some(position) = executed.unplanned {
+    if let Some(shape) = executed.shape {
         tx.rollback().await?;
-        return Ok(Err(ShapeError::NameMismatch { position }.into()));
+        return Ok(Err(shape.into()));
     }
     match access {
         Access::Read => tx.rollback().await?,
@@ -313,8 +298,9 @@ async fn run(
 
 /// Runs `sql`, feeding each row's values to `sink` and collecting its results.
 ///
-/// With `expected`, the first row's column origins are checked against it
-/// first; on a mismatch nothing reaches `sink` and the stream stops.
+/// With `expected`, the first row's column origins, count, and names are
+/// checked against it first, so a write that does not fit is never
+/// committed; on a mismatch nothing reaches `sink` and the stream stops.
 async fn execute(
     conn: &mut sqlx::SqliteConnection,
     sql: &str,
@@ -330,17 +316,22 @@ async fn execute(
         match item {
             Either::Left(result) => results.push(result),
             Either::Right(row) => {
+                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
                 if names.is_none()
                     && let Some(plan) = expected
-                    && let Some(position) = unplanned_ruled(row.columns(), plan, rules)
                 {
-                    return Ok(Executed {
-                        names: Vec::new(),
-                        results,
-                        unplanned: Some(position),
-                    });
+                    let fits = match unplanned_ruled(row.columns(), plan, rules) {
+                        Some(position) => Err(ShapeError::NameMismatch { position }),
+                        None => check_columns(plan, &row_names),
+                    };
+                    if let Err(shape) = fits {
+                        return Ok(Executed {
+                            names: Vec::new(),
+                            results,
+                            shape: Some(shape),
+                        });
+                    }
                 }
-                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
                 names.get_or_insert(row_names);
                 sink(Value::Array(values));
             }
@@ -349,7 +340,7 @@ async fn execute(
     Ok(Executed {
         names: names.unwrap_or_default(),
         results,
-        unplanned: None,
+        shape: None,
     })
 }
 
@@ -474,7 +465,7 @@ fn vacant(schemas: &[String], name: &WrittenName) -> Entry {
     })
 }
 
-/// Inserts a catalog entry for each of `names`, looked up and read in batched queries.
+/// Inserts a catalog entry for each of `names`, read in batched queries.
 async fn fetch(
     conn: &mut sqlx::SqliteConnection,
     schemas: &[String],
@@ -883,6 +874,38 @@ mod tests {
             columns: vec![planned(Position::Global)],
         };
         assert_eq!(unplanned_ruled(row.columns(), &short, &rules), Some(1));
+    }
+
+    #[tokio::test]
+    async fn results_that_do_not_fit_the_plan_stop_before_any_row() {
+        let mut conn = memory(SETUP).await;
+        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+        let one = Plan {
+            columns: vec![PlannedColumn {
+                position: Position::Global,
+                name: None,
+            }],
+        };
+        let mut sunk = 0;
+        let executed = execute(
+            &mut tx,
+            "UPDATE audit SET note = 'x' WHERE id = 1 RETURNING id, note",
+            Some(&one),
+            &[],
+            &mut |_| sunk += 1,
+        )
+        .await
+        .expect("execute");
+        assert_eq!(executed.shape, Some(ShapeError::ColumnCount { expected: 1, actual: 2 }));
+        assert_eq!(sunk, 0);
+    }
+
+    #[tokio::test]
+    async fn rules_without_a_redactor_refuse_every_statement() {
+        let mut handler = handler(false).await;
+        handler.redactor = None;
+        let error = read(&handler, "SELECT note FROM audit").await.expect_err("fail closed");
+        assert!(error.message.contains("column policy"), "{}", error.message);
     }
 
     #[tokio::test]

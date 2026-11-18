@@ -68,6 +68,26 @@ impl Cells {
     }
 }
 
+/// Checks a result's column names against `plan` before any row is used.
+///
+/// Lets a backend refuse a result while its transaction can still roll
+/// back; [`Redactor::redact_cells`] runs the same checks.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::ColumnCount`] when `names` and `plan` differ in
+/// length, and [`ShapeError::NameMismatch`] for the first known planned
+/// name that does not match its column, folded.
+pub fn check_columns(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
+    if names.len() != plan.columns.len() {
+        return Err(ShapeError::ColumnCount {
+            expected: plan.columns.len(),
+            actual: names.len(),
+        });
+    }
+    check_names(plan, names)
+}
+
 /// Checks that every known planned name matches its result column, folded.
 fn check_names(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
     for (position, (name, column)) in names.iter().zip(&plan.columns).enumerate() {
@@ -262,6 +282,14 @@ mod tests {
     #[test]
     fn duplicate_names_are_allowed() {
         check_names(&plan(vec![MASKED, Position::Global]), &["a", "a"].map(String::from)).expect("duplicates allowed");
+    }
+
+    #[test]
+    fn check_columns_checks_count_then_names() {
+        let two = plan(vec![MASKED, Position::Global]);
+        let err = check_columns(&two, &["a".to_owned()]).expect_err("count differs");
+        assert_eq!(err, ShapeError::ColumnCount { expected: 2, actual: 1 });
+        check_columns(&two, &["a", "b"].map(String::from)).expect("unknown names pass");
     }
 
     #[test]
