@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::{
     Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
-    RelationKind, Role, SourceRef, WrittenName, analyze,
+    RelationKind, Role, SourceRef, StatementKind, WrittenName, analyze,
 };
 
 /// Builds a relation in schema `public`; a leading `~` marks a star-invisible column.
@@ -1327,4 +1327,489 @@ fn views_using_a_view_twice_expand_it_once_per_pass() {
         }]))
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+/// The fixture plus a vacant `t2`, the name a `CREATE TABLE` can claim.
+fn create_fixture() -> Catalog {
+    let mut catalog = fixture();
+    catalog.insert(WrittenName::query(vec![NamePart::bare("t2")]), Entry::Vacant(id("t2")));
+    catalog
+}
+
+/// Analyzes against [`create_fixture`].
+fn on(sql: &str, dialect: Dialect) -> Result<Lineage, LineageError> {
+    analyze(sql, dialect, &create_fixture())
+}
+
+/// Returns the target relation's name.
+fn target(lineage: &Lineage) -> Option<&str> {
+    lineage.target.as_ref().map(|t| t.name.as_str())
+}
+
+/// Renders touched relations as sorted `(name, kind)` pairs.
+fn relations(lineage: &Lineage) -> Vec<(String, RelationKind)> {
+    lineage.relations.iter().map(|r| (r.id.name.clone(), r.kind)).collect()
+}
+
+/// Shorthand for a `SHOW` statement kind.
+fn show(what: &str) -> StatementKind {
+    StatementKind::Show(what.to_string())
+}
+
+/// Shorthand for an `EXPLAIN` statement kind.
+fn explain(inner: StatementKind) -> StatementKind {
+    StatementKind::Explain(Box::new(inner))
+}
+
+#[test]
+fn relations_only_statements_record_target_without_columns() {
+    let cases: &[(&str, Dialect, StatementKind, &str)] = &[
+        (
+            "CREATE TABLE t2 (id INT)",
+            Dialect::Postgres,
+            StatementKind::CreateTable,
+            "t2",
+        ),
+        ("DROP TABLE users", Dialect::Postgres, StatementKind::Drop, "users"),
+        ("TRUNCATE users", Dialect::Postgres, StatementKind::Truncate, "users"),
+        (
+            "CREATE INDEX i ON users (email)",
+            Dialect::Postgres,
+            StatementKind::CreateIndex,
+            "users",
+        ),
+        ("DROP INDEX i ON users", Dialect::Mysql, StatementKind::Drop, "users"),
+    ];
+    for (sql, dialect, kind, name) in cases {
+        let lineage = on(sql, *dialect).expect(sql);
+        assert_eq!(&lineage.statement, kind, "{sql}");
+        assert_eq!(target(&lineage), Some(*name), "{sql}");
+        assert_eq!(
+            lineage.relations.iter().map(|r| r.id.name.as_str()).collect::<Vec<_>>(),
+            vec![*name],
+            "{sql}"
+        );
+        assert!(lineage.columns.is_empty() && lineage.writes.is_empty(), "{sql}");
+        assert!(lineage.references.is_empty(), "{sql}");
+    }
+}
+
+#[test]
+fn create_table_claims_a_vacant_name() {
+    let lineage = on("CREATE TABLE t2 (id INT)", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateTable);
+    assert_eq!(target(&lineage), Some("t2"));
+    assert_eq!(relations(&lineage), vec![("t2".to_string(), RelationKind::Table)]);
+}
+
+#[test]
+fn create_table_target_goes_through_the_missing_loop() {
+    let result = analyze("CREATE TABLE t2 (id INT)", Dialect::Postgres, &Catalog::new());
+    assert_eq!(
+        result,
+        Err(LineageError::Missing(vec![WrittenName::query(vec![NamePart::bare(
+            "t2"
+        )])]))
+    );
+}
+
+#[test]
+fn create_table_as_is_unsupported_until_writes_land() {
+    assert_unsupported(
+        "CREATE TABLE t2 AS SELECT id FROM users",
+        Dialect::Postgres,
+        &create_fixture(),
+    );
+}
+
+#[test]
+fn vacant_name_is_unknown_outside_a_create() {
+    for sql in ["SELECT * FROM t2", "DROP TABLE t2"] {
+        let result = on(sql, Dialect::Postgres);
+        assert!(
+            matches!(result, Err(LineageError::UnknownRelation { .. })),
+            "{sql}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn drop_view_does_not_expand_the_body() {
+    let catalog = with_view(fixture(), None, "v", &["a"], "SELECT nope FROM nowhere");
+    let lineage = analyze("DROP VIEW v", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(target(&lineage), Some("v"));
+    assert_eq!(relations(&lineage), vec![("v".to_string(), RelationKind::View)]);
+}
+
+#[test]
+fn drop_if_exists_of_vacant_name_has_no_target() {
+    let mut catalog = fixture();
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("gone")]),
+        Entry::Vacant(id("gone")),
+    );
+    catalog.insert(WrittenName::query(vec![NamePart::bare("ghost")]), Entry::Absent);
+    for sql in ["DROP TABLE IF EXISTS gone", "TRUNCATE IF EXISTS gone"] {
+        let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
+        assert_eq!(lineage.target, None, "{sql}");
+        assert!(lineage.relations.is_empty(), "{sql}");
+    }
+    for sql in [
+        "DROP TABLE gone",
+        "DROP TABLE IF EXISTS ghost",
+        "TRUNCATE IF EXISTS ghost",
+    ] {
+        let result = analyze(sql, Dialect::Postgres, &catalog);
+        assert!(
+            matches!(result, Err(LineageError::UnknownRelation { .. })),
+            "{sql}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn mysql_engines_serving_other_rows_are_unsupported() {
+    for sql in [
+        "CREATE TABLE t2 (id INT) ENGINE=MERGE UNION=(users)",
+        "CREATE TABLE t2 (id INT) ENGINE=FEDERATED CONNECTION='mysql://h/db/users'",
+    ] {
+        assert_unsupported(sql, Dialect::Mysql, &create_fixture());
+    }
+    let lineage = analyze(
+        "CREATE TABLE t2 (id INT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        Dialect::Mysql,
+        &create_fixture(),
+    )
+    .expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::CreateTable);
+}
+
+#[test]
+fn drop_cascade_is_unsupported_and_drop_temporary_is_a_drop() {
+    assert_unsupported("DROP TABLE users CASCADE", Dialect::Postgres, &fixture());
+    let lineage = analyze("DROP TEMPORARY TABLE users", Dialect::Mysql, &fixture()).expect("analyze");
+    assert_eq!(lineage.statement, StatementKind::Drop);
+    assert_eq!(target(&lineage), Some("users"));
+}
+
+#[test]
+fn ddl_expressions_and_value_constraints_are_unsupported() {
+    let cases: &[(&str, Dialect)] = &[
+        ("CREATE INDEX i ON users ((lower(email)))", Dialect::Postgres),
+        (
+            "CREATE INDEX i ON users (email) WHERE ssn IS NOT NULL",
+            Dialect::Postgres,
+        ),
+        ("CREATE TABLE t2 (id INT DEFAULT 0)", Dialect::Postgres),
+        (
+            "CREATE TABLE t2 (id INT, d INT GENERATED ALWAYS AS (id * 2) STORED)",
+            Dialect::Postgres,
+        ),
+        ("CREATE TABLE t2 (id INT CHECK (id > 0))", Dialect::Postgres),
+        ("CREATE TABLE t2 (id INT, CHECK (id > 0))", Dialect::Postgres),
+        ("CREATE TABLE t2 (id INT REFERENCES users (id))", Dialect::Postgres),
+        (
+            "CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES users (id))",
+            Dialect::Postgres,
+        ),
+    ];
+    for (sql, dialect) in cases {
+        assert_unsupported(sql, *dialect, &create_fixture());
+    }
+}
+
+#[test]
+fn ddl_with_column_names_only_is_modeled() {
+    let cases: &[(&str, StatementKind)] = &[
+        (
+            "CREATE INDEX i ON users (email) INCLUDE (ssn)",
+            StatementKind::CreateIndex,
+        ),
+        ("CREATE TABLE t2 (id INT PRIMARY KEY)", StatementKind::CreateTable),
+        ("CREATE TABLE t2 (id INT, PRIMARY KEY (id))", StatementKind::CreateTable),
+        (
+            "CREATE TABLE t2 (email TEXT, UNIQUE (email))",
+            StatementKind::CreateTable,
+        ),
+    ];
+    for (sql, kind) in cases {
+        let lineage = on(sql, Dialect::Postgres).expect(sql);
+        assert_eq!(&lineage.statement, kind, "{sql}");
+    }
+}
+
+#[test]
+fn show_and_describe_have_no_sources() {
+    let cases: &[(&str, Dialect, StatementKind)] = &[
+        ("SHOW TABLES", Dialect::Mysql, show("TABLES")),
+        ("SHOW WARNINGS", Dialect::Mysql, show("WARNINGS")),
+        ("SHOW PROCESSLIST", Dialect::Mysql, show("PROCESSLIST")),
+        ("SHOW search_path", Dialect::Postgres, show("SEARCH_PATH")),
+        ("DESCRIBE users", Dialect::Mysql, StatementKind::Describe),
+    ];
+    for (sql, dialect, kind) in cases {
+        let lineage = on(sql, *dialect).expect(sql);
+        assert_eq!(&lineage.statement, kind, "{sql}");
+        assert!(lineage.columns.is_empty() && lineage.relations.is_empty(), "{sql}");
+        assert_eq!(lineage.target, None, "{sql}");
+    }
+}
+
+#[test]
+fn show_names_fold_ascii_only_and_ignore_quotes() {
+    let cases: &[(&str, Dialect, StatementKind)] = &[
+        ("SHOW `warnings`", Dialect::Mysql, show("WARNINGS")),
+        ("SHOW \"ALL\"", Dialect::Postgres, show("ALL")),
+        ("SHOW `ſtatus`", Dialect::Mysql, show("ſTATUS")),
+    ];
+    for (sql, dialect, kind) in cases {
+        let lineage = on(sql, *dialect).expect(sql);
+        assert_eq!(&lineage.statement, kind, "{sql}");
+    }
+    assert_unsupported("SHOW \"WARNINGS\"", Dialect::Mysql, &fixture());
+}
+
+#[test]
+fn explain_carries_inner_lineage() {
+    let lineage = on("EXPLAIN SELECT ssn FROM users", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, explain(StatementKind::Query));
+    assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])]);
+
+    let lineage = on("EXPLAIN DROP TABLE users", Dialect::Postgres).expect("analyze");
+    assert_eq!(lineage.statement, explain(StatementKind::Drop));
+    assert_eq!(target(&lineage), Some("users"));
+
+    assert_unsupported("EXPLAIN UPDATE users SET email = ssn", Dialect::Postgres, &fixture());
+}
+
+#[test]
+fn explain_forms_the_explain_tools_build_wrap_a_query() {
+    let cases: &[(&str, Dialect)] = &[
+        (
+            "EXPLAIN (ANALYZE, FORMAT JSON) SELECT ssn FROM users",
+            Dialect::Postgres,
+        ),
+        ("EXPLAIN ANALYZE SELECT ssn FROM users", Dialect::Mysql),
+        ("EXPLAIN FORMAT=JSON SELECT ssn FROM users", Dialect::Mysql),
+        ("EXPLAIN QUERY PLAN SELECT ssn FROM users", Dialect::Sqlite),
+    ];
+    for (sql, dialect) in cases {
+        let lineage = on(sql, *dialect).expect(sql);
+        assert_eq!(lineage.statement, explain(StatementKind::Query), "{sql}");
+        assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])], "{sql}");
+    }
+    let lineage = on("EXPLAIN SHOW TABLES", Dialect::Mysql).expect("analyze");
+    assert_eq!(lineage.statement, explain(show("TABLES")));
+}
+
+#[test]
+fn unmodeled_statements_are_unsupported() {
+    let fixture = create_fixture();
+    let cases: &[(&str, Dialect)] = &[
+        ("ALTER TABLE users ADD COLUMN x INT", Dialect::Postgres),
+        ("ALTER TABLE users DROP COLUMN ssn", Dialect::Mysql),
+        ("RENAME TABLE users TO people", Dialect::Mysql),
+        (
+            "CREATE TRIGGER t AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION f()",
+            Dialect::Postgres,
+        ),
+        (
+            "CREATE FUNCTION f() RETURNS INT LANGUAGE SQL AS 'SELECT 1'",
+            Dialect::Postgres,
+        ),
+        ("CREATE PROCEDURE p() AS BEGIN SELECT 1; END", Dialect::Mysql),
+        ("CREATE POLICY p ON users USING (true)", Dialect::Postgres),
+        ("COPY users TO STDOUT", Dialect::Postgres),
+        ("GRANT SELECT ON users TO bob", Dialect::Postgres),
+        ("REVOKE SELECT ON users FROM bob", Dialect::Postgres),
+        ("ATTACH DATABASE 'x.db' AS x", Dialect::Sqlite),
+        ("PRAGMA journal_mode = 'WAL'", Dialect::Sqlite),
+        ("PRAGMA table_info('users')", Dialect::Sqlite),
+        (
+            "WITH x AS (SELECT 1) INSERT INTO users (id) SELECT * FROM x",
+            Dialect::Postgres,
+        ),
+        ("CREATE TEMPORARY TABLE t2 AS SELECT ssn FROM users", Dialect::Postgres),
+        ("CREATE TEMPORARY TABLE t2 (id INT)", Dialect::Postgres),
+        ("DROP TABLE users, orders", Dialect::Postgres),
+        ("DROP INDEX i1, i2", Dialect::Postgres),
+        ("TRUNCATE users, orders", Dialect::Postgres),
+        ("CREATE TABLE t2 (LIKE users)", Dialect::Postgres),
+        ("USE app", Dialect::Mysql),
+        ("DROP SCHEMA public CASCADE", Dialect::Postgres),
+        ("DROP DATABASE app", Dialect::Mysql),
+        ("TRUNCATE users CASCADE", Dialect::Postgres),
+        ("UPDATE users SET email = ssn", Dialect::Postgres),
+        ("DELETE FROM users", Dialect::Postgres),
+    ];
+    for (sql, dialect) in cases {
+        assert_unsupported(sql, *dialect, &fixture);
+    }
+}
+
+#[test]
+fn statements_the_parser_rejects_fail_closed() {
+    for (sql, dialect) in [
+        ("LOAD DATA INFILE 'x' INTO TABLE users", Dialect::Mysql),
+        ("CREATE RULE r AS ON INSERT TO users DO NOTHING", Dialect::Postgres),
+        (
+            "CREATE EVENT e ON SCHEDULE EVERY 1 HOUR DO DELETE FROM users",
+            Dialect::Mysql,
+        ),
+    ] {
+        let result = on(sql, dialect);
+        assert!(matches!(result, Err(LineageError::Parse(_))), "{sql}: {result:?}");
+    }
+}
+
+/// Inserts a table under a multi-part written name with an explicit identity.
+fn insert_qualified(catalog: &mut Catalog, parts: &[&str], id: RelationId, cols: &[&str]) {
+    catalog.insert(
+        WrittenName::query(parts.iter().map(|p| NamePart::bare(*p)).collect()),
+        Entry::Resolved(Relation::new(
+            id,
+            RelationKind::Table,
+            cols.iter().map(|c| CatalogColumn::new(*c)).collect(),
+        )),
+    );
+}
+
+#[test]
+fn literal_projection_has_no_sources() {
+    let lineage = analyze("SELECT 1 AS n", Dialect::Postgres, &Catalog::new()).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("n", &[])]);
+    assert!(lineage.relations.is_empty());
+}
+
+#[test]
+fn schema_qualified_column_binds_through_qualified_table() {
+    let mut catalog = Catalog::new();
+    insert_qualified(
+        &mut catalog,
+        &["analytics", "events"],
+        RelationId::new("db", "analytics", "events"),
+        &["id"],
+    );
+    let lineage = analyze(
+        "SELECT analytics.events.id FROM analytics.events",
+        Dialect::Postgres,
+        &catalog,
+    )
+    .expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("id", &["events.id"])]);
+    let source = lineage.columns[0].sources.first().expect("source");
+    assert_eq!(source.relation.schema, "analytics");
+}
+
+#[test]
+fn three_part_column_binds_through_three_part_table() {
+    let mut catalog = Catalog::new();
+    insert_qualified(
+        &mut catalog,
+        &["db", "sch", "t"],
+        RelationId::new("db", "sch", "t"),
+        &["id"],
+    );
+    let lineage = analyze("SELECT db.sch.t.id FROM db.sch.t", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("id", &["t.id"])]);
+}
+
+#[test]
+fn postgres_folds_unquoted_alias_and_column() {
+    let mut catalog = Catalog::new();
+    insert_qualified(
+        &mut catalog,
+        &["Users"],
+        RelationId::new("db", "public", "users"),
+        &["email"],
+    );
+    let lineage = analyze("SELECT U.Email FROM Users U", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("email", &["users.email"])]);
+    let lineage = analyze("SELECT U.Email FROM Users u", Dialect::Postgres, &catalog).expect("alias folds");
+    assert_eq!(columns(&lineage), vec![col("email", &["users.email"])]);
+}
+
+#[test]
+fn binary_operator_unions_operand_sources() {
+    let lineage = pg("SELECT email || ' ' || ssn AS full FROM users").expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("full", &["users.email", "users.ssn"])]);
+}
+
+#[test]
+fn case_results_and_condition_are_projection_sources() {
+    let lineage = pg("SELECT CASE WHEN id > 0 THEN email ELSE ssn END AS c FROM users").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("c", &["users.email", "users.id", "users.ssn"])]
+    );
+}
+
+#[test]
+fn postgres_json_operators_carry_the_json_column() {
+    for sql in [
+        "SELECT email->>'ssn' AS v FROM users",
+        "SELECT email->'a'->>'b' AS v FROM users",
+        "SELECT email#>>'{a,b}' AS v FROM users",
+        "SELECT email#>'{a}' AS v FROM users",
+    ] {
+        let lineage = pg(sql).expect(sql);
+        assert_eq!(columns(&lineage), vec![col("v", &["users.email"])], "{sql}");
+    }
+}
+
+#[test]
+fn mysql_json_extract_carries_the_json_column() {
+    for sql in [
+        "SELECT JSON_EXTRACT(email, '$.ssn') AS v FROM users",
+        "SELECT email->>'$.ssn' AS v FROM users",
+        "SELECT email->'$.ssn' AS v FROM users",
+    ] {
+        for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+            let lineage = analyze(sql, dialect, &fixture()).expect(sql);
+            assert_eq!(
+                columns(&lineage),
+                vec![col("v", &["users.email"])],
+                "{sql} on {dialect:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cte_reading_an_earlier_cte_traces_to_base_table() {
+    let lineage =
+        pg("WITH a AS (SELECT email FROM users), b AS (SELECT email FROM a) SELECT email FROM b").expect("analyze");
+    assert_eq!(columns(&lineage), vec![col("email", &["users.email"])]);
+}
+
+#[test]
+fn non_recursive_cte_forward_reference_is_a_catalog_name() {
+    let catalog = catalog(&[]);
+    let result = analyze(
+        "WITH c1 AS (SELECT x FROM c2), c2 AS (SELECT x FROM c1) SELECT x FROM c1",
+        Dialect::Postgres,
+        &catalog,
+    );
+    let Err(LineageError::Missing(names)) = result else {
+        panic!("expected Missing, got {result:?}");
+    };
+    assert_eq!(names, vec![WrittenName::query(vec![NamePart::bare("c2")])]);
+}
+
+#[test]
+fn star_over_derived_table_expands_its_columns() {
+    let lineage = pg("SELECT * FROM (SELECT id, email FROM users) t").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("id", &["users.id"]), col("email", &["users.email"])]
+    );
+}
+
+#[test]
+fn qualified_star_over_cte_expands_its_columns() {
+    let lineage = pg("WITH c AS (SELECT id, email FROM users) SELECT c.* FROM c").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("id", &["users.id"]), col("email", &["users.email"])]
+    );
 }

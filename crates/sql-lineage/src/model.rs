@@ -134,26 +134,54 @@ pub struct OutputColumn {
 }
 
 /// The kind of statement analyzed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum StatementKind {
     /// A query: `SELECT`, set operation, or `VALUES`.
     Query,
+    /// `CREATE TABLE` without a query.
+    CreateTable,
+    /// `DROP TABLE`, `VIEW`, `MATERIALIZED VIEW`, or `INDEX`.
+    Drop,
+    /// `TRUNCATE`.
+    Truncate,
+    /// `CREATE INDEX`.
+    CreateIndex,
+    /// `SHOW`; holds the first keyword or name after `SHOW`, ASCII-uppercased.
+    Show(String),
+    /// `DESCRIBE`, `DESC`, or `EXPLAIN` of a table.
+    Describe,
+    /// `EXPLAIN` of the inner statement, whose lineage this one carries.
+    ///
+    /// The lineage's columns are the explained statement's, not the plan's
+    /// result set, so they do not match output positions.
+    Explain(Box<StatementKind>),
+}
+
+/// A column a statement writes, with the physical columns feeding it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetColumn {
+    /// The target column's actual name, or the new column's name on create.
+    pub name: String,
+    /// Physical columns whose values flow into the target column.
+    pub sources: BTreeSet<SourceRef>,
 }
 
 /// The lineage of a single statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lineage {
-    /// Output columns in result order.
+    /// Output columns in result order; for `EXPLAIN`, the explained statement's.
     pub columns: Vec<OutputColumn>,
     /// Columns used outside the projection, by role.
     pub references: BTreeSet<Reference>,
-    /// Catalog relations touched.
+    /// Catalog relations touched, the target included.
     pub relations: BTreeSet<RelationUse>,
     /// Functions called.
     pub functions: BTreeSet<FunctionUse>,
-    /// Write target; `None` for a query.
+    /// The relation created, dropped, truncated, or indexed; `None` for a query.
     pub target: Option<RelationId>,
+    /// Columns of `target` written, in first-write order; empty until writes are modeled.
+    pub writes: Vec<TargetColumn>,
     /// The statement kind.
     pub statement: StatementKind,
 }
