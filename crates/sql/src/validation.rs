@@ -3,7 +3,7 @@
 use crate::SqlError;
 use std::ops::ControlFlow;
 
-use sqlparser::ast::{Expr, Function, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
+use sqlparser::ast::{Expr, Function, Ident, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::Parser;
 
@@ -23,7 +23,9 @@ pub enum StatementKind {
 /// Parses the query using the given dialect and checks:
 /// 1. Exactly one statement (multi-statement injection blocked)
 /// 2. Statement type is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN); `USE`
-///    is rejected because it would leak to later queries on a pooled connection
+///    is rejected because it would leak to later queries on a pooled connection;
+///    `SHOW WARNINGS` / `SHOW ERRORS` are rejected because a warning can quote
+///    a value the previous query on the pooled connection read
 /// 3. The statement wrapped by `EXPLAIN` is itself read-only
 /// 4. No data-modifying CTEs or `SELECT ... INTO` inside queries
 /// 5. No dangerous functions (file access, large objects, sequences, extensions,
@@ -68,6 +70,7 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
             classify(statement)?;
             Ok(StatementKind::NonSelect)
         }
+        Statement::ShowVariable { variable } if is_diagnostics(variable) => Err(SqlError::DiagnosticsBlocked),
         Statement::ShowTables { .. }
         | Statement::ShowColumns { .. }
         | Statement::ShowCreate { .. }
@@ -84,6 +87,18 @@ fn classify(stmt: &Statement) -> Result<StatementKind, SqlError> {
         Statement::Use(_) => Err(SqlError::UseBlocked),
         _ => Err(SqlError::ReadOnlyViolation),
     }
+}
+
+/// Returns whether a `SHOW` names the warnings or errors list.
+///
+/// The parser reads `SHOW WARNINGS`, `SHOW ERRORS`, and `SHOW COUNT(*)
+/// WARNINGS` as a `SHOW` of a variable. Their rows are the conditions the
+/// previous statement on the connection raised, and a conversion warning
+/// such as `Truncated incorrect DOUBLE value: '...'` quotes the value read.
+fn is_diagnostics(variable: &[Ident]) -> bool {
+    variable
+        .iter()
+        .any(|part| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors"))
 }
 
 /// Validates SQL for the write tool, rejecting `USE`.
@@ -338,6 +353,26 @@ mod tests {
         // sqlparser parses DESC/DESCRIBE as ExplainTable
         assert!(validate_read("DESC users", &DIALECT).is_ok());
         assert!(validate_read("DESCRIBE users", &DIALECT).is_ok());
+    }
+
+    #[test]
+    fn diagnostics_are_blocked() {
+        for sql in [
+            "SHOW WARNINGS",
+            "show warnings",
+            "SHOW WARNINGS LIMIT 5",
+            "SHOW ERRORS",
+            "SHOW ERRORS LIMIT 1, 2",
+            "SHOW COUNT(*) WARNINGS",
+            "SHOW COUNT(*) ERRORS",
+        ] {
+            assert!(
+                matches!(validate_read(sql, &MYSQL), Err(SqlError::DiagnosticsBlocked)),
+                "{sql}"
+            );
+        }
+        assert!(validate_read("SHOW VARIABLES", &MYSQL).is_ok());
+        assert!(validate_read("SHOW search_path", &POSTGRES).is_ok());
     }
 
     #[test]

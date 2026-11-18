@@ -1164,6 +1164,34 @@ async fn test_read_query_use_statement_rejected() {
 }
 
 #[tokio::test]
+async fn test_read_query_show_warnings_rejected() {
+    // A size-1 pool: `SHOW WARNINGS` would run on the connection that just warned.
+    let handler = single_connection_handler(0);
+
+    handler
+        .read_query(
+            "SELECT abs(ssn) AS a FROM users WHERE ssn IS NOT NULL LIMIT 1".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .expect("a query that raises a conversion warning runs");
+
+    for sql in ["SHOW WARNINGS", "SHOW ERRORS", "SHOW COUNT(*) WARNINGS"] {
+        let error = handler
+            .read_query(sql.into(), Some("app".into()), None, None)
+            .await
+            .expect_err("diagnostics must be rejected by readQuery");
+        assert!(
+            error.message.contains("SHOW WARNINGS and SHOW ERRORS are not allowed"),
+            "expected diagnostics rejection for {sql}, got: {}",
+            error.message
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_write_query_use_statement_rejected() {
     // A size-1 pool: every call reuses the connection a leaked USE would taint.
     let handler = single_connection_handler(0);
