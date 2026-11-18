@@ -535,3 +535,46 @@ fn deep_nesting_does_not_panic() {
         "{result:?}"
     );
 }
+
+#[test]
+fn on_sees_its_join_tree_not_earlier_from_items() {
+    let catalog = catalog(&[("a", &["id", "x"]), ("b", &["id", "y"]), ("c", &["x", "y"])]);
+    let lineage = analyze("SELECT 1 FROM a, b JOIN c ON x = c.y", Dialect::Postgres, &catalog).expect("analyze");
+    assert_eq!(refs(&lineage), vec![r("c.x", Role::Join), r("c.y", Role::Join)]);
+
+    let result = analyze("SELECT 1 FROM a, b JOIN c ON a.x = c.x", Dialect::Postgres, &catalog);
+    assert!(matches!(result, Err(LineageError::ColumnNotFound { .. })), "{result:?}");
+}
+
+#[test]
+fn open_relations_defer_errors_until_the_catalog_fills() {
+    for sql in [
+        "SELECT * FROM m1 UNION SELECT id, x FROM a",
+        "SELECT * FROM (SELECT * FROM m1) d(p, q, r)",
+        "SELECT * FROM a JOIN m1 USING (x)",
+        "SELECT m.* FROM m1 m",
+        "SELECT * FROM m1 GROUP BY 5",
+        "WITH c AS (SELECT * FROM m1) SELECT c1.k FROM c c1 JOIN c c2 ON c1.k = c2.k",
+        "SELECT (SELECT nope FROM m1) FROM users",
+    ] {
+        let result = pg(sql);
+        assert!(
+            matches!(&result, Err(LineageError::Missing(names)) if names.len() == 1),
+            "{sql}: expected Missing, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn errors_independent_of_missing_relations_surface_at_once() {
+    for sql in [
+        "SELECT nope FROM users WHERE EXISTS (SELECT 1 FROM m1)",
+        "SELECT * FROM a JOIN m1 USING (nope)",
+    ] {
+        let result = pg(sql);
+        assert!(
+            matches!(result, Err(LineageError::ColumnNotFound { .. })),
+            "{sql}: expected ColumnNotFound, got {result:?}"
+        );
+    }
+}

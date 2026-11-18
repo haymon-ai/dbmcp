@@ -2,11 +2,12 @@
 
 use sqlparser::ast::Statement;
 
+use crate::bind::Level;
 use crate::catalog::{Catalog, Lexical};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{Lineage, OutputColumn, StatementKind};
-use crate::resolve::{Ctes, Ctx};
+use crate::resolve::Ctx;
 
 /// Analyzes the column lineage of a single SQL statement.
 ///
@@ -34,14 +35,14 @@ pub fn analyze(sql: &str, dialect: Dialect, catalog: &Catalog) -> Result<Lineage
     };
 
     let mut ctx = Ctx::new(dialect, catalog);
-    let result = ctx.query(query, None, &Ctes::root());
-    if !ctx.missing.is_empty() && result.as_ref().map_or_else(LineageError::is_soft, |_| true) {
+    let cols = ctx.query(query, Level::root(dialect))?;
+    if !ctx.missing.is_empty() {
         return Err(LineageError::Missing(ctx.missing));
     }
-    let cols = result?;
 
     Ok(Lineage {
         columns: cols
+            .cols
             .into_iter()
             .enumerate()
             .map(|(position, col)| OutputColumn {

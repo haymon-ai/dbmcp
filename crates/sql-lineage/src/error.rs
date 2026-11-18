@@ -82,16 +82,6 @@ pub enum LineageError {
     },
 }
 
-impl LineageError {
-    /// Returns whether this error may stem from relations still missing.
-    pub(crate) fn is_soft(&self) -> bool {
-        matches!(
-            self,
-            Self::ColumnNotFound { .. } | Self::AmbiguousColumn { .. } | Self::ColumnCountMismatch { .. }
-        )
-    }
-}
-
 fn join(names: &[WrittenName]) -> String {
     names.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }

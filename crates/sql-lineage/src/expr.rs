@@ -6,18 +6,15 @@
 //! conditions, aggregate arguments, and subquery outputs) flows into the
 //! caller's source set.
 
-use std::collections::BTreeSet;
-
 use sqlparser::ast::{
-    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, Ident,
-    ObjectName, Query, Subscript, WindowFrameBound, WindowSpec, WindowType,
+    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, ObjectName,
+    Query, Subscript, WindowFrameBound, WindowSpec, WindowType,
 };
 
+use crate::bind::{Clause, Level, Sources};
 use crate::error::LineageError;
-use crate::model::{FunctionUse, Origin, Role, SourceRef};
-use crate::resolve::{Ctx, MAX_EXPR_DEPTH, Walk, idents, unsupported};
-
-type Sources = BTreeSet<SourceRef>;
+use crate::model::{FunctionUse, Origin, Role};
+use crate::resolve::{Ctx, MAX_EXPR_DEPTH, idents, unsupported};
 
 impl Ctx<'_> {
     /// Adds the sources of `expr` to `acc`.
@@ -25,23 +22,41 @@ impl Ctx<'_> {
     /// # Errors
     /// Returns [`LineageError`] for unresolvable columns, unmodeled kinds, or
     /// nesting deeper than [`MAX_EXPR_DEPTH`].
-    pub(crate) fn expr(&mut self, expr: &Expr, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+    pub(crate) fn expr(
+        &mut self,
+        expr: &Expr,
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
         if self.expr_depth >= MAX_EXPR_DEPTH {
             return Err(LineageError::DepthLimit);
         }
         self.expr_depth += 1;
-        let result = self.expr_inner(expr, walk, acc);
+        let result = self.expr_inner(expr, level, clause, acc);
         self.expr_depth -= 1;
         result
     }
 
     /// Body of [`Ctx::expr`], inside the depth guard.
     #[expect(clippy::too_many_lines, reason = "one exhaustive match over every Expr variant")]
-    fn expr_inner(&mut self, expr: &Expr, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+    fn expr_inner(
+        &mut self,
+        expr: &Expr,
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
         match expr {
-            Expr::Identifier(id) => self.column(&[], id, walk, acc),
+            Expr::Identifier(id) => {
+                acc.extend(level.column(clause, &[], id)?);
+                Ok(())
+            }
             Expr::CompoundIdentifier(parts) => match parts.split_last() {
-                Some((name, qualifier)) => self.column(qualifier, name, walk, acc),
+                Some((name, qualifier)) => {
+                    acc.extend(level.column(clause, qualifier, name)?);
+                    Ok(())
+                }
                 None => Err(unsupported("empty identifier")),
             },
             Expr::IsFalse(e)
@@ -61,7 +76,7 @@ impl Ctx<'_> {
             | Expr::Floor { expr: e, .. }
             | Expr::Collate { expr: e, .. }
             | Expr::Nested(e)
-            | Expr::Prefixed { value: e, .. } => self.expr(e, walk, acc),
+            | Expr::Prefixed { value: e, .. } => self.expr(e, level, clause, acc),
             Expr::IsDistinctFrom(a, b)
             | Expr::IsNotDistinctFrom(a, b)
             | Expr::BinaryOp { left: a, right: b, .. }
@@ -75,12 +90,12 @@ impl Ctx<'_> {
                 time_zone: b,
             }
             | Expr::Position { expr: a, r#in: b } => {
-                self.expr(a, walk, acc)?;
-                self.expr(b, walk, acc)
+                self.expr(a, level, clause, acc)?;
+                self.expr(b, level, clause, acc)
             }
             Expr::MemberOf(member) => {
-                self.expr(&member.value, walk, acc)?;
-                self.expr(&member.array, walk, acc)
+                self.expr(&member.value, level, clause, acc)?;
+                self.expr(&member.array, level, clause, acc)
             }
             Expr::Like {
                 expr,
@@ -100,26 +115,26 @@ impl Ctx<'_> {
                 escape_char,
                 ..
             } => {
-                self.expr(expr, walk, acc)?;
-                self.expr(pattern, walk, acc)?;
-                self.opt(escape_char.as_deref(), walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.expr(pattern, level, clause, acc)?;
+                self.opt(escape_char.as_deref(), level, clause, acc)
             }
             Expr::InList { expr, list, .. } => {
-                self.expr(expr, walk, acc)?;
-                self.all(list, walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.all(list, level, clause, acc)
             }
             Expr::InSubquery { expr, subquery, .. } => {
-                self.expr(expr, walk, acc)?;
-                self.subquery(subquery, walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.subquery(subquery, level, acc)
             }
             Expr::Between { expr, low, high, .. } => {
-                self.expr(expr, walk, acc)?;
-                self.expr(low, walk, acc)?;
-                self.expr(high, walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.expr(low, level, clause, acc)?;
+                self.expr(high, level, clause, acc)
             }
             Expr::Convert { expr, styles, .. } => {
-                self.expr(expr, walk, acc)?;
-                self.all(styles, walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.all(styles, level, clause, acc)
             }
             Expr::Substring {
                 expr,
@@ -127,9 +142,9 @@ impl Ctx<'_> {
                 substring_for,
                 ..
             } => {
-                self.expr(expr, walk, acc)?;
-                self.opt(substring_from.as_deref(), walk, acc)?;
-                self.opt(substring_for.as_deref(), walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.opt(substring_from.as_deref(), level, clause, acc)?;
+                self.opt(substring_for.as_deref(), level, clause, acc)
             }
             Expr::Trim {
                 expr,
@@ -137,9 +152,9 @@ impl Ctx<'_> {
                 trim_characters,
                 ..
             } => {
-                self.expr(expr, walk, acc)?;
-                self.opt(trim_what.as_deref(), walk, acc)?;
-                self.all(trim_characters.as_deref().unwrap_or_default(), walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.opt(trim_what.as_deref(), level, clause, acc)?;
+                self.all(trim_characters.as_deref().unwrap_or_default(), level, clause, acc)
             }
             Expr::Overlay {
                 expr,
@@ -147,60 +162,60 @@ impl Ctx<'_> {
                 overlay_from,
                 overlay_for,
             } => {
-                self.expr(expr, walk, acc)?;
-                self.expr(overlay_what, walk, acc)?;
-                self.expr(overlay_from, walk, acc)?;
-                self.opt(overlay_for.as_deref(), walk, acc)
+                self.expr(expr, level, clause, acc)?;
+                self.expr(overlay_what, level, clause, acc)?;
+                self.expr(overlay_from, level, clause, acc)?;
+                self.opt(overlay_for.as_deref(), level, clause, acc)
             }
             Expr::Value(_) | Expr::TypedString(_) => Ok(()),
-            Expr::Function(function) => self.function(function, walk, acc),
+            Expr::Function(function) => self.function(function, level, clause, acc),
             Expr::Case {
                 operand,
                 conditions,
                 else_result,
                 ..
             } => {
-                self.opt(operand.as_deref(), walk, acc)?;
+                self.opt(operand.as_deref(), level, clause, acc)?;
                 for when in conditions {
-                    self.expr(&when.condition, walk, acc)?;
-                    self.expr(&when.result, walk, acc)?;
+                    self.expr(&when.condition, level, clause, acc)?;
+                    self.expr(&when.result, level, clause, acc)?;
                 }
-                self.opt(else_result.as_deref(), walk, acc)
+                self.opt(else_result.as_deref(), level, clause, acc)
             }
-            Expr::Exists { subquery, .. } | Expr::Subquery(subquery) => self.subquery(subquery, walk, acc),
+            Expr::Exists { subquery, .. } | Expr::Subquery(subquery) => self.subquery(subquery, level, acc),
             Expr::GroupingSets(sets) | Expr::Cube(sets) | Expr::Rollup(sets) => {
                 for set in sets {
-                    self.all(set, walk, acc)?;
+                    self.all(set, level, clause, acc)?;
                 }
                 Ok(())
             }
-            Expr::Tuple(items) => self.all(items, walk, acc),
-            Expr::Array(array) => self.all(&array.elem, walk, acc),
-            Expr::Interval(interval) => self.expr(&interval.value, walk, acc),
+            Expr::Tuple(items) => self.all(items, level, clause, acc),
+            Expr::Array(array) => self.all(&array.elem, level, clause, acc),
+            Expr::Interval(interval) => self.expr(&interval.value, level, clause, acc),
             Expr::MatchAgainst { columns, .. } => {
                 for name in columns {
                     let parts = idents(name)?;
                     match parts.split_last() {
-                        Some((name, qualifier)) => self.column(qualifier, name, walk, acc)?,
+                        Some((name, qualifier)) => acc.extend(level.column(clause, qualifier, name)?),
                         None => return Err(unsupported("empty identifier")),
                     }
                 }
                 Ok(())
             }
             Expr::CompoundFieldAccess { root, access_chain } => {
-                self.expr(root, walk, acc)?;
+                self.expr(root, level, clause, acc)?;
                 for access in access_chain {
                     match access {
                         AccessExpr::Dot(_) => return Err(unsupported("composite field access")),
-                        AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, walk, acc)?,
+                        AccessExpr::Subscript(Subscript::Index { index }) => self.expr(index, level, clause, acc)?,
                         AccessExpr::Subscript(Subscript::Slice {
                             lower_bound,
                             upper_bound,
                             stride,
                         }) => {
-                            self.opt(lower_bound.as_ref(), walk, acc)?;
-                            self.opt(upper_bound.as_ref(), walk, acc)?;
-                            self.opt(stride.as_ref(), walk, acc)?;
+                            self.opt(lower_bound.as_ref(), level, clause, acc)?;
+                            self.opt(upper_bound.as_ref(), level, clause, acc)?;
+                            self.opt(stride.as_ref(), level, clause, acc)?;
                         }
                     }
                 }
@@ -218,60 +233,44 @@ impl Ctx<'_> {
         }
     }
 
-    fn all(&mut self, exprs: &[Expr], walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+    fn all(
+        &mut self,
+        exprs: &[Expr],
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
         for expr in exprs {
-            self.expr(expr, walk, acc)?;
+            self.expr(expr, level, clause, acc)?;
         }
         Ok(())
     }
 
-    fn opt(&mut self, expr: Option<&Expr>, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
-        expr.map_or(Ok(()), |e| self.expr(e, walk, acc))
-    }
-
-    /// Binds a column reference, falling back to output aliases where allowed.
-    fn column(
+    fn opt(
         &mut self,
-        qualifier: &[Ident],
-        name: &Ident,
-        walk: Walk<'_>,
+        expr: Option<&Expr>,
+        level: &Level<'_>,
+        clause: Clause,
         acc: &mut Sources,
     ) -> Result<(), LineageError> {
-        let found = walk.scope.column(self.dialect, qualifier, name);
-        let alias = match walk.aliases {
-            Some(aliases) if qualifier.is_empty() => {
-                let mut hits = aliases
-                    .iter()
-                    .filter(|c| self.dialect.matches(name, &c.name))
-                    .peekable();
-                hits.peek()
-                    .is_some()
-                    .then(|| hits.flat_map(|c| c.sources.iter().cloned()).collect::<Sources>())
-            }
-            _ => None,
-        };
-        let result = match (found, alias) {
-            (Ok(mut sources), Some(alias)) => {
-                sources.extend(alias);
-                Ok(sources)
-            }
-            (Ok(sources), None) => Ok(sources),
-            (Err(err), Some(alias)) if err.is_soft() => Ok(alias),
-            (Err(err), _) => Err(err),
-        };
-        acc.extend(self.soften(result)?);
-        Ok(())
+        expr.map_or(Ok(()), |e| self.expr(e, level, clause, acc))
     }
 
     /// Adds every output source of a subquery.
-    fn subquery(&mut self, query: &Query, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
-        let cols = self.query(query, Some(walk.scope), walk.ctes)?;
-        acc.extend(cols.into_iter().flat_map(|c| c.sources));
+    fn subquery(&mut self, query: &Query, level: &Level<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+        let cols = self.query(query, level.correlated())?;
+        acc.extend(cols.cols.into_iter().flat_map(|c| c.sources));
         Ok(())
     }
 
     /// Records a function call and adds its argument sources.
-    fn function(&mut self, function: &Function, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+    fn function(
+        &mut self,
+        function: &Function,
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
         let Function {
             name,
             uses_odbc_syntax: _,
@@ -292,29 +291,31 @@ impl Ctx<'_> {
         });
         match args {
             FunctionArguments::None => {}
-            FunctionArguments::Subquery(query) => self.subquery(query, walk, acc)?,
+            FunctionArguments::Subquery(query) => self.subquery(query, level, acc)?,
             FunctionArguments::List(list) => {
                 for arg in &list.args {
                     match arg {
-                        FunctionArg::Named { arg, .. } | FunctionArg::Unnamed(arg) => self.arg(arg, walk, acc)?,
+                        FunctionArg::Named { arg, .. } | FunctionArg::Unnamed(arg) => {
+                            self.arg(arg, level, clause, acc)?;
+                        }
                         FunctionArg::ExprNamed { name, arg, .. } => {
-                            self.expr(name, walk, acc)?;
-                            self.arg(arg, walk, acc)?;
+                            self.expr(name, level, clause, acc)?;
+                            self.arg(arg, level, clause, acc)?;
                         }
                     }
                 }
-                for clause in &list.clauses {
-                    match clause {
+                for arg_clause in &list.clauses {
+                    match arg_clause {
                         FunctionArgumentClause::IgnoreOrRespectNulls(_)
                         | FunctionArgumentClause::Separator(_)
                         | FunctionArgumentClause::JsonNullClause(_)
                         | FunctionArgumentClause::JsonReturningClause(_) => {}
                         FunctionArgumentClause::Where(expr) | FunctionArgumentClause::Limit(expr) => {
-                            self.expr(expr, walk, acc)?;
+                            self.expr(expr, level, clause, acc)?;
                         }
                         FunctionArgumentClause::OrderBy(items) => {
                             for item in items {
-                                self.expr(&item.expr, walk, acc)?;
+                                self.expr(&item.expr, level, clause, acc)?;
                             }
                         }
                         FunctionArgumentClause::OnOverflow(_) | FunctionArgumentClause::Having(_) => {
@@ -325,19 +326,25 @@ impl Ctx<'_> {
             }
         }
         for item in within_group {
-            self.expr(&item.expr, walk, acc)?;
+            self.expr(&item.expr, level, clause, acc)?;
         }
-        self.opt(filter.as_deref(), walk, acc)?;
+        self.opt(filter.as_deref(), level, clause, acc)?;
         match over {
             None | Some(WindowType::NamedWindow(_)) => Ok(()),
-            Some(WindowType::WindowSpec(spec)) => self.window(spec, walk),
+            Some(WindowType::WindowSpec(spec)) => self.window(spec, level, clause),
         }
     }
 
     /// Adds the sources of one function argument.
-    fn arg(&mut self, arg: &FunctionArgExpr, walk: Walk<'_>, acc: &mut Sources) -> Result<(), LineageError> {
+    fn arg(
+        &mut self,
+        arg: &FunctionArgExpr,
+        level: &Level<'_>,
+        clause: Clause,
+        acc: &mut Sources,
+    ) -> Result<(), LineageError> {
         match arg {
-            FunctionArgExpr::Expr(expr) => self.expr(expr, walk, acc),
+            FunctionArgExpr::Expr(expr) => self.expr(expr, level, clause, acc),
             FunctionArgExpr::Wildcard => Ok(()),
             FunctionArgExpr::QualifiedWildcard(_) => Err(unsupported("whole-row reference")),
             FunctionArgExpr::WildcardWithOptions(_) => Err(unsupported("wildcard modifier in function argument")),
@@ -345,18 +352,18 @@ impl Ctx<'_> {
     }
 
     /// Records a window specification's columns as [`Role::Window`] references.
-    pub(crate) fn window(&mut self, spec: &WindowSpec, walk: Walk<'_>) -> Result<(), LineageError> {
+    pub(crate) fn window(&mut self, spec: &WindowSpec, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
         let mut sources = Sources::new();
-        self.all(&spec.partition_by, walk, &mut sources)?;
+        self.all(&spec.partition_by, level, clause, &mut sources)?;
         for item in &spec.order_by {
-            self.expr(&item.expr, walk, &mut sources)?;
+            self.expr(&item.expr, level, clause, &mut sources)?;
         }
         if let Some(frame) = &spec.window_frame {
             for bound in std::iter::once(&frame.start_bound).chain(frame.end_bound.as_ref()) {
                 match bound {
                     WindowFrameBound::CurrentRow => {}
                     WindowFrameBound::Preceding(e) | WindowFrameBound::Following(e) => {
-                        self.opt(e.as_deref(), walk, &mut sources)?;
+                        self.opt(e.as_deref(), level, clause, &mut sources)?;
                     }
                 }
             }

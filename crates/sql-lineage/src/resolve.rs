@@ -1,26 +1,25 @@
 //! Resolves queries, `FROM` lists, and joins against the catalog.
 //!
-//! [`Ctx`] walks a query top-down. Each query level builds a [`Scope`] from
+//! [`Ctx`] walks a query top-down. Each query level fills a [`Level`] from
 //! its `FROM` list, then resolves the projection into output columns and
 //! records every other column use as a [`Reference`] with its [`Role`].
 //! Relation names not in the catalog are collected in `missing` so one pass
-//! reports them all; while any are missing, errors that may stem from them
-//! (unknown or ambiguous columns, count mismatches) are suppressed.
+//! reports them all; each enters its level as an open relation.
 
 use std::collections::BTreeSet;
 
 use sqlparser::ast::{
     Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
     NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByExpr, OrderByKind, Query, Select, SelectFlavor,
-    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Value, Values,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor, TableWithJoins, Values,
     WildcardAdditionalOptions,
 };
 
+use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
 use crate::catalog::{Catalog, Entry, NamePart, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{FunctionUse, Origin, Reference, RelationKind, RelationUse, Role, SourceRef};
-use crate::scope::{Col, Rel, Scope};
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -30,42 +29,6 @@ const MAX_DEPTH: usize = 64;
 /// The parser builds long operator chains (`a + b + …`) as left-deep trees
 /// without its recursion limit, so the walk bounds its own recursion.
 pub(crate) const MAX_EXPR_DEPTH: usize = 256;
-
-/// CTEs visible at one query level, chained to the enclosing levels.
-#[derive(Debug)]
-pub(crate) struct Ctes<'p> {
-    /// Resolved CTEs at this level, in definition order: name and columns.
-    defs: Vec<(String, Vec<Col>)>,
-    parent: Option<&'p Ctes<'p>>,
-}
-
-impl Ctes<'_> {
-    /// Creates the empty top-level CTE chain.
-    pub(crate) fn root() -> Self {
-        Self {
-            defs: Vec::new(),
-            parent: None,
-        }
-    }
-}
-
-/// What expressions at one position may resolve against.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Walk<'a> {
-    pub scope: &'a Scope<'a>,
-    pub ctes: &'a Ctes<'a>,
-    /// Output columns unqualified names may also bind to, in clauses that allow it.
-    pub aliases: Option<&'a [Col]>,
-}
-
-/// A `FROM` item's visible relations and combined columns.
-#[derive(Debug, Default)]
-struct Item {
-    /// Relations a qualifier can name.
-    rels: Vec<Rel>,
-    /// Combined columns, `USING`/`NATURAL` keys merged first.
-    cols: Vec<Col>,
-}
 
 /// Mutable analysis state shared by the whole statement.
 #[derive(Debug)]
@@ -100,16 +63,8 @@ impl<'c> Ctx<'c> {
         }
     }
 
-    /// Suppresses errors that may stem from missing relations.
-    pub(crate) fn soften<T: Default>(&self, result: Result<T, LineageError>) -> Result<T, LineageError> {
-        match result {
-            Err(err) if !self.missing.is_empty() && err.is_soft() => Ok(T::default()),
-            other => other,
-        }
-    }
-
     /// Records each source as a reference with `role`.
-    pub(crate) fn refer(&mut self, sources: BTreeSet<SourceRef>, role: Role) {
+    pub(crate) fn refer(&mut self, sources: Sources, role: Role) {
         for source in sources {
             self.references.insert(Reference {
                 source,
@@ -119,32 +74,22 @@ impl<'c> Ctx<'c> {
         }
     }
 
-    /// Resolves a query into its output columns.
+    /// Resolves a query at `level`, a fresh child of the enclosing level.
     ///
     /// # Errors
     /// Returns [`LineageError`] on unresolvable names or unsupported constructs.
-    pub(crate) fn query(
-        &mut self,
-        query: &Query,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
-    ) -> Result<Vec<Col>, LineageError> {
+    pub(crate) fn query(&mut self, query: &Query, level: Level<'_>) -> Result<Columns, LineageError> {
         if self.depth >= MAX_DEPTH {
             return Err(LineageError::DepthLimit);
         }
         self.depth += 1;
-        let result = self.query_inner(query, outer, ctes);
+        let result = self.query_inner(query, level);
         self.depth -= 1;
         result
     }
 
     /// Body of [`Ctx::query`], inside the depth guard.
-    fn query_inner(
-        &mut self,
-        query: &Query,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
-    ) -> Result<Vec<Col>, LineageError> {
+    fn query_inner(&mut self, query: &Query, mut level: Level<'_>) -> Result<Columns, LineageError> {
         let Query {
             with,
             body,
@@ -161,10 +106,6 @@ impl<'c> Ctx<'c> {
             return Err(unsupported("query clause (FOR/SETTINGS/FORMAT/pipe)"));
         }
 
-        let mut local = Ctes {
-            defs: Vec::new(),
-            parent: Some(ctes),
-        };
         if let Some(with) = with {
             if with.recursive {
                 return Err(unsupported("WITH RECURSIVE"));
@@ -173,21 +114,13 @@ impl<'c> Ctx<'c> {
                 if cte.from.is_some() {
                     return Err(unsupported("CTE FROM clause"));
                 }
-                let mut cols = self.query(&cte.query, outer, &local)?;
-                let renamed = rename(self.dialect, &mut cols, &cte.alias);
-                self.soften(renamed)?;
-                local.defs.push((self.dialect.normalize(&cte.alias.name), cols));
+                let cols = self.query(&cte.query, level.derived())?;
+                level.define(&cte.alias, cols)?;
             }
         }
 
-        let cols = self.set_expr(body, outer, &local, order_by.as_ref())?;
+        let cols = self.set_expr(body, &level, order_by.as_ref())?;
 
-        let bare = Scope::new(outer);
-        let walk = Walk {
-            scope: &bare,
-            ctes: &local,
-            aliases: None,
-        };
         match limit_clause {
             None => {}
             Some(LimitClause::LimitOffset {
@@ -199,19 +132,19 @@ impl<'c> Ctx<'c> {
                     return Err(unsupported("LIMIT BY"));
                 }
                 if let Some(limit) = limit {
-                    self.clause(limit, walk, Role::Filter)?;
+                    self.clause(limit, &level, Clause::Limit)?;
                 }
                 if let Some(offset) = offset {
-                    self.clause(&offset.value, walk, Role::Filter)?;
+                    self.clause(&offset.value, &level, Clause::Limit)?;
                 }
             }
             Some(LimitClause::OffsetCommaLimit { offset, limit }) => {
-                self.clause(offset, walk, Role::Filter)?;
-                self.clause(limit, walk, Role::Filter)?;
+                self.clause(offset, &level, Clause::Limit)?;
+                self.clause(limit, &level, Clause::Limit)?;
             }
         }
         if let Some(quantity) = fetch.as_ref().and_then(|f| f.quantity.as_ref()) {
-            self.clause(quantity, walk, Role::Filter)?;
+            self.clause(quantity, &level, Clause::Limit)?;
         }
         Ok(cols)
     }
@@ -220,66 +153,35 @@ impl<'c> Ctx<'c> {
     fn set_expr(
         &mut self,
         body: &SetExpr,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
+        level: &Level<'_>,
         order_by: Option<&OrderBy>,
-    ) -> Result<Vec<Col>, LineageError> {
+    ) -> Result<Columns, LineageError> {
         let cols = match body {
-            SetExpr::Select(select) => return self.select(select, outer, ctes, order_by),
-            SetExpr::Query(query) => self.query(query, outer, ctes)?,
+            SetExpr::Select(select) => return self.select(select, level.correlated(), order_by),
+            SetExpr::Query(query) => self.query(query, level.correlated())?,
             SetExpr::SetOperation { left, right, .. } => {
-                let left = self.set_expr(left, outer, ctes, None)?;
-                let right = self.set_expr(right, outer, ctes, None)?;
-                if left.len() != right.len() {
-                    return self.soften(Err(LineageError::ColumnCountMismatch {
-                        relation: "set operation".to_string(),
-                        expected: left.len(),
-                        found: right.len(),
-                    }));
-                }
-                left.into_iter()
-                    .zip(right)
-                    .map(|(mut l, r)| {
-                        l.sources.extend(r.sources);
-                        l
-                    })
-                    .collect()
+                let left = self.set_expr(left, level, None)?;
+                let right = self.set_expr(right, level, None)?;
+                left.union(right)?
             }
-            SetExpr::Values(values) => self.values(values, outer, ctes)?,
+            SetExpr::Values(values) => self.values(values, level)?,
             SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => {
                 return Err(unsupported("data-modifying statement in a query"));
             }
             SetExpr::Table(_) => return Err(unsupported("TABLE statement")),
         };
         if let Some(order_by) = order_by {
-            let scope = Scope {
-                rels: Vec::new(),
-                cols: cols.clone(),
-                parent: outer,
-            };
-            let walk = Walk {
-                scope: &scope,
-                ctes,
-                aliases: None,
-            };
-            self.order_by(order_by, walk, &cols)?;
+            // The outputs are the only names a set operation's ORDER BY sees.
+            let mut sorted = level.correlated();
+            sorted.add(Tree::single(self.dialect, Vec::new(), cols.clone(), None)?);
+            sorted.set_outputs(cols.clone());
+            self.order_by(order_by, &sorted)?;
         }
         Ok(cols)
     }
 
     /// Resolves a `VALUES` list into positional columns.
-    fn values(
-        &mut self,
-        values: &Values,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
-    ) -> Result<Vec<Col>, LineageError> {
-        let scope = Scope::new(outer);
-        let walk = Walk {
-            scope: &scope,
-            ctes,
-            aliases: None,
-        };
+    fn values(&mut self, values: &Values, level: &Level<'_>) -> Result<Columns, LineageError> {
         let mut cols: Vec<Col> = Vec::new();
         for (r, row) in values.rows.iter().enumerate() {
             if r > 0 && row.content.len() != cols.len() {
@@ -291,7 +193,7 @@ impl<'c> Ctx<'c> {
             }
             for (i, expr) in row.content.iter().enumerate() {
                 let mut sources = BTreeSet::new();
-                self.expr(expr, walk, &mut sources)?;
+                self.expr(expr, level, Clause::Projection, &mut sources)?;
                 match cols.get_mut(i) {
                     Some(col) => col.sources.extend(sources),
                     None => cols.push(Col {
@@ -302,17 +204,16 @@ impl<'c> Ctx<'c> {
                 }
             }
         }
-        Ok(cols)
+        Ok(Columns::known(cols))
     }
 
-    /// Resolves one `SELECT` level.
+    /// Resolves one `SELECT` at `level`, a fresh child of its query's level.
     fn select(
         &mut self,
         select: &Select,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
+        mut level: Level<'_>,
         order_by: Option<&OrderBy>,
-    ) -> Result<Vec<Col>, LineageError> {
+    ) -> Result<Columns, LineageError> {
         let Select {
             select_token: _,
             optimizer_hints: _,
@@ -357,42 +258,26 @@ impl<'c> Ctx<'c> {
             return Err(unsupported("SELECT clause outside the modeled dialects"));
         }
 
-        let mut scope = Scope::new(outer);
         for twj in from {
-            let item = self.tree(twj, outer, ctes)?;
-            scope.rels.extend(item.rels);
-            scope.cols.extend(item.cols);
+            let tree = self.tree(twj, &level)?;
+            level.add(tree);
         }
-        let walk = Walk {
-            scope: &scope,
-            ctes,
-            aliases: None,
-        };
 
-        let mut out: Vec<Col> = Vec::new();
+        let mut out = Columns::default();
         for item in projection {
-            self.select_item(item, walk, &mut out)?;
+            self.select_item(item, &level, &mut out)?;
         }
-        let with_aliases = Walk {
-            aliases: Some(&out),
-            ..walk
-        };
+        level.set_outputs(out);
 
-        self.select_clauses(select, walk, with_aliases, &out)?;
+        self.select_clauses(select, &level)?;
         if let Some(order_by) = order_by {
-            self.order_by(order_by, with_aliases, &out)?;
+            self.order_by(order_by, &level)?;
         }
-        Ok(out)
+        Ok(level.into_outputs())
     }
 
     /// Records a `SELECT`'s `WHERE`, `GROUP BY`, `HAVING`, `WINDOW`, and `DISTINCT ON` uses.
-    fn select_clauses(
-        &mut self,
-        select: &Select,
-        walk: Walk<'_>,
-        with_aliases: Walk<'_>,
-        out: &[Col],
-    ) -> Result<(), LineageError> {
+    fn select_clauses(&mut self, select: &Select, level: &Level<'_>) -> Result<(), LineageError> {
         let Select {
             selection,
             group_by,
@@ -402,42 +287,36 @@ impl<'c> Ctx<'c> {
             ..
         } = select;
         if let Some(selection) = selection {
-            // SQLite lets WHERE fall back to output aliases.
-            let w = if self.dialect == Dialect::Sqlite {
-                with_aliases
-            } else {
-                walk
-            };
-            self.clause(selection, w, Role::Filter)?;
+            self.clause(selection, level, Clause::Where)?;
         }
         match group_by {
             GroupByExpr::All(_) => return Err(unsupported("GROUP BY ALL")),
             GroupByExpr::Expressions(exprs, modifiers) => {
                 for expr in exprs {
-                    self.positional(expr, with_aliases, out, Role::GroupBy)?;
+                    self.item(expr, level, Clause::GroupBy)?;
                 }
                 for modifier in modifiers {
                     match modifier {
                         GroupByWithModifier::Rollup | GroupByWithModifier::Cube | GroupByWithModifier::Totals => {}
-                        GroupByWithModifier::GroupingSets(expr) => self.clause(expr, with_aliases, Role::GroupBy)?,
+                        GroupByWithModifier::GroupingSets(expr) => self.clause(expr, level, Clause::GroupBy)?,
                     }
                 }
             }
         }
         if let Some(having) = having {
-            self.clause(having, with_aliases, Role::Filter)?;
+            self.clause(having, level, Clause::Having)?;
         }
         for window in named_window {
             match &window.1 {
                 NamedWindowExpr::NamedWindow(_) => {}
-                NamedWindowExpr::WindowSpec(spec) => self.window(spec, walk)?,
+                NamedWindowExpr::WindowSpec(spec) => self.window(spec, level, Clause::Window)?,
             }
         }
         match distinct {
             None | Some(Distinct::All | Distinct::Distinct) => {}
             Some(Distinct::On(exprs)) => {
                 for expr in exprs {
-                    self.positional(expr, with_aliases, out, Role::GroupBy)?;
+                    self.item(expr, level, Clause::GroupBy)?;
                 }
             }
         }
@@ -445,29 +324,19 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves one projection item into output columns.
-    fn select_item(&mut self, item: &SelectItem, walk: Walk<'_>, out: &mut Vec<Col>) -> Result<(), LineageError> {
+    fn select_item(&mut self, item: &SelectItem, level: &Level<'_>, out: &mut Columns) -> Result<(), LineageError> {
         let (expr, name) = match item {
             SelectItem::UnnamedExpr(expr) => (expr, self.output_name(expr)),
             SelectItem::ExprWithAlias { expr, alias } => (expr, self.dialect.normalize(alias)),
             SelectItem::ExprWithAliases { .. } => return Err(unsupported("multiple aliases on one expression")),
             SelectItem::Wildcard(options) => {
                 plain_wildcard(options)?;
-                if walk.scope.rels.is_empty() {
-                    return Err(LineageError::ColumnNotFound {
-                        column: "*".to_string(),
-                    });
-                }
-                out.extend(walk.scope.cols.iter().filter(|c| c.visible).cloned());
+                out.extend(level.star()?);
                 return Ok(());
             }
             SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::ObjectName(name), options) => {
                 plain_wildcard(options)?;
-                let qualifier = idents(name)?;
-                let cols = walk
-                    .scope
-                    .relation(self.dialect, &qualifier)
-                    .map(|rel| rel.columns.iter().filter(|c| c.visible).cloned().collect::<Vec<_>>());
-                out.extend(self.soften(cols)?);
+                out.extend(level.star_of(&idents(name)?)?);
                 return Ok(());
             }
             SelectItem::QualifiedWildcard(SelectItemQualifiedWildcardKind::Expr(_), _) => {
@@ -475,8 +344,8 @@ impl<'c> Ctx<'c> {
             }
         };
         let mut sources = BTreeSet::new();
-        self.expr(expr, walk, &mut sources)?;
-        out.push(Col {
+        self.expr(expr, level, Clause::Projection, &mut sources)?;
+        out.cols.push(Col {
             name,
             sources,
             visible: true,
@@ -494,7 +363,7 @@ impl<'c> Ctx<'c> {
     }
 
     /// Records `ORDER BY` items as [`Role::Sort`] references.
-    fn order_by(&mut self, order_by: &OrderBy, walk: Walk<'_>, out: &[Col]) -> Result<(), LineageError> {
+    fn order_by(&mut self, order_by: &OrderBy, level: &Level<'_>) -> Result<(), LineageError> {
         if order_by.interpolate.is_some() {
             return Err(unsupported("ORDER BY INTERPOLATE"));
         }
@@ -502,77 +371,55 @@ impl<'c> Ctx<'c> {
             OrderByKind::All(_) => Err(unsupported("ORDER BY ALL")),
             OrderByKind::Expressions(items) => {
                 for item in items {
-                    self.order_item(item, walk, out)?;
+                    self.order_item(item, level)?;
                 }
                 Ok(())
             }
         }
     }
 
-    fn order_item(&mut self, item: &OrderByExpr, walk: Walk<'_>, out: &[Col]) -> Result<(), LineageError> {
+    fn order_item(&mut self, item: &OrderByExpr, level: &Level<'_>) -> Result<(), LineageError> {
         if item.with_fill.is_some() {
             return Err(unsupported("ORDER BY WITH FILL"));
         }
-        // A bare name matching an output column sorts by that column on every
-        // modeled dialect; input columns of the same name are not read.
-        if let Expr::Identifier(name) = &item.expr {
-            let mut hits = out.iter().filter(|c| self.dialect.matches(name, &c.name)).peekable();
-            if hits.peek().is_some() {
-                let sources = hits.flat_map(|c| c.sources.iter().cloned()).collect();
-                self.refer(sources, Role::Sort);
-                return Ok(());
+        self.item(&item.expr, level, Clause::OrderBy)
+    }
+
+    /// Records a `GROUP BY` / `ORDER BY` item, which may name an output directly.
+    fn item(&mut self, expr: &Expr, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
+        match level.output_item(clause, expr)? {
+            Some(sources) => {
+                if let Some(role) = clause.role() {
+                    self.refer(sources, role);
+                }
+                Ok(())
             }
+            None => self.clause(expr, level, clause),
         }
-        self.positional(&item.expr, walk, out, Role::Sort)
     }
 
-    /// Records a `GROUP BY` / `ORDER BY` item, honoring 1-based positions.
-    fn positional(&mut self, expr: &Expr, walk: Walk<'_>, out: &[Col], role: Role) -> Result<(), LineageError> {
-        if let Expr::Value(value) = expr
-            && let Value::Number(text, _) = &value.value
-            && let Ok(position) = text.parse::<usize>()
-        {
-            let sources = position
-                .checked_sub(1)
-                .and_then(|i| out.get(i))
-                .map(|col| col.sources.clone())
-                .ok_or_else(|| LineageError::ColumnNotFound {
-                    column: position.to_string(),
-                });
-            let sources = self.soften(sources)?;
-            self.refer(sources, role);
-            return Ok(());
-        }
-        self.clause(expr, walk, role)
-    }
-
-    /// Resolves an expression and records its sources with `role`.
-    pub(crate) fn clause(&mut self, expr: &Expr, walk: Walk<'_>, role: Role) -> Result<(), LineageError> {
+    /// Resolves an expression and records its sources with the clause's role.
+    pub(crate) fn clause(&mut self, expr: &Expr, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
         let mut sources = BTreeSet::new();
-        self.expr(expr, walk, &mut sources)?;
-        self.refer(sources, role);
+        self.expr(expr, level, clause, &mut sources)?;
+        if let Some(role) = clause.role() {
+            self.refer(sources, role);
+        }
         Ok(())
     }
 
-    /// Resolves a `FROM` item and its joins.
-    fn tree(&mut self, twj: &TableWithJoins, outer: Option<&Scope<'_>>, ctes: &Ctes<'_>) -> Result<Item, LineageError> {
-        let mut item = self.factor(&twj.relation, outer, ctes)?;
+    /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
+    fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
+        let mut tree = self.factor(&twj.relation, level)?;
         for join in &twj.joins {
-            let right = self.factor(&join.relation, outer, ctes)?;
-            item = self.join(item, right, join, outer, ctes)?;
+            let right = self.factor(&join.relation, level)?;
+            tree = self.join(tree, right, join, level)?;
         }
-        Ok(item)
+        Ok(tree)
     }
 
     /// Joins `right` onto `left`, merging `USING`/`NATURAL` keys.
-    fn join(
-        &mut self,
-        mut left: Item,
-        right: Item,
-        join: &Join,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
-    ) -> Result<Item, LineageError> {
+    fn join(&mut self, left: Tree, right: Tree, join: &Join, level: &Level<'_>) -> Result<Tree, LineageError> {
         let (JoinOperator::Join(constraint)
         | JoinOperator::Inner(constraint)
         | JoinOperator::Left(constraint)
@@ -585,81 +432,34 @@ impl<'c> Ctx<'c> {
         else {
             return Err(unsupported("join kind"));
         };
-        let keys: Vec<Ident> = match constraint {
-            JoinConstraint::None => Vec::new(),
-            JoinConstraint::On(expr) => {
-                left.rels.extend(right.rels);
-                left.cols.extend(right.cols);
-                let scope = Scope {
-                    rels: left.rels,
-                    cols: left.cols,
-                    parent: outer,
-                };
-                let walk = Walk {
-                    scope: &scope,
-                    ctes,
-                    aliases: None,
-                };
-                self.clause(expr, walk, Role::Join)?;
-                return Ok(Item {
-                    rels: scope.rels,
-                    cols: scope.cols,
-                });
-            }
-            JoinConstraint::Using(names) => names
-                .iter()
-                .map(|n| {
-                    n.0.last()
-                        .and_then(ObjectNamePart::as_ident)
-                        .cloned()
-                        .ok_or_else(|| unsupported("USING column"))
-                })
-                .collect::<Result<_, _>>()?,
-            JoinConstraint::Natural => right
-                .cols
-                .iter()
-                .filter(|r| r.visible)
-                // Quoted, so PostgreSQL compares actual names exactly.
-                .map(|r| Ident::with_quote('"', r.name.clone()))
-                .filter(|key| {
-                    left.cols
-                        .iter()
-                        .any(|l| l.visible && self.dialect.matches(key, &l.name))
-                })
-                .collect(),
+        let keys = match constraint {
+            JoinConstraint::None | JoinConstraint::On(_) => Keys::None,
+            JoinConstraint::Using(names) => Keys::Using(
+                names
+                    .iter()
+                    .map(|n| {
+                        n.0.last()
+                            .and_then(ObjectNamePart::as_ident)
+                            .cloned()
+                            .ok_or_else(|| unsupported("USING column"))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            JoinConstraint::Natural => Keys::Natural,
         };
-
-        let mut merged = Vec::new();
-        let mut left_cols = left.cols;
-        let mut right_cols = right.cols;
-        for key in &keys {
-            let l = self.soften(take(self.dialect, &mut left_cols, key))?;
-            let r = self.soften(take(self.dialect, &mut right_cols, key))?;
-            let (Some(l), Some(r)) = (l, r) else { continue };
-            let mut sources = l.sources;
-            sources.extend(r.sources);
-            self.refer(sources.clone(), Role::Join);
-            merged.push(Col {
-                name: l.name,
-                sources,
-                visible: true,
-            });
-        }
-        merged.extend(left_cols);
-        merged.extend(right_cols);
-        left.rels.extend(right.rels);
-        Ok(Item {
-            rels: left.rels,
-            cols: merged,
-        })
+        let (tree, joined) = left.join(self.dialect, right, keys)?;
+        self.refer(joined, Role::Join);
+        let JoinConstraint::On(expr) = constraint else {
+            return Ok(tree);
+        };
+        // ON sees this join tree and the outer levels, not earlier FROM items.
+        let mut on = level.derived();
+        on.add(tree);
+        self.clause(expr, &on, Clause::On)?;
+        Ok(on.into_tree())
     }
 
-    fn factor(
-        &mut self,
-        factor: &TableFactor,
-        outer: Option<&Scope<'_>>,
-        ctes: &Ctes<'_>,
-    ) -> Result<Item, LineageError> {
+    fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
         match factor {
             TableFactor::Table {
                 name,
@@ -679,7 +479,7 @@ impl<'c> Ctx<'c> {
                 if !with_hints.is_empty() || version.is_some() || json_path.is_some() || sample.is_some() {
                     return Err(unsupported("table modifier (hints/version/sample)"));
                 }
-                self.named(name, alias.as_ref(), ctes)
+                self.named(name, alias.as_ref(), level)
             }
             TableFactor::Derived {
                 lateral,
@@ -693,30 +493,17 @@ impl<'c> Ctx<'c> {
                 if sample.is_some() {
                     return Err(unsupported("TABLESAMPLE"));
                 }
-                let mut cols = self.query(subquery, outer, ctes)?;
-                let path = match alias {
-                    Some(alias) => {
-                        let renamed = rename(self.dialect, &mut cols, alias);
-                        self.soften(renamed)?;
-                        vec![self.dialect.normalize(&alias.name)]
-                    }
-                    None => Vec::new(),
-                };
-                Ok(single(path, cols))
+                let cols = self.query(subquery, level.derived())?;
+                Tree::single(self.dialect, Vec::new(), cols, alias.as_ref())
             }
             TableFactor::NestedJoin {
                 table_with_joins,
                 alias,
             } => {
-                let item = self.tree(table_with_joins, outer, ctes)?;
+                let tree = self.tree(table_with_joins, level)?;
                 match alias {
-                    None => Ok(item),
-                    Some(alias) => {
-                        let mut cols = item.cols;
-                        let renamed = rename(self.dialect, &mut cols, alias);
-                        self.soften(renamed)?;
-                        Ok(single(vec![self.dialect.normalize(&alias.name)], cols))
-                    }
+                    None => Ok(tree),
+                    Some(alias) => tree.aliased(self.dialect, alias),
                 }
             }
             TableFactor::TableFunction { .. } | TableFactor::Function { .. } => {
@@ -734,21 +521,19 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a named relation: a visible CTE, else a catalog entry.
-    fn named(&mut self, name: &ObjectName, alias: Option<&TableAlias>, ctes: &Ctes<'_>) -> Result<Item, LineageError> {
+    fn named(
+        &mut self,
+        name: &ObjectName,
+        alias: Option<&TableAlias>,
+        level: &Level<'_>,
+    ) -> Result<Tree, LineageError> {
         let parts = idents(name)?;
-        let path = match alias {
-            Some(alias) => vec![self.dialect.normalize(&alias.name)],
-            None => parts.iter().map(|p| self.dialect.normalize(p)).collect(),
-        };
+        let path: Vec<String> = parts.iter().map(|p| self.dialect.normalize(p)).collect();
 
         if let [single_part] = parts.as_slice()
-            && let Some(mut cols) = self.cte(single_part, ctes)?
+            && let Some(cols) = level.cte(single_part)?
         {
-            if let Some(alias) = alias {
-                let renamed = rename(self.dialect, &mut cols, alias);
-                self.soften(renamed)?;
-            }
-            return Ok(single(path, cols));
+            return Tree::single(self.dialect, path, cols, alias);
         }
 
         let written = WrittenName::query(
@@ -766,7 +551,7 @@ impl<'c> Ctx<'c> {
                 if !self.missing.contains(&written) {
                     self.missing.push(written);
                 }
-                return Ok(single(path, Vec::new()));
+                return Tree::single(self.dialect, path, Columns::pending(), alias);
             }
             Some(Entry::Absent) => {
                 return Err(LineageError::UnknownRelation {
@@ -783,7 +568,7 @@ impl<'c> Ctx<'c> {
             kind: relation.kind,
             origin: Origin::Query,
         });
-        let mut cols: Vec<Col> = relation
+        let cols = relation
             .columns
             .iter()
             .map(|c| Col {
@@ -792,85 +577,8 @@ impl<'c> Ctx<'c> {
                 visible: c.star_visible,
             })
             .collect();
-        if let Some(alias) = alias {
-            let renamed = rename(self.dialect, &mut cols, alias);
-            self.soften(renamed)?;
-        }
-        Ok(single(path, cols))
+        Tree::single(self.dialect, path, Columns::known(cols), alias)
     }
-
-    /// Returns a copy of the visible CTE named `name`, innermost first.
-    fn cte(&self, name: &Ident, ctes: &Ctes<'_>) -> Result<Option<Vec<Col>>, LineageError> {
-        let mut level = Some(ctes);
-        while let Some(chain) = level {
-            for (cte_name, cols) in chain.defs.iter().rev() {
-                if self.dialect.matches(name, cte_name) {
-                    if self.dialect.strict_cte_case() && name.value != *cte_name {
-                        return Err(unsupported("CTE name differing from its definition only by case"));
-                    }
-                    return Ok(Some(cols.clone()));
-                }
-            }
-            level = chain.parent;
-        }
-        Ok(None)
-    }
-}
-
-/// Builds an item exposing one relation.
-fn single(path: Vec<String>, cols: Vec<Col>) -> Item {
-    Item {
-        rels: vec![Rel {
-            path,
-            columns: cols.clone(),
-        }],
-        cols,
-    }
-}
-
-/// Removes and returns the one column named `key`.
-fn take(dialect: Dialect, cols: &mut Vec<Col>, key: &Ident) -> Result<Option<Col>, LineageError> {
-    let hits: Vec<usize> = cols
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| dialect.matches(key, &c.name))
-        .map(|(i, _)| i)
-        .collect();
-    match hits.as_slice() {
-        [i] => Ok(Some(cols.remove(*i))),
-        [] => Err(LineageError::ColumnNotFound {
-            column: key.value.clone(),
-        }),
-        _ => Err(LineageError::AmbiguousColumn {
-            column: key.value.clone(),
-        }),
-    }
-}
-
-/// Renames star-visible columns positionally from an alias column list.
-///
-/// # Errors
-/// [`LineageError::ColumnCountMismatch`] when the list is longer than the
-/// columns; [`LineageError::Unsupported`] for typed column definitions.
-fn rename(dialect: Dialect, cols: &mut [Col], alias: &TableAlias) -> Result<(), LineageError> {
-    if alias.at.is_some() {
-        return Err(unsupported("table alias AT clause"));
-    }
-    if alias.columns.iter().any(|c| c.data_type.is_some()) {
-        return Err(unsupported("column definition list"));
-    }
-    let visible = cols.iter().filter(|c| c.visible).count();
-    if alias.columns.len() > visible {
-        return Err(LineageError::ColumnCountMismatch {
-            relation: alias.name.value.clone(),
-            expected: visible,
-            found: alias.columns.len(),
-        });
-    }
-    for (col, def) in cols.iter_mut().filter(|c| c.visible).zip(&alias.columns) {
-        col.name = dialect.normalize(&def.name);
-    }
-    Ok(())
 }
 
 /// Rejects wildcard modifiers (`EXCLUDE`, `REPLACE`, `RENAME`, …).

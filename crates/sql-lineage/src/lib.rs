@@ -41,13 +41,13 @@
 //! ```
 
 mod analyze;
+mod bind;
 mod catalog;
 mod dialect;
 mod error;
 mod expr;
 mod model;
 mod resolve;
-mod scope;
 #[cfg(test)]
 mod tests;
 
