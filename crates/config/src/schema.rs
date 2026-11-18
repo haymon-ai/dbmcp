@@ -66,9 +66,7 @@ fn compile() -> (Schemas, SchemaIndex) {
     (schemas, index)
 }
 
-/// Keeps only [`ANNOTATIONS`] on every leaf property: one without `properties`.
-///
-/// Drops `$defs` too: only the stripped value keywords refer to it.
+/// Keeps only [`ANNOTATIONS`] on every leaf property, and drops `$defs`.
 fn strip_values(schema: &mut Value) {
     if let Some(object) = schema.as_object_mut() {
         object.remove("$defs");
@@ -298,10 +296,11 @@ pub(crate) mod tests {
                     assert_eq!(schema["items"], reference, "{path}");
                     let rule = &document["$defs"]["columnRule"];
                     assert_eq!(rule["required"], serde_json::json!(["columns", "entity"]), "{path}");
-                    let Kind::Enum { choices } = crate::env::PII_OPERATOR.kind else {
-                        panic!("pii.operator is an enum");
-                    };
-                    assert_eq!(rule["properties"]["operator"]["enum"], nullable(choices), "{path}");
+                    assert_eq!(
+                        rule["properties"]["operator"]["enum"],
+                        nullable(&crate::env::PII_OPERATOR_NAMES),
+                        "{path}"
+                    );
                 }
             }
         }

@@ -3,12 +3,10 @@
 //! Every setting is one constant here, and the loader reads it through that
 //! constant, so a misspelt setting is a compile error. Env names are
 //! hand-picked, not derived from key paths. Every leaf setting has at most
-//! one name and every name maps to exactly one setting; a YAML-only setting
-//! (`pii.rules`) has none. The [`Kind`] carries
+//! one name and every name maps to exactly one setting. The [`Kind`] carries
 //! every rule a value must meet: integer ranges, enum choices, and path
-//! rules are stated here and nowhere else, and [`Kind::check`] applies them
-//! to values from every source. The one exception is `pii.rules`, whose
-//! value rules live in the `rules` module.
+//! rules are stated here and nowhere else (`pii.rules` aside: see `rules`),
+//! and [`Kind::check`] applies them to values from every source.
 
 use std::path::{Path, PathBuf};
 
@@ -70,7 +68,7 @@ pub enum Kind {
         /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
-    /// The `pii.rules` column rules: a mapping of rule names, or a sequence.
+    /// The `pii.rules` column rules.
     Rules,
 }
 
@@ -300,7 +298,7 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
+pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
 const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);
@@ -320,11 +318,6 @@ const fn setting(path: &'static str, env: &'static str, kind: Kind) -> Setting {
         env: Some(env),
         kind,
     }
-}
-
-/// A setting set only in config files; it has no env var.
-const fn yaml_only(path: &'static str, kind: Kind) -> Setting {
-    Setting { path, env: None, kind }
 }
 
 /// `transport` / `DBMCP_TRANSPORT`.
@@ -430,7 +423,11 @@ pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_EN
 /// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
 pub const PII_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
 /// `pii.rules`, YAML only.
-pub const PII_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
+pub const PII_RULES: Setting = Setting {
+    path: "pii.rules",
+    env: None,
+    kind: Kind::Rules,
+};
 /// `ssh.host` / `DBMCP_SSH_HOST`.
 pub const SSH_HOST: Setting = setting("ssh.host", "DBMCP_SSH_HOST", Kind::Text);
 /// `ssh.port` / `DBMCP_SSH_PORT`.

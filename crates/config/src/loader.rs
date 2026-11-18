@@ -376,7 +376,7 @@ impl Resolver<'_> {
 ///
 /// Panics when `name` is missing, which cannot happen: each setting's
 /// choices are the names in its type's `CHOICES`.
-fn choose<T: Copy>(choices: &[(&str, T)], name: &str) -> T {
+pub(crate) fn choose<T: Copy>(choices: &[(&str, T)], name: &str) -> T {
     choices
         .iter()
         .find(|(choice, _)| *choice == name)
@@ -1277,11 +1277,11 @@ mod tests {
     #[track_caller]
     fn rule_names(fixture: &Fixture) -> Vec<Option<String>> {
         let settings = settings::read(&fixture.options, &mut Vec::new()).unwrap_or_else(|e| panic!("read failed: {e}"));
-        match settings.get(env::PII_RULES) {
-            None => Vec::new(),
-            Some(Value::Rules(rules)) => rules.iter().map(|rule| rule.name.clone()).collect(),
-            Some(other) => panic!("pii.rules is a rules setting: {other:?}"),
-        }
+        let resolver = Resolver {
+            settings: &settings,
+            home: fixture.options.home.as_deref(),
+        };
+        resolver.rules().iter().map(|rule| rule.name.clone()).collect()
     }
 
     const RULES: &str = "pii:\n  enabled: true\n  operator: mask\n  rules:\n    \

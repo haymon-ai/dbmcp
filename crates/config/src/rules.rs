@@ -1,20 +1,8 @@
 //! Casts and checks the `pii.rules` column rules.
 //!
-//! A `pii.rules` value is a mapping of rule names to rules, or a sequence of
-//! unnamed rules; messages refer to an unnamed rule as `rule <index>`.
-//! [`cast`] backs [`Kind::Rules`]: it checks every rule a single file's
-//! value must meet (rule names, fields, column key shape, known entity and
-//! operator, and columns repeated within or across rules, compared
-//! case-insensitively). The last file that sets `pii.rules` wins it whole, so
-//! these checks run on one file's value. [`flatten`] turns the winning value
-//! into one [`ColumnRule`] per listed column, each inheriting `pii.operator`
-//! when its rule sets none. [`check`] runs the rules that need other settings
-//! on the winning value: `pii.enabled` must be on, column rules are not yet
-//! supported on any backend, and each column's catalog segment must fit the
-//! backend. Reasons are value-free: they name the rule and the item index,
-//! never a column key.
-//!
-//! [`Kind::Rules`]: crate::env::Kind::Rules
+//! [`cast`] checks one file's value, [`flatten`] turns the winning value into
+//! [`ColumnRule`]s, and [`check`] checks it against other settings. Reasons
+//! are value-free: they name the rule and item index, never a column key.
 
 use std::collections::HashMap;
 
@@ -24,7 +12,7 @@ use crate::error::{ConfigError, Diagnostic};
 use crate::node::Node;
 use crate::pii::{ColumnRule, PiiOperator};
 
-/// The fields a rule accepts, in the order error messages list them.
+/// The fields a rule accepts.
 const FIELDS: [&str; 3] = ["columns", "entity", "operator"];
 
 /// One rule from a `pii.rules` value, as written.
@@ -56,7 +44,6 @@ pub(crate) fn cast(node: &Node) -> Result<Vec<Rule>, String> {
         other => return Err(unexpected(other, "mapping or sequence")),
     };
     let mut rules: Vec<Rule> = Vec::with_capacity(entries.len());
-    // Each listed column, folded to lower case once, with its rule and item index.
     let mut seen: HashMap<[String; 4], (usize, usize)> = HashMap::new();
     for (index, (name, value)) in entries.into_iter().enumerate() {
         if name.is_some_and(|name| !valid_name(name)) {
@@ -92,9 +79,6 @@ fn label(name: Option<&str>, index: usize) -> String {
 }
 
 /// Flattens rules into one [`ColumnRule`] per listed column, in file order.
-///
-/// A rule without its own operator takes `default_operator`, the resolved
-/// `pii.operator`.
 pub(crate) fn flatten(rules: &[Rule], default_operator: PiiOperator) -> Vec<ColumnRule> {
     rules
         .iter()
@@ -109,14 +93,7 @@ pub(crate) fn flatten(rules: &[Rule], default_operator: PiiOperator) -> Vec<Colu
         .collect()
 }
 
-/// Checks the winning `pii.rules` value against the settings it depends on.
-///
-/// Reports, in this order: rules set while `pii_enabled` is off; rules set
-/// while it is on, since no backend enforces them yet; and each rule whose
-/// column keys name a catalog the backend never uses: `def` on
-/// `MySQL`/`MariaDB`, `main` on `SQLite`, and `database.name` on `PostgreSQL`
-/// when that is set. The catalog is compared case-insensitively. The catalog
-/// check always runs.
+/// Checks the winning `pii.rules` value against `pii.enabled` and the backend.
 pub(crate) fn check(rules: &[Rule], pii_enabled: bool, database: &DatabaseConfig) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     let backend = database.backend;
@@ -128,18 +105,13 @@ pub(crate) fn check(rules: &[Rule], pii_enabled: bool, database: &DatabaseConfig
             Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE])
         });
     }
-    let (catalog, expected) = match backend {
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ("def", "def"),
-        DatabaseBackend::Sqlite => ("main", "main"),
+    let (catalog, expected, involved): (&str, &str, &[Setting]) = match backend {
+        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ("def", "def", &[env::PII_RULES, env::DB_BACKEND]),
+        DatabaseBackend::Sqlite => ("main", "main", &[env::PII_RULES, env::DB_BACKEND]),
         DatabaseBackend::Postgres => match database.name.as_deref() {
-            Some(name) if !name.is_empty() => (name, "database.name"),
+            Some(name) if !name.is_empty() => (name, "database.name", &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME]),
             _ => return errors,
         },
-    };
-    let involved: &[Setting] = if backend == DatabaseBackend::Postgres {
-        &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME]
-    } else {
-        &[env::PII_RULES, env::DB_BACKEND]
     };
     let catalog = catalog.to_lowercase();
     for (index, rule) in rules.iter().enumerate() {
@@ -196,16 +168,10 @@ fn rule(name: Option<&str>, node: &Node) -> Result<Rule, String> {
     };
     let operator = match field("operator") {
         None | Some(Node::Null) => None,
-        Some(Node::Str(text)) => Some(
-            PiiOperator::CHOICES
-                .iter()
-                .find(|(name, _)| name == text)
-                .map(|&(_, operator)| operator)
-                .ok_or_else(|| {
-                    let names: Vec<&str> = PiiOperator::CHOICES.iter().map(|&(name, _)| name).collect();
-                    format!("operator: expected one of {}", names.join(", "))
-                })?,
-        ),
+        Some(Node::Str(text)) => {
+            let name = choose(&env::PII_OPERATOR_NAMES, text).map_err(|reason| format!("operator: {reason}"))?;
+            Some(crate::loader::choose(PiiOperator::CHOICES, name))
+        }
         Some(other) => return Err(format!("operator: {}", unexpected(other, "string"))),
     };
     Ok(Rule {
@@ -383,24 +349,6 @@ mod tests {
     /// The temporary backend gate's message on `backend`.
     fn gate(backend: DatabaseBackend) -> String {
         format!("pii.rules: column rules are not yet supported on {backend}")
-    }
-
-    #[test]
-    fn column_rules_are_not_yet_supported_on_any_backend() {
-        for (backend, name, catalog) in [
-            (DatabaseBackend::Mysql, None, "def"),
-            (DatabaseBackend::Mariadb, None, "def"),
-            (DatabaseBackend::Postgres, Some("app"), "app"),
-            (DatabaseBackend::Sqlite, Some("x.db"), "main"),
-        ] {
-            let database = database(backend, name);
-            assert_eq!(
-                checked(&with_catalogs(&[catalog]), true, &database),
-                [gate(backend)],
-                "{backend}"
-            );
-            assert!(check(&[], true, &database).is_empty(), "{backend}");
-        }
     }
 
     #[test]
