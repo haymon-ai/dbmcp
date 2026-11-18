@@ -1155,6 +1155,29 @@ fn open_view_body_keeps_the_catalog_shape() {
 }
 
 #[test]
+fn view_over_an_open_view_still_ends_in_missing() {
+    // `v2` reads a missing table, so it falls back to the catalog's
+    // column names; `v1` reads `v2` and looks complete. The outer query
+    // keeps binding and reports both missing names.
+    let catalog = with_view(fixture(), None, "v1", &["id"], "SELECT id FROM v2");
+    let catalog = with_view(catalog, Some("v1"), "v2", &["id"], "SELECT * FROM m1");
+    assert_eq!(
+        analyze(
+            "SELECT v1.id FROM v1 JOIN m2 ON v1.id = m2.k",
+            Dialect::Postgres,
+            &catalog
+        ),
+        Err(LineageError::Missing(vec![
+            WrittenName {
+                parts: vec![NamePart::bare("m1")],
+                context: Origin::View(id("v2")),
+            },
+            WrittenName::query(vec![NamePart::bare("m2")]),
+        ]))
+    );
+}
+
+#[test]
 fn view_body_column_count_must_match_the_catalog() {
     let catalog = users_in_view(
         with_view(fixture(), None, "v", &["id"], "SELECT id, email FROM users"),

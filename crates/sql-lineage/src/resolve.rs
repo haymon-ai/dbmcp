@@ -647,9 +647,9 @@ impl<'c> Ctx<'c> {
     /// The body resolves on its own, without the query's scopes or CTEs, and
     /// everything it records is tagged [`Origin::View`] of this view. Its
     /// output columns take the catalog's names and visibility by position.
-    /// Once the pass has a missing name, a view yields the catalog's columns
-    /// without sources, so the outer query keeps binding until the pass ends
-    /// in `Missing`. Each view expands once per pass, so views reusing views
+    /// An open body yields the catalog's columns without sources, so the
+    /// outer query keeps binding; a pass with a missing name ends in
+    /// `Missing`, so no stale sources are ever returned. Each view expands once per pass, so views reusing views
     /// stay linear.
     ///
     /// # Errors
@@ -683,9 +683,7 @@ impl<'c> Ctx<'c> {
         self.views.pop();
         let body = body?;
 
-        // Once a name is missing the pass ends in `Missing`, so a body
-        // resolved now may hold unbound columns even if it looks complete.
-        if body.open || !self.missing.is_empty() {
+        if body.open {
             let cols: Vec<Col> = relation
                 .columns
                 .iter()
