@@ -30,6 +30,7 @@ pub enum StatementKind {
 /// 5. No dangerous functions (file access, large objects, sequences, extensions,
 ///    session locks, backend signalling, server administration)
 /// 6. No INTO OUTFILE/DUMPFILE clauses
+/// 7. On `MySQL` / `MariaDB`, no executable comments (`/*! … */`, `/*M! … */`)
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
 /// paginate can dispatch `Select` to a paged fetch and route `NonSelect`
@@ -138,7 +139,15 @@ pub fn validate_single_statement(sql: &str, dialect: &impl Dialect) -> Result<()
 }
 
 /// Parses `sql` and returns its only statement, `None` if it has none.
+///
+/// Where the parser expands `/*!` hints (`MySQL`/`MariaDB`), rejects executable
+/// comments first: parser and server disagree on their contents. Matches raw
+/// text, string literals included, so it fails closed.
 fn parse_single(sql: &str, dialect: &impl Dialect) -> Result<Option<Statement>, SqlError> {
+    if dialect.supports_multiline_comment_hints() && ["/*!", "/*M!", "/*m!"].iter().any(|p| sql.contains(p)) {
+        return Err(SqlError::ExecutableCommentBlocked);
+    }
+
     let mut statements =
         Parser::parse_sql(dialect, sql).map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
 
@@ -392,6 +401,29 @@ mod tests {
         assert!(validate_read("SHOW WARNINGS_X", &MYSQL).is_ok());
         assert!(validate_read("SHOW TABLE STATUS FROM warnings", &MYSQL).is_ok());
         assert!(validate_read("SHOW search_path", &POSTGRES).is_ok());
+    }
+
+    #[test]
+    fn executable_comments_are_blocked_on_mysql() {
+        for sql in [
+            "SELECT 1 /*M!100000 ; DELETE FROM users */",
+            "SELECT 1 /*m!100000 , 2 */",
+            "SHOW /*!99999 TABLES */ WARNINGS",
+            "SELECT '/*!'",
+        ] {
+            assert!(
+                matches!(validate_read(sql, &MYSQL), Err(SqlError::ExecutableCommentBlocked)),
+                "{sql}"
+            );
+        }
+        assert!(matches!(
+            validate_single_statement("SELECT 1 /*M!100000 ; DELETE FROM users */", &MYSQL),
+            Err(SqlError::ExecutableCommentBlocked)
+        ));
+        assert!(validate_read("SELECT 1 /* plain */", &MYSQL).is_ok());
+        assert!(validate_read("SELECT /*+ MAX_EXECUTION_TIME(1) */ 1", &MYSQL).is_ok());
+        assert!(validate_read("SELECT '/*!'", &POSTGRES).is_ok());
+        assert!(validate_read("SELECT '/*M!'", &SQLITE).is_ok());
     }
 
     #[test]
