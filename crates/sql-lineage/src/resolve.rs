@@ -21,7 +21,10 @@ use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
 use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{FunctionUse, Origin, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef};
+use crate::model::{
+    FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
+    StatementKind,
+};
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -38,13 +41,13 @@ pub(crate) struct Ctx<'c> {
     pub dialect: Dialect,
     catalog: &'c Catalog,
     /// Names absent from the snapshot, in discovery order.
-    pub missing: Vec<WrittenName>,
+    missing: Vec<WrittenName>,
     /// Column uses outside the projection.
-    pub references: BTreeSet<Reference>,
+    references: BTreeSet<Reference>,
     /// Catalog relations touched.
-    pub relations: BTreeSet<RelationUse>,
+    relations: BTreeSet<RelationUse>,
     /// Functions called.
-    pub functions: BTreeSet<FunctionUse>,
+    functions: BTreeSet<FunctionUse>,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
@@ -72,8 +75,55 @@ impl<'c> Ctx<'c> {
     }
 
     /// Returns where the SQL being walked was written: the innermost view body, else the statement.
-    pub(crate) fn origin(&self) -> Origin {
+    ///
+    /// Only the recording methods and the catalog lookup name in [`Ctx::named`] call it.
+    fn origin(&self) -> Origin {
         self.views.last().map_or(Origin::Query, |id| Origin::View(id.clone()))
+    }
+
+    /// Records a catalog relation named in the SQL being walked.
+    fn use_relation(&mut self, relation: &Relation) {
+        self.relations.insert(RelationUse {
+            id: relation.id.clone(),
+            kind: relation.kind,
+            origin: self.origin(),
+        });
+    }
+
+    /// Records a function called in the SQL being walked.
+    pub(crate) fn call(&mut self, name: String, known: bool) {
+        self.functions.insert(FunctionUse {
+            name,
+            known,
+            origin: self.origin(),
+        });
+    }
+
+    /// Ends the pass: the lineage of `cols`, unless a name was missing.
+    ///
+    /// # Errors
+    /// Returns [`LineageError::Missing`] with every name absent from the snapshot.
+    pub(crate) fn finish(self, cols: Columns) -> Result<Lineage, LineageError> {
+        if !self.missing.is_empty() {
+            return Err(LineageError::Missing(self.missing));
+        }
+        Ok(Lineage {
+            columns: cols
+                .cols
+                .into_iter()
+                .enumerate()
+                .map(|(position, col)| OutputColumn {
+                    name: col.name,
+                    position,
+                    sources: col.sources,
+                })
+                .collect(),
+            references: self.references,
+            relations: self.relations,
+            functions: self.functions,
+            target: None,
+            statement: StatementKind::Query,
+        })
     }
 
     /// Records each source as a reference with `role`.
@@ -576,11 +626,7 @@ impl<'c> Ctx<'c> {
             }
             Some(Entry::Resolved(relation)) => relation,
         };
-        self.relations.insert(RelationUse {
-            id: relation.id.clone(),
-            kind: relation.kind,
-            origin: self.origin(),
-        });
+        self.use_relation(relation);
         let cols = match relation.kind {
             RelationKind::View | RelationKind::MatView => self.view(relation)?,
             _ => relation

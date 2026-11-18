@@ -6,7 +6,7 @@ use crate::bind::Level;
 use crate::catalog::{Catalog, Lexical};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{Lineage, OutputColumn, StatementKind};
+use crate::model::Lineage;
 use crate::resolve::Ctx;
 
 /// Analyzes the column lineage of a single SQL statement.
@@ -36,25 +36,5 @@ pub fn analyze(sql: &str, dialect: Dialect, catalog: &Catalog) -> Result<Lineage
 
     let mut ctx = Ctx::new(dialect, catalog);
     let cols = ctx.query(query, Level::root(dialect))?;
-    if !ctx.missing.is_empty() {
-        return Err(LineageError::Missing(ctx.missing));
-    }
-
-    Ok(Lineage {
-        columns: cols
-            .cols
-            .into_iter()
-            .enumerate()
-            .map(|(position, col)| OutputColumn {
-                name: col.name,
-                position,
-                sources: col.sources,
-            })
-            .collect(),
-        references: ctx.references,
-        relations: ctx.relations,
-        functions: ctx.functions,
-        target: None,
-        statement: StatementKind::Query,
-    })
+    ctx.finish(cols)
 }
