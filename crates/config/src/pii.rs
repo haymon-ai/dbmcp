@@ -92,14 +92,14 @@ impl std::fmt::Display for PiiCategory {
     }
 }
 
-/// One ruled column, flattened from a named `pii.rules` entry.
+/// One ruled column, flattened from a `pii.rules` entry.
 ///
 /// Each column a rule lists becomes one `ColumnRule` carrying the rule's
 /// name, entity, and resolved operator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnRule {
-    /// The rule's name, for messages only.
-    pub name: String,
+    /// The rule's name, for messages only; `None` for an unnamed rule.
+    pub name: Option<String>,
     /// The `catalog.schema.table.column` key's segments, as written.
     ///
     /// Matching ignores case.

@@ -1275,7 +1275,7 @@ mod tests {
 
     /// Returns the name of each rule in the winning `pii.rules` value.
     #[track_caller]
-    fn rule_names(fixture: &Fixture) -> Vec<String> {
+    fn rule_names(fixture: &Fixture) -> Vec<Option<String>> {
         let settings = settings::read(&fixture.options, &mut Vec::new()).unwrap_or_else(|e| panic!("read failed: {e}"));
         match settings.get(env::PII_RULES) {
             None => Vec::new(),
@@ -1303,7 +1303,7 @@ mod tests {
         assert!(!error.contains("secret_col") && !error.contains("NOPE"), "{error}");
         let error = Fixture::new().config("dbmcp.yaml", "pii:\n  rules: \"\"\n").err();
         assert!(
-            error.ends_with(":2:10: pii.rules: expected mapping, found string"),
+            error.ends_with(":2:10: pii.rules: expected mapping or sequence, found string"),
             "{error}"
         );
     }
@@ -1327,14 +1327,32 @@ mod tests {
             "b.yaml",
             "pii:\n  rules:\n    phones:\n      columns: [def.shop.users.phone]\n      entity: PHONE_NUMBER\n",
         );
-        assert_eq!(rule_names(&fixture), ["phones"]);
+        assert_eq!(rule_names(&fixture), [Some("phones".to_owned())]);
+    }
+
+    #[test]
+    fn unnamed_rules_replace_named_ones_and_an_empty_sequence_clears() {
+        let fixture = Fixture::new().config("a.yaml", RULES).config(
+            "b.yaml",
+            "pii:\n  rules:\n    - columns: [def.shop.users.phone]\n      entity: PHONE_NUMBER\n",
+        );
+        assert_eq!(rule_names(&fixture), [None]);
+        let fixture = Fixture::new()
+            .config("a.yaml", RULES)
+            .config("b.yaml", "pii:\n  rules: []\n");
+        assert!(rule_names(&fixture).is_empty());
+        assert!(fixture.ok().config.pii.expect("pii").rules.is_empty());
     }
 
     #[test]
     fn null_rules_keep_earlier_ones_and_empty_clears() {
         for null in ["pii:\n  rules:\n", "pii:\n  rules: ~\n"] {
             let fixture = Fixture::new().config("a.yaml", RULES).config("b.yaml", null);
-            assert_eq!(rule_names(&fixture), ["emails", "names"], "{null}");
+            assert_eq!(
+                rule_names(&fixture),
+                [Some("emails".to_owned()), Some("names".to_owned())],
+                "{null}"
+            );
         }
         let fixture = Fixture::new()
             .config("a.yaml", RULES)

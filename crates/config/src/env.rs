@@ -70,7 +70,7 @@ pub enum Kind {
         /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
-    /// The `pii.rules` mapping of rule names to column rules.
+    /// The `pii.rules` column rules: a mapping of rule names, or a sequence.
     Rules,
 }
 
@@ -213,8 +213,8 @@ impl Kind {
                 Value::List(items.into_iter().map(str::to_owned).collect())
             }
             Self::Rules => match node {
-                Some(Node::Map(entries)) => Value::Rules(rules::cast(entries)?),
-                _ => return Err(format!("expected mapping, found {}", found())),
+                Some(node) => Value::Rules(rules::cast(node)?),
+                None => return Err(format!("expected mapping or sequence, found {}", found())),
             },
         };
         Ok(Some(value))
@@ -684,8 +684,9 @@ mod tests {
             (yaml(COLORS, "1"), "expected string, found integer"),
             (yaml(LIST, "{a: b}"), "expected string or sequence, found mapping"),
             (yaml(LIST, "[a, 1]"), "item 1: expected string, found integer"),
-            (yaml(Kind::Rules, "[a]"), "expected mapping, found sequence"),
-            (yaml(Kind::Rules, "\"\""), "expected mapping, found string"),
+            (yaml(Kind::Rules, "[a]"), "rule 0: expected mapping, found string"),
+            (yaml(Kind::Rules, "\"\""), "expected mapping or sequence, found string"),
+            (yaml(Kind::Rules, "1"), "expected mapping or sequence, found integer"),
             (yaml(Kind::Rules, "!x {}"), "YAML tag !x is not supported"),
         ];
         for (result, reason) in cases {

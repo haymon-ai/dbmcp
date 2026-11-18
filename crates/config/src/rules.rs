@@ -1,5 +1,7 @@
 //! Casts and checks the `pii.rules` column rules.
 //!
+//! A `pii.rules` value is a mapping of rule names to rules, or a sequence of
+//! unnamed rules; messages refer to an unnamed rule as `rule <index>`.
 //! [`cast`] backs [`Kind::Rules`]: it checks every rule a single file's
 //! value must meet (rule names, fields, column key shape, known entity and
 //! operator, and columns repeated within or across rules, compared
@@ -16,26 +18,20 @@
 
 use std::collections::HashMap;
 
-use indexmap::IndexMap;
-use serde_saphyr::Location;
-
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, PII_OPERATOR_NAMES, Setting, choose, unsupported_tag};
 use crate::error::{ConfigError, Diagnostic};
-use crate::node::{Node, SpannedNode};
+use crate::node::Node;
 use crate::pii::{ColumnRule, PiiOperator};
-
-/// A YAML mapping's entries, each with its key's location.
-type Entries = IndexMap<String, (Location, SpannedNode)>;
 
 /// The fields a rule accepts, in the order error messages list them.
 const FIELDS: [&str; 3] = ["columns", "entity", "operator"];
 
-/// One named rule from a `pii.rules` value, as written.
+/// One rule from a `pii.rules` value, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Rule {
-    /// The rule's name.
-    pub(crate) name: String,
+    /// The rule's name; `None` for a rule written in a sequence.
+    pub(crate) name: Option<String>,
     /// Each listed column key's four segments, in file order.
     pub(crate) columns: Vec<[String; 4]>,
     /// The entity name, one of [`ColumnRule::ENTITIES`].
@@ -44,34 +40,41 @@ pub(crate) struct Rule {
     pub(crate) operator: Option<&'static str>,
 }
 
-/// Casts the entries of a `pii.rules` mapping, one [`Rule`] per entry.
+/// Casts a `pii.rules` mapping or sequence, one [`Rule`] per entry.
 ///
 /// # Errors
 ///
 /// Returns the first problem, prefixed with the rule's name, or with
-/// `rule <index>` when the name itself is invalid.
-pub(crate) fn cast(entries: &Entries) -> Result<Vec<Rule>, String> {
+/// `rule <index>` when the rule is unnamed or its name is invalid.
+pub(crate) fn cast(node: &Node) -> Result<Vec<Rule>, String> {
+    let entries: Vec<(Option<&str>, &Node)> = match node {
+        Node::Map(entries) => entries
+            .iter()
+            .map(|(name, (_, value))| (Some(name.as_str()), &value.value))
+            .collect(),
+        Node::Seq(items) => items.iter().map(|item| (None, &item.value)).collect(),
+        other => return Err(unexpected(other, "mapping or sequence")),
+    };
     let mut rules: Vec<Rule> = Vec::with_capacity(entries.len());
     // Each listed column, folded to lower case once, with its rule and item index.
     let mut seen: HashMap<[String; 4], (usize, usize)> = HashMap::new();
-    for (index, (name, (_, value))) in entries.iter().enumerate() {
-        if !valid_name(name) {
+    for (index, (name, value)) in entries.into_iter().enumerate() {
+        if name.is_some_and(|name| !valid_name(name)) {
             return Err(format!(
                 "rule {index}: name must be non-empty and use only a-z, 0-9, _ and -"
             ));
         }
-        let rule = rule(name, &value.value).map_err(|reason| format!("{name}: {reason}"))?;
+        let label = label(name, index);
+        let rule = rule(name, value).map_err(|reason| format!("{label}: {reason}"))?;
         for (i, column) in rule.columns.iter().enumerate() {
             let folded = column.each_ref().map(|segment| segment.to_lowercase());
             match seen.get(&folded) {
                 Some(&(other, first)) if other == index => {
-                    return Err(format!("{name}: columns: item {i} repeats item {first}"));
+                    return Err(format!("{label}: columns: item {i} repeats item {first}"));
                 }
                 Some(&(other, _)) => {
-                    return Err(format!(
-                        "{name}: columns: item {i} is also in rule {}",
-                        rules[other].name
-                    ));
+                    let other = rules[other].name.clone().unwrap_or_else(|| other.to_string());
+                    return Err(format!("{label}: columns: item {i} is also in rule {other}"));
                 }
                 None => {
                     seen.insert(folded, (index, i));
@@ -81,6 +84,11 @@ pub(crate) fn cast(entries: &Entries) -> Result<Vec<Rule>, String> {
         rules.push(rule);
     }
     Ok(rules)
+}
+
+/// Names a rule in messages: its name, or `rule <index>` when unnamed.
+fn label(name: Option<&str>, index: usize) -> String {
+    name.map_or_else(|| format!("rule {index}"), str::to_owned)
 }
 
 /// Flattens rules into one [`ColumnRule`] per listed column, in file order.
@@ -140,7 +148,7 @@ pub(crate) fn check(rules: &[Rule], pii_enabled: bool, database: &DatabaseConfig
         &[env::PII_RULES, env::DB_BACKEND]
     };
     let catalog = catalog.to_lowercase();
-    for rule in rules {
+    for (index, rule) in rules.iter().enumerate() {
         let items: Vec<String> = rule
             .columns
             .iter()
@@ -155,7 +163,7 @@ pub(crate) fn check(rules: &[Rule], pii_enabled: bool, database: &DatabaseConfig
         };
         errors.push(
             Diagnostic::new(ConfigError::PiiRuleCatalog {
-                rule: rule.name.clone(),
+                rule: label(rule.name.as_deref(), index),
                 items,
                 expected,
                 backend,
@@ -175,7 +183,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 /// Casts one rule's body.
-fn rule(name: &str, node: &Node) -> Result<Rule, String> {
+fn rule(name: Option<&str>, node: &Node) -> Result<Rule, String> {
     let Node::Map(entries) = node else {
         return Err(unexpected(node, "mapping"));
     };
@@ -200,7 +208,7 @@ fn rule(name: &str, node: &Node) -> Result<Rule, String> {
         Some(other) => return Err(format!("operator: {}", unexpected(other, "string"))),
     };
     Ok(Rule {
-        name: name.to_owned(),
+        name: name.map(str::to_owned),
         columns,
         entity,
         operator,
@@ -263,11 +271,7 @@ mod tests {
     use super::*;
 
     fn cast_yaml(yaml: &str) -> Result<Vec<Rule>, String> {
-        let root = crate::node::parse(yaml).expect("valid yaml");
-        let Node::Map(entries) = root.value else {
-            panic!("expected mapping");
-        };
-        cast(&entries)
+        cast(&crate::node::parse(yaml).expect("valid yaml").value)
     }
 
     fn key_of(text: &str) -> [String; 4] {
@@ -285,13 +289,13 @@ mod tests {
             rules,
             [
                 Rule {
-                    name: "emails".into(),
+                    name: Some("emails".into()),
                     columns: vec![key_of("def.shop.users.email"), key_of("def.shop.orders.email")],
                     entity: "EMAIL_ADDRESS",
                     operator: None,
                 },
                 Rule {
-                    name: "names".into(),
+                    name: Some("names".into()),
                     columns: vec![key_of("def.shop.users.name")],
                     entity: "PERSON",
                     operator: Some("mask"),
@@ -407,7 +411,14 @@ mod tests {
         .expect("valid rules");
         let flat: Vec<_> = flatten(&rules, PiiOperator::Mask)
             .into_iter()
-            .map(|rule| (rule.name, rule.key.join("."), rule.entity, rule.operator))
+            .map(|rule| {
+                (
+                    rule.name.expect("named"),
+                    rule.key.join("."),
+                    rule.entity,
+                    rule.operator,
+                )
+            })
             .collect();
         assert_eq!(
             flat,
@@ -481,6 +492,76 @@ mod tests {
         );
         assert!(check(&[], false, &mysql).is_empty());
         assert!(check(&[], true, &mysql).is_empty());
+    }
+
+    #[test]
+    fn unnamed_rules_cast_from_a_sequence() {
+        let rules = cast_yaml(
+            "- columns: [def.shop.users.email]\n  entity: EMAIL_ADDRESS\n\
+             - columns: [def.shop.users.name]\n  entity: PERSON\n  operator: mask\n",
+        )
+        .expect("valid rules");
+        assert_eq!(
+            rules,
+            [
+                Rule {
+                    name: None,
+                    columns: vec![key_of("def.shop.users.email")],
+                    entity: "EMAIL_ADDRESS",
+                    operator: None,
+                },
+                Rule {
+                    name: None,
+                    columns: vec![key_of("def.shop.users.name")],
+                    entity: "PERSON",
+                    operator: Some("mask"),
+                },
+            ]
+        );
+        assert_eq!(flatten(&rules, PiiOperator::Hash)[0].name, None);
+        assert!(cast_yaml("[]\n").expect("empty").is_empty());
+    }
+
+    #[test]
+    fn unnamed_rules_are_named_by_index_in_messages() {
+        let body = "  entity: EMAIL_ADDRESS\n";
+        let cases = [
+            (
+                "- columns: [a.b.c.d]\n".to_owned() + body + "- 1\n",
+                "rule 1: expected mapping, found integer",
+            ),
+            (
+                "- columns: [a.b.c]\n".to_owned() + body,
+                "rule 0: columns: item 0: expected 4 dot-separated segments (catalog.schema.table.column), found 3",
+            ),
+            (
+                "- columns: [a.b.c.d]\n  name: x\n".to_owned() + body,
+                "rule 0: name: unknown field; expected one of columns, entity, operator",
+            ),
+            (
+                "- columns: [a.b.c.d, A.B.C.D]\n".to_owned() + body,
+                "rule 0: columns: item 1 repeats item 0",
+            ),
+            (
+                "- columns: [a.b.c.d]\n".to_owned() + body + "- columns: [a.B.c.d]\n" + body,
+                "rule 1: columns: item 0 is also in rule 0",
+            ),
+            ("\"\"\n".to_owned(), "expected mapping or sequence, found string"),
+        ];
+        for (yaml, reason) in cases {
+            assert_eq!(cast_yaml(&yaml).map(|_| ()), Err(reason.into()), "{yaml}");
+        }
+        assert_eq!(
+            checked(
+                "- columns: [def.s.t.c]\n  entity: URL\n- columns: [shop.s.t.c]\n  entity: URL\n",
+                true,
+                &database(DatabaseBackend::Mysql, None)
+            ),
+            [
+                gate(DatabaseBackend::Mysql),
+                "pii.rules: rule 1: columns item 0: the catalog segment must be def on mysql".to_owned(),
+            ]
+        );
     }
 
     #[test]

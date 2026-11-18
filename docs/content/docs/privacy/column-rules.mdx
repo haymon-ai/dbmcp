@@ -7,7 +7,7 @@ description: Name the columns that hold PII so their whole values are masked (no
 Column rules are **not yet supported on any backend**. <Dbmcp /> checks a `pii.rules` value at startup, then refuses to start with `pii.rules: column rules are not yet supported on <backend>`. Leave `pii.rules` unset until a release lifts this for your backend.
 </Callout>
 
-`pii.rules` names the columns that hold a known kind of personal data. Each rule has a name and lists exact column keys, the entity those columns hold, and optionally the operator that rewrites them:
+`pii.rules` names the columns that hold a known kind of personal data. Each rule lists exact column keys, the entity those columns hold, and optionally the operator that rewrites them. Rules are either named, as a mapping:
 
 ```yaml
 pii:
@@ -25,9 +25,26 @@ pii:
       operator: mask                       # default: pii.operator
 ```
 
+or unnamed, as a sequence:
+
+```yaml
+pii:
+  enabled: true
+  rules:
+    - columns:
+        - def.shop.customers.email
+        - def.shop.orders.customer_email
+      entity: EMAIL_ADDRESS
+    - columns: [def.shop.customers.phone]
+      entity: PHONE_NUMBER
+      operator: mask
+```
+
+Error messages name a rule by its name, or as `rule <index>` (counting from 0) when it has none.
+
 - `pii.rules` is set only in a config file; it has no `DBMCP_*` variable. It requires `pii.enabled: true`.
 - A column key has exactly four non-empty segments, `catalog.schema.table.column`, with no `*` and no whitespace. Keys are compared case-insensitively.
 - The catalog segment must be `def` on MySQL and MariaDB, `main` on SQLite, and equal `database.name` on PostgreSQL when that is set.
 - `entity` is required and must be one of the [data types](/privacy/data-types), including the machine-learning ones (`PERSON`, `LOCATION`, …), which here only label the output.
 - A column listed twice, in one rule or in two, is an error. So is a rule name used twice.
-- The last config file that sets `pii.rules` replaces it whole: `pii.rules:` / `null` keeps the earlier file's rules, and `pii.rules: {}` clears them.
+- The last config file that sets `pii.rules` replaces it whole: `pii.rules:` / `null` keeps the earlier file's rules, and `pii.rules: {}` or `pii.rules: []` clears them.

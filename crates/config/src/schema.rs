@@ -67,7 +67,12 @@ fn compile() -> (Schemas, SchemaIndex) {
 }
 
 /// Keeps only [`ANNOTATIONS`] on every leaf property: one without `properties`.
+///
+/// Drops `$defs` too: only the stripped value keywords refer to it.
 fn strip_values(schema: &mut Value) {
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("$defs");
+    }
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return;
     };
@@ -287,8 +292,11 @@ pub(crate) mod tests {
                     assert_eq!(schema["items"].get("enum"), names.as_ref(), "{path}");
                 }
                 Kind::Rules => {
-                    assert_eq!(types(schema), ["object", "null"], "{path}");
-                    let rule = &schema["additionalProperties"];
+                    assert_eq!(types(schema), ["object", "array", "null"], "{path}");
+                    let reference = serde_json::json!({ "$ref": "#/$defs/columnRule" });
+                    assert_eq!(schema["additionalProperties"], reference, "{path}");
+                    assert_eq!(schema["items"], reference, "{path}");
+                    let rule = &document["$defs"]["columnRule"];
                     assert_eq!(rule["required"], serde_json::json!(["columns", "entity"]), "{path}");
                     let Kind::Enum { choices } = crate::env::PII_OPERATOR.kind else {
                         panic!("pii.operator is an enum");
@@ -451,6 +459,11 @@ pub(crate) mod tests {
             "names": { "columns": ["def.shop.users.name"], "entity": "PERSON", "operator": "mask" },
         })));
         assert!(valid(serde_json::json!({})));
+        assert!(valid(serde_json::json!([
+            { "columns": ["def.shop.users.email"], "entity": "EMAIL_ADDRESS" },
+            { "columns": ["def.shop.users.name"], "entity": "PERSON", "operator": "mask" },
+        ])));
+        assert!(valid(serde_json::json!([])));
         for rules in [
             serde_json::json!({ "Emails": { "columns": ["a.b.c.d"], "entity": "URL" } }),
             serde_json::json!({ "r": { "columns": ["a.b.c.d"] } }),
@@ -460,7 +473,9 @@ pub(crate) mod tests {
             serde_json::json!({ "r": { "columns": [], "entity": "URL" } }),
             serde_json::json!({ "r": { "columns": ["a.b.c.d"], "entity": "URL", "allow": ["join"] } }),
             serde_json::json!({ "r": { "columns": ["a.b.c.d"], "entity": "URL", "operator": "scramble" } }),
-            serde_json::json!([{ "columns": ["a.b.c.d"], "entity": "URL" }]),
+            serde_json::json!([{ "columns": ["a.b.c"], "entity": "URL" }]),
+            serde_json::json!([{ "columns": ["a.b.c.d"], "entity": "URL", "name": "r" }]),
+            serde_json::json!(["a.b.c.d"]),
         ] {
             assert!(!valid(rules.clone()), "{rules}");
         }
