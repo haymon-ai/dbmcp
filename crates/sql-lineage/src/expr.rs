@@ -7,14 +7,14 @@
 //! caller's source set.
 
 use sqlparser::ast::{
-    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, ObjectName,
-    Query, Subscript, WindowFrameBound, WindowSpec, WindowType,
+    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, Query,
+    Subscript, WindowFrameBound, WindowSpec, WindowType,
 };
 
 use crate::bind::{Clause, Level, Sources};
 use crate::error::LineageError;
 use crate::functions;
-use crate::model::{FunctionUse, Origin, Role};
+use crate::model::Role;
 use crate::resolve::{Ctx, MAX_EXPR_DEPTH, idents, unsupported};
 
 impl Ctx<'_> {
@@ -285,11 +285,7 @@ impl Ctx<'_> {
         if !matches!(parameters, FunctionArguments::None) {
             return Err(unsupported("parametric function"));
         }
-        self.functions.insert(FunctionUse {
-            name: self.function_name(name)?,
-            known: functions::lookup(self.dialect, &idents(name)?).is_some(),
-            origin: Origin::Query,
-        });
+        self.functions.insert(functions::resolve(self.dialect, name)?);
         match args {
             FunctionArguments::None => {}
             FunctionArguments::Subquery(query) => self.subquery(query, level, acc)?,
@@ -371,14 +367,5 @@ impl Ctx<'_> {
         }
         self.refer(sources, Role::Window);
         Ok(())
-    }
-
-    /// Returns a function's dotted name, case-folded per dialect.
-    fn function_name(&self, name: &ObjectName) -> Result<String, LineageError> {
-        Ok(idents(name)?
-            .iter()
-            .map(|p| self.dialect.function_name(p))
-            .collect::<Vec<_>>()
-            .join("."))
     }
 }

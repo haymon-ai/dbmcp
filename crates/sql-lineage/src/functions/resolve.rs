@@ -1,50 +1,57 @@
-//! Function-name lookup in the dialect's built-in table.
+//! Resolution of a written function name against the dialect's built-in names.
 
-use sqlparser::ast::Ident;
+use sqlparser::ast::{Ident, ObjectName};
 
-use super::table::{Kind, Table};
 use super::{mariadb, mysql, postgres, sqlite};
 use crate::dialect::Dialect;
+use crate::error::LineageError;
+use crate::model::{FunctionUse, Origin};
+use crate::resolve::idents;
 
-/// Returns the dialect's table.
-const fn table(dialect: Dialect) -> &'static Table {
+/// Returns the dialect's built-in function names.
+const fn names(dialect: Dialect) -> &'static [&'static str] {
     match dialect {
-        Dialect::Postgres => &postgres::TABLE,
-        Dialect::Mysql => &mysql::TABLE,
-        Dialect::Mariadb => &mariadb::TABLE,
-        Dialect::Sqlite => &sqlite::TABLE,
+        Dialect::Postgres => postgres::NAMES,
+        Dialect::Mysql => mysql::NAMES,
+        Dialect::Mariadb => mariadb::NAMES,
+        Dialect::Sqlite => sqlite::NAMES,
     }
 }
 
-/// Looks up a written function name in the dialect's table.
+/// Returns a function name part case-folded the way the server resolves it.
+fn fold(dialect: Dialect, ident: &Ident) -> String {
+    match dialect {
+        Dialect::Postgres => dialect.normalize(ident),
+        Dialect::Mysql | Dialect::Mariadb | Dialect::Sqlite => ident.value.to_lowercase(),
+    }
+}
+
+/// Resolves a called function name to its recorded use.
 ///
-/// Only unqualified names match, plus `pg_catalog.`-qualified ones on
+/// The recorded name is the written name with each part case-folded per
+/// dialect, joined with `.`. The use is known when the dialect lists the
+/// name: only unqualified names match, plus `pg_catalog.`-qualified ones on
 /// `PostgreSQL`; a call qualified with any other schema is never known.
 /// Matching is by name only: an unqualified call that overload resolution
 /// sends to a same-named user function is still reported known, so callers
 /// that rely on `known` must rule out such user functions themselves.
-pub(crate) fn lookup(dialect: Dialect, parts: &[Ident]) -> Option<Kind> {
-    let name = match parts {
-        [name] => name,
-        [schema, name] if dialect == Dialect::Postgres && dialect.normalize(schema) == "pg_catalog" => name,
-        _ => return None,
-    };
-    let name = dialect.function_name(name);
-    let table = table(dialect);
-    if table.scalars.contains(&name.as_str()) {
-        return Some(Kind::Scalar);
+///
+/// # Errors
+///
+/// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
+pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse, LineageError> {
+    let parts = idents(name)?;
+    let known = match parts.as_slice() {
+        [name] => Some(name),
+        [schema, name] if dialect == Dialect::Postgres && dialect.normalize(schema) == "pg_catalog" => Some(name),
+        _ => None,
     }
-    if table.aggregates.contains(&name.as_str()) {
-        return Some(Kind::Aggregate);
-    }
-    if table.windows.contains(&name.as_str()) {
-        return Some(Kind::Window);
-    }
-    table
-        .tables
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, output)| Kind::Table(*output))
+    .is_some_and(|name| names(dialect).contains(&fold(dialect, name).as_str()));
+    Ok(FunctionUse {
+        name: parts.iter().map(|p| fold(dialect, p)).collect::<Vec<_>>().join("."),
+        known,
+        origin: Origin::Query,
+    })
 }
 
 #[cfg(test)]
@@ -57,15 +64,7 @@ mod tests {
     #[test]
     fn names_are_lowercase_and_unique_per_dialect() {
         for dialect in DIALECTS {
-            let table = table(dialect);
-            let mut names: Vec<&str> = table
-                .scalars
-                .iter()
-                .chain(table.aggregates)
-                .chain(table.windows)
-                .copied()
-                .chain(table.tables.iter().map(|(n, _)| *n))
-                .collect();
+            let mut names = names(dialect).to_vec();
             for name in &names {
                 assert_eq!(*name, name.to_lowercase(), "{dialect:?}: {name}");
             }
@@ -177,11 +176,17 @@ mod tests {
         ),
     ];
 
+    /// Resolves a name written as `parts`, returning its recorded name and verdict.
+    fn call(dialect: Dialect, parts: &[Ident]) -> (String, bool) {
+        let used = resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve");
+        (used.name, used.known)
+    }
+
     #[test]
     fn value_exposing_built_ins_are_absent() {
         for (dialect, names) in ABSENT {
             for name in *names {
-                assert_eq!(lookup(*dialect, &[Ident::new(*name)]), None, "{dialect:?}: {name}");
+                assert!(!call(*dialect, &[Ident::new(*name)]).1, "{dialect:?}: {name}");
             }
         }
     }
@@ -190,20 +195,32 @@ mod tests {
     fn only_pg_catalog_qualifies_a_built_in() {
         let lower = Ident::new("lower");
         assert_eq!(
-            lookup(Dialect::Postgres, &[Ident::new("pg_catalog"), lower.clone()]),
-            Some(Kind::Scalar)
+            call(Dialect::Postgres, &[Ident::new("PG_CATALOG"), lower.clone()]),
+            ("pg_catalog.lower".to_string(), true)
         );
-        assert_eq!(lookup(Dialect::Postgres, &[Ident::new("public"), lower.clone()]), None);
-        assert_eq!(lookup(Dialect::Mysql, &[Ident::new("pg_catalog"), lower]), None);
+        assert_eq!(
+            call(Dialect::Postgres, &[Ident::new("public"), lower.clone()]),
+            ("public.lower".to_string(), false)
+        );
+        assert_eq!(
+            call(Dialect::Mysql, &[Ident::new("pg_catalog"), lower]),
+            ("pg_catalog.lower".to_string(), false)
+        );
     }
 
     #[test]
     fn quoted_postgres_name_matches_exactly() {
-        assert_eq!(lookup(Dialect::Postgres, &[Ident::new("LOWER")]), Some(Kind::Scalar));
-        assert_eq!(lookup(Dialect::Postgres, &[Ident::with_quote('"', "LOWER")]), None);
         assert_eq!(
-            lookup(Dialect::Mysql, &[Ident::with_quote('`', "LOWER")]),
-            Some(Kind::Scalar)
+            call(Dialect::Postgres, &[Ident::new("LOWER")]),
+            ("lower".to_string(), true)
+        );
+        assert_eq!(
+            call(Dialect::Postgres, &[Ident::with_quote('"', "LOWER")]),
+            ("LOWER".to_string(), false)
+        );
+        assert_eq!(
+            call(Dialect::Mysql, &[Ident::with_quote('`', "LOWER")]),
+            ("lower".to_string(), true)
         );
     }
 }
