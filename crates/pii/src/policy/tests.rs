@@ -481,7 +481,10 @@ fn relations_only_ddl_on_unruled_relation_plans_empty() {
     for statement in [StatementKind::Drop, StatementKind::Truncate, StatementKind::CreateTable] {
         assert_eq!(
             pg(&ddl(statement.clone(), "orders"), &config),
-            Ok(Plan { positions: Vec::new() }),
+            Ok(Plan {
+                positions: Vec::new(),
+                names: Vec::new(),
+            }),
             "{statement:?}"
         );
     }
@@ -800,4 +803,25 @@ fn catalog_round_cap_names_the_cap_and_gate() {
         "column policy: catalog resolution exceeded 16 rounds"
     );
     assert_eq!(rejection.gate(), "lineage");
+}
+
+#[test]
+fn names_are_known_only_for_single_same_name_sources() {
+    let mut lineage = select(vec![
+        vec![col("users", "Email")],
+        vec![col("users", "ssn")],
+        vec![col("users", "name")],
+        vec![col("users", "id"), col("users", "ssn")],
+        vec![],
+    ]);
+    lineage.columns[0].name = "email".into();
+    lineage.columns[1].name = "ssn".into();
+    lineage.columns[2].name = "full_name".into();
+    lineage.columns[3].name = "id".into();
+    lineage.columns[4].name = "one".into();
+    let plan = pg(&lineage, &config(vec![])).expect("plan");
+    assert_eq!(
+        plan.names,
+        [Some("email".to_string()), Some("ssn".to_string()), None, None, None]
+    );
 }

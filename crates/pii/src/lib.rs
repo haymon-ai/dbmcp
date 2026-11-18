@@ -26,6 +26,7 @@
 pub mod analyzer;
 pub mod anonymizer;
 pub mod category;
+pub mod cells;
 pub mod context;
 pub mod entity;
 pub mod error;

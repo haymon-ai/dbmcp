@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
-use dbmcp_sql_lineage::{Dialect, Lineage, Origin, RelationId, Role, SourceRef, StatementKind};
+use dbmcp_sql_lineage::{Dialect, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind};
 
 use super::deny;
 use super::rejection::Rejection;
@@ -19,6 +19,14 @@ use crate::entity::Entity;
 pub struct Plan {
     /// One entry per output column, by 0-based position.
     pub positions: Vec<Position>,
+    /// The folded name each output column must come back under, where known.
+    ///
+    /// `Some` only for a column with one source whose output name is that
+    /// source's column name (`*`, a bare column, or a same-name alias): the
+    /// server returns it under that name, so a mismatch means the result
+    /// shifted since the plan was made. Expression names are engine-specific
+    /// and stay `None`.
+    pub names: Vec<Option<String>>,
 }
 
 /// How the values of one output column are redacted.
@@ -131,6 +139,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let names = lineage.columns.iter().map(known_name).collect();
     if *statement != StatementKind::CreateView
         && let Some(target) = &lineage.target
     {
@@ -156,7 +165,20 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             }
         }
     }
-    Ok(Plan { positions })
+    Ok(Plan { positions, names })
+}
+
+/// Returns the folded name a column must come back under, when the server keeps it.
+///
+/// Known only for one source whose column name the output name repeats.
+fn known_name(column: &OutputColumn) -> Option<String> {
+    let mut sources = column.sources.iter();
+    match (sources.next(), sources.next()) {
+        (Some(source), None) if ColumnRule::fold(&column.name) == ColumnRule::fold(&source.column) => {
+            Some(ColumnRule::fold(&source.column))
+        }
+        _ => None,
+    }
 }
 
 /// Returns the rule whose key is `source`'s folded `catalog.schema.table.column`.
