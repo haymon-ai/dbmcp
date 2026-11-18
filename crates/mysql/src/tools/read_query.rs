@@ -122,7 +122,8 @@ impl MysqlHandler {
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
-    /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`, or
+    /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`,
+    /// [`SqlError::ExecutableCommentBlocked`] for `/*! … */` / `/*M! … */`, or
     /// [`SqlError::Query`] if the backend reports an error.
     pub async fn read_query(
         &self,

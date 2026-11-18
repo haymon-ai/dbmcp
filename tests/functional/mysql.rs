@@ -1192,6 +1192,48 @@ async fn test_read_query_show_warnings_rejected() {
 }
 
 #[tokio::test]
+async fn test_executable_comments_rejected() {
+    let handler = handler(true);
+    let smuggled = "SELECT 1 /*M!100000 ; CREATE TABLE readonly_probe_comment(i int) */";
+
+    for sql in [smuggled, "SHOW /*!99999 TABLES */ WARNINGS"] {
+        let error = handler
+            .read_query(sql.into(), Some("app".into()), None, None)
+            .await
+            .expect_err("readQuery must reject executable comments");
+        assert!(
+            error.message.contains("executable comments"),
+            "expected executable-comment rejection for {sql}, got: {}",
+            error.message
+        );
+    }
+    for analyze in [false, true] {
+        let error = handler
+            .explain_query(Some("app".into()), smuggled.into(), analyze)
+            .await
+            .expect_err("explainQuery must reject executable comments");
+        assert!(
+            error.message.contains("executable comments"),
+            "expected executable-comment rejection (analyze: {analyze}), got: {}",
+            error.message
+        );
+    }
+
+    let rows = handler
+        .read_query(
+            "SELECT COUNT(*) AS n FROM information_schema.tables \
+             WHERE table_schema = 'app' AND table_name = 'readonly_probe_comment'"
+                .into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .expect("count probe tables");
+    assert_eq!(rows.rows[0]["n"], 0, "smuggled statement must not have executed");
+}
+
+#[tokio::test]
 async fn test_write_query_use_statement_rejected() {
     // A size-1 pool: every call reuses the connection a leaked USE would taint.
     let handler = single_connection_handler(0);

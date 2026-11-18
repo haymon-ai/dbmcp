@@ -111,6 +111,8 @@ impl MysqlHandler {
     ///
     /// Returns [`SqlError::MultiStatement`] if the query holds more than
     /// one statement.
+    /// Returns [`SqlError::ExecutableCommentBlocked`] if the query holds a
+    /// `/*! … */` or `/*M! … */` comment.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
     /// the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error, including

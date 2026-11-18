@@ -32,6 +32,10 @@ pub enum SqlError {
     #[error("Query blocked: SHOW WARNINGS and SHOW ERRORS are not allowed")]
     DiagnosticsBlocked,
 
+    /// Executable comment blocked: the parser and the server would read different SQL.
+    #[error("Query blocked: executable comments (/*! ... */, /*M! ... */) are not allowed")]
+    ExecutableCommentBlocked,
+
     /// Multiple SQL statements blocked.
     #[error("Query blocked: only single statements are allowed")]
     MultiStatement,
