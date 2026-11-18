@@ -74,7 +74,9 @@ impl Config {
     }
 
     /// Checks each rule's catalog segment against the backend, one diagnostic per rule.
-    fn rule_catalogs(&self, rules: &[ColumnRule]) -> Vec<Diagnostic> {
+    ///
+    /// On `PostgreSQL` the diagnostic also names where `database.name` came from.
+    pub(crate) fn rule_catalogs(&self, rules: &[ColumnRule]) -> Vec<Diagnostic> {
         let (catalog, expected) = match self.database.backend {
             DatabaseBackend::Mysql | DatabaseBackend::Mariadb => ("def".to_owned(), "def"),
             DatabaseBackend::Sqlite => ("main".to_owned(), "main"),
@@ -92,12 +94,17 @@ impl Config {
                     .map(|column| format!("item {}", column.item))
                     .collect();
                 (!items.is_empty()).then(|| {
+                    let involved: &[_] = match self.database.backend {
+                        DatabaseBackend::Postgres => &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME],
+                        _ => &[env::PII_RULES, env::DB_BACKEND],
+                    };
                     Diagnostic::new(ConfigError::PiiRuleCatalog {
                         rule: rule[0].name.clone(),
                         items: items.join(", "),
                         expected,
+                        backend: self.database.backend,
                     })
-                    .involving(&[env::PII_RULES, env::DB_BACKEND])
+                    .involving(involved)
                 })
             })
             .collect()

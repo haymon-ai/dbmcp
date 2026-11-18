@@ -242,6 +242,8 @@ impl Resolver<'_> {
         if rules_without_pii {
             diagnostics
                 .push(Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE]));
+            // Report wrong catalog segments now, not only once PII is enabled.
+            diagnostics.extend(config.rule_catalogs(&self.pii().rules));
         }
         if !diagnostics.is_empty() {
             return Err(diagnostics);
@@ -1500,19 +1502,56 @@ mod tests {
         );
         let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &format!("{RULES}  operator: redact\n")));
         assert_eq!(pii.rules[0].operator, PiiOperator::Redact);
+        let inherit = RULES.replace("      operator: mask\n", "      operator: ~\n");
+        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &inherit));
+        assert_eq!(pii.rules[2].operator, PiiOperator::Hash);
     }
 
     #[test]
+    #[expect(clippy::too_many_lines, reason = "one table with a row per rule error")]
     fn rule_value_errors_are_located_in_the_declaring_file() {
         let rule = "      columns: [a.b.c.d]\n      entity: URL\n";
         let cases: Vec<(String, &str)> = vec![
             (
                 format!("    Emails:\n{rule}"),
-                "Emails: rule name must use only a-z, 0-9, _ and -",
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
             ),
             (
                 format!("    a b:\n{rule}"),
-                "a b: rule name must use only a-z, 0-9, _ and -",
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
+            ),
+            (
+                format!("    emails:\n{rule}    def.shop.users.secret:\n{rule}"),
+                "rule 1: rule name must use only a-z, 0-9, _ and -",
+            ),
+            (
+                format!("    '':\n{rule}"),
+                "rule 0: rule name must use only a-z, 0-9, _ and -",
+            ),
+            ("    emails:\n".into(), "emails: expected mapping, found null"),
+            (
+                "    emails: [a.b.c.d]\n".into(),
+                "emails: expected mapping, found sequence",
+            ),
+            (
+                "    emails:\n      columns:\n      entity: URL\n".into(),
+                "emails: columns: required",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n      entity: ~\n".into(),
+                "emails: entity: required",
+            ),
+            (
+                "    emails:\n      columns: a.b.c.d\n      entity: URL\n".into(),
+                "emails: columns: expected sequence, found string",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d, 1]\n      entity: URL\n".into(),
+                "emails: columns: item 1: expected string, found integer",
+            ),
+            (
+                "    emails:\n      columns: [a.b.c.d]\n      entity: [URL]\n".into(),
+                "emails: entity: expected string, found sequence",
             ),
             ("    emails: 1\n".into(), "emails: expected mapping, found integer"),
             (
@@ -1597,6 +1636,13 @@ mod tests {
             )
             .err();
         assert!(!error.contains("s3cr3t"), "key leaked: {error}");
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [a.b.c.d]\n      entity: S3CR3T_ENTITY\n",
+            )
+            .err();
+        assert!(!error.contains("S3CR3T_ENTITY"), "entity leaked: {error}");
     }
 
     #[test]
@@ -1609,7 +1655,10 @@ mod tests {
             )
             .err();
         assert!(error.starts_with("failed to parse config file"), "{error}");
-        assert!(error.contains("duplicate mapping key `emails`"), "{error}");
+        assert!(
+            error.contains(":6:5: duplicate mapping key `emails` is not allowed here"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1657,6 +1706,25 @@ mod tests {
     fn pii_rules_has_no_env_var() {
         let loaded = Fixture::new().env("DBMCP_PII_RULES", "garbage").ok();
         assert!(loaded.config.pii.is_none());
+        let pii = Fixture::new()
+            .env_file(".env", "DBMCP_PII_RULES=garbage\nDBMCP_PII_ENABLE=true\n")
+            .ok()
+            .config
+            .pii
+            .expect("pii");
+        assert!(pii.rules.is_empty());
+    }
+
+    #[test]
+    fn catalog_errors_show_beside_a_missing_pii_enabled() {
+        let error = Fixture::new()
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  rules:\n    emails:\n      columns: [main.s.t.c]\n      entity: URL\n",
+            )
+            .err();
+        assert!(error.contains("pii.rules requires pii.enabled"), "{error}");
+        assert!(error.contains("catalog segment must be def on mysql"), "{error}");
     }
 
     #[test]
@@ -1745,17 +1813,17 @@ mod tests {
         assert!(catalogs("mysql", None, "DEF.s.t.c").is_empty());
         assert_eq!(
             catalogs("mariadb", None, "def.s.t.a, main.s.t.b, x.s.t.c"),
-            ["pii.rules: emails: columns: item 1, item 2: catalog segment must be def"]
+            ["pii.rules: emails: columns: item 1, item 2: catalog segment must be def on mariadb"]
         );
         assert!(catalogs("sqlite", Some("app.db"), "Main.s.t.c").is_empty());
         assert_eq!(
             catalogs("sqlite", Some("app.db"), "def.s.t.c"),
-            ["pii.rules: emails: columns: item 0: catalog segment must be main"]
+            ["pii.rules: emails: columns: item 0: catalog segment must be main on sqlite"]
         );
         assert!(catalogs("postgres", Some("Shop"), "shop.public.t.c").is_empty());
         assert_eq!(
             catalogs("postgres", Some("shop"), "other.public.t.c"),
-            ["pii.rules: emails: columns: item 0: catalog segment must be database.name"]
+            ["pii.rules: emails: columns: item 0: catalog segment must be database.name on postgres"]
         );
         assert!(catalogs("postgres", None, "anything.public.t.c").is_empty());
     }

@@ -35,14 +35,18 @@ const FIELDS: &str = "columns, entity, operator";
 ///
 /// # Errors
 ///
-/// Returns the first value-free reason, prefixed with the rule's name: a
-/// bad name, a rule that is not a mapping, an unknown or missing field, an
+/// Returns the first value-free reason, prefixed with the rule's name, or
+/// with `rule <index>` when the name itself is invalid (a misplaced column
+/// key must not be echoed): a bad name, a rule that is not a mapping, an unknown or missing field, an
 /// empty or malformed column list, an unknown entity or operator, or a
 /// column listed twice in one rule or in two rules.
 pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Result<Vec<Rule>, String> {
     let mut rules = Vec::with_capacity(entries.len());
     let mut seen: HashMap<[String; 4], (usize, usize)> = HashMap::new();
     for (index, (name, (_, node))) in entries.iter().enumerate() {
+        if !valid_name(name) {
+            return Err(format!("rule {index}: rule name must use only a-z, 0-9, _ and -"));
+        }
         let rule = rule(name, &node.value).map_err(|reason| format!("{name}: {reason}"))?;
         for (item, key) in rule.columns.iter().enumerate() {
             match seen.get(key) {
@@ -63,15 +67,16 @@ pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Res
     Ok(rules)
 }
 
-/// Casts one rule's body; reasons are not yet prefixed with its name.
-fn rule(name: &str, node: &Node) -> Result<Rule, String> {
-    if name.is_empty()
-        || !name
+/// Returns whether a rule name is non-empty `a-z`, `0-9`, `_`, and `-`.
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
-    {
-        return Err("rule name must use only a-z, 0-9, _ and -".into());
-    }
+}
+
+/// Casts one rule's body; reasons are not yet prefixed with its name.
+fn rule(name: &str, node: &Node) -> Result<Rule, String> {
     let fields = match node {
         Node::Map(fields) => fields,
         other => return Err(unexpected("mapping", other)),
@@ -82,7 +87,13 @@ fn rule(name: &str, node: &Node) -> Result<Rule, String> {
     {
         return Err(format!("{field}: unknown field; expected one of {FIELDS}"));
     }
-    let field = |key: &str| fields.get(key).map(|(_, node)| &node.value);
+    // A field set to null counts as missing.
+    let field = |key: &str| {
+        fields
+            .get(key)
+            .map(|(_, node)| &node.value)
+            .filter(|node| !matches!(node, Node::Null))
+    };
     let columns = columns(field("columns").ok_or("columns: required")?).map_err(|r| format!("columns: {r}"))?;
     let entity = entity(field("entity").ok_or("entity: required")?).map_err(|r| format!("entity: {r}"))?;
     let operator = match field("operator") {

@@ -83,7 +83,7 @@ pub enum ConfigError {
     PiiRulesUnsupported(DatabaseBackend),
 
     /// A rule's catalog segment does not fit the backend.
-    #[error("pii.rules: {rule}: columns: {items}: catalog segment must be {expected}")]
+    #[error("pii.rules: {rule}: columns: {items}: catalog segment must be {expected} on {backend}")]
     PiiRuleCatalog {
         /// The rule's name.
         rule: String,
@@ -91,6 +91,8 @@ pub enum ConfigError {
         items: String,
         /// What the segment must be: `def`, `main`, or `database.name`.
         expected: &'static str,
+        /// The configured backend.
+        backend: DatabaseBackend,
     },
 
     /// SSH tunnelling was requested for the `SQLite` backend.

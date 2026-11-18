@@ -480,5 +480,12 @@ pub(crate) mod tests {
         assert!(!valid(serde_json::json!({
             "emails": { "columns": ["a.b.c.d"], "entity": "URL", "allow": ["join"] },
         })));
+        assert!(!valid(
+            serde_json::json!({ "emails": rule(serde_json::json!(["a.b. c.d"])) })
+        ));
+        assert!(!valid(serde_json::json!({
+            "emails": { "columns": ["a.b.c.d"], "entity": "URL", "operator": "scramble" },
+        })));
+        assert!(valid(serde_json::json!({})));
     }
 }
