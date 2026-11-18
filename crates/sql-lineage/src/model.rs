@@ -53,7 +53,7 @@ impl SourceRef {
 pub enum Origin {
     /// The analyzed statement itself.
     Query,
-    /// The body of this view.
+    /// The body of this view, the innermost one when views nest.
     View(RelationId),
 }
 
@@ -107,7 +107,9 @@ pub struct RelationUse {
     pub id: RelationId,
     /// Relation kind.
     pub kind: RelationKind,
-    /// Where it was named.
+    /// Where it was named: the statement, or the view whose body names it.
+    ///
+    /// For a view, this is its parent-view edge; walk it to rebuild a chain.
     pub origin: Origin,
 }
 

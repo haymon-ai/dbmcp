@@ -120,7 +120,7 @@ pub struct Relation {
     pub kind: RelationKind,
     /// Columns in ordinal order.
     pub columns: Vec<CatalogColumn>,
-    /// The view body, for views.
+    /// The view's query, not the `CREATE VIEW` statement; views and materialized views only.
     pub view_sql: Option<String>,
 }
 
@@ -136,7 +136,7 @@ impl Relation {
         }
     }
 
-    /// Sets the view body.
+    /// Sets the view's query, without the `CREATE VIEW` prefix.
     #[must_use]
     pub fn with_view_sql(mut self, sql: impl Into<String>) -> Self {
         self.view_sql = Some(sql.into());

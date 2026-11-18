@@ -320,7 +320,8 @@ impl Ctx<'_> {
         if !matches!(parameters, FunctionArguments::None) {
             return Err(unsupported("parametric function"));
         }
-        self.functions.insert(functions::resolve(self.dialect, name)?);
+        self.functions
+            .insert(functions::resolve(self.dialect, name, self.origin())?);
         match args {
             FunctionArguments::None => {}
             FunctionArguments::Subquery(query) => self.subquery(query, level, acc)?,

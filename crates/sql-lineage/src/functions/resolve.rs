@@ -26,7 +26,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
     }
 }
 
-/// Resolves a called function name to its recorded use.
+/// Resolves a called function name to its use, written in `origin`.
 ///
 /// Known when the dialect lists the unqualified (or, on `PostgreSQL`,
 /// `pg_catalog.`-qualified) name. Matching is by name only, so a same-named
@@ -35,7 +35,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
 /// # Errors
 ///
 /// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
-pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse, LineageError> {
+pub(crate) fn resolve(dialect: Dialect, name: &ObjectName, origin: Origin) -> Result<FunctionUse, LineageError> {
     let parts: Vec<String> = idents(name)?.iter().map(|p| fold(dialect, p)).collect();
     let known = match parts.as_slice() {
         [name] => names(dialect).contains(&name.as_str()),
@@ -47,7 +47,7 @@ pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<FunctionUse
     Ok(FunctionUse {
         name: parts.join("."),
         known,
-        origin: Origin::Query,
+        origin,
     })
 }
 
@@ -176,7 +176,7 @@ mod tests {
 
     /// Resolves a name written as `parts`, returning its recorded name and verdict.
     fn call(dialect: Dialect, parts: &[Ident]) -> (String, bool) {
-        let used = resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve");
+        let used = resolve(dialect, &ObjectName::from(parts.to_vec()), Origin::Query).expect("resolve");
         (used.name, used.known)
     }
 
