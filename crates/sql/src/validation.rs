@@ -365,14 +365,31 @@ mod tests {
             "SHOW ERRORS LIMIT 1, 2",
             "SHOW COUNT(*) WARNINGS",
             "SHOW COUNT(*) ERRORS",
+            "show count(*) errors",
+            "SHOW COUNT ( * ) WARNINGS",
+            "SHOW /*x*/ WARNINGS",
+            "SHOW\nWARNINGS",
+            "SHOW `WARNINGS`",
+            "SHOW WARNINGS LIMIT 1 OFFSET 2",
         ] {
             assert!(
                 matches!(validate_read(sql, &MYSQL), Err(SqlError::DiagnosticsBlocked)),
                 "{sql}"
             );
         }
+        assert!(matches!(
+            validate_read("SHOW WARNINGS", &POSTGRES),
+            Err(SqlError::DiagnosticsBlocked)
+        ));
+        assert!(matches!(
+            validate_read("SHOW WARNINGS", &SQLITE),
+            Err(SqlError::DiagnosticsBlocked)
+        ));
         assert!(validate_read("SHOW VARIABLES", &MYSQL).is_ok());
         assert!(validate_read("SHOW INDEX FROM errors", &MYSQL).is_ok());
+        assert!(validate_read("SHOW COLUMNS FROM errors", &MYSQL).is_ok());
+        assert!(validate_read("SHOW VARIABLES LIKE 'warnings'", &MYSQL).is_ok());
+        assert!(validate_read("SHOW WARNINGS_X", &MYSQL).is_ok());
         assert!(validate_read("SHOW TABLE STATUS FROM warnings", &MYSQL).is_ok());
         assert!(validate_read("SHOW search_path", &POSTGRES).is_ok());
     }

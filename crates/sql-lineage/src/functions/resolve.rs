@@ -98,6 +98,8 @@ mod tests {
                 "to_timestamp",
                 "decode",
                 "convert_from",
+                "convert_to",
+                "unistr",
                 "to_number",
                 "pg_size_bytes",
                 "jsonb_path_query",
@@ -202,6 +204,50 @@ mod tests {
             call(Dialect::Mysql, &[Ident::new("pg_catalog"), lower]),
             ("pg_catalog.lower".to_string(), false)
         );
+    }
+
+    #[test]
+    fn tables_are_per_dialect() {
+        let cases = [
+            (Dialect::Mysql, "nvl", false),
+            (Dialect::Mariadb, "nvl", true),
+            (Dialect::Mysql, "json_schema_validation_report", true),
+            (Dialect::Mariadb, "json_schema_validation_report", false),
+            (Dialect::Postgres, "json_value", false),
+            (Dialect::Mysql, "json_value", true),
+            (Dialect::Sqlite, "printf", true),
+            (Dialect::Postgres, "printf", false),
+        ];
+        for (dialect, name, known) in cases {
+            assert_eq!(call(dialect, &[Ident::new(name)]).1, known, "{dialect:?}: {name}");
+        }
+    }
+
+    #[test]
+    fn other_qualifiers_are_unknown() {
+        let lower = Ident::new("lower");
+        let cases = [
+            (
+                Dialect::Postgres,
+                vec![Ident::with_quote('"', "pg_catalog"), Ident::with_quote('"', "lower")],
+                true,
+            ),
+            (
+                Dialect::Postgres,
+                vec![Ident::with_quote('"', "PG_CATALOG"), lower.clone()],
+                false,
+            ),
+            (
+                Dialect::Postgres,
+                vec![Ident::new("db"), Ident::new("pg_catalog"), lower.clone()],
+                false,
+            ),
+            (Dialect::Mysql, vec![Ident::new("app"), lower.clone()], false),
+            (Dialect::Mariadb, vec![Ident::new("pg_catalog"), lower], false),
+        ];
+        for (dialect, parts, known) in cases {
+            assert_eq!(call(dialect, &parts).1, known, "{dialect:?}: {parts:?}");
+        }
     }
 
     #[test]

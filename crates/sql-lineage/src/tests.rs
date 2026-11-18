@@ -331,6 +331,58 @@ fn known_and_unknown_functions_both_carry_argument_sources() {
     );
 }
 
+/// Renders recorded functions as sorted `(name, known)` pairs.
+fn functions(lineage: &Lineage) -> Vec<(&str, bool)> {
+    lineage.functions.iter().map(|f| (f.name.as_str(), f.known)).collect()
+}
+
+#[test]
+fn functions_are_recorded_in_every_clause() {
+    let lineage = pg(
+        "SELECT count(*) FILTER (WHERE lower(email) = 'x'), row_number() OVER (ORDER BY upper(ssn)) \
+         FROM users WHERE abs(id) > 1 GROUP BY md5(email) ORDER BY reverse(email)",
+    )
+    .expect("analyze");
+    assert_eq!(
+        functions(&lineage),
+        vec![
+            ("abs", true),
+            ("count", true),
+            ("lower", true),
+            ("md5", true),
+            ("reverse", true),
+            ("row_number", true),
+            ("upper", true),
+        ]
+    );
+}
+
+#[test]
+fn nested_and_subquery_functions_are_recorded() {
+    let lineage = pg("SELECT lower(leak(ssn)), (SELECT max(id) FROM orders) FROM users").expect("analyze");
+    assert_eq!(
+        functions(&lineage),
+        vec![("leak", false), ("lower", true), ("max", true)]
+    );
+    assert_eq!(columns(&lineage)[0], col("lower(leak(ssn))", &["users.ssn"]));
+}
+
+#[test]
+fn repeated_function_is_recorded_once() {
+    let lineage = pg("SELECT lower(email), lower(ssn) FROM users").expect("analyze");
+    assert_eq!(functions(&lineage), vec![("lower", true)]);
+}
+
+#[test]
+fn special_forms_are_not_recorded() {
+    let lineage = pg("SELECT CAST(ssn AS int), substring(ssn from 1 for 3) FROM users").expect("analyze");
+    assert!(lineage.functions.is_empty(), "{:?}", lineage.functions);
+    assert_eq!(
+        columns(&lineage).into_iter().map(|(_, s)| s).collect::<Vec<_>>(),
+        vec![vec!["users.ssn".to_string()], vec!["users.ssn".to_string()]]
+    );
+}
+
 #[test]
 fn value_exposing_built_ins_are_unknown() {
     let cases: &[(&str, Dialect, &str)] = &[
@@ -356,6 +408,12 @@ fn value_exposing_built_ins_are_unknown() {
             "extractvalue",
         ),
         ("SELECT load_extension('x')", Dialect::Sqlite, "load_extension"),
+        (
+            "SELECT convert_to(ssn, 'LATIN1') FROM users",
+            Dialect::Postgres,
+            "convert_to",
+        ),
+        ("SELECT unistr(ssn) FROM users", Dialect::Postgres, "unistr"),
     ];
     for (sql, dialect, name) in cases {
         let lineage = analyze(sql, *dialect, &fixture()).expect(sql);
