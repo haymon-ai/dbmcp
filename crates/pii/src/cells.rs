@@ -10,7 +10,7 @@
 //!   JSON text. `NULL` stays `null`.
 //!
 //! Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not positional; redact them
-//! with [`Redactor::redact_rows`].
+//! with no plan, which runs global detection on every cell.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -140,31 +140,37 @@ fn check_names(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
 impl Redactor {
     /// Redacts `cells` in place, cell `i` of every row by `plan` position `i`.
     ///
+    /// With no plan every cell is `Global` and the shape is not checked.
+    ///
     /// # Errors
     ///
     /// Returns [`RedactionError::Shape`] before any cell changes, and
     /// [`RedactionError::Internal`] on a panic or NER failure.
-    pub(crate) fn apply_cells(&self, cells: &mut Cells, plan: &Plan) -> Result<RedactionStats, RedactionError> {
+    pub(crate) fn apply_cells(&self, cells: &mut Cells, plan: Option<&Plan>) -> Result<RedactionStats, RedactionError> {
         let Cells { columns, rows } = cells;
         if rows.is_empty() {
             return Ok(RedactionStats::default());
         }
-        if let Some(row) = rows.iter().find(|row| row.len() != plan.columns.len()) {
-            return Err(ShapeError::ColumnCount {
-                expected: plan.columns.len(),
-                actual: row.len(),
+        let actions = match plan {
+            Some(plan) => {
+                if let Some(row) = rows.iter().find(|row| row.len() != plan.columns.len()) {
+                    return Err(ShapeError::ColumnCount {
+                        expected: plan.columns.len(),
+                        actual: row.len(),
+                    }
+                    .into());
+                }
+                check_names(plan, columns)?;
+                plan.columns
+                    .iter()
+                    .map(|column| match column.position {
+                        Position::Global => None,
+                        Position::Action(operator, entity) => Some((self.operator(operator), entity)),
+                    })
+                    .collect::<Vec<_>>()
             }
-            .into());
-        }
-        check_names(plan, columns)?;
-        let actions = plan
-            .columns
-            .iter()
-            .map(|column| match column.position {
-                Position::Global => None,
-                Position::Action(operator, entity) => Some((self.operator(operator), entity)),
-            })
-            .collect::<Vec<_>>();
+            None => columns.iter().map(|_| None).collect(),
+        };
 
         let row_count = rows.len();
         let columns = &*columns;
@@ -195,19 +201,21 @@ impl Redactor {
 
     /// Redacts `cells` by `plan` and returns its rows as JSON objects.
     ///
-    /// Offloads to a blocking thread when a `Global` position needs NER. A
-    /// repeated name keeps its last value.
+    /// With no plan every cell runs global detection, as for `EXPLAIN`,
+    /// `SHOW`, and `DESCRIBE` rows. Offloads to a blocking thread when a
+    /// `Global` position needs NER. A repeated name keeps its last value.
     ///
     /// # Errors
     ///
     /// Returns [`RedactionError::Shape`] when the result does not fit `plan`
     /// (an empty result is not checked), and [`RedactionError::Internal`]
     /// when redaction panics or NER fails (fail-closed).
-    pub async fn redact_cells(&self, mut cells: Cells, plan: &Plan) -> Result<Vec<Value>, RedactionError> {
-        if self.uses_ner() && plan.columns.iter().any(|column| column.position == Position::Global) {
+    pub async fn redact_cells(&self, mut cells: Cells, plan: Option<&Plan>) -> Result<Vec<Value>, RedactionError> {
+        let global = plan.is_none_or(|plan| plan.columns.iter().any(|column| column.position == Position::Global));
+        if self.uses_ner() && global {
             let redactor = self.clone();
-            let plan = plan.clone();
-            cells = tokio::task::spawn_blocking(move || redactor.apply_cells(&mut cells, &plan).map(|_| cells))
+            let plan = plan.cloned();
+            cells = tokio::task::spawn_blocking(move || redactor.apply_cells(&mut cells, plan.as_ref()).map(|_| cells))
                 .await
                 .map_err(|e| RedactionError::Internal(format!("redaction task panicked: {e}")))??;
         } else {
@@ -270,7 +278,7 @@ mod tests {
     fn redact(redactor: &Redactor, positions: Vec<Position>, values: Vec<Value>) -> Vec<Value> {
         let mut cells = cells(vec![values]);
         redactor
-            .apply_cells(&mut cells, &plan(positions))
+            .apply_cells(&mut cells, Some(&plan(positions)))
             .expect("redaction runs");
         cells.rows.remove(0)
     }
@@ -332,7 +340,7 @@ mod tests {
     fn misfit_row_fails_before_any_cell_changes() {
         let mut cells = cells(vec![vec![json!(EMAIL), json!("123-45-6789")]]);
         let err = Redactor::with_defaults()
-            .apply_cells(&mut cells, &plan(vec![MASKED]))
+            .apply_cells(&mut cells, Some(&plan(vec![MASKED])))
             .expect_err("count differs");
         assert!(
             matches!(err, RedactionError::Shape(ShapeError::ColumnCount { .. })),
@@ -345,7 +353,7 @@ mod tests {
     fn later_row_of_wrong_length_is_rejected() {
         let mut cells = cells(vec![vec![json!("a")], vec![json!("a"), json!("b")]]);
         let err = Redactor::with_defaults()
-            .apply_cells(&mut cells, &plan(vec![MASKED]))
+            .apply_cells(&mut cells, Some(&plan(vec![MASKED])))
             .expect_err("second row differs");
         assert!(
             matches!(err, RedactionError::Shape(ShapeError::ColumnCount { .. })),
@@ -357,7 +365,7 @@ mod tests {
     fn empty_result_is_not_checked() {
         let mut cells = Cells::default();
         let stats = Redactor::with_defaults()
-            .apply_cells(&mut cells, &plan(vec![MASKED, Position::Global]))
+            .apply_cells(&mut cells, Some(&plan(vec![MASKED, Position::Global])))
             .expect("nothing to check");
         assert_eq!(stats.total, 0);
     }
@@ -404,7 +412,7 @@ mod tests {
             vec![json!("987-65-4321"), json!("x")],
         ]);
         let stats = Redactor::with_defaults()
-            .apply_cells(&mut cells, &plan(vec![MASKED, MASKED]))
+            .apply_cells(&mut cells, Some(&plan(vec![MASKED, MASKED])))
             .expect("runs");
         assert_eq!(stats.total, 3);
         assert_eq!(stats.by_entity.get(&Entity::UsSsn), Some(&3));
@@ -416,7 +424,7 @@ mod tests {
         let mut cells = Cells::default();
         cells.push(vec![("contact".to_string(), json!(EMAIL))]);
         redactor
-            .apply_cells(&mut cells, &plan(vec![Position::Global]))
+            .apply_cells(&mut cells, Some(&plan(vec![Position::Global])))
             .expect("runs");
         let mut objects = vec![json!({ "contact": EMAIL })];
         redactor.apply(&mut objects).expect("runs");
@@ -465,9 +473,36 @@ mod tests {
             ("x".to_string(), json!("987-65-4321")),
         ]);
         let out = Redactor::with_defaults()
-            .redact_cells(cells, &plan(vec![MASKED, Position::Global, MASKED]))
+            .redact_cells(cells, Some(&plan(vec![MASKED, Position::Global, MASKED])))
             .await
             .expect("runs");
         assert_eq!(out, [json!({ "x": "***********", "note": "plain" })]);
+    }
+
+    #[tokio::test]
+    async fn no_plan_matches_row_redaction_of_the_row_objects() {
+        let redactor = keyed(PiiOperator::Hash);
+        let columns = ["contact", "ssn", "doc", "n", "contact"].map(String::from).to_vec();
+        let rows = vec![
+            vec![
+                json!(EMAIL),
+                json!("123-45-6789"),
+                json!({ "email": EMAIL, "tags": ["call 555-123-4567", 7] }),
+                json!(42),
+                json!("second jane@example.org"),
+            ],
+            vec![Value::Null, json!("plain"), json!([EMAIL]), json!(true), json!(EMAIL)],
+        ];
+        let objects = rows
+            .iter()
+            .map(|values| Value::Object(columns.iter().cloned().zip(values.iter().cloned()).collect()))
+            .collect();
+        let expected = redactor.redact_rows(objects).await.expect("runs");
+        let out = redactor
+            .redact_cells(Cells::new(columns, rows), None)
+            .await
+            .expect("runs");
+        assert_eq!(out, expected);
+        assert_ne!(out[0]["contact"], json!("second jane@example.org"));
     }
 }

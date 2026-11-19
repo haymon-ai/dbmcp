@@ -344,18 +344,10 @@ impl MysqlHandler {
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(planned) = run.plan {
-            redactor
-                .redact_cells(Cells::new(run.names, rows), planned.plan())
-                .await?
-        } else {
-            let rows = rows
-                .into_iter()
-                .map(|values| Value::Object(run.names.iter().cloned().zip(values).collect()))
-                .collect();
-            redactor.redact_rows(rows).await?
-        };
+        let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = redactor
+            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
+            .await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
