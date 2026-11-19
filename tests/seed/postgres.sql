@@ -476,6 +476,22 @@ INSERT INTO invoices (user_id, billing_email) VALUES
     (1, 'alice@example.com'),
     (2, 'bob@example.com');
 
+-- `policy_deferred` fails every insert at COMMIT with a message quoting the e-mail.
+CREATE TABLE policy_deferred (
+    id SERIAL PRIMARY KEY,
+    email TEXT
+);
+
+CREATE FUNCTION policy_deferred_reject() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'rejected %', NEW.email;
+END $$;
+
+CREATE CONSTRAINT TRIGGER policy_deferred_reject
+    AFTER INSERT ON policy_deferred
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION policy_deferred_reject();
+
 CREATE VIEW users_with_ssn AS
     SELECT id, email FROM users WHERE ssn IS NOT NULL;
 

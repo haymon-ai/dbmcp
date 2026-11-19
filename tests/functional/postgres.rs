@@ -5013,3 +5013,83 @@ async fn column_rules_refuse_bare_creates_when_pg_temp_leads_the_search_path() {
         .await
         .expect("drop");
 }
+
+#[tokio::test]
+async fn column_rules_apply_in_the_database_a_tool_selects() {
+    // Without a pinned database, a rule applies only in the database its key names.
+    let events_name_ruled_in = |catalog: &str| {
+        let mut rule = column_rule("public", "events", "name", "PERSON", PiiOperator::Replace);
+        rule.key[0] = catalog.into();
+        PostgresHandler::new(&Config {
+            transport: Transport::Stdio,
+            database: DatabaseConfig {
+                name: None,
+                ..base_db_config(false)
+            },
+            http: None,
+            pii: Some(PiiConfig {
+                key: Some(PII_TEST_KEY.into()),
+                rules: vec![rule],
+                ..PiiConfig::default()
+            }),
+            ssh: None,
+        })
+        .expect("handler builds")
+    };
+    let analytics = || Some("analytics".into());
+    let query = "SELECT id, name FROM events ORDER BY id";
+    let ruled = events_name_ruled_in("analytics");
+    let events = ruled
+        .read_query(query.into(), analytics(), None, None)
+        .await
+        .expect("ruled read");
+    assert_eq!(events.rows.len(), 2);
+    assert!(
+        events.rows.iter().all(|row| row["name"] == "<PERSON>"),
+        "{:?}",
+        events.rows
+    );
+    let error = ruled
+        .read_query(
+            "SELECT id FROM events WHERE name = 'signup'".into(),
+            analytics(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("ruled filter");
+    assert!(error.message.contains("(ruled) used in"), "{}", error.message);
+    // The same rule keyed to `app` leaves `analytics.public.events` alone.
+    let events = events_name_ruled_in("app")
+        .read_query(query.into(), analytics(), None, None)
+        .await
+        .expect("unruled read");
+    assert_eq!(events.rows[0]["name"], "signup");
+}
+
+#[tokio::test]
+async fn column_rules_withhold_errors_raised_at_commit() {
+    let query = "INSERT INTO policy_deferred (email) VALUES ('alice@example.com')";
+    // The trigger must stay deferred: only then does the error arise at COMMIT.
+    let unruled = handler(false)
+        .write_query(query.into(), None)
+        .await
+        .expect_err("unruled commit");
+    assert!(unruled.message.contains("alice@example.com"), "{}", unruled.message);
+    let error = ruled_handler(
+        None,
+        100,
+        vec![column_rule(
+            "public",
+            "policy_deferred",
+            "email",
+            "EMAIL_ADDRESS",
+            PiiOperator::Hash,
+        )],
+    )
+    .write_query(query.into(), None)
+    .await
+    .expect_err("ruled commit");
+    assert!(error.message.contains("withheld"), "{}", error.message);
+    assert!(!error.message.contains("@example.com"), "{}", error.message);
+}
