@@ -11,7 +11,7 @@ use dbmcp_sql_lineage::{
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, Position};
 
-use crate::plan::{plan, touches_ruled};
+use crate::plan::{Names, plan, touches_ruled};
 use crate::rejection::reject_lineage;
 use crate::{LineageClass, Rejection};
 
@@ -83,9 +83,19 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
     }
 }
 
+/// Plans `lineage` without bare names.
+fn plan_on(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
+    plan(lineage, dialect, config, &Names::default())
+}
+
 /// Plans `lineage` on `PostgreSQL`.
 fn pg(lineage: &Lineage, config: &PiiConfig) -> Result<Plan, Rejection> {
-    plan(lineage, Dialect::Postgres, config)
+    plan_on(lineage, Dialect::Postgres, config)
+}
+
+/// Plans `lineage` on `PostgreSQL` under `names`.
+fn pg_with(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+    plan(lineage, Dialect::Postgres, config, names)
 }
 
 /// The single position of a one-column plan.
@@ -136,7 +146,7 @@ fn rule_for_another_engine_tuple_never_matches() {
     // A MySQL relation has catalog `def`; a PG-shaped rule names the database.
     let config = config(vec![ssn("shop.shop.users.ssn")]);
     let source = SourceRef::new(RelationId::new("def", "shop", "users"), "ssn");
-    let plan = plan(&select(vec![vec![source]]), Dialect::Mysql, &config).expect("plan");
+    let plan = plan_on(&select(vec![vec![source]]), Dialect::Mysql, &config).expect("plan");
     assert_eq!(positions(plan), [Position::Global]);
 }
 
@@ -244,7 +254,7 @@ fn touching(dialect: Dialect, id: RelationId, kind: RelationKind) -> Result<Plan
         kind,
         origin: Origin::View(table("v")),
     });
-    plan(&lineage, dialect, &config(vec![]))
+    plan_on(&lineage, dialect, &config(vec![]))
 }
 
 #[test]
@@ -352,7 +362,7 @@ fn denied_show_statements_reject() {
         let mut lineage = select(vec![]);
         lineage.statement = StatementKind::Show(what.into());
         assert_eq!(
-            plan(&lineage, dialect, &config(vec![])),
+            plan_on(&lineage, dialect, &config(vec![])),
             Err(Rejection::DeniedStatement { statement: what.into() }),
             "{dialect:?} {what}"
         );
@@ -363,7 +373,7 @@ fn denied_show_statements_reject() {
 fn harmless_show_passes() {
     let mut lineage = select(vec![]);
     lineage.statement = StatementKind::Show("TABLES".into());
-    assert!(plan(&lineage, Dialect::Mysql, &config(vec![])).is_ok());
+    assert!(plan_on(&lineage, Dialect::Mysql, &config(vec![])).is_ok());
 }
 
 #[test]
@@ -371,7 +381,7 @@ fn explain_of_show_unwraps_to_the_show_deny() {
     let mut lineage = select(vec![]);
     lineage.statement = StatementKind::Explain(Box::new(StatementKind::Show("WARNINGS".into())));
     assert!(matches!(
-        plan(&lineage, Dialect::Mysql, &config(vec![])),
+        plan_on(&lineage, Dialect::Mysql, &config(vec![])),
         Err(Rejection::DeniedStatement { .. })
     ));
 }
@@ -390,7 +400,7 @@ fn analyzed_log_show_forms_reject() {
         let lineage = analyze(sql, dialect, &Catalog::new()).expect(sql);
         assert!(
             matches!(
-                plan(&lineage, dialect, &config(vec![])),
+                plan_on(&lineage, dialect, &config(vec![])),
                 Err(Rejection::DeniedStatement { .. })
             ),
             "{sql}: {:?}",
@@ -627,6 +637,72 @@ fn conflict_message_omits_output_name() {
     assert!(!message.contains("123-45-6789"), "{message}");
 }
 
+// Shadowed create targets.
+
+/// Plans a create of `public.copy` with `names`, without rules.
+fn create(statement: StatementKind, names: &Names) -> Result<Plan, Rejection> {
+    let lineage = write("copy", "x", vec![col("users", "name")], statement);
+    pg_with(&lineage, &config(vec![]), names)
+}
+
+/// Names creating in `creation`, with `bare` resolved bare.
+fn names(creation: Option<&str>, bare: &[&str]) -> Names {
+    Names {
+        creation: creation.map(Into::into),
+        bare: bare.iter().map(|name| table(name)).collect(),
+    }
+}
+
+#[test]
+fn bare_creates_must_resolve_in_the_creation_schema() {
+    let shadowed = Err(Rejection::ShadowedTarget {
+        relation: "public.copy".into(),
+    });
+    for statement in [
+        StatementKind::CreateTableAs,
+        StatementKind::CreateView,
+        StatementKind::CreateMaterializedView,
+    ] {
+        for (creation, bare, rejected) in [
+            (Some(SCHEMA), &["copy"][..], false),
+            (Some("app"), &["copy"], true),
+            (Some("app"), &["users"], false),
+            (None, &["copy"], true),
+            (None, &[], false),
+        ] {
+            let planned = create(statement.clone(), &names(creation, bare));
+            assert_eq!(planned == shadowed, rejected, "{statement:?} {creation:?} {bare:?}");
+        }
+    }
+}
+
+#[test]
+fn other_statements_skip_the_create_target_gate() {
+    let shadowing = names(Some("app"), &["copy"]);
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::CreateTable] {
+        assert!(create(statement.clone(), &shadowing).is_ok(), "{statement:?}");
+    }
+    for statement in [StatementKind::CreateIndex, StatementKind::Drop] {
+        let lineage = ddl(statement.clone(), "copy");
+        assert!(pg_with(&lineage, &config(vec![]), &shadowing).is_ok(), "{statement:?}");
+    }
+    let explained = StatementKind::Explain(Box::new(StatementKind::CreateTableAs));
+    assert!(create(explained, &shadowing).is_ok());
+}
+
+#[test]
+fn shadowed_target_rejects_before_laundering() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let lineage = write("copy", "x", vec![col("users", "ssn")], StatementKind::CreateTableAs);
+    assert!(matches!(pg(&lineage, &config), Err(Rejection::Laundering { .. })));
+    let rejection = pg_with(&lineage, &config, &names(Some("app"), &["copy"])).expect_err("shadowed");
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: create target \"public.copy\" resolves to another relation than it creates"
+    );
+    assert_eq!(rejection.gate(), "target");
+}
+
 // Write laundering.
 
 /// A write lineage into `target` writing `column` (named) from `sources`.
@@ -809,16 +885,6 @@ fn catalog_round_cap_names_the_cap_and_gate() {
         "column policy: catalog resolution exceeded 16 rounds"
     );
     assert_eq!(rejection.gate(), "lineage");
-}
-
-#[test]
-fn shadowed_targets_name_the_relation_and_gate() {
-    let rejection = Rejection::shadowed(&RelationId::new(DB, "temp", "copy"));
-    assert_eq!(
-        rejection.to_string(),
-        "column policy: create target \"temp.copy\" resolves to another relation than it creates"
-    );
-    assert_eq!(rejection.gate(), "target");
 }
 
 #[test]

@@ -23,8 +23,8 @@ use std::mem;
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind, Step,
+    WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -211,14 +211,6 @@ async fn run<'c>(
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
-    // `CREATE TABLE x AS` creates `main.x` even when a bare `x` resolved to a
-    // `temp` or attached table, so its rules would check the wrong target.
-    if *analyzed.statement() == StatementKind::CreateTableAs
-        && let Some(target) = analyzed.target()
-        && target.schema != "main"
-    {
-        return Err(Rejection::shadowed(target).into());
-    }
     let plan = analyzed.plan(config)?;
     let failed = |error: sqlx::Error| match withheld(&error) {
         Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
@@ -303,6 +295,7 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
 async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
     let mut analysis = Analysis::new(sql, DatabaseBackend::Sqlite);
+    analysis.creates_in(Some("main".into()));
     let mut entries = Vec::new();
     loop {
         match analysis.step(entries)? {
@@ -825,16 +818,22 @@ mod tests {
         write(&handler, "CREATE TABLE fresh AS SELECT id FROM users")
             .await
             .expect("unshadowed CTAS plans");
-        let error = write(&handler, "CREATE TABLE copy AS SELECT id FROM users")
+        write(&handler, "CREATE TABLE temp.scratch AS SELECT id FROM users")
             .await
-            .expect_err("guard");
-        assert!(
-            error
-                .message
-                .contains("create target \"temp.copy\" resolves to another relation"),
-            "{}",
-            error.message
-        );
+            .expect("qualified CTAS plans outside main");
+        for sql in [
+            "CREATE TABLE copy AS SELECT id FROM users",
+            "CREATE VIEW copy AS SELECT id FROM users",
+        ] {
+            let error = write(&handler, sql).await.expect_err("guard");
+            assert!(
+                error
+                    .message
+                    .contains("create target \"temp.copy\" resolves to another relation"),
+                "{sql}: {}",
+                error.message
+            );
+        }
     }
 
     #[tokio::test]

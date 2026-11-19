@@ -2,10 +2,10 @@
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, Entry, Lexical, Lineage, LineageError, RelationId, StatementKind, WrittenName, analyze,
+    Catalog, Dialect, Entry, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName, analyze,
 };
 
-use crate::plan::{plan, touches_ruled};
+use crate::plan::{Names, plan, touches_ruled};
 use crate::planned::Planned;
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 
@@ -25,6 +25,8 @@ pub struct Analysis<'a> {
     catalog: Catalog,
     /// Rounds that reported missing names so far.
     rounds: usize,
+    /// See [`Names`].
+    names: Names,
 }
 
 /// What an analysis step needs next.
@@ -43,9 +45,11 @@ pub enum Step {
 #[derive(Debug)]
 pub struct Analyzed {
     /// The statement's lineage.
-    lineage: Lineage,
+    lineage: Box<Lineage>,
     /// The dialect it was analyzed in.
     dialect: Dialect,
+    /// See [`Names`].
+    names: Names,
 }
 
 impl<'a> Analysis<'a> {
@@ -63,7 +67,13 @@ impl<'a> Analysis<'a> {
             dialect,
             catalog: Catalog::new(),
             rounds: 0,
+            names: Names::default(),
         }
+    }
+
+    /// Records the schema an unqualified `CREATE` lands in; `None` when unknown.
+    pub fn creates_in(&mut self, schema: Option<String>) {
+        self.names.creation = schema;
     }
 
     /// Records that the server lexes SQL unlike the parser, for `reason`.
@@ -82,12 +92,16 @@ impl<'a> Analysis<'a> {
     /// Each rejection is logged.
     pub fn step(&mut self, entries: Vec<(WrittenName, Entry)>) -> Result<Step, Rejection> {
         for (name, entry) in entries {
+            if let (Origin::Query, [_], Entry::Resolved(relation)) = (&name.context, name.parts.as_slice(), &entry) {
+                self.names.bare.insert(relation.id.clone());
+            }
             self.catalog.insert(name, entry);
         }
         match analyze(self.sql, self.dialect, &self.catalog) {
             Ok(lineage) => Ok(Step::Done(Analyzed {
-                lineage,
+                lineage: Box::new(lineage),
                 dialect: self.dialect,
+                names: std::mem::take(&mut self.names),
             })),
             Err(LineageError::Missing(_)) if self.rounds == CATALOG_ROUNDS => Err(Rejection::CatalogRounds.logged()),
             Err(LineageError::Missing(names)) => {
@@ -127,7 +141,7 @@ impl Analyzed {
     /// Panics when a rule's entity is not an [`Entity`](dbmcp_pii::Entity)
     /// name; the loader only accepts `ColumnRule::ENTITIES`.
     pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Option<Planned<'c>>, Rejection> {
-        let plan = plan(&self.lineage, self.dialect, config)?;
+        let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
         Ok((!matches!(
             self.lineage.statement,
             StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
@@ -162,16 +176,27 @@ mod tests {
         Entry::Resolved(Relation::new(id, RelationKind::Table, columns))
     }
 
-    /// Analyzes `sql` on `backend`, resolving every missing name with [`table`].
-    fn analyzed_on(backend: DatabaseBackend, sql: &str) -> Analyzed {
+    /// Analyzes `sql`, creating in `creation` and resolving names with `entry`.
+    fn analyzed_with(
+        backend: DatabaseBackend,
+        sql: &str,
+        creation: Option<&str>,
+        entry: impl Fn(&WrittenName) -> Entry,
+    ) -> Analyzed {
         let mut analysis = Analysis::new(sql, backend);
+        analysis.creates_in(creation.map(Into::into));
         let mut entries = Vec::new();
         loop {
             match analysis.step(entries).expect("analysis") {
-                Step::Missing(names) => entries = names.into_iter().map(|name| (name.clone(), table(&name))).collect(),
+                Step::Missing(names) => entries = names.into_iter().map(|name| (name.clone(), entry(&name))).collect(),
                 Step::Done(analyzed) => return analyzed,
             }
         }
+    }
+
+    /// Analyzes `sql` on `backend`, resolving every missing name with [`table`].
+    fn analyzed_on(backend: DatabaseBackend, sql: &str) -> Analyzed {
+        analyzed_with(backend, sql, Some("public"), table)
     }
 
     /// Analyzes `sql` on `PostgreSQL`.
@@ -246,6 +271,24 @@ mod tests {
     fn touches_ruled_sees_the_ruled_relation() {
         assert!(analyzed("SELECT b FROM t").touches_ruled(&ruled()));
         assert!(!analyzed("SELECT b FROM u").touches_ruled(&ruled()));
+    }
+
+    #[test]
+    fn bare_query_names_feed_the_create_target_gate() {
+        let config = PiiConfig::default();
+        let plans = |sql, creation, entry: fn(&WrittenName) -> Entry| {
+            analyzed_with(DatabaseBackend::Postgres, sql, creation, entry)
+                .plan(&config)
+                .is_ok()
+        };
+        let vacant = |name: &WrittenName| match name.parts.last().map(|part| part.value.as_str()) {
+            Some("c") => Entry::Vacant(RelationId::new("shop", "app", "c")),
+            _ => table(name),
+        };
+        let bare = "CREATE TABLE c AS SELECT a FROM t";
+        assert!(!plans(bare, Some("app"), table));
+        assert!(plans(bare, Some("app"), vacant));
+        assert!(plans("CREATE TABLE public.c AS SELECT a FROM t", Some("app"), table));
     }
 
     #[test]

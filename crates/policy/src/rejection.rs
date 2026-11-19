@@ -1,6 +1,6 @@
 //! Why the planner refused a statement.
 
-use dbmcp_sql_lineage::{LineageError, RelationId};
+use dbmcp_sql_lineage::LineageError;
 use thiserror::Error;
 
 /// Most catalog rounds a backend runs before rejecting with [`Rejection::CatalogRounds`].
@@ -125,18 +125,6 @@ impl Rejection {
             Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
             Self::ShadowedTarget { .. } => "target",
         }
-    }
-
-    /// Rejects a create whose bare target name resolved to `target`, another relation.
-    ///
-    /// Backends call it when the server would create elsewhere than the name
-    /// resolved. The rejection is logged.
-    #[must_use]
-    pub fn shadowed(target: &RelationId) -> Self {
-        Self::ShadowedTarget {
-            relation: format!("{}.{}", target.schema, target.name),
-        }
-        .logged()
     }
 
     /// Logs this rejection and returns it.

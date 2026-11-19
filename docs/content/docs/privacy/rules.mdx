@@ -166,6 +166,8 @@ Each statement runs in one transaction, and a result that does not fit the plan 
 
 On PostgreSQL, a `search_path` that puts `pg_temp` first refuses creates of unqualified names: the server would create them as temporary tables.
 
+An unqualified `CREATE TABLE … AS` or `CREATE [MATERIALIZED] VIEW` name that resolves to an existing relation outside the schema the server creates in, such as a SQLite `temp` table, is refused; qualify it.
+
 ## Database errors
 
 Database error messages can echo values, for example `invalid input syntax for type integer: "123-45-6789"`. When the failing statement touches a table with a ruled column, and for every PostgreSQL `CREATE INDEX` while rules exist, <Dbmcp /> keeps only messages whose error code never carries a value, and replaces every other message, including errors raised at `COMMIT`:

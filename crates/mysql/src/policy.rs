@@ -551,6 +551,7 @@ async fn resolve(
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe { database, lower_case };
     let mut analysis = Analysis::new(sql, backend);
+    analysis.creates_in(probe.database.as_deref().map(|database| probe.created(database)));
     if let Some(reason) = lexical_mismatch(&sql_mode, &charset, sql) {
         analysis.mismatch(reason);
     }

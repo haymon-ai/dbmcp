@@ -22,15 +22,24 @@ use crate::rejection::Rejection;
 /// Returns the first failing gate's [`Rejection`]: an unknown function, a
 /// denied relation or statement, `EXPLAIN` of a ruled relation, `CREATE
 /// INDEX` on one, a ruled column used outside the output, conflicting rules
-/// on one output column, or a write copying ruled values into a column not
-/// ruled the same way or not nameable by a rule.
+/// on one output column, a shadowed bare create target, or a write copying
+/// ruled values into a column not ruled the same way or not nameable by a rule.
 ///
 /// # Panics
 ///
 /// Panics when a rule's entity is not an [`Entity`] name; the loader only
 /// accepts `ColumnRule::ENTITIES`, which a test ties to [`Entity`].
-pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
-    gate(lineage, dialect, config).map_err(Rejection::logged)
+pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+    gate(lineage, dialect, config, names).map_err(Rejection::logged)
+}
+
+/// Bare-name resolutions and the creation schema.
+#[derive(Debug, Default)]
+pub(crate) struct Names {
+    /// The schema unqualified creates land in, if known.
+    pub(crate) creation: Option<String>,
+    /// Relations that one-part query names resolved to.
+    pub(crate) bare: BTreeSet<RelationId>,
 }
 
 /// Reports whether `lineage` touches a relation with a ruled column.
@@ -43,7 +52,7 @@ pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig) -> bool {
 }
 
 /// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
+fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
     if let Some(function) = lineage.functions.iter().find(|function| !function.known) {
         return Err(Rejection::UnknownFunction {
             name: function.name.clone(),
@@ -116,6 +125,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    create_target(lineage, names)?;
     if *statement != StatementKind::CreateView
         && let Some(target) = &lineage.target
     {
@@ -142,6 +152,24 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
         }
     }
     Ok(Plan { columns })
+}
+
+/// Rejects a bare create target resolved outside the creation schema.
+///
+/// `EXPLAIN` creates nothing, so only the top-level statement counts.
+fn create_target(lineage: &Lineage, names: &Names) -> Result<(), Rejection> {
+    if matches!(
+        lineage.statement,
+        StatementKind::CreateTableAs | StatementKind::CreateView | StatementKind::CreateMaterializedView
+    ) && let Some(target) = &lineage.target
+        && names.bare.contains(target)
+        && names.creation.as_deref() != Some(target.schema.as_str())
+    {
+        return Err(Rejection::ShadowedTarget {
+            relation: relation_name(target),
+        });
+    }
+    Ok(())
 }
 
 /// Computes [`PlannedColumn::name`].
