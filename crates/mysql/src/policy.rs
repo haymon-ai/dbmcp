@@ -373,15 +373,14 @@ async fn run<'c>(
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
-    let withholds = planned.withholds();
-    let failed = |error: sqlx::Error| match withheld(&error) {
-        Some((number, state)) if withholds => Stop::Withheld { number, state },
-        _ => Stop::Sql(error),
+    let failed = |planned: &Planned<'_>, error: sqlx::Error| match planned.withheld(echoing(&error)) {
+        Some((number, state)) => Stop::Withheld { number, state },
+        None => Stop::Sql(error),
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
         Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(error)),
+        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => {
             tx.rollback().await?;
             return Err(stop);
@@ -396,7 +395,7 @@ async fn run<'c>(
         Access::Read => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
-    finished.map_err(failed)?;
+    finished.map_err(|error| failed(&planned, error))?;
     let (rows_affected, last_insert_id) = MysqlConnection::counts(sql, &executed.results);
     Ok(Run {
         planned,
@@ -747,7 +746,7 @@ async fn vacant(
 /// Returns the error number and `SQLSTATE` of an error that may echo a value.
 ///
 /// Timeouts and non-database errors are never withheld.
-fn withheld(error: &sqlx::Error) -> Option<(u16, String)> {
+fn echoing(error: &sqlx::Error) -> Option<(u16, String)> {
     if MysqlConnection::is_timeout(error) {
         return None;
     }

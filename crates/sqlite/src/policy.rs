@@ -204,14 +204,13 @@ async fn run<'c>(
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
-    let withholds = planned.withholds();
-    let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if withholds => Stop::Withheld(code),
-        _ => Stop::Sql(error),
+    let failed = |planned: &Planned<'_>, error: sqlx::Error| match planned.withheld(echoing(&error)) {
+        Some(code) => Stop::Withheld(code),
+        None => Stop::Sql(error),
     };
     let executed = match execute(&mut tx, sql, &mut planned, sink).await {
         Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(error)),
+        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => {
             tx.rollback().await?;
             return Err(stop);
@@ -222,7 +221,7 @@ async fn run<'c>(
         Access::Read => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
-    finished.map_err(failed)?;
+    finished.map_err(|error| failed(&planned, error))?;
     let (rows_affected, last_insert_id) = SqliteConnection::counts(sql, &executed.results);
     Ok(Run {
         planned,
@@ -434,7 +433,7 @@ fn view_query(create: &str) -> Option<String> {
 /// Returns the extended code of a database error that may echo a value.
 ///
 /// Timeouts and non-database errors are never withheld.
-fn withheld(error: &sqlx::Error) -> Option<String> {
+fn echoing(error: &sqlx::Error) -> Option<String> {
     if SqliteConnection::is_timeout(error) {
         return None;
     }
@@ -655,7 +654,7 @@ mod tests {
     async fn value_echoing_errors_are_withheld() {
         let error = error_of("SELECT 1", "SELECT json_extract('{}', 'secret')").await;
         assert!(error.to_string().contains("secret"), "{error}");
-        assert_eq!(withheld(&error).as_deref(), Some("1"));
+        assert_eq!(echoing(&error).as_deref(), Some("1"));
     }
 
     #[tokio::test]
@@ -667,7 +666,7 @@ mod tests {
             "SELECT json('not json')",
         ] {
             let error = error_of(unique, sql).await;
-            assert_eq!(withheld(&error), None, "{sql}: {error}");
+            assert_eq!(echoing(&error), None, "{sql}: {error}");
         }
     }
 
@@ -676,7 +675,7 @@ mod tests {
         let setup = "CREATE TABLE t (a); \
              CREATE TRIGGER g BEFORE INSERT ON t BEGIN SELECT RAISE(ABORT, 'no'); END";
         let error = error_of(setup, "INSERT INTO t VALUES (1)").await;
-        assert_eq!(withheld(&error).as_deref(), Some("1811"));
+        assert_eq!(echoing(&error).as_deref(), Some("1811"));
     }
 
     #[tokio::test]

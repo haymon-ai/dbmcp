@@ -42,12 +42,14 @@ impl<'c> Planned<'c> {
         }
     }
 
-    /// Reports whether database errors must be withheld.
+    /// Returns the code of a value-echoing database error this plan withholds.
     ///
-    /// True when a ruled relation is touched, and for every `PostgreSQL` `CREATE INDEX`.
+    /// `code` is the backend's code for an error that may echo a value, `None`
+    /// for one that cannot. Errors are withheld when the statement touches a
+    /// ruled relation, and for every `PostgreSQL` `CREATE INDEX`.
     #[must_use]
-    pub const fn withholds(&self) -> bool {
-        self.withholds
+    pub fn withheld<C>(&self, code: Option<C>) -> Option<C> {
+        code.filter(|_| self.withholds)
     }
 
     /// Checks the first row's names and origins against the plan.
@@ -156,6 +158,17 @@ mod tests {
     }
 
     const ACTION: Position = Position::Action(PiiOperator::Mask, Entity::UsSsn);
+
+    #[test]
+    fn echoing_errors_are_withheld_only_when_the_plan_withholds() {
+        let config = ruled();
+        let withholding = Planned::new(None, &config, true);
+        assert_eq!(withholding.withheld(Some("23505")), Some("23505"));
+        assert_eq!(withholding.withheld(None::<&str>), None);
+        let showing = Planned::new(None, &config, false);
+        assert_eq!(showing.withheld(Some("23505")), None);
+        assert_eq!(showing.withheld(None::<&str>), None);
+    }
 
     #[test]
     fn ruled_origins_need_an_action_position() {
