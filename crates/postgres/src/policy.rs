@@ -352,7 +352,7 @@ async fn run(
             return Err(stop);
         }
     };
-    if !views_unchanged(&mut tx, &owners).await? {
+    if !views_unchanged(&mut tx, &owners, lineage.target.as_ref()).await? {
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
@@ -400,10 +400,16 @@ async fn autocommit(
 /// Reports whether every view body planned from is still the current one.
 ///
 /// Executing a view holds a lock that blocks its replacement until the
-/// transaction ends, so the body read now is the one that ran.
-async fn views_unchanged(conn: &mut sqlx::PgConnection, owners: &Owners) -> Result<bool, sqlx::Error> {
+/// transaction ends, so the body read now is the one that ran. The
+/// statement's own `target`, which it may drop or replace, is skipped.
+async fn views_unchanged(
+    conn: &mut sqlx::PgConnection,
+    owners: &Owners,
+    target: Option<&RelationId>,
+) -> Result<bool, sqlx::Error> {
     let (oids, bodies): (Vec<i64>, Vec<&str>) = owners
         .iter()
+        .filter(|(_, owner)| target != Some(&owner.id))
         .filter_map(|(oid, owner)| Some((i64::from(*oid), owner.view.as_deref()?)))
         .unzip();
     if oids.is_empty() {
@@ -454,22 +460,26 @@ async fn execute(
 /// Refuses a result column whose origin is ruled but not planned as ruled.
 ///
 /// `PostgreSQL` reports a column's origin as its table's OID and attribute
-/// number, through subqueries and CTEs; a view column reports the view. An
-/// origin the catalog reads did not describe is refused too.
+/// number, through subqueries and CTEs; a view column reports the view. A
+/// whole-row reference reports attribute zero and is ruled when any column
+/// is. An origin the catalog reads did not describe is refused too.
 fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: &Owners) -> Result<(), Stop> {
     for column in columns {
         let position = column.ordinal();
         let Some(oid) = column.relation_id() else {
             continue;
         };
-        let name = owners.get(&oid.0).and_then(|owner| {
-            let name = owner.columns.get(&column.relation_attribute_no()?)?;
-            Some((&owner.id, name))
-        });
-        let Some((id, name)) = name else {
+        let Some(owner) = owners.get(&oid.0) else {
             return Err(Stop::Unresolved(position));
         };
-        let ruled = rule(config, &SourceRef::new(id.clone(), name)).is_some();
+        let ruled = |name: &String| rule(config, &SourceRef::new(owner.id.clone(), name)).is_some();
+        let ruled = match column.relation_attribute_no() {
+            Some(number) => match owner.columns.get(&number) {
+                Some(name) => ruled(name),
+                None => return Err(Stop::Unresolved(position)),
+            },
+            None => owner.columns.values().any(ruled),
+        };
         let planned = matches!(
             plan.columns.get(position).map(|planned| planned.position),
             Some(Position::Action(..))

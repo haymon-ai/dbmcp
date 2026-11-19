@@ -4913,6 +4913,30 @@ async fn column_rules_run_concurrent_index_statements() {
 }
 
 #[tokio::test]
+async fn column_rules_replace_and_drop_views() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "CREATE VIEW policy_audit_view AS SELECT id FROM audit",
+        "CREATE OR REPLACE VIEW policy_audit_view AS SELECT id, note FROM audit",
+        "DROP VIEW policy_audit_view",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_check_whole_row_references() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT a FROM audit a WHERE id = 1")
+        .await
+        .expect("unruled whole row");
+    assert_eq!(rows.len(), 1);
+    let refusal = ruled_refusal(&handler, "SELECT u FROM users u WHERE id = 1").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+    assert!(!refusal.contains("@example.com"), "{refusal}");
+}
+
+#[tokio::test]
 async fn column_rules_refuse_multi_statement_writes() {
     let handler = handler_with_rules(100);
     let error = handler
