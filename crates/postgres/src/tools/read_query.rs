@@ -9,6 +9,7 @@ use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
 
 use super::prelude::*;
+use crate::policy::Access;
 
 const NAME: &str = "readQuery";
 const TITLE: &str = "Read Query";
@@ -123,7 +124,8 @@ impl PostgresHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
     /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`, or
-    /// [`SqlError::Query`] if the backend reports an error.
+    /// [`SqlError::Query`] if the backend reports an error. With column
+    /// rules, also the policy's rejection or a withheld database error.
     pub async fn read_query(
         &self,
         query: String,
@@ -149,10 +151,16 @@ impl PostgresHandler {
         };
         let mut window =
             truncate::Window::new(offset, size, self.config.max_cell_chars, self.config.max_response_chars);
-        self.connection
-            .read_json(&*sql, database, timeout, |row| window.push(row))
-            .await?;
-        let rows = self.redactor.redact_rows(window.rows).await?;
+        let rows = if let Some(policy) = &self.policy {
+            self.enforce(policy, &sql, Access::Read, timeout, database, &mut window)
+                .await?
+                .rows
+        } else {
+            self.connection
+                .read_json(&*sql, database, timeout, |row| window.push(row))
+                .await?;
+            self.redactor.redact_rows(window.rows).await?
+        };
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
         let next_cursor = match kind {

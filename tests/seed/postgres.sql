@@ -453,6 +453,67 @@ CREATE MATERIALIZED VIEW mv_pending_data AS
     SELECT id, customer_id, total FROM orders WHERE status = 'new'
 WITH NO DATA;
 
+-- Column-rules fixture: rules target `users` and `invoices.billing_email`;
+-- `audit` stays unruled.
+CREATE TABLE audit (
+    id SERIAL PRIMARY KEY,
+    user_id INT,
+    action TEXT,
+    note TEXT
+);
+
+INSERT INTO audit (user_id, action, note) VALUES
+    (1, 'login', 'ok'),
+    (2, 'logout', NULL);
+
+CREATE TABLE invoices (
+    id SERIAL PRIMARY KEY,
+    user_id INT,
+    billing_email TEXT
+);
+
+INSERT INTO invoices (user_id, billing_email) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE VIEW users_with_ssn AS
+    SELECT id, email FROM users WHERE ssn IS NOT NULL;
+
+CREATE VIEW user_emails AS
+    SELECT id, email FROM users;
+
+-- Search-path hijack: `shadow.users` precedes `public.users` for
+-- `policy_shadow`, so a bare `users` must bind to the shadow table.
+CREATE SCHEMA shadow;
+CREATE TABLE shadow.users (
+    id INT PRIMARY KEY,
+    email TEXT,
+    ssn TEXT,
+    bio TEXT
+);
+INSERT INTO shadow.users (id, email, ssn, bio) VALUES
+    (1, 'shadow@example.com', '999-99-9999', NULL);
+
+-- `policy_lexical` connects with `standard_conforming_strings = off`;
+-- `policy_temp` lists `pg_temp` first in its `search_path`.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'policy_shadow') THEN
+        CREATE ROLE policy_shadow LOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'policy_lexical') THEN
+        CREATE ROLE policy_lexical LOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'policy_temp') THEN
+        CREATE ROLE policy_temp LOGIN;
+    END IF;
+END $$;
+ALTER ROLE policy_shadow SET search_path = shadow, public;
+ALTER ROLE policy_lexical SET standard_conforming_strings = off;
+ALTER ROLE policy_temp SET search_path = pg_temp, public;
+GRANT USAGE ON SCHEMA shadow TO policy_shadow, policy_lexical, policy_temp;
+GRANT SELECT ON ALL TABLES IN SCHEMA public, shadow TO policy_shadow, policy_lexical, policy_temp;
+GRANT CREATE ON SCHEMA public TO policy_temp;
+
 -- analytics database
 
 DROP DATABASE IF EXISTS analytics;

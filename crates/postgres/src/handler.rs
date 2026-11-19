@@ -5,7 +5,7 @@
 //! the MCP `ServerHandler` surface and exposes a small set of thin
 //! delegator methods that the per-tool implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseConfig, PiiConfig};
 use dbmcp_pii::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
@@ -82,6 +82,8 @@ pub struct PostgresHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: PostgresConnection,
     pub(crate) redactor: Option<Redactor>,
+    /// PII settings with column rules; `None` without rules.
+    pub(crate) policy: Option<PiiConfig>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -90,6 +92,7 @@ impl std::fmt::Debug for PostgresHandler {
         f.debug_struct("PostgresHandler")
             .field("read_only", &self.config.read_only)
             .field("redact_pii", &self.redactor.is_some())
+            .field("column_rules", &self.policy.is_some())
             .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
@@ -110,6 +113,7 @@ impl PostgresHandler {
             config: config.database.clone(),
             connection: PostgresConnection::new(&config.database),
             redactor: Redactor::from_config(config.pii.as_ref())?,
+            policy: config.pii.clone().filter(|pii| !pii.rules.is_empty()),
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })
     }

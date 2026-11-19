@@ -1765,12 +1765,8 @@ mod tests {
     }
 
     #[test]
-    fn column_rules_are_not_yet_supported_on_mysql_or_postgres() {
-        for (backend, name, catalog) in [
-            ("mysql", "app", "def"),
-            ("mariadb", "app", "def"),
-            ("postgres", "app", "app"),
-        ] {
+    fn column_rules_are_not_yet_supported_on_mysql() {
+        for (backend, name, catalog) in [("mysql", "app", "def"), ("mariadb", "app", "def")] {
             let fixture = Fixture::new()
                 .env("DBMCP_DB_BACKEND", backend)
                 .env("DBMCP_DB_NAME", name)
@@ -1806,6 +1802,21 @@ mod tests {
     }
 
     #[test]
+    fn postgres_column_rules_load() {
+        let fixture = Fixture::new()
+            .env("DBMCP_DB_BACKEND", "postgres")
+            .env("DBMCP_DB_NAME", "app")
+            .env("DBMCP_PII_KEY", PII_KEY_32)
+            .config(
+                "dbmcp.yaml",
+                "pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [app.public.users.email]\n      entity: EMAIL_ADDRESS\n",
+            );
+        let pii = fixture.ok().config.pii.expect("pii enabled");
+        assert_eq!(pii.rules.len(), 1);
+        assert_eq!(pii.rules[0].key, ["app", "public", "users", "email"].map(String::from));
+    }
+
+    #[test]
     fn rule_catalog_must_fit_the_backend() {
         let catalogs = |backend: &str, name: Option<&str>, keys: &str| {
             let mut fixture = Fixture::new().env("DBMCP_DB_BACKEND", backend);
@@ -1816,7 +1827,7 @@ mod tests {
                 "dbmcp.yaml",
                 &format!("pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{keys}]\n      entity: URL\n"),
             );
-            // SQLite enforces rules, so a fitting catalog loads.
+            // SQLite and PostgreSQL enforce rules, so a fitting catalog loads.
             let Err(error) = fixture.load() else {
                 return Vec::new();
             };

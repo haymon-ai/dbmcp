@@ -9,7 +9,7 @@
 
 mod probe;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use indexmap::IndexMap;
@@ -4652,4 +4652,364 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
         .expect("a merged first page stops before the failing row");
     assert_eq!(response.rows.len(), 2);
     assert!(response.next_cursor.is_some());
+}
+
+// Column rules (`pii.rules`)
+
+fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, operator: PiiOperator) -> ColumnRule {
+    ColumnRule {
+        name: format!("{schema}_{table}_{column}"),
+        item: 0,
+        key: ["app", schema, table, column].map(String::from),
+        entity,
+        operator,
+    }
+}
+
+/// The rules [`handler_with_rules`] uses: hash e-mails (`users`, `invoices`),
+/// mask phones, redact SSNs, and replace card numbers.
+fn standard_rules() -> Vec<ColumnRule> {
+    vec![
+        column_rule("public", "users", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule(
+            "public",
+            "invoices",
+            "billing_email",
+            "EMAIL_ADDRESS",
+            PiiOperator::Hash,
+        ),
+        column_rule("public", "users", "phone", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("public", "users", "ssn", "US_SSN", PiiOperator::Redact),
+        column_rule("public", "users", "credit_card", "CREDIT_CARD", PiiOperator::Replace),
+    ]
+}
+
+/// A handler connected as `user` (the default user when `None`) under `rules`.
+fn ruled_handler(user: Option<&str>, page_size: u16, rules: Vec<ColumnRule>) -> PostgresHandler {
+    let base = base_db_config(false);
+    PostgresHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            page_size,
+            user: user.map_or(base.user.clone(), Into::into),
+            ..base
+        },
+        http: None,
+        pii: Some(PiiConfig {
+            key: Some(PII_TEST_KEY.into()),
+            rules,
+            ..PiiConfig::default()
+        }),
+        ssh: None,
+    })
+    .expect("handler builds")
+}
+
+fn handler_with_rules(page_size: u16) -> PostgresHandler {
+    ruled_handler(None, page_size, standard_rules())
+}
+
+async fn ruled_read(handler: &PostgresHandler, query: &str) -> Result<Vec<Value>, rmcp::model::ErrorData> {
+    handler
+        .read_query(query.into(), None, None, None)
+        .await
+        .map(|response| response.rows)
+}
+
+async fn ruled_refusal(handler: &PostgresHandler, query: &str) -> String {
+    ruled_read(handler, query).await.expect_err(query).message.into_owned()
+}
+
+fn is_email_token(value: &Value) -> bool {
+    value.as_str().is_some_and(|v| v.starts_with("<EMAIL_ADDRESS_"))
+}
+
+#[tokio::test]
+async fn column_rules_rewrite_each_operator_whole() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(
+        &handler,
+        "SELECT name, email, phone, ssn, credit_card FROM users WHERE id = 1",
+    )
+    .await
+    .expect("read");
+    let row = &rows[0];
+    assert_eq!(row["name"], "Alice Johnson");
+    assert!(is_email_token(&row["email"]), "{row}");
+    assert_ne!(row["phone"], "+14155552671", "{row}");
+    assert_ne!(row["ssn"], "078-05-1123", "{row}");
+    assert_eq!(row["credit_card"], "<CREDIT_CARD>", "{row}");
+}
+
+#[tokio::test]
+async fn column_rules_apply_to_star_and_keep_nulls() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT * FROM users WHERE id = 2")
+        .await
+        .expect("read");
+    assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
+    assert_eq!(rows[0]["ssn"], Value::Null);
+}
+
+#[tokio::test]
+async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
+    let handler = handler_with_rules(100);
+    let users = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("users");
+    let invoices = ruled_read(&handler, "SELECT billing_email FROM invoices WHERE user_id = 1")
+        .await
+        .expect("invoices");
+    assert!(is_email_token(&users[0]["email"]));
+    assert_eq!(users[0]["email"], invoices[0]["billing_email"]);
+}
+
+#[tokio::test]
+async fn column_rules_follow_views_and_refuse_ruled_view_bodies() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT email FROM user_emails WHERE id = 1")
+        .await
+        .expect("view");
+    assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
+    let refusal = ruled_refusal(&handler, "SELECT id FROM users_with_ssn").await;
+    assert!(refusal.contains("users_with_ssn"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_ruled_columns_outside_the_output() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "SELECT id FROM users WHERE email = 'alice@example.com'",
+        "SELECT u.id FROM users u JOIN invoices i ON i.billing_email = u.email",
+        "SELECT count(*) FROM users GROUP BY email",
+        "SELECT id FROM users ORDER BY ssn",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("(ruled) used in"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_conflicting_rules_in_one_column() {
+    let handler = handler_with_rules(100);
+    let refusal = ruled_refusal(&handler, "SELECT email || phone AS contact FROM users").await;
+    assert!(refusal.contains("conflicting"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_unknown_functions() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "SELECT no_such_function(name) FROM users",
+        "SELECT set_config('x.y', email, true) FROM users",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("column policy"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_explaining_ruled_relations() {
+    let handler = handler_with_rules(100);
+    for analyze in [false, true] {
+        handler
+            .explain_query(None, "SELECT note FROM audit".into(), analyze)
+            .await
+            .expect("unruled explain");
+        let error = handler
+            .explain_query(None, "SELECT email FROM users".into(), analyze)
+            .await
+            .expect_err("ruled explain");
+        assert!(error.message.contains("EXPLAIN"), "{}", error.message);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_laundering_writes() {
+    let handler = handler_with_rules(100);
+    let error = handler
+        .write_query("INSERT INTO audit (note) SELECT email FROM users".into(), None)
+        .await
+        .expect_err("laundering");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    let rows = ruled_read(&handler, "SELECT count(*) AS n FROM audit")
+        .await
+        .expect("count");
+    assert_eq!(rows[0]["n"], 2);
+}
+
+#[tokio::test]
+async fn column_rules_redact_returning_rows() {
+    let handler = handler_with_rules(100);
+    let response = handler
+        .write_query(
+            "UPDATE users SET name = name WHERE id = 1 RETURNING id, email".into(),
+            None,
+        )
+        .await
+        .expect("update");
+    assert_eq!(response.rows_affected, 1);
+    assert!(is_email_token(&response.rows[0]["email"]), "{}", response.rows[0]);
+}
+
+#[tokio::test]
+async fn column_rules_keep_positions_across_pages() {
+    let handler = handler_with_rules(2);
+    let query = "SELECT id, email FROM users ORDER BY id";
+    let first = handler
+        .read_query(query.into(), None, None, None)
+        .await
+        .expect("first page");
+    assert_eq!(first.rows.len(), 2);
+    assert!(first.rows.iter().all(|row| is_email_token(&row["email"])));
+    let second = handler
+        .read_query(query.into(), None, first.next_cursor, None)
+        .await
+        .expect("second page");
+    assert!(!second.rows.is_empty());
+    assert!(second.rows.iter().all(|row| is_email_token(&row["email"])));
+    assert_ne!(first.rows[0]["id"], second.rows[0]["id"]);
+}
+
+#[tokio::test]
+async fn column_rules_withhold_value_echoing_errors() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "SELECT email::int AS x FROM users",
+        "SELECT email::regclass AS x FROM users",
+        // Three parts read as a cross-database reference: `0A000` quotes the value.
+        "SELECT ('x.' || email)::regclass AS x FROM users",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("withheld"), "{query}: {refusal}");
+        assert!(!refusal.contains("@example.com"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_toast_relations() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(
+        &handler,
+        "SELECT reltoastrelid::regclass::text AS toast FROM pg_class \
+         WHERE relname = 'users' AND relnamespace = 'public'::regnamespace",
+    )
+    .await
+    .expect("toast name");
+    let toast = rows[0]["toast"].as_str().expect("users has a TOAST table");
+    let refusal = ruled_refusal(&handler, &format!("SELECT chunk_data FROM {toast}")).await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_run_concurrent_index_statements() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "CREATE INDEX CONCURRENTLY policy_audit_note ON audit (note)",
+        "DROP INDEX policy_audit_note",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_replace_and_drop_views() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "CREATE VIEW policy_audit_view AS SELECT id FROM audit",
+        "CREATE OR REPLACE VIEW policy_audit_view AS SELECT id, note FROM audit",
+        "DROP VIEW policy_audit_view",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_check_whole_row_references() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT a FROM audit a WHERE id = 1")
+        .await
+        .expect("unruled whole row");
+    assert_eq!(rows.len(), 1);
+    let refusal = ruled_refusal(&handler, "SELECT u FROM users u WHERE id = 1").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+    assert!(!refusal.contains("@example.com"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_multi_statement_writes() {
+    let handler = handler_with_rules(100);
+    let error = handler
+        .write_query(
+            "UPDATE audit SET note = 'a' WHERE id = 1; UPDATE audit SET note = 'ok' WHERE id = 1".into(),
+            None,
+        )
+        .await
+        .expect_err("multi-statement");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_follow_renamed_columns() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
+        "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)",
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert!(is_email_token(&rows[0]["a"]), "{query}: {}", rows[0]);
+        assert_eq!(rows[0]["b"], "Alice Johnson", "{query}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_bind_bare_names_through_the_search_path() {
+    let shadow_ssn = || vec![column_rule("shadow", "users", "ssn", "US_SSN", PiiOperator::Redact)];
+    let query = "SELECT id FROM users WHERE ssn IS NOT NULL";
+    // `postgres` resolves `users` to `public.users`, which this rule leaves alone.
+    ruled_read(&ruled_handler(None, 100, shadow_ssn()), query)
+        .await
+        .expect("public.users");
+    let refusal = ruled_refusal(&ruled_handler(Some("policy_shadow"), 100, shadow_ssn()), query).await;
+    assert!(refusal.contains("(ruled) used in"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_every_statement_when_strings_lex_differently() {
+    let handler = ruled_handler(Some("policy_lexical"), 100, standard_rules());
+    let refusal = ruled_refusal(&handler, "SELECT note FROM audit").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_bare_creates_shadowed_further_along_the_search_path() {
+    let query = "CREATE OR REPLACE VIEW user_emails AS SELECT id, email FROM users";
+    // `policy_shadow` creates in `shadow`, but `user_emails` resolves to `public`.
+    let error = ruled_handler(Some("policy_shadow"), 100, standard_rules())
+        .write_query(query.into(), None)
+        .await
+        .expect_err("shadowed view");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    // For `postgres` the same statement replaces `public.user_emails` itself.
+    handler_with_rules(100)
+        .write_query(query.into(), None)
+        .await
+        .expect("replace in the creation schema");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_bare_creates_when_pg_temp_leads_the_search_path() {
+    let query = "CREATE TABLE policy_temp_copy AS SELECT note FROM audit";
+    let error = ruled_handler(Some("policy_temp"), 100, standard_rules())
+        .write_query(query.into(), None)
+        .await
+        .expect_err("pg_temp first");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    // The same create lands in `public` for `postgres`.
+    let handler = handler_with_rules(100);
+    handler.write_query(query.into(), None).await.expect("create");
+    handler
+        .write_query("DROP TABLE policy_temp_copy".into(), None)
+        .await
+        .expect("drop");
 }
