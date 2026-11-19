@@ -8,8 +8,12 @@ use dbmcp_sql_lineage::{
     RelationUse, Role, SourceRef, StatementKind, TargetColumn, analyze,
 };
 
-use super::{LineageClass, Plan, Position, Rejection, plan, reject_lineage, touches_ruled};
-use crate::entity::Entity;
+use dbmcp_pii::Entity;
+use dbmcp_pii::cells::{Plan, Position};
+
+use crate::plan::{plan, touches_ruled};
+use crate::rejection::reject_lineage;
+use crate::{LineageClass, Rejection};
 
 const DB: &str = "shop";
 const SCHEMA: &str = "public";
@@ -805,6 +809,16 @@ fn catalog_round_cap_names_the_cap_and_gate() {
         "column policy: catalog resolution exceeded 16 rounds"
     );
     assert_eq!(rejection.gate(), "lineage");
+}
+
+#[test]
+fn shadowed_targets_name_the_relation_and_gate() {
+    let rejection = Rejection::shadowed(&RelationId::new(DB, "temp", "copy"));
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: create target \"temp.copy\" resolves to another relation than it creates"
+    );
+    assert_eq!(rejection.gate(), "target");
 }
 
 #[test]

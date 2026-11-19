@@ -1,6 +1,6 @@
 //! Why the planner refused a statement.
 
-use dbmcp_sql_lineage::LineageError;
+use dbmcp_sql_lineage::{LineageError, RelationId};
 use thiserror::Error;
 
 /// Most catalog rounds a backend runs before rejecting with [`Rejection::CatalogRounds`].
@@ -98,6 +98,15 @@ pub enum Rejection {
         /// 0-based position among the created columns.
         position: usize,
     },
+
+    /// A bare create target that names another relation than the one created.
+    ///
+    /// The rules were checked against the relation the name resolved to.
+    #[error("column policy: create target \"{relation}\" resolves to another relation than it creates")]
+    ShadowedTarget {
+        /// The relation the name resolved to, as `schema.name`.
+        relation: String,
+    },
 }
 
 impl Rejection {
@@ -114,12 +123,25 @@ impl Rejection {
             Self::Reference { .. } => "reference",
             Self::Conflict { .. } => "combine",
             Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
+            Self::ShadowedTarget { .. } => "target",
         }
+    }
+
+    /// Rejects a create whose bare target name resolved to `target`, another relation.
+    ///
+    /// Backends call it when the server would create elsewhere than the name
+    /// resolved. The rejection is logged.
+    #[must_use]
+    pub fn shadowed(target: &RelationId) -> Self {
+        Self::ShadowedTarget {
+            relation: format!("{}.{}", target.schema, target.name),
+        }
+        .logged()
     }
 
     /// Logs this rejection and returns it.
     #[must_use]
-    pub fn logged(self) -> Self {
+    pub(crate) fn logged(self) -> Self {
         tracing::info!(target: "dbmcp::policy", gate = self.gate(), "{self}");
         self
     }
@@ -168,7 +190,7 @@ impl LineageClass {
 /// With column rules active every [`LineageError`] rejects the statement;
 /// the rejection keeps only the error's class.
 #[must_use]
-pub fn reject_lineage(error: &LineageError) -> Rejection {
+pub(crate) fn reject_lineage(error: &LineageError) -> Rejection {
     let class = match error {
         LineageError::Missing(_) | LineageError::UnknownRelation { .. } => LineageClass::UnresolvedRelation,
         LineageError::Parse(_) => LineageClass::Parse,

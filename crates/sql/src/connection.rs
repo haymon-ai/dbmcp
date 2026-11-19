@@ -243,6 +243,41 @@ where
         .await
     }
 
+    /// Runs `sql` on `conn`, checking the first row before any row reaches `sink`.
+    ///
+    /// `first` sees the first row and its column names; once it passes, each
+    /// row's values reach `sink` as a JSON array. Returns the column names
+    /// (empty without rows) and the per-statement results.
+    ///
+    /// # Errors
+    ///
+    /// Returns `first`'s error, or the driver's error converted into `E`.
+    async fn execute_checked<E: From<sqlx::Error>>(
+        conn: &mut <Self::DB as sqlx::Database>::Connection,
+        sql: &str,
+        mut first: impl FnMut(&<Self::DB as sqlx::Database>::Row, &[String]) -> Result<(), E> + Send,
+        sink: &mut (impl FnMut(Value) + Send),
+    ) -> Result<(Vec<String>, Vec<<Self::DB as sqlx::Database>::QueryResult>), E> {
+        let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
+        let mut stream = conn.fetch_many(query);
+        let mut names = None;
+        let mut results = Vec::new();
+        while let Some(item) = stream.try_next().await? {
+            match item {
+                Either::Left(result) => results.push(result),
+                Either::Right(row) => {
+                    let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
+                    if names.is_none() {
+                        first(&row, &row_names)?;
+                    }
+                    names.get_or_insert(row_names);
+                    sink(Value::Array(values));
+                }
+            }
+        }
+        Ok((names.unwrap_or_default(), results))
+    }
+
     /// Folds per-statement results of `sql` into affected rows and the last insert id.
     ///
     /// The default sums [`QueryResult::rows_affected`] and keeps the last

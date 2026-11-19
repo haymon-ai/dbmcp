@@ -8,8 +8,8 @@
 //!
 //! 1. analyzes the statement's lineage, fetching the relations it reports
 //!    missing (`pragma_table_list`, `pragma_table_xinfo`, view bodies from
-//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`] rounds,
-//! 2. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//! 2. plans it with [`Analyzed::plan`](dbmcp_policy::Analyzed::plan); a rejection runs nothing,
 //! 3. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
 //! 4. commits a write or rolls a read back.
@@ -20,24 +20,21 @@
 
 use std::mem;
 
-use dbmcp_config::PiiConfig;
+use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
+use dbmcp_policy::{
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName,
+};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
-use dbmcp_sql_lineage::{
-    Catalog, CatalogColumn, Dialect, Entry, Lineage, LineageError, Origin, Relation, RelationId, RelationKind,
-    SourceRef, StatementKind, WrittenName, analyze,
-};
-use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlx::sqlite::{SqliteColumn, SqliteQueryResult};
-use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Either, Executor as _, Row as _, SqlSafeStr as _, SqlStr};
-use sqlx_json::RowExt as _;
+use sqlx::sqlite::{SqliteColumn, SqliteQueryResult, SqliteRow};
+use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::SqliteHandler;
 use crate::connection::{SqliteConnection, quote_ident};
@@ -111,10 +108,10 @@ enum Stop {
     Sql(#[from] sqlx::Error),
 }
 
-struct Run {
+struct Run<'c> {
     /// The plan when the result columns are the planned ones; `EXPLAIN`,
     /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
-    plan: Option<Plan>,
+    plan: Option<Planned<'c>>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -173,16 +170,10 @@ impl SqliteHandler {
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(plan) = run.plan {
-            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
-        } else {
-            let rows = rows
-                .into_iter()
-                .map(|values| Value::Object(run.names.iter().cloned().zip(values).collect()))
-                .collect();
-            redactor.redact_rows(rows).await?
-        };
+        let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = redactor
+            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
+            .await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -200,14 +191,14 @@ fn values(row: Value) -> Vec<Value> {
 }
 
 /// Plans and executes one statement inside a transaction on `conn`.
-async fn run(
+async fn run<'c>(
     conn: &mut sqlx::SqliteConnection,
     read_only: bool,
-    config: &PiiConfig,
+    config: &'c PiiConfig,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
+) -> Result<Run<'c>, Stop> {
     let begin = match access {
         Access::Read => {
             // A file opened read-only needs no pragma; `before_acquire` switches it off again.
@@ -219,25 +210,21 @@ async fn run(
         Access::Write => "BEGIN IMMEDIATE",
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
-    let lineage = resolve(&mut tx, sql).await?;
+    let analyzed = resolve(&mut tx, sql).await?;
     // `CREATE TABLE x AS` creates `main.x` even when a bare `x` resolved to a
     // `temp` or attached table, so its rules would check the wrong target.
-    if lineage.statement == StatementKind::CreateTableAs
-        && lineage.target.as_ref().is_some_and(|target| target.schema != "main")
+    if *analyzed.statement() == StatementKind::CreateTableAs
+        && let Some(target) = analyzed.target()
+        && target.schema != "main"
     {
-        return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
+        return Err(Rejection::shadowed(target).into());
     }
-    let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Sqlite, config)?;
-    let plan = (!matches!(
-        lineage.statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    ))
-    .then_some(plan);
+    let plan = analyzed.plan(config)?;
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
-    let executed = match execute(&mut tx, sql, plan.as_ref(), config, sink).await {
+    let executed = match execute(&mut tx, sql, plan.as_ref(), sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -267,57 +254,39 @@ async fn run(
 async fn execute(
     conn: &mut sqlx::SqliteConnection,
     sql: &str,
-    plan: Option<&Plan>,
-    config: &PiiConfig,
+    planned: Option<&Planned<'_>>,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
-    let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
-    let mut stream = conn.fetch_many(query);
-    let mut names = None;
-    let mut results = Vec::new();
-    while let Some(item) = stream.try_next().await? {
-        match item {
-            Either::Left(result) => results.push(result),
-            Either::Right(row) => {
-                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
-                if names.is_none()
-                    && let Some(plan) = plan
-                {
-                    if let Some(position) = unplanned_ruled(row.columns(), plan, config) {
-                        return Err(Stop::Unplanned(position));
-                    }
-                    check_columns(plan, &row_names)?;
-                }
-                names.get_or_insert(row_names);
-                sink(Value::Array(values));
+    let first = |row: &SqliteRow, names: &[String]| {
+        if let Some(planned) = planned {
+            if let Some(position) = unplanned_ruled(row.columns(), planned) {
+                return Err(Stop::Unplanned(position));
             }
+            check_columns(planned.plan(), names)?;
         }
-    }
-    Ok(Executed {
-        names: names.unwrap_or_default(),
-        results,
-    })
+        Ok::<_, Stop>(())
+    };
+    let (names, results) = SqliteConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed { names, results })
 }
 
-/// Returns the first result position whose origin is ruled but not planned as ruled.
+/// Returns the first result position whose origin the plan does not admit.
 ///
 /// `SQLite` reports a column's origin through views and subqueries down to
 /// its base table, as `table` in `main` and `schema.table` elsewhere. A
-/// table name holding a `.` reads both ways; either reading counts.
-fn unplanned_ruled(columns: &[SqliteColumn], plan: &Plan, config: &PiiConfig) -> Option<usize> {
+/// table name holding a `.` reads both ways; each reading must be admitted.
+fn unplanned_ruled(columns: &[SqliteColumn], planned: &Planned<'_>) -> Option<usize> {
     columns.iter().position(|column| {
         let ColumnOrigin::Table(origin) = column.origin() else {
             return false;
         };
-        let is_ruled = readings(&origin.table).any(|(schema, table)| {
-            let source = SourceRef::new(RelationId::new(CATALOG, schema, table), &*origin.name);
-            rule(config, &source).is_some()
-        });
-        is_ruled
-            && !matches!(
-                plan.columns.get(column.ordinal()).map(|planned| planned.position),
-                Some(Position::Action(..))
+        readings(&origin.table).any(|(schema, table)| {
+            !planned.admits(
+                column.ordinal(),
+                &RelationId::new(CATALOG, schema, table),
+                Some(&origin.name),
             )
+        })
     })
 }
 
@@ -330,21 +299,16 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
     )
 }
 
-/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
-async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Lineage, Stop> {
+/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
+async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
-    let mut catalog = Catalog::new();
-    let mut rounds = 0;
+    let mut analysis = Analysis::new(sql, DatabaseBackend::Sqlite);
+    let mut entries = Vec::new();
     loop {
-        match analyze(sql, Dialect::Sqlite, &catalog) {
-            Ok(lineage) => return Ok(lineage),
-            Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Err(Rejection::CatalogRounds.logged().into());
-            }
-            Err(LineageError::Missing(names)) => fetch(conn, &schemas, names, &mut catalog).await?,
-            Err(error) => return Err(reject_lineage(&error).into()),
+        match analysis.step(entries)? {
+            Step::Missing(names) => entries = fetch(conn, &schemas, names).await?,
+            Step::Done(analyzed) => return Ok(analyzed),
         }
-        rounds += 1;
     }
 }
 
@@ -410,33 +374,33 @@ fn vacant(schemas: &[String], name: &WrittenName) -> Entry {
     })
 }
 
-/// Inserts a catalog entry for each of `names`, read in batched queries.
+/// Builds a catalog entry for each of `names`, read in batched queries.
 async fn fetch(
     conn: &mut sqlx::SqliteConnection,
     schemas: &[String],
     names: Vec<WrittenName>,
-    catalog: &mut Catalog,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
     let tables: Vec<&str> = names
         .iter()
         .filter_map(|name| name.parts.last().map(|part| part.value.as_str()))
         .collect();
     let listed = lookup(conn, &tables).await?;
+    let mut entries = Vec::new();
     let mut found: Vec<(WrittenName, &Listed, RelationKind)> = Vec::new();
     for name in names {
         let Some(relation) = locate(&listed, &name) else {
             let entry = vacant(schemas, &name);
-            catalog.insert(name, entry);
+            entries.push((name, entry));
             continue;
         };
         match relation.kind {
             Some(kind) => found.push((name, relation, kind)),
             // Exists, but cannot be described: never vacant, so `IF EXISTS` cannot skip it.
-            None => catalog.insert(name, Entry::Absent),
+            None => entries.push((name, Entry::Absent)),
         }
     }
     if found.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let pairs: Vec<Value> = found
         .iter()
@@ -461,14 +425,14 @@ async fn fetch(
         let mut relation = Relation::new(id, kind, columns);
         if kind == RelationKind::View {
             let Some(body) = view_body(conn, listed).await? else {
-                catalog.insert(name, Entry::Absent);
+                entries.push((name, Entry::Absent));
                 continue;
             };
             relation = relation.with_view_sql(body);
         }
-        catalog.insert(name, Entry::Resolved(relation));
+        entries.push((name, Entry::Resolved(relation)));
     }
-    Ok(())
+    Ok(entries)
 }
 
 /// Reads the query of a view's `CREATE VIEW` statement; `None` when unreadable.
@@ -508,10 +472,8 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiOperator, Transport};
-    use dbmcp_pii::Entity;
-    use dbmcp_pii::policy::PlannedColumn;
-    use dbmcp_sql_lineage::NamePart;
+    use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PiiOperator, Transport};
+    use dbmcp_policy::NamePart;
     use sqlx::Connection as _;
 
     use super::*;
@@ -750,12 +712,9 @@ mod tests {
         .await;
         let schemas = vec!["main".to_owned(), "temp".to_owned()];
         let names = ["g", "f", "v"].map(|table| WrittenName::query(vec![NamePart::bare(table)]));
-        let mut catalog = Catalog::new();
-        fetch(&mut conn, &schemas, names.to_vec(), &mut catalog)
-            .await
-            .expect("fetch");
-        let resolved = |name: &WrittenName| match catalog.get(name) {
-            Some(Entry::Resolved(relation)) => relation.clone(),
+        let entries = fetch(&mut conn, &schemas, names.to_vec()).await.expect("fetch");
+        let resolved = |name: &WrittenName| match entries.iter().find(|(written, _)| written == name) {
+            Some((_, Entry::Resolved(relation))) => relation.clone(),
             other => panic!("{name:?}: {other:?}"),
         };
         let generated = resolved(&names[0]);
@@ -792,39 +751,32 @@ mod tests {
             .fetch_one(&mut conn)
             .await
             .expect("row");
-        let planned = |position| PlannedColumn { position, name: None };
-        let action = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
         let rules = rules_config();
-        let global = Plan {
-            columns: vec![planned(Position::Global), planned(Position::Global)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &global, &rules), Some(1));
-        let rewritten = Plan {
-            columns: vec![planned(Position::Global), planned(action)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &rewritten, &rules), None);
-        let short = Plan {
-            columns: vec![planned(Position::Global)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &short, &rules), Some(1));
+        // Each plan comes from another statement, so it disagrees with the row's origins.
+        for (planned_sql, unplanned) in [
+            ("SELECT name, name FROM users", Some(1)),
+            ("SELECT name, email FROM users", None),
+            ("SELECT name FROM users", Some(1)),
+        ] {
+            let analyzed = resolve(&mut conn, planned_sql).await.expect("resolve");
+            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
+            assert_eq!(unplanned_ruled(row.columns(), &planned), unplanned, "{planned_sql}");
+        }
     }
 
     #[tokio::test]
     async fn results_that_do_not_fit_the_plan_stop_before_any_row() {
         let mut conn = memory(SETUP).await;
         let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
-        let one = Plan {
-            columns: vec![PlannedColumn {
-                position: Position::Global,
-                name: None,
-            }],
-        };
+        let rules = rules_config();
+        // A one-column plan from another statement.
+        let analyzed = resolve(&mut tx, "SELECT id FROM audit").await.expect("resolve");
+        let one = analyzed.plan(&rules).expect("plan").expect("positional");
         let mut sunk = 0;
         let stop = execute(
             &mut tx,
             "UPDATE audit SET note = 'x' WHERE id = 1 RETURNING id, note",
             Some(&one),
-            &rules_config(),
             &mut |_| sunk += 1,
         )
         .await
@@ -863,7 +815,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ctas_into_a_temp_shadowed_name_is_unsupported() {
+    async fn ctas_into_a_temp_shadowed_name_is_refused() {
         let handler = handler(false, rules_config()).await;
         let pool = handler.connection.pool(None).await.expect("pool");
         sqlx::raw_sql("CREATE TEMP TABLE copy (id INTEGER)")
@@ -876,7 +828,13 @@ mod tests {
         let error = write(&handler, "CREATE TABLE copy AS SELECT id FROM users")
             .await
             .expect_err("guard");
-        assert!(error.message.contains("unsupported"), "{}", error.message);
+        assert!(
+            error
+                .message
+                .contains("create target \"temp.copy\" resolves to another relation"),
+            "{}",
+            error.message
+        );
     }
 
     #[tokio::test]

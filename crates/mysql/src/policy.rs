@@ -10,8 +10,8 @@
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing in `information_schema` (`TABLES`, `COLUMNS` with `INVISIBLE`
 //!    columns hidden from `*`, `VIEWS` bodies) for at most
-//!    [`CATALOG_ROUNDS`] rounds,
-//! 3. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//!    [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. refuses a write that reads a view but cannot roll back,
 //! 5. opens a transaction (read-only for reads) and executes it, refusing a
 //!    result that does not fit the plan before any row is kept,
@@ -32,22 +32,19 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
+use dbmcp_policy::{
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName,
+};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
-use dbmcp_sql_lineage::{
-    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, Origin, Relation, RelationId, RelationKind,
-    SourceRef, StatementKind, WrittenName, analyze,
-};
-use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
-use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult};
-use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Either, Executor as _, Row as _, SqlSafeStr as _, SqlStr};
-use sqlx_json::RowExt as _;
+use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult, MySqlRow};
+use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
@@ -173,9 +170,9 @@ enum Stop {
     Sql(#[from] sqlx::Error),
 }
 
-struct Run {
+struct Run<'c> {
     /// The result columns' plan; `None` for `EXPLAIN`, `SHOW`, `DESCRIBE`, detected globally.
-    plan: Option<Plan>,
+    plan: Option<Planned<'c>>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -334,30 +331,21 @@ impl MysqlHandler {
         if access == Access::Write && self.connection.read_only() {
             return Err(SqlError::ReadOnlyViolation.into());
         }
-        let dialect = match self.config.backend {
-            DatabaseBackend::Mariadb => Dialect::Mariadb,
-            _ => Dialect::Mysql,
-        };
+        let backend = self.config.backend;
         let run = self
             .connection
             .with_connection(sql, database, timeout_secs, async |conn| {
-                match run(conn, policy, dialect, sql, access, &mut |row| window.push(row)).await {
+                match run(conn, policy, backend, sql, access, &mut |row| window.push(row)).await {
                     Err(Stop::Sql(error)) => Err(error),
                     other => Ok(other),
                 }
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(plan) = run.plan {
-            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
-        } else {
-            let rows = rows
-                .into_iter()
-                .map(|values| Value::Object(run.names.iter().cloned().zip(values).collect()))
-                .collect();
-            redactor.redact_rows(rows).await?
-        };
+        let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = redactor
+            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
+            .await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -375,34 +363,29 @@ fn values(row: Value) -> Vec<Value> {
 }
 
 /// Plans one statement on `conn`, then executes it inside a transaction.
-async fn run(
+async fn run<'c>(
     conn: &mut sqlx::MySqlConnection,
-    config: &PiiConfig,
-    dialect: Dialect,
+    config: &'c PiiConfig,
+    backend: DatabaseBackend,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
+) -> Result<Run<'c>, Stop> {
     let begin = match access {
         Access::Read => "START TRANSACTION READ ONLY",
         Access::Write => "START TRANSACTION",
     };
-    let (lineage, probe, owners) = resolve(&mut *conn, dialect, sql).await?;
-    let plan = dbmcp_pii::policy::plan(&lineage, dialect, config)?;
-    if !rolls_back(&lineage, &owners) {
+    let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
+    let plan = analyzed.plan(config)?;
+    if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
-    let plan = (!matches!(
-        lineage.statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    ))
-    .then_some(plan);
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some((number, state)) if touches_ruled(&lineage, config) => Stop::Withheld { number, state },
+        Some((number, state)) if analyzed.touches_ruled(config) => Stop::Withheld { number, state },
         _ => Stop::Sql(error),
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let executed = match execute(&mut tx, sql, plan.as_ref(), config, &probe, &owners, sink).await {
+    let executed = match execute(&mut tx, sql, plan.as_ref(), &probe, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -411,7 +394,7 @@ async fn run(
         }
     };
     // A statement that commits implicitly cannot be undone, and moves no rows.
-    if !commits_implicitly(&lineage.statement) && !views_unchanged(&mut tx, &owners, lineage.target.as_ref()).await? {
+    if !commits_implicitly(analyzed.statement()) && !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
@@ -429,13 +412,12 @@ async fn run(
     })
 }
 
-/// Reports whether `lineage`'s write can roll back should a view it reads change.
+/// Reports whether a write to `target` can roll back should a view it reads change.
 ///
 /// The view check runs after the statement: a write reading a view must
 /// still be undoable then. `CREATE TABLE … AS SELECT` commits implicitly,
 /// and only `InnoDB` targets roll back DML; an unknown engine cannot.
-fn rolls_back(lineage: &Lineage, owners: &[Owner]) -> bool {
-    let target = lineage.target.as_ref();
+fn rolls_back(statement: &StatementKind, target: Option<&RelationId>, owners: &[Owner]) -> bool {
     // The views `views_unchanged` checks.
     let reads_view = owners
         .iter()
@@ -443,7 +425,7 @@ fn rolls_back(lineage: &Lineage, owners: &[Owner]) -> bool {
     if !reads_view {
         return true;
     }
-    match lineage.statement {
+    match statement {
         StatementKind::CreateTableAs => false,
         StatementKind::Insert | StatementKind::Update | StatementKind::Delete => target
             .and_then(|target| owners.iter().find(|owner| owner.id == *target))
@@ -504,36 +486,20 @@ async fn views_unchanged(
 async fn execute(
     conn: &mut sqlx::MySqlConnection,
     sql: &str,
-    plan: Option<&Plan>,
-    config: &PiiConfig,
+    planned: Option<&Planned<'_>>,
     probe: &Probe,
     owners: &[Owner],
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
-    let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
-    let mut stream = conn.fetch_many(query);
-    let mut names = None;
-    let mut results = Vec::new();
-    while let Some(item) = stream.try_next().await? {
-        match item {
-            Either::Left(result) => results.push(result),
-            Either::Right(row) => {
-                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
-                if names.is_none()
-                    && let Some(plan) = plan
-                {
-                    check_origins(row.columns(), plan, config, probe, owners)?;
-                    check_columns(plan, &row_names)?;
-                }
-                names.get_or_insert(row_names);
-                sink(Value::Array(values));
-            }
+    let first = |row: &MySqlRow, names: &[String]| {
+        if let Some(planned) = planned {
+            check_origins(row.columns(), planned, probe, owners)?;
+            check_columns(planned.plan(), names)?;
         }
-    }
-    Ok(Executed {
-        names: names.unwrap_or_default(),
-        results,
-    })
+        Ok::<_, Stop>(())
+    };
+    let (names, results) = MysqlConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed { names, results })
 }
 
 /// Refuses a result column whose origin is ruled but not planned as ruled.
@@ -543,13 +509,7 @@ async fn execute(
 /// reports the physical column: `MySQL` names the base table with the
 /// derived column's alias, `MariaDB` the derived table's alias (without a
 /// schema once materialized). Those, and expressions, rest on the plan.
-fn check_origins(
-    columns: &[MySqlColumn],
-    plan: &Plan,
-    config: &PiiConfig,
-    probe: &Probe,
-    owners: &[Owner],
-) -> Result<(), Stop> {
+fn check_origins(columns: &[MySqlColumn], planned: &Planned<'_>, probe: &Probe, owners: &[Owner]) -> Result<(), Stop> {
     for column in columns {
         let position = column.ordinal();
         let ColumnOrigin::Table(origin) = column.origin() else {
@@ -572,45 +532,35 @@ fn check_origins(
         }) else {
             continue;
         };
-        let ruled = rule(config, &SourceRef::new(owner.id.clone(), name)).is_some();
-        let planned = matches!(
-            plan.columns.get(position).map(|planned| planned.position),
-            Some(Position::Action(..))
-        );
-        if ruled && !planned {
+        if !planned.admits(position, &owner.id, Some(name)) {
             return Err(Stop::Unplanned(position));
         }
     }
     Ok(())
 }
 
-/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
+/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the session probe and the relations it described.
 async fn resolve(
     conn: &mut sqlx::MySqlConnection,
-    dialect: Dialect,
+    backend: DatabaseBackend,
     sql: &str,
-) -> Result<(Lineage, Probe, Vec<Owner>), Stop> {
+) -> Result<(Analyzed, Probe, Vec<Owner>), Stop> {
     let (database, lower_case, sql_mode, charset): (Option<String>, i64, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe { database, lower_case };
-    let mut catalog = Catalog::new();
+    let mut analysis = Analysis::new(sql, backend);
     if let Some(reason) = lexical_mismatch(&sql_mode, &charset, sql) {
-        catalog.set_lexical(Lexical::Mismatch(reason));
+        analysis.mismatch(reason);
     }
     let mut owners = Vec::new();
-    let mut rounds = 0;
+    let mut entries = Vec::new();
     loop {
-        match analyze(sql, dialect, &catalog) {
-            Ok(lineage) => return Ok((lineage, probe, owners)),
-            Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Err(Rejection::CatalogRounds.logged().into());
-            }
-            Err(LineageError::Missing(names)) => fetch(conn, &probe, names, &mut catalog, &mut owners).await?,
-            Err(error) => return Err(reject_lineage(&error).into()),
+        match analysis.step(entries)? {
+            Step::Missing(names) => entries = fetch(conn, &probe, names, &mut owners).await?,
+            Step::Done(analyzed) => return Ok((analyzed, probe, owners)),
         }
-        rounds += 1;
     }
 }
 
@@ -645,26 +595,26 @@ fn lexical_mismatch(sql_mode: &str, charset: &str, sql: &str) -> Option<String> 
         .then(|| "user or system variable".into())
 }
 
-/// Inserts a catalog entry for each of `names`, read in batched queries.
+/// Builds a catalog entry for each of `names`, read in batched queries.
 async fn fetch(
     conn: &mut sqlx::MySqlConnection,
     probe: &Probe,
     names: Vec<WrittenName>,
-    catalog: &mut Catalog,
     owners: &mut Vec<Owner>,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
+    let mut entries = Vec::new();
     let lookups: Vec<(WrittenName, Lookup)> = names
         .into_iter()
         .filter_map(|name| {
             if let Some(lookup) = Lookup::new(&name, probe.database.as_deref()) {
                 return Some((name, lookup));
             }
-            catalog.insert(name, Entry::Absent);
+            entries.push((name, Entry::Absent));
             None
         })
         .collect();
     if lookups.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let mut branches = Vec::new();
     let mut binds = Vec::new();
@@ -734,9 +684,10 @@ async fn fetch(
                 engine: found.engine.clone(),
             });
         }
-        catalog.insert(name, entry);
+        entries.push((name, entry));
     }
-    vacant(conn, probe, unresolved, catalog).await
+    entries.extend(vacant(conn, probe, unresolved).await?);
+    Ok(entries)
 }
 
 /// Builds the catalog entry of one relation found in `information_schema`.
@@ -773,7 +724,7 @@ fn entry(schema: &str, name: &str, found: &Found) -> Entry {
     }
 }
 
-/// Inserts the entries of names nothing resolves to.
+/// Builds the entries of names nothing resolves to.
 ///
 /// A relation created under a name in the query lands in its schema when
 /// that schema exists; names in view bodies are absent.
@@ -781,14 +732,11 @@ async fn vacant(
     conn: &mut sqlx::MySqlConnection,
     probe: &Probe,
     names: Vec<(WrittenName, Lookup)>,
-    catalog: &mut Catalog,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
     let (query, view): (Vec<_>, Vec<_>) = names.into_iter().partition(|(name, _)| name.context == Origin::Query);
-    for (name, _) in view {
-        catalog.insert(name, Entry::Absent);
-    }
+    let mut entries: Vec<_> = view.into_iter().map(|(name, _)| (name, Entry::Absent)).collect();
     if query.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let filter = vec![SCHEMAS_ONE; query.len()].join(" OR ");
     let mut schemas = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!("{SCHEMAS_SQL}{filter}")));
@@ -801,9 +749,9 @@ async fn vacant(
         let entry = schema.map_or(Entry::Absent, |schema| {
             Entry::Vacant(RelationId::new(CATALOG, schema, probe.created(&lookup.name)))
         });
-        catalog.insert(name, entry);
+        entries.push((name, entry));
     }
-    Ok(())
+    Ok(entries)
 }
 
 /// Returns the error number and `SQLSTATE` of an error that may echo a value.
@@ -820,9 +768,8 @@ fn withheld(error: &sqlx::Error) -> Option<(u16, String)> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
-    use dbmcp_sql_lineage::NamePart;
+    use dbmcp_config::{ColumnRule, PiiOperator};
+    use dbmcp_policy::NamePart;
 
     use super::*;
 
@@ -994,16 +941,9 @@ mod tests {
         }
     }
 
-    fn write(statement: StatementKind) -> Lineage {
-        Lineage {
-            columns: Vec::new(),
-            references: BTreeSet::new(),
-            relations: BTreeSet::new(),
-            functions: BTreeSet::new(),
-            target: Some(RelationId::new(CATALOG, "app", "target")),
-            writes: Vec::new(),
-            statement,
-        }
+    /// Reports whether `statement` writing `app.target` rolls back.
+    fn write_rolls_back(statement: &StatementKind, owners: &[Owner]) -> bool {
+        rolls_back(statement, Some(&RelationId::new(CATALOG, "app", "target")), owners)
     }
 
     #[test]
@@ -1015,21 +955,94 @@ mod tests {
         let myisam = [view(), target(Some("MyISAM"))];
         let unknown = [view(), target(None)];
         let no_view = [table(), target(Some("MyISAM"))];
-        assert!(!rolls_back(&write(StatementKind::CreateTableAs), &innodb));
-        assert!(rolls_back(&write(StatementKind::CreateTableAs), &no_view));
-        assert!(rolls_back(&write(StatementKind::Insert), &innodb));
-        assert!(!rolls_back(&write(StatementKind::Insert), &myisam));
-        assert!(!rolls_back(&write(StatementKind::Update), &unknown));
-        assert!(!rolls_back(&write(StatementKind::Delete), &[view()]));
-        assert!(rolls_back(&write(StatementKind::Insert), &no_view));
-        assert!(rolls_back(&write(StatementKind::Query), &[view()]));
-        assert!(rolls_back(&write(StatementKind::CreateView), &[view()]));
+        assert!(!write_rolls_back(&StatementKind::CreateTableAs, &innodb));
+        assert!(write_rolls_back(&StatementKind::CreateTableAs, &no_view));
+        assert!(write_rolls_back(&StatementKind::Insert, &innodb));
+        assert!(!write_rolls_back(&StatementKind::Insert, &myisam));
+        assert!(!write_rolls_back(&StatementKind::Update, &unknown));
+        assert!(!write_rolls_back(&StatementKind::Delete, &[view()]));
+        assert!(write_rolls_back(&StatementKind::Insert, &no_view));
+        assert!(write_rolls_back(&StatementKind::Query, &[view()]));
+        assert!(write_rolls_back(&StatementKind::CreateView, &[view()]));
     }
 
     #[test]
     fn a_replaced_view_is_not_a_view_it_reads() {
-        let mut lineage = write(StatementKind::CreateTableAs);
-        lineage.target = Some(RelationId::new(CATALOG, "app", "source"));
-        assert!(rolls_back(&lineage, &[owner("source", None, Some("select 1"))]));
+        let target = RelationId::new(CATALOG, "app", "source");
+        let owners = [owner("source", None, Some("select 1"))];
+        assert!(rolls_back(&StatementKind::CreateTableAs, Some(&target), &owners));
+    }
+
+    /// Rules `def.app.users.email` of the functional seed.
+    fn email_ruled() -> PiiConfig {
+        PiiConfig {
+            rules: vec![ColumnRule {
+                name: "email".into(),
+                item: 0,
+                key: ["def", "app", "users", "email"].map(String::from),
+                entity: "EMAIL_ADDRESS",
+                operator: PiiOperator::Hash,
+            }],
+            ..PiiConfig::default()
+        }
+    }
+
+    /// Connects to the seeded `app` database that `./tests/run.sh` starts.
+    async fn seeded() -> sqlx::MySqlConnection {
+        let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port = std::env::var("DBMCP_DB_PORT")
+            .ok()
+            .and_then(|port| port.parse().ok())
+            .unwrap_or(3306);
+        let options = sqlx::mysql::MySqlConnectOptions::new()
+            .host(&host)
+            .port(port)
+            .username("root")
+            .database("app");
+        <sqlx::MySqlConnection as sqlx::Connection>::connect_with(&options)
+            .await
+            .expect("connect to the seeded database")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+        let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+            Ok("mariadb") => DatabaseBackend::Mariadb,
+            _ => DatabaseBackend::Mysql,
+        };
+        let mut conn = seeded().await;
+        let rules = email_ruled();
+        // Each plan comes from another statement, so it disagrees with the row's origins.
+        for (planned_sql, unplanned) in [
+            ("SELECT name, name FROM users", Some(1)),
+            ("SELECT name, email FROM users", None),
+            ("SELECT name FROM users", Some(1)),
+        ] {
+            let (analyzed, probe, owners) = resolve(&mut conn, backend, planned_sql).await.expect("resolve");
+            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
+            let mut sunk = 0;
+            let executed = execute(
+                &mut conn,
+                "SELECT name, email FROM users",
+                Some(&planned),
+                &probe,
+                &owners,
+                &mut |_| sunk += 1,
+            )
+            .await;
+            match unplanned {
+                Some(position) => {
+                    assert!(
+                        matches!(executed, Err(Stop::Unplanned(at)) if at == position),
+                        "{planned_sql}"
+                    );
+                    assert_eq!(sunk, 0, "{planned_sql}");
+                }
+                None => {
+                    executed.expect("admitted");
+                }
+            }
+        }
     }
 }

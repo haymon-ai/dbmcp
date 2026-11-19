@@ -11,8 +11,8 @@
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing with `to_regclass` (so the session's `search_path` decides, as
 //!    it will when the statement runs), columns from `pg_attribute`, and view
-//!    bodies from `pg_get_viewdef`, for at most [`CATALOG_ROUNDS`] rounds,
-//! 3. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//!    bodies from `pg_get_viewdef`, for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
 //! 5. refuses the result when a view body it planned from has changed,
@@ -28,21 +28,18 @@
 use std::collections::HashMap;
 use std::mem;
 
-use dbmcp_config::PiiConfig;
+use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
+use dbmcp_policy::{
+    Analysis, Analyzed, CatalogColumn, Entry, NamePart, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName,
+};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
-use dbmcp_sql_lineage::{
-    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
-    RelationKind, SourceRef, StatementKind, WrittenName, analyze,
-};
-use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
-use sqlx::postgres::{PgColumn, PgQueryResult};
-use sqlx::{AssertSqlSafe, Column as _, Either, Executor as _, Row as _, SqlSafeStr as _, SqlStr};
-use sqlx_json::RowExt as _;
+use sqlx::postgres::{PgColumn, PgQueryResult, PgRow};
+use sqlx::{Column as _, Row as _, SqlStr};
 
 use crate::PostgresHandler;
 use crate::connection::{PostgresConnection, quote_ident};
@@ -148,10 +145,10 @@ enum Stop {
     Sql(#[from] sqlx::Error),
 }
 
-struct Run {
+struct Run<'c> {
     /// The plan when the result columns are the planned ones; `EXPLAIN`,
     /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
-    plan: Option<Plan>,
+    plan: Option<Planned<'c>>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -279,16 +276,10 @@ impl PostgresHandler {
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(plan) = run.plan {
-            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
-        } else {
-            let rows = rows
-                .into_iter()
-                .map(|values| Value::Object(run.names.iter().cloned().zip(values).collect()))
-                .collect();
-            redactor.redact_rows(rows).await?
-        };
+        let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = redactor
+            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
+            .await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -306,45 +297,40 @@ fn values(row: Value) -> Vec<Value> {
 }
 
 /// Plans and executes one statement inside a transaction on `conn`.
-async fn run(
+async fn run<'c>(
     conn: &mut sqlx::PgConnection,
-    config: &PiiConfig,
+    config: &'c PiiConfig,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
+) -> Result<Run<'c>, Stop> {
     let begin = match access {
         Access::Read => "START TRANSACTION READ ONLY",
         Access::Write => "BEGIN",
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let (lineage, owners) = resolve(&mut tx, sql).await?;
+    let (analyzed, owners) = resolve(&mut tx, sql).await?;
     // A bare create target resolves through the whole `search_path`, but the
     // relation is created in the creation schema: a name taken further along
     // would check the rules of the wrong target.
     if let (
         StatementKind::CreateTableAs | StatementKind::CreateMaterializedView | StatementKind::CreateView,
         Some(target),
-    ) = (&lineage.statement, &lineage.target)
+    ) = (analyzed.statement(), analyzed.target())
         && owners.values().any(|owner| owner.shadowed && owner.id == *target)
     {
-        return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
+        return Err(Rejection::shadowed(target).into());
     }
-    let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Postgres, config)?;
-    if lineage.statement == StatementKind::CreateIndex {
+    let plan = analyzed.plan(config)?;
+    if *analyzed.statement() == StatementKind::CreateIndex {
         tx.rollback().await?;
-        return autocommit(conn, sql, config, &owners, sink).await;
+        return autocommit(conn, sql, &owners, sink).await;
     }
-    let plan = (!matches!(
-        lineage.statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    ))
-    .then_some(plan);
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
-    let executed = match execute(&mut tx, sql, plan.as_ref(), config, &owners, sink).await {
+    let executed = match execute(&mut tx, sql, plan.as_ref(), &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -352,7 +338,7 @@ async fn run(
             return Err(stop);
         }
     };
-    if !views_unchanged(&mut tx, &owners, lineage.target.as_ref()).await? {
+    if !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
@@ -378,11 +364,10 @@ async fn run(
 async fn autocommit(
     conn: &mut sqlx::PgConnection,
     sql: &str,
-    config: &PiiConfig,
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
-    let executed = execute(conn, sql, None, config, owners, sink)
+) -> Result<Run<'static>, Stop> {
+    let executed = execute(conn, sql, None, owners, sink)
         .await
         .map_err(|stop| match stop {
             Stop::Sql(error) => withheld(&error).map_or(Stop::Sql(error), Stop::Withheld),
@@ -426,35 +411,19 @@ async fn views_unchanged(
 async fn execute(
     conn: &mut sqlx::PgConnection,
     sql: &str,
-    plan: Option<&Plan>,
-    config: &PiiConfig,
+    planned: Option<&Planned<'_>>,
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
-    let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
-    let mut stream = conn.fetch_many(query);
-    let mut names = None;
-    let mut results = Vec::new();
-    while let Some(item) = stream.try_next().await? {
-        match item {
-            Either::Left(result) => results.push(result),
-            Either::Right(row) => {
-                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
-                if names.is_none()
-                    && let Some(plan) = plan
-                {
-                    check_origins(row.columns(), plan, config, owners)?;
-                    check_columns(plan, &row_names)?;
-                }
-                names.get_or_insert(row_names);
-                sink(Value::Array(values));
-            }
+    let first = |row: &PgRow, names: &[String]| {
+        if let Some(planned) = planned {
+            check_origins(row.columns(), planned, owners)?;
+            check_columns(planned.plan(), names)?;
         }
-    }
-    Ok(Executed {
-        names: names.unwrap_or_default(),
-        results,
-    })
+        Ok::<_, Stop>(())
+    };
+    let (names, results) = PostgresConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed { names, results })
 }
 
 /// Refuses a result column whose origin is ruled but not planned as ruled.
@@ -463,7 +432,7 @@ async fn execute(
 /// number, through subqueries and CTEs; a view column reports the view. A
 /// whole-row reference reports attribute zero and is ruled when any column
 /// is. An origin the catalog reads did not describe is refused too.
-fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: &Owners) -> Result<(), Stop> {
+fn check_origins(columns: &[PgColumn], planned: &Planned<'_>, owners: &Owners) -> Result<(), Stop> {
     for column in columns {
         let position = column.ordinal();
         let Some(oid) = column.relation_id() else {
@@ -472,51 +441,41 @@ fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: 
         let Some(owner) = owners.get(&oid.0) else {
             return Err(Stop::Unresolved(position));
         };
-        let ruled = |name: &String| rule(config, &SourceRef::new(owner.id.clone(), name)).is_some();
-        let ruled = match column.relation_attribute_no() {
+        let name = match column.relation_attribute_no() {
             Some(number) => match owner.columns.get(&number) {
-                Some(name) => ruled(name),
+                Some(name) => Some(name.as_str()),
                 None => return Err(Stop::Unresolved(position)),
             },
-            None => owner.columns.values().any(ruled),
+            None => None,
         };
-        let planned = matches!(
-            plan.columns.get(position).map(|planned| planned.position),
-            Some(Position::Action(..))
-        );
-        if ruled && !planned {
+        if !planned.admits(position, &owner.id, name) {
             return Err(Stop::Unplanned(position));
         }
     }
     Ok(())
 }
 
-/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
+/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the relations it described, by OID.
-async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Lineage, Owners), Stop> {
+async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, Owners), Stop> {
     let (database, conforming, first, search_path, user): (String, String, Option<String>, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe {
         database,
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
-    let mut catalog = Catalog::new();
+    let mut analysis = Analysis::new(sql, DatabaseBackend::Postgres);
     if conforming != "on" {
-        catalog.set_lexical(Lexical::Mismatch("standard_conforming_strings is off".into()));
+        analysis.mismatch("standard_conforming_strings is off");
     }
     let mut owners = Owners::new();
-    let mut rounds = 0;
+    let mut entries = Vec::new();
     loop {
-        match analyze(sql, Dialect::Postgres, &catalog) {
-            Ok(lineage) => return Ok((lineage, owners)),
-            Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Err(Rejection::CatalogRounds.logged().into());
-            }
-            Err(LineageError::Missing(names)) => fetch(conn, &probe, names, &mut catalog, &mut owners).await?,
-            Err(error) => return Err(reject_lineage(&error).into()),
+        match analysis.step(entries)? {
+            Step::Missing(names) => entries = fetch(conn, &probe, names, &mut owners).await?,
+            Step::Done(analyzed) => return Ok((analyzed, owners)),
         }
-        rounds += 1;
     }
 }
 
@@ -543,26 +502,26 @@ fn temp_first(search_path: &str, first: &str, user: &str) -> bool {
     true
 }
 
-/// Inserts a catalog entry for each of `names`, read in one batched query.
+/// Builds a catalog entry for each of `names`, read in one batched query.
 async fn fetch(
     conn: &mut sqlx::PgConnection,
     probe: &Probe,
     names: Vec<WrittenName>,
-    catalog: &mut Catalog,
     owners: &mut Owners,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
+    let mut entries = Vec::new();
     let lookups: Vec<(WrittenName, Lookup)> = names
         .into_iter()
         .filter_map(|name| {
             if let Some(lookup) = Lookup::new(&name, &probe.database) {
                 return Some((name, lookup));
             }
-            catalog.insert(name, Entry::Absent);
+            entries.push((name, Entry::Absent));
             None
         })
         .collect();
     if lookups.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let regclasses: Vec<String> = lookups.iter().map(|(_, lookup)| lookup.regclass()).collect();
     let schemas: Vec<Option<String>> = lookups
@@ -589,9 +548,9 @@ async fn fetch(
                 })
                 .shadowed |= shadowed;
         }
-        catalog.insert(name, entry);
+        entries.push((name, entry));
     }
-    Ok(())
+    Ok(entries)
 }
 
 /// Builds the catalog entry of one resolved row.
@@ -678,6 +637,8 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use dbmcp_config::{ColumnRule, PiiOperator};
+
     use super::*;
 
     const DB: &str = "app";
@@ -876,5 +837,73 @@ mod tests {
             entry(&probe(Some("public")), &name, &lookup, &row),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
         );
+    }
+
+    /// Rules `app.public.users.email` of the functional seed.
+    fn email_ruled() -> PiiConfig {
+        PiiConfig {
+            rules: vec![ColumnRule {
+                name: "email".into(),
+                item: 0,
+                key: ["app", "public", "users", "email"].map(String::from),
+                entity: "EMAIL_ADDRESS",
+                operator: PiiOperator::Hash,
+            }],
+            ..PiiConfig::default()
+        }
+    }
+
+    /// Connects to the seeded `app` database that `./tests/run.sh` starts.
+    async fn seeded() -> sqlx::PgConnection {
+        let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port = std::env::var("DBMCP_DB_PORT")
+            .ok()
+            .and_then(|port| port.parse().ok())
+            .unwrap_or(5432);
+        let options = sqlx::postgres::PgConnectOptions::new()
+            .host(&host)
+            .port(port)
+            .username("postgres")
+            .database("app");
+        <sqlx::PgConnection as sqlx::Connection>::connect_with(&options)
+            .await
+            .expect("connect to the seeded database")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+        let mut conn = seeded().await;
+        let rules = email_ruled();
+        // Each plan comes from another statement, so it disagrees with the row's origins.
+        for (planned_sql, unplanned) in [
+            ("SELECT name, name FROM users", Some(1)),
+            ("SELECT name, email FROM users", None),
+            ("SELECT name FROM users", Some(1)),
+        ] {
+            let (analyzed, owners) = resolve(&mut conn, planned_sql).await.expect("resolve");
+            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
+            let mut sunk = 0;
+            let executed = execute(
+                &mut conn,
+                "SELECT name, email FROM users",
+                Some(&planned),
+                &owners,
+                &mut |_| sunk += 1,
+            )
+            .await;
+            match unplanned {
+                Some(position) => {
+                    assert!(
+                        matches!(executed, Err(Stop::Unplanned(at)) if at == position),
+                        "{planned_sql}"
+                    );
+                    assert_eq!(sunk, 0, "{planned_sql}");
+                }
+                None => {
+                    executed.expect("admitted");
+                }
+            }
+        }
     }
 }
