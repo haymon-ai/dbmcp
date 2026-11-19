@@ -10,7 +10,7 @@
 
 mod probe;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
@@ -1881,19 +1881,19 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 9 seeded base tables (users, posts, tags,
+    // SHOW TABLES in `app` returns 11 seeded base tables (users, posts, tags,
     // post_tags, temporal, binary_samples, posts_audit, events_by_year,
-    // numeric_samples) plus
-    // 9 seeded views (active_users, active_users_v2, active_orders,
+    // numeric_samples, audit, orders) plus
+    // 10 seeded views (active_users, active_users_v2, active_orders,
     // active_users_with_check_cascaded, active_users_with_check_local,
     // archived_users, archived_users_invoker, user_metrics_cte,
-    // published_posts); MySQL's SHOW TABLES lists both. Must not be paginated
-    // even with page_size=2.
+    // published_posts, users_with_ssn); MySQL's SHOW TABLES lists both. Must
+    // not be paginated even with page_size=2.
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        18,
-        "SHOW TABLES must not be paginated: expected all 18 seeded tables+views, got {}",
+        21,
+        "SHOW TABLES must not be paginated: expected all 21 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -5100,4 +5100,352 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
         .expect("a merged first page stops before the failing row");
     assert_eq!(response.rows.len(), 2);
     assert!(response.next_cursor.is_some());
+}
+
+// Column rules (`pii.rules`)
+
+fn column_rule(table: &str, column: &str, entity: &'static str, operator: PiiOperator) -> ColumnRule {
+    ColumnRule {
+        name: format!("{table}_{column}"),
+        item: 0,
+        key: ["def", "app", table, column].map(String::from),
+        entity,
+        operator,
+    }
+}
+
+fn standard_rules() -> Vec<ColumnRule> {
+    vec![
+        column_rule("users", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("orders", "customer_email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("users", "phone", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("users", "ssn", "US_SSN", PiiOperator::Redact),
+        column_rule("users", "credit_card", "CREDIT_CARD", PiiOperator::Replace),
+    ]
+}
+
+/// A handler connected as `user` (default when `None`) under the standard rules.
+fn ruled_handler(user: Option<&str>, page_size: u16) -> MysqlHandler {
+    let base = base_db_config(false);
+    let database = match user {
+        Some(user) => DatabaseConfig {
+            page_size,
+            user: user.into(),
+            password: None,
+            ..base
+        },
+        None => DatabaseConfig { page_size, ..base },
+    };
+    MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
+        database,
+        http: None,
+        pii: Some(PiiConfig {
+            key: Some(PII_TEST_KEY.into()),
+            rules: standard_rules(),
+            ..PiiConfig::default()
+        }),
+        ssh: None,
+    })
+    .expect("handler builds")
+}
+
+async fn ruled_read(handler: &MysqlHandler, query: &str) -> Result<Vec<Value>, rmcp::model::ErrorData> {
+    handler
+        .read_query(query.into(), None, None, None)
+        .await
+        .map(|response| response.rows)
+}
+
+async fn ruled_refusal(handler: &MysqlHandler, query: &str) -> String {
+    ruled_read(handler, query).await.expect_err(query).message.into_owned()
+}
+
+async fn ruled_write_refusal(handler: &MysqlHandler, query: &str) -> String {
+    handler
+        .write_query(query.into(), None)
+        .await
+        .expect_err(query)
+        .message
+        .into_owned()
+}
+
+fn is_email_token(value: &Value) -> bool {
+    value.as_str().is_some_and(|v| v.starts_with("<EMAIL_ADDRESS_"))
+}
+
+#[tokio::test]
+async fn column_rules_rewrite_each_operator_whole() {
+    let handler = ruled_handler(None, 100);
+    let rows = ruled_read(
+        &handler,
+        "SELECT name, email, phone, ssn, credit_card FROM users WHERE id = 1",
+    )
+    .await
+    .expect("read");
+    let row = &rows[0];
+    assert_eq!(row["name"], "Alice Johnson");
+    assert!(is_email_token(&row["email"]), "{row}");
+    assert_ne!(row["phone"], "+14155552671", "{row}");
+    assert_ne!(row["ssn"], "078-05-1123", "{row}");
+    assert_eq!(row["credit_card"], "<CREDIT_CARD>", "{row}");
+}
+
+#[tokio::test]
+async fn column_rules_apply_to_star_and_keep_nulls() {
+    let handler = ruled_handler(None, 100);
+    let rows = ruled_read(&handler, "SELECT * FROM users WHERE id = 2")
+        .await
+        .expect("read");
+    assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
+    assert_eq!(rows[0]["ssn"], Value::Null);
+}
+
+#[tokio::test]
+async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
+    let handler = ruled_handler(None, 100);
+    let users = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("users");
+    let orders = ruled_read(&handler, "SELECT customer_email FROM orders WHERE user_id = 1")
+        .await
+        .expect("orders");
+    assert!(is_email_token(&users[0]["email"]));
+    assert_eq!(users[0]["email"], orders[0]["customer_email"]);
+}
+
+#[tokio::test]
+async fn column_rules_follow_views_and_refuse_ruled_view_bodies() {
+    let handler = ruled_handler(None, 100);
+    let rows = ruled_read(&handler, "SELECT email FROM active_users WHERE id = 1")
+        .await
+        .expect("view");
+    assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
+    let refusal = ruled_refusal(&handler, "SELECT id FROM users_with_ssn").await;
+    assert!(refusal.contains("users_with_ssn"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_views_whose_body_the_user_cannot_read() {
+    let handler = ruled_handler(Some("policy_viewer"), 100);
+    ruled_read(&handler, "SELECT id FROM audit").await.expect("table read");
+    let refusal = ruled_refusal(&handler, "SELECT id FROM active_users").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_ruled_columns_outside_the_output() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "SELECT id FROM users WHERE email = 'alice@example.com'",
+        "SELECT u.id FROM users u JOIN orders o ON o.customer_email = u.email",
+        "SELECT count(*) FROM users GROUP BY email",
+        "SELECT id FROM users ORDER BY ssn",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("(ruled) used in"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_conflicting_rules_in_one_column() {
+    let handler = ruled_handler(None, 100);
+    let refusal = ruled_refusal(&handler, "SELECT CONCAT(email, phone) AS contact FROM users").await;
+    assert!(refusal.contains("conflicting"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_unknown_functions_and_denied_relations() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "SELECT no_such_function(name) FROM users",
+        "SELECT * FROM performance_schema.threads",
+        "SELECT user FROM mysql.user",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("column policy"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_explaining_ruled_relations() {
+    let handler = ruled_handler(None, 100);
+    // MariaDB has no `EXPLAIN ANALYZE`.
+    let modes: &[bool] = match backend() {
+        DatabaseBackend::Mariadb => &[false],
+        _ => &[false, true],
+    };
+    for &analyze in modes {
+        handler
+            .explain_query(None, "SELECT note FROM audit".into(), analyze)
+            .await
+            .expect("unruled explain");
+    }
+    for analyze in [false, true] {
+        let error = handler
+            .explain_query(None, "SELECT email FROM users".into(), analyze)
+            .await
+            .expect_err("ruled explain");
+        assert!(error.message.contains("EXPLAIN"), "{}", error.message);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_laundering_writes() {
+    let handler = ruled_handler(None, 100);
+    let refusal = ruled_write_refusal(&handler, "INSERT INTO audit (note) SELECT email FROM users").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+    let rows = ruled_read(&handler, "SELECT count(*) AS n FROM audit")
+        .await
+        .expect("count");
+    assert_eq!(rows[0]["n"], 2);
+}
+
+#[tokio::test]
+async fn column_rules_redact_returning_rows() {
+    let handler = ruled_handler(None, 100);
+    let insert = "INSERT INTO orders (user_id, customer_email) VALUES (90, 'zed@example.com') \
+                  RETURNING id, customer_email";
+    let delete = "DELETE FROM orders WHERE user_id = 90 RETURNING customer_email";
+    if backend() == DatabaseBackend::Mariadb {
+        for query in [insert, delete] {
+            let response = handler.write_query(query.into(), None).await.expect(query);
+            assert_eq!(response.rows.len(), 1, "{query}");
+            assert!(
+                is_email_token(&response.rows[0]["customer_email"]),
+                "{query}: {}",
+                response.rows[0]
+            );
+        }
+    } else {
+        // MySQL has no `RETURNING`: a syntax error that runs nothing.
+        let refusal = ruled_write_refusal(&handler, insert).await;
+        assert!(!refusal.contains("alice@example.com"), "{refusal}");
+        let rows = ruled_read(&handler, "SELECT count(*) AS n FROM orders WHERE user_id = 90")
+            .await
+            .expect("count");
+        assert_eq!(rows[0]["n"], 0);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_keep_positions_across_pages() {
+    let handler = ruled_handler(None, 2);
+    let query = "SELECT id, email FROM users ORDER BY id";
+    let first = handler
+        .read_query(query.into(), None, None, None)
+        .await
+        .expect("first page");
+    assert_eq!(first.rows.len(), 2);
+    assert!(first.rows.iter().all(|row| is_email_token(&row["email"])));
+    let second = handler
+        .read_query(query.into(), None, first.next_cursor, None)
+        .await
+        .expect("second page");
+    assert!(!second.rows.is_empty());
+    assert!(second.rows.iter().all(|row| is_email_token(&row["email"])));
+    assert_ne!(first.rows[0]["id"], second.rows[0]["id"]);
+}
+
+#[tokio::test]
+async fn column_rules_withhold_value_echoing_errors() {
+    let handler = ruled_handler(None, 100);
+    // 1366 quotes the rejected value.
+    let refusal = ruled_write_refusal(&handler, "UPDATE orders SET user_id = 'leak-me' WHERE id = 1").await;
+    assert!(refusal.contains("withheld"), "{refusal}");
+    assert!(!refusal.contains("leak-me"), "{refusal}");
+    if backend() == DatabaseBackend::Mysql {
+        let refusal = ruled_refusal(&handler, "SELECT JSON_EXTRACT('{}', email) AS x FROM users").await;
+        assert!(refusal.contains("withheld"), "{refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_replace_and_drop_views() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "CREATE VIEW policy_audit_view AS SELECT id FROM audit",
+        "CREATE OR REPLACE VIEW policy_audit_view AS SELECT id, note FROM audit",
+        "DROP VIEW policy_audit_view",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_multi_statement_writes_and_executable_comments() {
+    let handler = ruled_handler(None, 100);
+    for (query, expected) in [
+        (
+            "UPDATE audit SET note = 'a' WHERE id = 1; UPDATE audit SET note = 'ok' WHERE id = 1",
+            "single statements",
+        ),
+        (
+            "UPDATE audit SET note = 'x' /*! , user_id = 3 */ WHERE id = 1",
+            "executable comments",
+        ),
+        (
+            "UPDATE audit SET note = 'x' /*M! , user_id = 3 */ WHERE id = 1",
+            "executable comments",
+        ),
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(refusal.contains(expected), "{query}: {refusal}");
+    }
+    let rows = ruled_read(&handler, "SELECT note, user_id FROM audit WHERE id = 1")
+        .await
+        .expect("audit");
+    assert_eq!(rows[0]["note"], "ok");
+    assert_eq!(rows[0]["user_id"], 1);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_variables() {
+    let handler = ruled_handler(None, 100);
+    let refusal = ruled_write_refusal(&handler, "UPDATE audit SET note = @x WHERE id = 2").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+    let refusal = ruled_refusal(&handler, "SELECT @@version AS v").await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_follow_renamed_columns() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
+        "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)",
+        "SELECT d.a, d.b FROM (SELECT DISTINCT email AS a, name AS b FROM users WHERE id = 1) AS d",
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert!(is_email_token(&rows[0]["a"]), "{query}: {}", rows[0]);
+        assert_eq!(rows[0]["b"], "Alice Johnson", "{query}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_writes_reading_views_that_cannot_roll_back() {
+    let handler = ruled_handler(None, 100);
+    let refusal = ruled_write_refusal(
+        &handler,
+        "CREATE TABLE policy_ctas AS SELECT id, name FROM active_users",
+    )
+    .await;
+    assert!(refusal.contains("roll back"), "{refusal}");
+    for query in [
+        "CREATE TABLE policy_copy (id INT, name VARCHAR(100)) ENGINE=InnoDB",
+        "INSERT INTO policy_copy (id, name) SELECT id, name FROM active_users",
+        "CREATE TABLE policy_myisam (id INT, name VARCHAR(100)) ENGINE=MyISAM",
+        "INSERT INTO policy_myisam (id, name) SELECT id, name FROM users",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
+    let refusal = ruled_write_refusal(
+        &handler,
+        "INSERT INTO policy_myisam (id, name) SELECT id, name FROM active_users",
+    )
+    .await;
+    assert!(refusal.contains("roll back"), "{refusal}");
+    for query in ["DROP TABLE policy_copy", "DROP TABLE policy_myisam"] {
+        handler.write_query(query.into(), None).await.expect(query);
+    }
 }

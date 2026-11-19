@@ -1765,24 +1765,19 @@ mod tests {
     }
 
     #[test]
-    fn column_rules_are_not_yet_supported_on_mysql() {
-        for (backend, name, catalog) in [("mysql", "app", "def"), ("mariadb", "app", "def")] {
+    fn mysql_and_mariadb_column_rules_load() {
+        for backend in ["mysql", "mariadb"] {
             let fixture = Fixture::new()
                 .env("DBMCP_DB_BACKEND", backend)
-                .env("DBMCP_DB_NAME", name)
+                .env("DBMCP_DB_NAME", "app")
+                .env("DBMCP_PII_KEY", PII_KEY_32)
                 .config(
                     "dbmcp.yaml",
-                    &format!(
-                        "pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{catalog}.s.t.c]\n      entity: URL\n"
-                    ),
+                    "pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [def.app.users.email]\n      entity: EMAIL_ADDRESS\n",
                 );
-            let error = fixture.load().expect_err("gate");
-            let messages: Vec<String> = diagnostics(&error).iter().map(ToString::to_string).collect();
-            let gate = format!("pii.rules: column rules are not yet supported on {backend}");
-            assert!(
-                messages.len() == 1 && messages[0].starts_with(&gate),
-                "{backend}: {messages:?}"
-            );
+            let pii = fixture.ok().config.pii.expect("pii enabled");
+            assert_eq!(pii.rules.len(), 1, "{backend}");
+            assert_eq!(pii.rules[0].key, ["def", "app", "users", "email"].map(String::from));
         }
     }
 
@@ -1827,7 +1822,7 @@ mod tests {
                 "dbmcp.yaml",
                 &format!("pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{keys}]\n      entity: URL\n"),
             );
-            // SQLite and PostgreSQL enforce rules, so a fitting catalog loads.
+            // Every backend enforces rules, so a fitting catalog loads.
             let Err(error) = fixture.load() else {
                 return Vec::new();
             };
@@ -1857,7 +1852,7 @@ mod tests {
     }
 
     #[test]
-    fn trimmed_magento_rules_fail_only_on_the_gate() {
+    fn trimmed_magento_rules_load() {
         let fixture = Fixture::new().config(
             "dbmcp.yaml",
             "pii:
@@ -1883,9 +1878,6 @@ mod tests {
 ",
         );
         assert_eq!(pii_section(&fixture).rules.len(), 5);
-        let error = fixture.load().expect_err("gate");
-        let messages: Vec<String> = diagnostics(&error).iter().map(ToString::to_string).collect();
-        assert_eq!(messages.len(), 1, "{messages:?}");
-        assert!(messages[0].starts_with("pii.rules: column rules are not yet supported on mysql"));
+        assert_eq!(fixture.ok().config.pii.expect("pii enabled").rules.len(), 5);
     }
 }

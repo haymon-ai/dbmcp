@@ -382,6 +382,36 @@ CREATE PROCEDURE `app`.`no_arg_proc`()
     SELECT 'first line
 second line with quote ''here''' AS note;
 
+-- Column-rule fixtures: `audit` is unruled; `users_with_ssn` reads ruled `ssn` in its body.
+CREATE TABLE `app`.`audit` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT,
+    `action` VARCHAR(40),
+    `note` TEXT
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`audit` (`user_id`, `action`, `note`) VALUES
+    (1, 'login', 'ok'),
+    (2, 'logout', NULL);
+
+CREATE TABLE `app`.`orders` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `customer_email` VARCHAR(255)
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`orders` (`user_id`, `customer_email`) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE VIEW `app`.`users_with_ssn` AS
+    SELECT `id`, `name` FROM `app`.`users` WHERE `ssn` IS NOT NULL;
+
+-- `policy_viewer` may read `app` but not view bodies (no `SHOW VIEW`), so
+-- `VIEW_DEFINITION` is empty for it.
+CREATE USER IF NOT EXISTS 'policy_viewer'@'%';
+GRANT SELECT ON `app`.* TO 'policy_viewer'@'%';
+
 -- analytics database
 
 DROP DATABASE IF EXISTS `analytics`;
