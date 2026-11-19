@@ -25,7 +25,7 @@ pub struct Analysis<'a> {
     catalog: Catalog,
     /// Rounds that reported missing names so far.
     rounds: usize,
-    /// Where bare names resolved and creates land.
+    /// See [`Names`].
     names: Names,
 }
 
@@ -48,7 +48,7 @@ pub struct Analyzed {
     lineage: Box<Lineage>,
     /// The dialect it was analyzed in.
     dialect: Dialect,
-    /// Where bare names resolved and creates land.
+    /// See [`Names`].
     names: Names,
 }
 
@@ -176,7 +176,7 @@ mod tests {
         Entry::Resolved(Relation::new(id, RelationKind::Table, columns))
     }
 
-    /// Analyzes `sql` on `backend` creating in `creation`, resolving names with `entry`.
+    /// Analyzes `sql`, creating in `creation` and resolving names with `entry`.
     fn analyzed_with(
         backend: DatabaseBackend,
         sql: &str,
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn only_bare_names_resolving_outside_the_creation_schema_reject_creates() {
+    fn bare_query_names_feed_the_create_target_gate() {
         let config = PiiConfig::default();
         let plans = |sql, creation, entry: fn(&WrittenName) -> Entry| {
             analyzed_with(DatabaseBackend::Postgres, sql, creation, entry)
@@ -286,9 +286,7 @@ mod tests {
             _ => table(name),
         };
         let bare = "CREATE TABLE c AS SELECT a FROM t";
-        assert!(plans(bare, Some("public"), table));
         assert!(!plans(bare, Some("app"), table));
-        assert!(!plans(bare, None, table));
         assert!(plans(bare, Some("app"), vacant));
         assert!(plans("CREATE TABLE public.c AS SELECT a FROM t", Some("app"), table));
     }

@@ -83,7 +83,7 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
     }
 }
 
-/// Plans `lineage` in `dialect` with no bare names.
+/// Plans `lineage` without bare names.
 fn plan_on(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
     plan(lineage, dialect, config, &Names::default())
 }
@@ -91,6 +91,11 @@ fn plan_on(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Pl
 /// Plans `lineage` on `PostgreSQL`.
 fn pg(lineage: &Lineage, config: &PiiConfig) -> Result<Plan, Rejection> {
     plan_on(lineage, Dialect::Postgres, config)
+}
+
+/// Plans `lineage` on `PostgreSQL` under `names`.
+fn pg_with(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+    plan(lineage, Dialect::Postgres, config, names)
 }
 
 /// The single position of a one-column plan.
@@ -637,10 +642,10 @@ fn conflict_message_omits_output_name() {
 /// Plans a create of `public.copy` with `names`, without rules.
 fn create(statement: StatementKind, names: &Names) -> Result<Plan, Rejection> {
     let lineage = write("copy", "x", vec![col("users", "name")], statement);
-    plan(&lineage, Dialect::Postgres, &config(vec![]), names)
+    pg_with(&lineage, &config(vec![]), names)
 }
 
-/// Names creating in `creation`, with bare names resolving to `bare`.
+/// Names creating in `creation`, with `bare` resolved bare.
 fn names(creation: Option<&str>, bare: &[&str]) -> Names {
     Names {
         creation: creation.map(Into::into),
@@ -679,10 +684,7 @@ fn other_statements_skip_the_create_target_gate() {
     }
     for statement in [StatementKind::CreateIndex, StatementKind::Drop] {
         let lineage = ddl(statement.clone(), "copy");
-        assert!(
-            plan(&lineage, Dialect::Postgres, &config(vec![]), &shadowing).is_ok(),
-            "{statement:?}"
-        );
+        assert!(pg_with(&lineage, &config(vec![]), &shadowing).is_ok(), "{statement:?}");
     }
     let explained = StatementKind::Explain(Box::new(StatementKind::CreateTableAs));
     assert!(create(explained, &shadowing).is_ok());
@@ -693,7 +695,7 @@ fn shadowed_target_rejects_before_laundering() {
     let config = config(vec![ssn("shop.public.users.ssn")]);
     let lineage = write("copy", "x", vec![col("users", "ssn")], StatementKind::CreateTableAs);
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Laundering { .. })));
-    let rejection = plan(&lineage, Dialect::Postgres, &config, &names(Some("app"), &["copy"])).expect_err("shadowed");
+    let rejection = pg_with(&lineage, &config, &names(Some("app"), &["copy"])).expect_err("shadowed");
     assert_eq!(
         rejection.to_string(),
         "column policy: create target \"public.copy\" resolves to another relation than it creates"

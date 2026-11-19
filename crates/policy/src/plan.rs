@@ -33,12 +33,12 @@ pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, name
     gate(lineage, dialect, config, names).map_err(Rejection::logged)
 }
 
-/// Where a statement's bare names resolved, and where the server creates.
+/// Bare-name resolutions and the creation schema.
 #[derive(Debug, Default)]
 pub(crate) struct Names {
-    /// The schema an unqualified create lands in; `None` when unknown.
+    /// The schema unqualified creates land in, if known.
     pub(crate) creation: Option<String>,
-    /// The relations a one-part name written in the statement resolved to.
+    /// Relations that one-part query names resolved to.
     pub(crate) bare: BTreeSet<RelationId>,
 }
 
@@ -154,7 +154,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     Ok(Plan { columns })
 }
 
-/// Rejects a create whose bare target name resolved outside the creation schema.
+/// Rejects a bare create target resolved outside the creation schema.
 ///
 /// `EXPLAIN` creates nothing, so only the top-level statement counts.
 fn create_target(lineage: &Lineage, names: &Names) -> Result<(), Rejection> {

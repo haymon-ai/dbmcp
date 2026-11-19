@@ -24,8 +24,7 @@
 //!    window rejects, in the statement or in a view body it reads.
 //! 8. Each output column takes the `(operator, entity)` of its ruled
 //!    sources; two different pairs reject.
-//! 9. A create whose bare target name resolved outside
-//!    [`Analysis::creates_in`] rejects.
+//! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
 //!
