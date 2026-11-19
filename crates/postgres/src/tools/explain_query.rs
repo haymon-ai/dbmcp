@@ -6,6 +6,7 @@ use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 
 use super::prelude::*;
+use crate::policy::Access;
 
 const NAME: &str = "explainQuery";
 const TITLE: &str = "Explain Query";
@@ -105,7 +106,8 @@ impl PostgresHandler {
     ///
     /// The inner query must be a single statement, and read-only when
     /// `analyze` is true. The plan is always fetched so the database
-    /// rejects writes, in every mode.
+    /// rejects writes, in every mode. With column rules, explaining a
+    /// statement that touches a ruled relation is rejected.
     ///
     /// # Errors
     ///
@@ -136,12 +138,25 @@ impl PostgresHandler {
 
         // ANALYZE executes the statement, and planning alone can run user functions.
         let mut window = truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
-        self.connection
-            .read_json(explain_sql.as_str(), database, self.config.query_timeout, |row| {
-                window.push(row);
-            })
-            .await?;
-        let rows = self.redactor.redact_rows(window.rows).await?;
+        let rows = if let Some(policy) = &self.policy {
+            self.enforce(
+                policy,
+                &explain_sql,
+                Access::Read,
+                self.config.query_timeout,
+                database,
+                &mut window,
+            )
+            .await?
+            .rows
+        } else {
+            self.connection
+                .read_json(explain_sql.as_str(), database, self.config.query_timeout, |row| {
+                    window.push(row);
+                })
+                .await?;
+            self.redactor.redact_rows(window.rows).await?
+        };
         let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
         fitted.omit(window.rest);
 

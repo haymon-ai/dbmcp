@@ -1121,6 +1121,8 @@ dependencies = [
  "dbmcp-pii",
  "dbmcp-server",
  "dbmcp-sql",
+ "dbmcp-sql-lineage",
+ "futures-util",
  "indexmap",
  "moka",
  "rmcp",
@@ -1130,6 +1132,8 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "sqlx",
+ "sqlx-json",
+ "thiserror",
  "tokio",
  "tracing",
 ]
