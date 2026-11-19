@@ -3,49 +3,18 @@
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
+use dbmcp_config::{ColumnRule, PiiConfig};
+use dbmcp_pii::Entity;
+use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{Dialect, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind};
 
-use super::deny;
-use super::rejection::Rejection;
-use crate::entity::Entity;
-
-/// How the values of each output column are redacted, in result order.
-///
-/// Positions follow the result set of a query or a write's `RETURNING`
-/// only. For `EXPLAIN`, `SHOW`, `DESCRIBE`, and DDL the server returns
-/// other columns, so callers detect globally on those rows instead.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Plan {
-    /// One entry per output column, by 0-based position.
-    pub columns: Vec<PlannedColumn>,
-}
-
-/// One output column's redaction and the name it must come back under.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlannedColumn {
-    /// How the column's values are redacted.
-    pub position: Position,
-    /// The folded name the column must come back under, where known.
-    ///
-    /// `Some` only for a single source under its own name (`*`, a bare
-    /// column, or a same-name alias).
-    pub name: Option<String>,
-}
-
-/// How the values of one output column are redacted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Position {
-    /// Replace every non-null value whole with the operator; the entity labels it.
-    Action(PiiOperator, Entity),
-    /// Run global detection, as without column rules.
-    Global,
-}
+use crate::deny;
+use crate::rejection::Rejection;
 
 /// Plans a statement's output columns under `config`'s column rules.
 ///
 /// `lineage` must come from a successful analysis; map a failed one with
-/// [`reject_lineage`](super::reject_lineage). Each rejection is logged at
+/// [`reject_lineage`](crate::rejection::reject_lineage). Each rejection is logged at
 /// `info` under the `dbmcp::policy` target.
 ///
 /// # Errors
@@ -60,7 +29,7 @@ pub enum Position {
 ///
 /// Panics when a rule's entity is not an [`Entity`] name; the loader only
 /// accepts `ColumnRule::ENTITIES`, which a test ties to [`Entity`].
-pub fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
+pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
     gate(lineage, dialect, config).map_err(Rejection::logged)
 }
 
@@ -69,7 +38,7 @@ pub fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<P
 /// Every relation counts, those named inside view bodies included. Backends
 /// use it to decide whether database errors must be sanitized.
 #[must_use]
-pub fn touches_ruled(lineage: &Lineage, config: &PiiConfig) -> bool {
+pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig) -> bool {
     ruled_relation(lineage, config).is_some()
 }
 
@@ -116,7 +85,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan,
         });
     }
     for reference in &lineage.references {
-        if rule(config, &reference.source).is_none() {
+        if rule(config, &reference.source.relation, &reference.source.column).is_none() {
             continue;
         }
         return Err(Rejection::Reference {
@@ -185,15 +154,14 @@ fn known_name(column: &OutputColumn) -> Option<String> {
     (ColumnRule::fold(&column.name) == folded).then_some(folded)
 }
 
-/// Returns the rule whose key is `source`'s folded `catalog.schema.table.column`.
+/// Returns the rule whose key is the folded `catalog.schema.table.column`.
 #[must_use]
-pub fn rule<'a>(config: &'a PiiConfig, source: &SourceRef) -> Option<&'a ColumnRule> {
-    let relation = &source.relation;
+pub fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
     let key = [
         ColumnRule::fold(&relation.catalog),
         ColumnRule::fold(&relation.schema),
         ColumnRule::fold(&relation.name),
-        ColumnRule::fold(&source.column),
+        ColumnRule::fold(column),
     ];
     config.rules.iter().find(|rule| rule.key == key)
 }
@@ -224,7 +192,7 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig) -> Option<&'a Re
 fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig) -> Option<Position> {
     let mut pairs = sources
         .iter()
-        .filter_map(|source| rule(config, source))
+        .filter_map(|source| rule(config, &source.relation, &source.column))
         .map(|rule| (rule.operator, rule.entity));
     let Some(first) = pairs.next() else {
         return Some(Position::Global);

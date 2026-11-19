@@ -1073,9 +1073,9 @@ version = "0.19.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-pii",
+ "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
- "dbmcp-sql-lineage",
  "futures-util",
  "moka",
  "rmcp",
@@ -1100,7 +1100,6 @@ dependencies = [
  "bs58",
  "criterion",
  "dbmcp-config",
- "dbmcp-sql-lineage",
  "fancy-regex 0.20.0",
  "getrandom 0.4.3",
  "hmac",
@@ -1118,14 +1117,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbmcp-policy"
+version = "0.19.0"
+dependencies = [
+ "dbmcp-config",
+ "dbmcp-pii",
+ "dbmcp-sql-lineage",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "dbmcp-postgres"
 version = "0.19.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-pii",
+ "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
- "dbmcp-sql-lineage",
  "futures-util",
  "indexmap",
  "moka",
@@ -1186,9 +1196,9 @@ version = "0.19.0"
 dependencies = [
  "dbmcp-config",
  "dbmcp-pii",
+ "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
- "dbmcp-sql-lineage",
  "futures-util",
  "rmcp",
  "schemars",

@@ -8,8 +8,12 @@ use dbmcp_sql_lineage::{
     RelationUse, Role, SourceRef, StatementKind, TargetColumn, analyze,
 };
 
-use super::{LineageClass, Plan, Position, Rejection, plan, reject_lineage, touches_ruled};
-use crate::entity::Entity;
+use dbmcp_pii::Entity;
+use dbmcp_pii::cells::{Plan, Position};
+
+use crate::plan::{plan, touches_ruled};
+use crate::rejection::reject_lineage;
+use crate::{LineageClass, Rejection};
 
 const DB: &str = "shop";
 const SCHEMA: &str = "public";

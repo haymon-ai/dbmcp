@@ -34,7 +34,6 @@ pub mod ner;
 pub mod operators;
 pub mod overlap;
 pub mod pattern;
-pub mod policy;
 pub mod recognizers;
 pub mod redact;
 pub mod result;

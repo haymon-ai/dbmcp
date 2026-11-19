@@ -168,7 +168,7 @@ impl LineageClass {
 /// With column rules active every [`LineageError`] rejects the statement;
 /// the rejection keeps only the error's class.
 #[must_use]
-pub fn reject_lineage(error: &LineageError) -> Rejection {
+pub(crate) fn reject_lineage(error: &LineageError) -> Rejection {
     let class = match error {
         LineageError::Missing(_) | LineageError::UnknownRelation { .. } => LineageClass::UnresolvedRelation,
         LineageError::Parse(_) => LineageClass::Parse,

@@ -14,12 +14,43 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use dbmcp_config::ColumnRule;
+use dbmcp_config::{ColumnRule, PiiOperator};
 use serde_json::Value;
 
-use crate::policy::{Plan, Position};
 use crate::redact::{Frame, log_redactions};
 use crate::{Entity, Operator, RedactionError, RedactionStats, Redactor};
+
+/// How the values of each output column are redacted, in result order.
+///
+/// Positions follow the result set of a query or a write's `RETURNING`
+/// only. For `EXPLAIN`, `SHOW`, `DESCRIBE`, and DDL the server returns
+/// other columns, so callers detect globally on those rows instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    /// One entry per output column, by 0-based position.
+    pub columns: Vec<PlannedColumn>,
+}
+
+/// One output column's redaction and the name it must come back under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedColumn {
+    /// How the column's values are redacted.
+    pub position: Position,
+    /// The folded name the column must come back under, where known.
+    ///
+    /// `Some` only for a single source under its own name (`*`, a bare
+    /// column, or a same-name alias).
+    pub name: Option<String>,
+}
+
+/// How the values of one output column are redacted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    /// Replace every non-null value whole with the operator; the entity labels it.
+    Action(PiiOperator, Entity),
+    /// Run global detection, as without column rules.
+    Global,
+}
 
 /// Why result cells do not fit a column plan.
 ///
@@ -203,11 +234,10 @@ fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{PiiConfig, PiiOperator};
+    use dbmcp_config::PiiConfig;
     use serde_json::json;
 
     use super::*;
-    use crate::policy::PlannedColumn;
 
     const EMAIL: &str = "jane.doe@example.com";
     const KEY: &str = "0123456789abcdef0123456789abcdef";

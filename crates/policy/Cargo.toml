@@ -1,0 +1,18 @@
+[package]
+name = "dbmcp-policy"
+description = "Column-rules policy planner for dbmcp"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dbmcp-config = { workspace = true }
+dbmcp-pii = { workspace = true }
+dbmcp-sql-lineage = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

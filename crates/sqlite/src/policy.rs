@@ -8,8 +8,8 @@
 //!
 //! 1. analyzes the statement's lineage, fetching the relations it reports
 //!    missing (`pragma_table_list`, `pragma_table_xinfo`, view bodies from
-//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`] rounds,
-//! 2. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//! 2. plans it with [`Analyzed::plan`](dbmcp_policy::Analyzed::plan); a rejection runs nothing,
 //! 3. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
 //! 4. commits a write or rolls a read back.
@@ -20,15 +20,14 @@
 
 use std::mem;
 
-use dbmcp_config::PiiConfig;
-use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
+use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
+use dbmcp_policy::{
+    Analysis, Analyzed, CatalogColumn, Entry, LineageClass, Origin, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName, rule,
+};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
-use dbmcp_sql_lineage::{
-    Catalog, CatalogColumn, Dialect, Entry, Lineage, LineageError, Origin, Relation, RelationId, RelationKind,
-    SourceRef, StatementKind, WrittenName, analyze,
-};
 use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
@@ -219,22 +218,17 @@ async fn run(
         Access::Write => "BEGIN IMMEDIATE",
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
-    let lineage = resolve(&mut tx, sql).await?;
+    let analyzed = resolve(&mut tx, sql).await?;
     // `CREATE TABLE x AS` creates `main.x` even when a bare `x` resolved to a
     // `temp` or attached table, so its rules would check the wrong target.
-    if lineage.statement == StatementKind::CreateTableAs
-        && lineage.target.as_ref().is_some_and(|target| target.schema != "main")
+    if *analyzed.statement() == StatementKind::CreateTableAs
+        && analyzed.target().is_some_and(|target| target.schema != "main")
     {
         return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
     }
-    let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Sqlite, config)?;
-    let plan = (!matches!(
-        lineage.statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    ))
-    .then_some(plan);
+    let plan = analyzed.plan(config)?;
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
     let executed = match execute(&mut tx, sql, plan.as_ref(), config, sink).await {
@@ -309,10 +303,8 @@ fn unplanned_ruled(columns: &[SqliteColumn], plan: &Plan, config: &PiiConfig) ->
         let ColumnOrigin::Table(origin) = column.origin() else {
             return false;
         };
-        let is_ruled = readings(&origin.table).any(|(schema, table)| {
-            let source = SourceRef::new(RelationId::new(CATALOG, schema, table), &*origin.name);
-            rule(config, &source).is_some()
-        });
+        let is_ruled = readings(&origin.table)
+            .any(|(schema, table)| rule(config, &RelationId::new(CATALOG, schema, table), &origin.name).is_some());
         is_ruled
             && !matches!(
                 plan.columns.get(column.ordinal()).map(|planned| planned.position),
@@ -330,21 +322,16 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
     )
 }
 
-/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
-async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Lineage, Stop> {
+/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
+async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
-    let mut catalog = Catalog::new();
-    let mut rounds = 0;
+    let mut analysis = Analysis::new(sql, DatabaseBackend::Sqlite);
+    let mut entries = Vec::new();
     loop {
-        match analyze(sql, Dialect::Sqlite, &catalog) {
-            Ok(lineage) => return Ok(lineage),
-            Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Err(Rejection::CatalogRounds.logged().into());
-            }
-            Err(LineageError::Missing(names)) => fetch(conn, &schemas, names, &mut catalog).await?,
-            Err(error) => return Err(reject_lineage(&error).into()),
+        match analysis.step(entries)? {
+            Step::Missing(names) => entries = fetch(conn, &schemas, names).await?,
+            Step::Done(analyzed) => return Ok(analyzed),
         }
-        rounds += 1;
     }
 }
 
@@ -410,33 +397,33 @@ fn vacant(schemas: &[String], name: &WrittenName) -> Entry {
     })
 }
 
-/// Inserts a catalog entry for each of `names`, read in batched queries.
+/// Builds a catalog entry for each of `names`, read in batched queries.
 async fn fetch(
     conn: &mut sqlx::SqliteConnection,
     schemas: &[String],
     names: Vec<WrittenName>,
-    catalog: &mut Catalog,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
     let tables: Vec<&str> = names
         .iter()
         .filter_map(|name| name.parts.last().map(|part| part.value.as_str()))
         .collect();
     let listed = lookup(conn, &tables).await?;
+    let mut entries = Vec::new();
     let mut found: Vec<(WrittenName, &Listed, RelationKind)> = Vec::new();
     for name in names {
         let Some(relation) = locate(&listed, &name) else {
             let entry = vacant(schemas, &name);
-            catalog.insert(name, entry);
+            entries.push((name, entry));
             continue;
         };
         match relation.kind {
             Some(kind) => found.push((name, relation, kind)),
             // Exists, but cannot be described: never vacant, so `IF EXISTS` cannot skip it.
-            None => catalog.insert(name, Entry::Absent),
+            None => entries.push((name, Entry::Absent)),
         }
     }
     if found.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let pairs: Vec<Value> = found
         .iter()
@@ -461,14 +448,14 @@ async fn fetch(
         let mut relation = Relation::new(id, kind, columns);
         if kind == RelationKind::View {
             let Some(body) = view_body(conn, listed).await? else {
-                catalog.insert(name, Entry::Absent);
+                entries.push((name, Entry::Absent));
                 continue;
             };
             relation = relation.with_view_sql(body);
         }
-        catalog.insert(name, Entry::Resolved(relation));
+        entries.push((name, Entry::Resolved(relation)));
     }
-    Ok(())
+    Ok(entries)
 }
 
 /// Reads the query of a view's `CREATE VIEW` statement; `None` when unreadable.
@@ -508,10 +495,10 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiOperator, Transport};
+    use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PiiOperator, Transport};
     use dbmcp_pii::Entity;
-    use dbmcp_pii::policy::PlannedColumn;
-    use dbmcp_sql_lineage::NamePart;
+    use dbmcp_pii::cells::PlannedColumn;
+    use dbmcp_policy::NamePart;
     use sqlx::Connection as _;
 
     use super::*;
@@ -750,12 +737,9 @@ mod tests {
         .await;
         let schemas = vec!["main".to_owned(), "temp".to_owned()];
         let names = ["g", "f", "v"].map(|table| WrittenName::query(vec![NamePart::bare(table)]));
-        let mut catalog = Catalog::new();
-        fetch(&mut conn, &schemas, names.to_vec(), &mut catalog)
-            .await
-            .expect("fetch");
-        let resolved = |name: &WrittenName| match catalog.get(name) {
-            Some(Entry::Resolved(relation)) => relation.clone(),
+        let entries = fetch(&mut conn, &schemas, names.to_vec()).await.expect("fetch");
+        let resolved = |name: &WrittenName| match entries.iter().find(|(written, _)| written == name) {
+            Some((_, Entry::Resolved(relation))) => relation.clone(),
             other => panic!("{name:?}: {other:?}"),
         };
         let generated = resolved(&names[0]);

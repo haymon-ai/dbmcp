@@ -1,11 +1,16 @@
-//! Column-level PII policy planner.
+//! Column-rules (`pii.rules`) policy planner for `dbmcp`.
 //!
-//! [`plan`] turns a statement's [`Lineage`] and the `pii.rules` of a
-//! [`PiiConfig`] into a [`Plan`]: one [`Position`] per output column saying
+//! Backends reach SQL lineage only through this crate. An [`Analysis`]
+//! analyzes one statement, asking the backend for each relation it names
+//! that the catalog lacks; the backend looks the names up on its own
+//! connection and passes back an [`Entry`] for each. The finished
+//! [`Analyzed`] statement then plans with [`Analyzed::plan`] under the
+//! `pii.rules` of a [`PiiConfig`]: one [`Position`] per output column saying
 //! how its values are redacted. It rejects the statement instead, before it
 //! runs, when any gate fails. The gates run in this order, all fail closed:
 //!
-//! 1. Lineage errors reject; callers map them with [`reject_lineage`].
+//! 1. Lineage errors reject, and so do names still missing after
+//!    [`CATALOG_ROUNDS`] catalog rounds.
 //! 2. Functions missing from the dialect's built-in table reject.
 //! 3. Denied relations (statistics, statement text, raw pages, virtual
 //!    tables) reject.
@@ -26,14 +31,20 @@
 //! touches a database. Rejection messages name only catalog identifiers,
 //! never a rule's name, entity, or operator, nor a value.
 //!
-//! [`Lineage`]: dbmcp_sql_lineage::Lineage
 //! [`PiiConfig`]: dbmcp_config::PiiConfig
+//! [`Position`]: dbmcp_pii::cells::Position
 
+mod analysis;
 mod deny;
 mod plan;
 mod rejection;
 #[cfg(test)]
 mod tests;
 
-pub use self::plan::{Plan, PlannedColumn, Position, plan, rule, touches_ruled};
-pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection, reject_lineage};
+pub use dbmcp_sql_lineage::{
+    CatalogColumn, Entry, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind, WrittenName,
+};
+
+pub use self::analysis::{Analysis, Analyzed, Step};
+pub use self::plan::rule;
+pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};

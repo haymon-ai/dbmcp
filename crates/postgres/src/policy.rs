@@ -11,8 +11,8 @@
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing with `to_regclass` (so the session's `search_path` decides, as
 //!    it will when the statement runs), columns from `pg_attribute`, and view
-//!    bodies from `pg_get_viewdef`, for at most [`CATALOG_ROUNDS`] rounds,
-//! 3. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
+//!    bodies from `pg_get_viewdef`, for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
 //! 5. refuses the result when a view body it planned from has changed,
@@ -28,15 +28,14 @@
 use std::collections::HashMap;
 use std::mem;
 
-use dbmcp_config::PiiConfig;
-use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
-use dbmcp_pii::policy::{CATALOG_ROUNDS, LineageClass, Plan, Position, Rejection, reject_lineage, rule, touches_ruled};
+use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
+use dbmcp_policy::{
+    Analysis, Analyzed, CatalogColumn, Entry, LineageClass, NamePart, Origin, Rejection, Relation, RelationId,
+    RelationKind, StatementKind, Step, WrittenName, rule,
+};
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
-use dbmcp_sql_lineage::{
-    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
-    RelationKind, SourceRef, StatementKind, WrittenName, analyze,
-};
 use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
@@ -318,30 +317,25 @@ async fn run(
         Access::Write => "BEGIN",
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let (lineage, owners) = resolve(&mut tx, sql).await?;
+    let (analyzed, owners) = resolve(&mut tx, sql).await?;
     // A bare create target resolves through the whole `search_path`, but the
     // relation is created in the creation schema: a name taken further along
     // would check the rules of the wrong target.
     if let (
         StatementKind::CreateTableAs | StatementKind::CreateMaterializedView | StatementKind::CreateView,
         Some(target),
-    ) = (&lineage.statement, &lineage.target)
+    ) = (analyzed.statement(), analyzed.target())
         && owners.values().any(|owner| owner.shadowed && owner.id == *target)
     {
         return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
     }
-    let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Postgres, config)?;
-    if lineage.statement == StatementKind::CreateIndex {
+    let plan = analyzed.plan(config)?;
+    if *analyzed.statement() == StatementKind::CreateIndex {
         tx.rollback().await?;
         return autocommit(conn, sql, config, &owners, sink).await;
     }
-    let plan = (!matches!(
-        lineage.statement,
-        StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-    ))
-    .then_some(plan);
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
     let executed = match execute(&mut tx, sql, plan.as_ref(), config, &owners, sink).await {
@@ -352,7 +346,7 @@ async fn run(
             return Err(stop);
         }
     };
-    if !views_unchanged(&mut tx, &owners, lineage.target.as_ref()).await? {
+    if !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
@@ -472,7 +466,7 @@ fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: 
         let Some(owner) = owners.get(&oid.0) else {
             return Err(Stop::Unresolved(position));
         };
-        let ruled = |name: &String| rule(config, &SourceRef::new(owner.id.clone(), name)).is_some();
+        let ruled = |name: &String| rule(config, &owner.id, name).is_some();
         let ruled = match column.relation_attribute_no() {
             Some(number) => match owner.columns.get(&number) {
                 Some(name) => ruled(name),
@@ -491,32 +485,27 @@ fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: 
     Ok(())
 }
 
-/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`] rounds.
+/// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the relations it described, by OID.
-async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Lineage, Owners), Stop> {
+async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, Owners), Stop> {
     let (database, conforming, first, search_path, user): (String, String, Option<String>, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe {
         database,
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
-    let mut catalog = Catalog::new();
+    let mut analysis = Analysis::new(sql, DatabaseBackend::Postgres);
     if conforming != "on" {
-        catalog.set_lexical(Lexical::Mismatch("standard_conforming_strings is off".into()));
+        analysis.mismatch("standard_conforming_strings is off");
     }
     let mut owners = Owners::new();
-    let mut rounds = 0;
+    let mut entries = Vec::new();
     loop {
-        match analyze(sql, Dialect::Postgres, &catalog) {
-            Ok(lineage) => return Ok((lineage, owners)),
-            Err(LineageError::Missing(_)) if rounds == CATALOG_ROUNDS => {
-                return Err(Rejection::CatalogRounds.logged().into());
-            }
-            Err(LineageError::Missing(names)) => fetch(conn, &probe, names, &mut catalog, &mut owners).await?,
-            Err(error) => return Err(reject_lineage(&error).into()),
+        match analysis.step(entries)? {
+            Step::Missing(names) => entries = fetch(conn, &probe, names, &mut owners).await?,
+            Step::Done(analyzed) => return Ok((analyzed, owners)),
         }
-        rounds += 1;
     }
 }
 
@@ -543,26 +532,26 @@ fn temp_first(search_path: &str, first: &str, user: &str) -> bool {
     true
 }
 
-/// Inserts a catalog entry for each of `names`, read in one batched query.
+/// Builds a catalog entry for each of `names`, read in one batched query.
 async fn fetch(
     conn: &mut sqlx::PgConnection,
     probe: &Probe,
     names: Vec<WrittenName>,
-    catalog: &mut Catalog,
     owners: &mut Owners,
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
+    let mut entries = Vec::new();
     let lookups: Vec<(WrittenName, Lookup)> = names
         .into_iter()
         .filter_map(|name| {
             if let Some(lookup) = Lookup::new(&name, &probe.database) {
                 return Some((name, lookup));
             }
-            catalog.insert(name, Entry::Absent);
+            entries.push((name, Entry::Absent));
             None
         })
         .collect();
     if lookups.is_empty() {
-        return Ok(());
+        return Ok(entries);
     }
     let regclasses: Vec<String> = lookups.iter().map(|(_, lookup)| lookup.regclass()).collect();
     let schemas: Vec<Option<String>> = lookups
@@ -589,9 +578,9 @@ async fn fetch(
                 })
                 .shadowed |= shadowed;
         }
-        catalog.insert(name, entry);
+        entries.push((name, entry));
     }
-    Ok(())
+    Ok(entries)
 }
 
 /// Builds the catalog entry of one resolved row.
