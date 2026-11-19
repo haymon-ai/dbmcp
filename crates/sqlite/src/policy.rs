@@ -233,23 +233,24 @@ async fn run(
         StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
     ))
     .then_some(plan);
+    let failed = |error: sqlx::Error| match withheld(&error) {
+        Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
+        _ => Stop::Sql(error),
+    };
     let executed = match execute(&mut tx, sql, plan.as_ref(), config, sink).await {
         Ok(executed) => executed,
-        Err(Stop::Sql(error)) => {
-            return Err(match withheld(&error) {
-                Some(code) if touches_ruled(&lineage, config) => Stop::Withheld(code),
-                _ => Stop::Sql(error),
-            });
-        }
+        Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
             tx.rollback().await?;
             return Err(stop);
         }
     };
-    match access {
-        Access::Read => tx.rollback().await?,
-        Access::Write => tx.commit().await?,
-    }
+    // Deferred foreign keys fail at `COMMIT`, so its error is filtered too.
+    let finished = match access {
+        Access::Read => tx.rollback().await,
+        Access::Write => tx.commit().await,
+    };
+    finished.map_err(failed)?;
     let (rows_affected, last_insert_id) = SqliteConnection::counts(sql, &executed.results);
     Ok(Run {
         plan,
