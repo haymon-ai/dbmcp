@@ -812,6 +812,16 @@ fn catalog_round_cap_names_the_cap_and_gate() {
 }
 
 #[test]
+fn shadowed_targets_name_the_relation_and_gate() {
+    let rejection = Rejection::shadowed(&RelationId::new(DB, "temp", "copy"));
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: create target \"temp.copy\" resolves to another relation than it creates"
+    );
+    assert_eq!(rejection.gate(), "target");
+}
+
+#[test]
 fn names_are_known_only_for_single_same_name_sources() {
     let mut lineage = select(vec![
         vec![col("users", "Email")],

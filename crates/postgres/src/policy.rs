@@ -31,8 +31,8 @@ use std::mem;
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, LineageClass, NamePart, Origin, Planned, Rejection, Relation, RelationId,
-    RelationKind, StatementKind, Step, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, NamePart, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -321,7 +321,7 @@ async fn run<'c>(
     ) = (analyzed.statement(), analyzed.target())
         && owners.values().any(|owner| owner.shadowed && owner.id == *target)
     {
-        return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
+        return Err(Rejection::shadowed(target).into());
     }
     let plan = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
