@@ -4877,10 +4877,38 @@ async fn column_rules_withhold_value_echoing_errors() {
     for query in [
         "SELECT email::int AS x FROM users",
         "SELECT email::regclass AS x FROM users",
+        // Three parts read as a cross-database reference: `0A000` quotes the value.
+        "SELECT ('x.' || email)::regclass AS x FROM users",
     ] {
         let refusal = ruled_refusal(&handler, query).await;
         assert!(refusal.contains("withheld"), "{query}: {refusal}");
         assert!(!refusal.contains("@example.com"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_toast_relations() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(
+        &handler,
+        "SELECT reltoastrelid::regclass::text AS toast FROM pg_class \
+         WHERE relname = 'users' AND relnamespace = 'public'::regnamespace",
+    )
+    .await
+    .expect("toast name");
+    let toast = rows[0]["toast"].as_str().expect("users has a TOAST table");
+    let refusal = ruled_refusal(&handler, &format!("SELECT chunk_data FROM {toast}")).await;
+    assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_run_concurrent_index_statements() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "CREATE INDEX CONCURRENTLY policy_audit_note ON audit (note)",
+        "DROP INDEX policy_audit_note",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
     }
 }
 
@@ -4927,6 +4955,22 @@ async fn column_rules_refuse_every_statement_when_strings_lex_differently() {
     let handler = ruled_handler(Some("policy_lexical"), 100, standard_rules());
     let refusal = ruled_refusal(&handler, "SELECT note FROM audit").await;
     assert!(refusal.contains("column policy"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_bare_creates_shadowed_further_along_the_search_path() {
+    let query = "CREATE OR REPLACE VIEW user_emails AS SELECT id, email FROM users";
+    // `policy_shadow` creates in `shadow`, but `user_emails` resolves to `public`.
+    let error = ruled_handler(Some("policy_shadow"), 100, standard_rules())
+        .write_query(query.into(), None)
+        .await
+        .expect_err("shadowed view");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    // For `postgres` the same statement replaces `public.user_emails` itself.
+    handler_with_rules(100)
+        .write_query(query.into(), None)
+        .await
+        .expect("replace in the creation schema");
 }
 
 #[tokio::test]

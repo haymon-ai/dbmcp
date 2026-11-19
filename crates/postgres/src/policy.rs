@@ -15,7 +15,11 @@
 //! 3. plans it with [`dbmcp_pii::policy::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
-//! 5. commits a write or rolls a read back.
+//! 5. refuses the result when a view body it planned from has changed,
+//! 6. commits a write or rolls a read back.
+//!
+//! `CREATE INDEX` runs outside the transaction once planned, since its
+//! `CONCURRENTLY` form cannot run inside one.
 //!
 //! The rows are then redacted by position. When the statement touched a
 //! ruled relation, database errors outside the value-free `SQLSTATE`
@@ -43,12 +47,14 @@ use sqlx_json::RowExt as _;
 use crate::PostgresHandler;
 use crate::connection::{PostgresConnection, quote_ident};
 
-/// Reads the database, `standard_conforming_strings`, the first existing
-/// schema of the search path, and the search path itself.
+/// Reads the session state that decides how names resolve.
+///
+/// The database, `standard_conforming_strings`, the first existing schema
+/// of the search path, the search path itself, and the current user.
 const PROBE_SQL: &str = "SELECT current_database()::text, \
      current_setting('standard_conforming_strings'), \
      (current_schemas(false))[1]::text, \
-     current_setting('search_path')";
+     current_setting('search_path'), current_user::text";
 
 /// Resolves each `to_regclass` input of `$1`, with its explicit schema in `$2`.
 ///
@@ -70,27 +76,34 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
 
 /// `SQLSTATE` classes whose messages name schema objects or states, never values.
 ///
-/// Syntax and access (`42`), unsupported features (`0A`), transaction state
-/// (`25`), rollbacks (`40`), resources (`53`), limits (`54`), operator
-/// intervention (`57`), and connections (`08`).
-const VALUE_FREE_CLASSES: &[&str] = &["42", "0A", "25", "40", "53", "54", "57", "08"];
+/// Syntax and access (`42`), transaction state (`25`), rollbacks (`40`),
+/// resources (`53`), limits (`54`), operator intervention (`57`), and
+/// connections (`08`).
+///
+/// Not unsupported features (`0A`): a `reg*` cast of a three-part value
+/// quotes it as a cross-database reference.
+const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
 
 /// Class `42` codes withheld anyway.
 ///
 /// `reg*` input casts (`ssn::regclass`) quote the cast text in syntax,
-/// undefined-relation, -object, and -function errors; `invalid_name` quotes
-/// configuration parameter and replication slot names taken from values.
-const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42883"];
+/// undefined-relation, -object, -function, and ambiguous-function errors;
+/// `invalid_name` quotes configuration parameter and replication slot names
+/// taken from values.
+const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
 
 /// Longest identifier in bytes; `PostgreSQL` truncates longer ones.
 const MAX_IDENTIFIER_BYTES: usize = 63;
 
-/// Reports whether a relation named `$2` exists in schema `$1`.
-const EXISTS_SQL: &str = "SELECT EXISTS (SELECT 1 FROM pg_class AS c \
-     JOIN pg_namespace AS s ON s.oid = c.relnamespace WHERE s.nspname = $1 AND c.relname = $2)";
+/// Reads the current body of each view OID in `$1`, in order.
+const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
+     FROM unnest($1::int8[]) WITH ORDINALITY AS v(oid, ord) ORDER BY v.ord";
 
 /// Schemas whose relations are system catalogs, never expanded as views.
-const SYSTEM_SCHEMAS: &[&str] = &["pg_catalog", "information_schema", "pg_toast"];
+///
+/// Not `pg_toast`: TOAST relations hold the raw out-of-line values of
+/// their tables, ruled columns included, so they stay absent.
+const SYSTEM_SCHEMAS: &[&str] = &["pg_catalog", "information_schema"];
 
 /// Whether the statement may write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +137,9 @@ enum Stop {
     /// A result column came from a relation the catalog reads did not describe.
     #[error("column policy: result column {0} comes from a relation the policy did not resolve")]
     Unresolved(usize),
+    /// A view body changed between planning and execution; nothing was committed.
+    #[error("column policy: a view changed while the statement ran")]
+    ViewChanged,
     /// The statement failed with an error that may echo a ruled value.
     #[error("query failed (SQLSTATE {0}): error detail withheld under column policy")]
     Withheld(String),
@@ -159,6 +175,10 @@ struct Owner {
     id: RelationId,
     /// Column names by attribute number.
     columns: HashMap<i16, String>,
+    /// The `pg_get_viewdef` body planned from, for a view or materialized view.
+    view: Option<String>,
+    /// Whether a bare name resolved here, outside the creation schema.
+    shadowed: bool,
 }
 
 /// The relations a statement's result columns may come from, by OID.
@@ -297,24 +317,24 @@ async fn run(
         Access::Read => "START TRANSACTION READ ONLY",
         Access::Write => "BEGIN",
     };
-    let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
+    let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let (lineage, owners) = resolve(&mut tx, sql).await?;
-    // A bare `CREATE … AS` target resolves through the whole `search_path`, but
-    // the relation is created in the first schema: a name already taken
-    // anywhere would check the rules of the wrong target.
-    if let (StatementKind::CreateTableAs | StatementKind::CreateMaterializedView, Some(target)) =
-        (&lineage.statement, &lineage.target)
+    // A bare create target resolves through the whole `search_path`, but the
+    // relation is created in the creation schema: a name taken further along
+    // would check the rules of the wrong target.
+    if let (
+        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView | StatementKind::CreateView,
+        Some(target),
+    ) = (&lineage.statement, &lineage.target)
+        && owners.values().any(|owner| owner.shadowed && owner.id == *target)
     {
-        let exists: bool = sqlx::query_scalar(EXISTS_SQL)
-            .bind(&target.schema)
-            .bind(&target.name)
-            .fetch_one(&mut *tx)
-            .await?;
-        if exists {
-            return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
-        }
+        return Err(Rejection::Lineage(LineageClass::Unsupported).logged().into());
     }
     let plan = dbmcp_pii::policy::plan(&lineage, Dialect::Postgres, config)?;
+    if lineage.statement == StatementKind::CreateIndex {
+        tx.rollback().await?;
+        return autocommit(conn, sql, config, &owners, sink).await;
+    }
     let plan = (!matches!(
         lineage.statement,
         StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
@@ -332,6 +352,10 @@ async fn run(
             return Err(stop);
         }
     };
+    if !views_unchanged(&mut tx, &owners).await? {
+        tx.rollback().await?;
+        return Err(Stop::ViewChanged);
+    }
     // Deferred constraints fail at `COMMIT`, with messages as revealing.
     let finished = match access {
         Access::Read => tx.rollback().await,
@@ -345,6 +369,48 @@ async fn run(
         rows_affected,
         last_insert_id,
     })
+}
+
+/// Runs a planned `CREATE INDEX` outside a transaction block.
+///
+/// It returns no rows. Its names may rebind once the planning transaction
+/// ends, so value-echoing errors are withheld whatever it touched.
+async fn autocommit(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    config: &PiiConfig,
+    owners: &Owners,
+    sink: &mut (impl FnMut(Value) + Send),
+) -> Result<Run, Stop> {
+    let executed = execute(conn, sql, None, config, owners, sink)
+        .await
+        .map_err(|stop| match stop {
+            Stop::Sql(error) => withheld(&error).map_or(Stop::Sql(error), Stop::Withheld),
+            other => other,
+        })?;
+    let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
+    Ok(Run {
+        plan: None,
+        names: executed.names,
+        rows_affected,
+        last_insert_id,
+    })
+}
+
+/// Reports whether every view body planned from is still the current one.
+///
+/// Executing a view holds a lock that blocks its replacement until the
+/// transaction ends, so the body read now is the one that ran.
+async fn views_unchanged(conn: &mut sqlx::PgConnection, owners: &Owners) -> Result<bool, sqlx::Error> {
+    let (oids, bodies): (Vec<i64>, Vec<&str>) = owners
+        .iter()
+        .filter_map(|(oid, owner)| Some((i64::from(*oid), owner.view.as_deref()?)))
+        .unzip();
+    if oids.is_empty() {
+        return Ok(true);
+    }
+    let current: Vec<Option<String>> = sqlx::query_scalar(VIEWS_SQL).bind(oids).fetch_all(conn).await?;
+    Ok(current.iter().map(Option::as_deref).eq(bodies.into_iter().map(Some)))
 }
 
 /// Runs `sql`, feeding each row's values to `sink` and collecting its results.
@@ -419,11 +485,11 @@ fn check_origins(columns: &[PgColumn], plan: &Plan, config: &PiiConfig, owners: 
 ///
 /// Also returns the relations it described, by OID.
 async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Lineage, Owners), Stop> {
-    let (database, conforming, first, search_path): (String, String, Option<String>, String) =
+    let (database, conforming, first, search_path, user): (String, String, Option<String>, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe {
         database,
-        creation: first.filter(|_| !lists_temp(&search_path)),
+        creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
     let mut catalog = Catalog::new();
     if conforming != "on" {
@@ -444,20 +510,27 @@ async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Lineage, O
     }
 }
 
-/// Reports whether `search_path` lists a temporary schema.
+/// Reports whether `search_path` lists a temporary schema before `first`.
 ///
-/// The server creates bare names in `pg_temp` when it comes before every
-/// existing schema, creating that schema on first use, so the first
-/// existing schema would name the wrong creation target.
-fn lists_temp(search_path: &str) -> bool {
-    search_path.split(',').any(|element| {
+/// `first` is the first existing schema; `$user` names `user`'s schema. The
+/// server creates bare names in `pg_temp` when it comes first, creating that
+/// schema on first use, so `first` would name the wrong creation target. A
+/// path that never reaches `first` is treated as temporary.
+fn temp_first(search_path: &str, first: &str, user: &str) -> bool {
+    for element in search_path.split(',') {
         let element = element.trim();
         let name = element
             .strip_prefix('"')
             .and_then(|quoted| quoted.strip_suffix('"'))
             .map_or_else(|| element.to_ascii_lowercase(), str::to_owned);
-        name.starts_with("pg_temp")
-    })
+        if name.starts_with("pg_temp") {
+            return true;
+        }
+        if name == first || (name == "$user" && user == first) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Inserts a catalog entry for each of `names`, read in one batched query.
@@ -493,15 +566,18 @@ async fn fetch(
         .await?;
     for ((name, lookup), row) in lookups.into_iter().zip(rows) {
         let entry = entry(probe, &name, &lookup, &row);
-        let (_, _, _, oid, _, names, numbers, _) = row;
+        let (_, _, _, oid, body, names, numbers, _) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
-            owners.insert(
-                oid,
-                Owner {
+            let shadowed = lookup.schema.is_none() && probe.creation.as_ref() != Some(&relation.id.schema);
+            owners
+                .entry(oid)
+                .or_insert_with(|| Owner {
                     id: relation.id.clone(),
                     columns: numbers.into_iter().zip(names).collect(),
-                },
-            );
+                    view: body,
+                    shadowed: false,
+                })
+                .shadowed |= shadowed;
         }
         catalog.insert(name, entry);
     }
@@ -651,18 +727,25 @@ mod tests {
     }
 
     #[test]
-    fn search_paths_listing_a_temporary_schema_are_detected() {
+    fn temporary_schemas_before_the_first_existing_one_are_detected() {
         for path in [
             "pg_temp, public",
             "\"$user\", pg_temp, public",
-            "PG_TEMP",
-            "public, pg_temp_3",
+            "PG_TEMP, public",
+            "other",
         ] {
-            assert!(lists_temp(path), "{path}");
+            assert!(temp_first(path, "public", "app"), "{path}");
         }
-        for path in ["\"$user\", public", "public", "\"PG_TEMP\"", "temp"] {
-            assert!(!lists_temp(path), "{path}");
+        for path in [
+            "\"$user\", public",
+            "public, pg_temp",
+            "public, pg_temp_3",
+            "\"PG_TEMP\", public",
+            "temp, public",
+        ] {
+            assert!(!temp_first(path, "public", "app"), "{path}");
         }
+        assert!(!temp_first("\"$user\", pg_temp, public", "app", "app"));
     }
 
     fn probe(creation: Option<&str>) -> Probe {
@@ -749,6 +832,7 @@ mod tests {
         for relkind in ["i", "c", "t"] {
             assert_eq!(resolved(&row(relkind, "public", None)), None, "{relkind}");
         }
+        assert_eq!(resolved(&row("t", "pg_toast", None)), None, "TOAST");
         let system = resolved(&row("v", "pg_catalog", None)).expect("system view");
         assert_eq!(system.kind, RelationKind::System);
         assert_eq!(system.view_sql, None);
