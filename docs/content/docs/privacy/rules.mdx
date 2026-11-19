@@ -1,0 +1,198 @@
+---
+title: Rules
+description: Rewrite every value of named table columns, whatever the query does with them
+---
+
+Global [redaction](/privacy/redaction) finds sensitive values by their pattern. Column rules work from the other direction: you name the table columns that hold sensitive data, and <Dbmcp /> rewrites **every** value that comes from them, whether or not it looks like PII. A rule covers the column wherever a query reads it: selected directly, through `*`, a view, a CTE, a subquery, or an expression such as `lower(email)`.
+
+To do that, <Dbmcp /> works out which table columns feed each output column of a statement before it runs. A statement it cannot check, or one that would use a ruled column in a way that could reveal its values, is refused before it runs.
+
+Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `explainQuery` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection.
+
+## Settings
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `pii.rules` | — (YAML only) | map | *unset* | Named column rules |
+
+`pii.rules` exists only in config files. It requires `pii.enabled: true`; rules with redaction off stop startup with `pii.rules requires pii.enabled` (an empty `{}` is accepted). The last config file that sets `pii.rules` wins it whole: rules from different files never merge, `null` leaves an earlier file's rules in place, and `{}` clears them.
+
+```yaml
+pii:
+  enabled: true
+  rules:
+    customer-email:
+      columns:
+        - shop.public.users.email
+        - shop.public.invoices.billing_email
+      entity: EMAIL_ADDRESS
+    national-id:
+      columns:
+        - shop.public.users.ssn
+      entity: US_SSN
+      operator: redact
+    card-number:
+      columns:
+        - shop.public.users.credit_card
+      entity: CREDIT_CARD
+      operator: replace
+```
+
+With these rules, `SELECT email, ssn, credit_card FROM users` returns:
+
+```json
+{ "email": "<EMAIL_ADDRESS_3f9a1c07b2d4e855>", "ssn": "", "credit_card": "<CREDIT_CARD>" }
+```
+
+## Rule shape
+
+Each entry under `pii.rules` is one rule. The key is its name, which every error message about the rule uses; names use only `a-z`, `0-9`, `_`, and `-`.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `columns` | yes | Non-empty list of table columns, each written `catalog.schema.table.column` |
+| `entity` | yes | The [data type](/privacy/data-types) of the values, such as `EMAIL_ADDRESS`, `PHONE_NUMBER`, or `PERSON` |
+| `operator` | no | `hash`, `replace`, `mask`, or `redact`; defaults to `pii.operator` |
+
+A column may appear in only one rule, and only once in it; a repeat stops startup and names both places.
+
+The entity only labels the values: a ruled column is rewritten whether or not its values look like that type, and no recognizer runs on it. Machine-learning entities such as `PERSON`, `LOCATION`, and `ORGANIZATION` work as labels without `pii.ner_enabled`, so a `name` column can be ruled as `PERSON` without the model.
+
+### Column keys
+
+A column key has exactly four dot-separated segments, compared case-insensitively. Wildcards (`*`), quotes, and whitespace are not supported, so a name containing `.` cannot be ruled. Write each name as the catalog stores it.
+
+What fills the first two segments depends on the engine:
+
+| Engine | Key |
+|--------|-----|
+| PostgreSQL | `<database>.<schema>.<table>.<column>`, for example `shop.public.users.email` |
+| MySQL / MariaDB | `def.<database>.<table>.<column>`, for example `def.shop.users.email` |
+| SQLite | `main.<schema>.<table>.<column>`, where `<schema>` is `main` or an attached database's alias, for example `main.main.users.email` |
+
+Startup checks the first segment: it must be `def` on MySQL and MariaDB, `main` on SQLite, and on PostgreSQL the database in `database.name` when that is set. Without a pinned database, PostgreSQL accepts any first segment, and a rule applies when a statement runs in that database (including one chosen with a tool's `database` parameter).
+
+> **Check the names.** A rule for a column that does not exist (a typo, a renamed table, the database name in the wrong segment) never matches, and nothing warns you. Compare every key with `listTables` output.
+
+Rules name **table** columns. A query that reads through a view gets the rules of the view's base table columns.
+
+## How values are rewritten
+
+Every non-null value of a ruled output column is rendered as text (JSON values included, keys and all) and replaced whole, so the result is always a string:
+
+| Operator | Result for `jane.doe@example.com` |
+|----------|-----------------------------------|
+| `hash` | `<EMAIL_ADDRESS_3f9a1c07b2d4e855>`: the entity plus a keyed hash, as in [Redaction](/privacy/redaction#how-spans-are-rewritten) |
+| `replace` | `<EMAIL_ADDRESS>` |
+| `mask` | `********************`, one `*` per character |
+| `redact` | `""` |
+
+`NULL` stays `null` under every operator.
+
+`hash` uses the same key as global detection, and the token covers the entity as well as the value. So a value gets the same token in every column ruled with the same entity, and wherever global detection finds it as that entity: an e-mail address in `users.email` and in `invoices.billing_email` hashes to one token when both rules say `EMAIL_ADDRESS`, and the assistant can match rows by token without seeing the address. The same address ruled as `PERSON` elsewhere gets an unrelated token. Set [`pii.key`](/privacy/redaction#hash-key); without it, tokens change on every restart and differ across replicas.
+
+### Derived columns
+
+An output column computed from a ruled column gets that rule: `lower(email)`, `concat(email, '!')`, `coalesce(email, backup_email)`, and `count(DISTINCT email)` are all rewritten as `EMAIL_ADDRESS`. The value never shows, but the label can look odd: a count comes back as an e-mail token.
+
+Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule. Two ruled sources must agree on operator and entity. `concat(email, phone)` under different rules is refused:
+
+```text
+column policy: output column 0 combines conflicting column rules
+```
+
+The message names only the 0-based position: an unaliased column name is expression text and can contain values.
+
+## Where a ruled column may appear
+
+A ruled column may be selected, but it may not appear in any other clause. A condition such as `WHERE ssn LIKE '123%'` would let the assistant learn the value one guess at a time without ever seeing it. These uses are refused:
+
+| Clause | Examples |
+|--------|----------|
+| `JOIN` | `JOIN … ON`, `USING`, `NATURAL` join keys |
+| `WHERE` | `WHERE`, `HAVING`, `UPDATE` / `DELETE … WHERE`, `MERGE … ON` |
+| `GROUP BY` | `GROUP BY email` |
+| `ORDER BY` | `ORDER BY ssn` |
+| a window | `PARTITION BY` and `ORDER BY` inside `OVER (…)` |
+
+Uses in `LIMIT` / `OFFSET` (through a subquery) are refused too, and reported as `WHERE`. Inside an aggregate in the select list, `FILTER (WHERE …)` and `WITHIN GROUP (ORDER BY …)` count as sources of that output column, so it gets the rule instead.
+
+A use inside a subquery takes the clause the subquery sits in, and uses inside a view body count the same as uses in the query. So a view that filters on a ruled column cannot be queried at all:
+
+```text
+column policy: column "public.users.email" (ruled) used in WHERE
+column policy: column "public.users.ssn" (ruled) used in WHERE in view "public.users_with_ssn"
+```
+
+There is no way to allow a clause per rule yet. Filter, join, and group on unruled columns (an `id`, a foreign key) instead.
+
+## What gets rejected
+
+While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, not only statements that touch a ruled table. Nothing runs. Every refusal starts with `column policy:` and names only clauses and identifiers, never a rule body or a value.
+
+- **Statements it cannot analyze**: parse errors, unknown or ambiguous columns, nesting that is too deep, and SQL it does not model, including `WITH RECURSIVE`, `LATERAL`, table functions (`unnest`, `generate_series`, `JSON_TABLE`), and temporary tables. PostgreSQL `pg_toast` tables and SQLite's `sqlite_schema` (`sqlite_master`) are never resolved, so statements reading them are refused here too, and SQLite's implicit `rowid` is not a known column.
+- **SQL the server reads differently from the parser**: MySQL and MariaDB with `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` in `sql_mode`, or a client charset such as `gbk` or `sjis`; MySQL and MariaDB `@user` and `@@system` variables; PostgreSQL with `standard_conforming_strings = off`.
+- **Unknown functions**: any function missing from the engine's built-in table, including every user-defined function, wherever it appears, view bodies included: a function body could return the values of columns it reads. Built-ins that read values outside the query are deliberately missing too (for example `current_setting`, `lo_get`, `EXTRACTVALUE`, `LOAD_FILE`).
+- **Relations that expose values outside the columns**: column statistics, other sessions' statement text, locked key values, raw pages, large objects, and server settings.
+  - PostgreSQL (any schema): `pg_statistic`, `pg_stats`, `pg_stats_ext`, `pg_stats_ext_exprs`, `pg_statistic_ext_data`, `pg_stat_activity`, `pg_stat_statements`, `pg_largeobject`, `pg_largeobject_metadata`, `pg_settings`, `pg_file_settings`, `pg_db_role_setting`.
+  - MySQL and MariaDB: `information_schema.COLUMN_STATISTICS`, `PROCESSLIST`, `INNODB_TRX`, `INNODB_LOCKS`, `INNODB_FT_*`; `performance_schema.events_statements_*`, `threads`, `processlist`, `data_locks`, `prepared_statements_instances`, `user_variables_by_thread`, `replication_applier_status*`; `sys` views whose name contains `statement`, `processlist`, `session`, or `innodb_lock_waits`; every table in `mysql`.
+  - SQLite: `sqlite_stat1` to `sqlite_stat4`, `sqlite_dbpage`, and **every virtual table**, including full-text search (FTS) tables. FTS cannot be queried while rules exist.
+- **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
+- **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB: `SHOW WARNINGS`, `ERRORS`, `ENGINE`, `PROCESSLIST`, `BINLOG EVENTS`, `RELAYLOG EVENTS`, `REPLICA` / `SLAVE STATUS`, and MariaDB's `SHOW EXPLAIN` / `SHOW ANALYZE`.
+- **`EXPLAIN` of ruled tables**: `explainQuery`, and `EXPLAIN` through `readQuery`, are refused when the statement touches a table with a ruled column: plans can print literal values and statistics. `EXPLAIN` of other tables works as before. `CREATE INDEX` on a ruled table is refused too.
+- **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
+
+Output of `SHOW`, `DESCRIBE`, and `EXPLAIN` that is not refused gets global detection, as without rules.
+
+## Writes
+
+With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
+
+- A target column fed by a ruled column needs a rule with the same operator and entity. An unruled target, or one ruled differently, is refused.
+- A target fed only by literals or unruled columns copies no ruled values and is always allowed.
+- A new table's column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused until the column is aliased (`lower(email) AS email`) and ruled.
+
+This covers `INSERT`, `UPDATE`, `MERGE`, `CREATE TABLE … AS`, PostgreSQL `SELECT INTO`, and `CREATE MATERIALIZED VIEW`. For example, `INSERT INTO audit (note) SELECT ssn FROM users` is refused unless `audit.note` carries the `ssn` rule. To copy ruled data into a new table, add a rule for the new table's columns first. `CREATE VIEW` is not laundering, since reads through the view get the base table rules, but its body passes the other checks.
+
+```text
+column policy: writing column "public.audit.note" would weaken the rules of its source columns
+```
+
+Each statement runs in one transaction, and a result that does not fit the plan is rolled back before anything commits. Some writes cannot be undone that way:
+
+- **MySQL and MariaDB DDL** (`CREATE TABLE`, `DROP`, `TRUNCATE`, `CREATE INDEX`) commits implicitly. A refusal after it ran leaves the change in place.
+- **MySQL and MariaDB non-transactional tables** (MyISAM, MEMORY, Aria, …) ignore rollback. A write that reads a view must be able to roll back, so `CREATE TABLE … AS SELECT` from a view, and writes from a view into a table that is not InnoDB, are refused. Use `CREATE TABLE` followed by `INSERT … SELECT` into an InnoDB table instead.
+- **PostgreSQL `CREATE INDEX`** runs outside the transaction, since its `CONCURRENTLY` form needs that.
+
+On PostgreSQL, a `search_path` that puts `pg_temp` first refuses creates of unqualified names: the server would create them as temporary tables.
+
+## Database errors
+
+Database error messages can echo values, for example `invalid input syntax for type integer: "123-45-6789"`. When the failing statement touches a table with a ruled column, and for every PostgreSQL `CREATE INDEX` while rules exist, <Dbmcp /> keeps only messages whose error code never carries a value, and replaces every other message, including errors raised at `COMMIT`:
+
+```text
+query failed (SQLSTATE 22P02): error detail withheld under column policy
+```
+
+- **PostgreSQL** keeps SQLSTATE classes `42` (syntax and access), `25` (transaction state), `40` (rollback), `53` (resources), `54` (limits), `57` (operator intervention), and `08` (connection), except `42601`, `42602`, `42P01`, `42704`, `42725`, and `42883`, which can echo a cast's input.
+- **MySQL and MariaDB** keep a fixed list of error numbers: unknown column or table, syntax, access, unknown function, foreign key, `NOT NULL`, out of range, too long, check constraint, JSON, and duplicate column name. Everything else is withheld as `query failed (error <number>, SQLSTATE <state>): error detail withheld under column policy`.
+- **SQLite** keeps constraint failures (`CHECK`, foreign key, `NOT NULL`, primary key, unique, rowid, datatype) and malformed-JSON errors, but not `RAISE()` messages from triggers, as `query failed (SQLite code <code>): …`.
+
+Policy refusals, timeouts, and connection errors are returned as they are. Other errors, from statements that touch no ruled table, get global redaction, as without rules.
+
+## Residual risks
+
+Column rules narrow what the assistant can learn, but some channels stay open. Plan for them:
+
+- **Rules that match nothing.** A key with a typo or the wrong segments (see [Column keys](#column-keys)) silently has no effect.
+- **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds personal data.
+- **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
+- **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds. Withholding the message does not hide that an error happened.
+- **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
+- **`mask` length.** `mask` keeps the length of the value.
+- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
+- **Concurrent schema changes.** The catalog is read and the statement runs on one connection. On PostgreSQL both happen in one transaction; on MySQL and MariaDB the catalog is read just before the transaction opens. A view body that changed meanwhile refuses the result, but table columns are not checked again. Another session can still change a table in between. Restrict DDL on ruled tables to trusted roles.
+- **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly.
+- **MySQL GTID consistency.** With `enforce_gtid_consistency` on, writes to non-transactional tables fail inside the transaction <Dbmcp /> opens.
+
+Metadata tools (`listTables`, `listViews`, …) are not covered by column rules: they return schema objects, not query rows.

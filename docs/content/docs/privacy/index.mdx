@@ -17,9 +17,11 @@ The feature is **opt-in and off by default**. Nothing is rewritten until you tur
 2. **Rewrite.** Each detected span is replaced by the configured operator: a keyed hash token such as `<EMAIL_ADDRESS_3f9a1c07b2d4e855>` (`hash`, the default), a plain placeholder such as `<EMAIL_ADDRESS>` (`replace`), `*` masking (`mask`), or removal (`redact`).
 3. **Return.** The rewritten result goes to the assistant. Your database is never modified.
 
+For columns you know hold sensitive data, [column rules](/privacy/rules) go further: every value of a named table column is rewritten, whatever it looks like and however the query reads it, and statements that could reveal those values in other ways are refused.
+
 ## What gets filtered
 
-Redaction applies to the **rows the query tools return** — `readQuery` results, `writeQuery` rows (for example from `RETURNING`), and `explainQuery` output — and to **tool error messages** from every tool. Error messages run through the regex recognizers only; the optional NER pass is skipped so table, column, and schema names in database errors stay intact. Logs, successful schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
+Redaction applies to the **rows the query tools return** — `readQuery` results, `writeQuery` rows (for example from `RETURNING`), and `explainQuery` output — and to **tool error messages** from every tool. Error messages run through the regex recognizers only; the optional NER pass is skipped so table, column, and schema names in database errors stay intact. With [column rules](/privacy/rules), statements that could reveal ruled values are refused, and database errors from statements touching a ruled table are replaced by a generic message unless their error code never carries a value. Logs, successful schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
 
 ## Turn it on
 
@@ -38,5 +40,6 @@ Treat PII redaction as a layer that reduces what an enabled assistant sees in re
 ## In this section
 
 - [Redaction](/privacy/redaction): settings, operators, categories, and JSON columns.
+- [Rules](/privacy/rules): rewrite every value of named table columns, and what gets refused.
 - [Machine Learning](/privacy/machine-learning): optional machine-learning model for names of people, places, and organizations.
 - [Data types](/privacy/data-types): every kind of data the built-in recognizers find.

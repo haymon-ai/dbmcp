@@ -16,7 +16,7 @@ Turn PII redaction on and choose how detected values are rewritten. For what the
 | `pii.ner_enabled` | `DBMCP_PII_NER_ENABLE` | boolean | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
 | `pii.ner_model` | `DBMCP_PII_NER_MODEL` | path | *unset* | Path to the NER model directory (required with `pii.ner_enabled`) |
 
-The other `pii` settings are ignored unless `pii.enabled` is true.
+The other `pii` settings are ignored unless `pii.enabled` is true. Column rules (`pii.rules`, YAML only) have their own page: [Rules](/privacy/rules).
 
 > **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `pii.enabled: true` in the config file) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_KEY`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` settings alone have no effect.
 
