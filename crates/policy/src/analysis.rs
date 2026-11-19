@@ -145,7 +145,7 @@ impl Analyzed {
             statement,
             StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
         );
-        // `PostgreSQL` runs `CREATE INDEX` after planning, where its names may rebind.
+        // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction, where names may rebind.
         let withholds = touches_ruled(&self.lineage, config)
             || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
         Ok(Planned::new(positional.then_some(plan), config, withholds))
@@ -263,17 +263,20 @@ mod tests {
     #[test]
     fn statements_touching_a_ruled_relation_withhold_errors() {
         let config = ruled();
-        assert!(analyzed("SELECT b FROM t").plan(&config).expect("plan").withholds());
-        assert!(!analyzed("SELECT b FROM u").plan(&config).expect("plan").withholds());
+        let ruled = analyzed("SELECT b FROM t").plan(&config).expect("plan");
+        assert_eq!(ruled.withheld(Some("23505")), Some("23505"));
+        let other = analyzed("SELECT b FROM u").plan(&config).expect("plan");
+        assert_eq!(other.withheld(Some("23505")), None);
     }
 
     #[test]
     fn every_postgres_create_index_withholds_errors() {
         let config = ruled();
         let index = "CREATE INDEX i ON u (a)";
-        assert!(analyzed(index).plan(&config).expect("plan").withholds());
+        let postgres = analyzed(index).plan(&config).expect("plan");
+        assert_eq!(postgres.withheld(Some("23505")), Some("23505"));
         let other = analyzed_on(DatabaseBackend::Sqlite, index);
-        assert!(!other.plan(&config).expect("plan").withholds());
+        assert_eq!(other.plan(&config).expect("plan").withheld(Some("23505")), None);
     }
 
     #[test]

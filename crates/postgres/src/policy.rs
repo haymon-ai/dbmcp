@@ -305,14 +305,9 @@ async fn run<'c>(
         tx.rollback().await?;
         return autocommit(conn, sql, planned, &owners, sink).await;
     }
-    let withholds = planned.withholds();
-    let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if withholds => Stop::Withheld(code),
-        _ => Stop::Sql(error),
-    };
     let executed = match execute(&mut tx, sql, &mut planned, &owners, sink).await {
         Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(error)),
+        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => {
             tx.rollback().await?;
             return Err(stop);
@@ -327,7 +322,7 @@ async fn run<'c>(
         Access::Read => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
-    finished.map_err(failed)?;
+    finished.map_err(|error| failed(&planned, error))?;
     let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
     Ok(Run {
         planned,
@@ -337,10 +332,7 @@ async fn run<'c>(
     })
 }
 
-/// Runs a planned `CREATE INDEX` outside a transaction block.
-///
-/// It returns no rows. Its names may rebind once the planning transaction
-/// ends, so value-echoing errors are withheld whatever it touched.
+/// Runs a planned `CREATE INDEX` outside a transaction block; it returns no rows.
 async fn autocommit<'c>(
     conn: &mut sqlx::PgConnection,
     sql: &str,
@@ -348,12 +340,11 @@ async fn autocommit<'c>(
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let executed = execute(conn, sql, &mut planned, owners, sink)
-        .await
-        .map_err(|stop| match stop {
-            Stop::Sql(error) => withheld(&error).map_or(Stop::Sql(error), Stop::Withheld),
-            other => other,
-        })?;
+    let executed = match execute(conn, sql, &mut planned, owners, sink).await {
+        Ok(executed) => executed,
+        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
+        Err(stop) => return Err(stop),
+    };
     let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
     Ok(Run {
         planned,
@@ -595,10 +586,17 @@ fn view_query(body: &str) -> String {
     body.strip_suffix(';').unwrap_or(body).trim().to_owned()
 }
 
+/// Withholds `error` when it may echo a value and the plan withholds.
+fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
+    planned
+        .withheld(echoing(&error))
+        .map_or(Stop::Sql(error), Stop::Withheld)
+}
+
 /// Returns the `SQLSTATE` of a database error that may echo a value.
 ///
-/// Timeouts and non-database errors are never withheld.
-fn withheld(error: &sqlx::Error) -> Option<String> {
+/// Timeouts and non-database errors return `None`.
+fn echoing(error: &sqlx::Error) -> Option<String> {
     if PostgresConnection::is_timeout(error) {
         return None;
     }
