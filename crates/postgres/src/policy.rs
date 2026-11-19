@@ -55,18 +55,17 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// Per name, in order: schema, name, `relkind`, OID, view body, column names
 /// and numbers (system columns, numbered below zero, come last), and whether
 /// the explicit schema exists.
-const RESOLVE_SQL: &str = "SELECT n.ord, s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
+const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
-     ARRAY(SELECT a.attname::text FROM pg_attribute AS a \
-           WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped \
-           ORDER BY a.attnum < 0, a.attnum), \
-     ARRAY(SELECT a.attnum FROM pg_attribute AS a \
-           WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped \
-           ORDER BY a.attnum < 0, a.attnum), \
+     coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
      to_regnamespace(n.schema) IS NOT NULL \
      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
      LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
      LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
+     LEFT JOIN LATERAL (SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
+           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers \
+           FROM pg_attribute AS a \
+           WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
      ORDER BY n.ord";
 
 /// `SQLSTATE` classes whose messages name schema objects or states, never values.
@@ -209,7 +208,6 @@ impl Lookup {
 
 /// One row of [`RESOLVE_SQL`].
 type Resolved = (
-    i64,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -494,15 +492,14 @@ async fn fetch(
         .fetch_all(&mut *conn)
         .await?;
     for ((name, lookup), row) in lookups.into_iter().zip(rows) {
-        let oid = row.4.and_then(|oid| u32::try_from(oid).ok());
-        let columns: HashMap<i16, String> = row.7.iter().copied().zip(row.6.iter().cloned()).collect();
-        let entry = entry(probe, &name, &lookup, row);
-        if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid) {
+        let entry = entry(probe, &name, &lookup, &row);
+        let (_, _, _, oid, _, names, numbers, _) = row;
+        if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.insert(
                 oid,
                 Owner {
                     id: relation.id.clone(),
-                    columns,
+                    columns: numbers.into_iter().zip(names).collect(),
                 },
             );
         }
@@ -512,10 +509,10 @@ async fn fetch(
 }
 
 /// Builds the catalog entry of one resolved row.
-fn entry(probe: &Probe, name: &WrittenName, lookup: &Lookup, row: Resolved) -> Entry {
-    let (_, schema, relname, relkind, _, body, columns, numbers, schema_exists) = row;
+fn entry(probe: &Probe, name: &WrittenName, lookup: &Lookup, row: &Resolved) -> Entry {
+    let (schema, relname, relkind, _, body, columns, numbers, schema_exists) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
-        return vacant(probe, name, lookup, schema_exists);
+        return vacant(probe, name, lookup, *schema_exists);
     };
     let system = SYSTEM_SCHEMAS.contains(&schema.as_str());
     let kind = match relkind.as_str() {
@@ -527,17 +524,17 @@ fn entry(probe: &Probe, name: &WrittenName, lookup: &Lookup, row: Resolved) -> E
         _ => return Entry::Absent,
     };
     let columns = columns
-        .into_iter()
+        .iter()
         .zip(numbers)
-        .map(|(column, number)| {
+        .map(|(column, &number)| {
             if number > 0 {
-                CatalogColumn::new(column)
+                CatalogColumn::new(column.clone())
             } else {
-                CatalogColumn::hidden(column)
+                CatalogColumn::hidden(column.clone())
             }
         })
         .collect();
-    let id = RelationId::new(&probe.database, &schema, &relname);
+    let id = RelationId::new(&probe.database, schema, relname);
     let relation = Relation::new(id, kind, columns);
     if !matches!(kind, RelationKind::View | RelationKind::MatView) {
         return Entry::Resolved(relation);
@@ -570,13 +567,7 @@ fn vacant(probe: &Probe, name: &WrittenName, lookup: &Lookup, schema_exists: boo
 
 /// Cuts `identifier` to [`MAX_IDENTIFIER_BYTES`] on a character boundary, as the server does.
 fn truncate_identifier(mut identifier: String) -> String {
-    if identifier.len() > MAX_IDENTIFIER_BYTES {
-        let end = (0..=MAX_IDENTIFIER_BYTES)
-            .rev()
-            .find(|&end| identifier.is_char_boundary(end))
-            .unwrap_or(0);
-        identifier.truncate(end);
-    }
+    identifier.truncate(identifier.floor_char_boundary(MAX_IDENTIFIER_BYTES));
     identifier
 }
 
@@ -723,7 +714,6 @@ mod tests {
 
     fn row(relkind: &str, schema: &str, body: Option<&str>) -> Resolved {
         (
-            1,
             Some(schema.into()),
             Some("r".into()),
             Some(relkind.into()),
@@ -735,7 +725,7 @@ mod tests {
         )
     }
 
-    fn resolved(row: Resolved) -> Option<Relation> {
+    fn resolved(row: &Resolved) -> Option<Relation> {
         let name = WrittenName::query(vec![NamePart::bare("r")]);
         let lookup = Lookup::new(&name, DB).expect("lookup");
         match entry(&probe(Some("public")), &name, &lookup, row) {
@@ -752,21 +742,21 @@ mod tests {
             ("S", RelationKind::Table),
             ("f", RelationKind::Foreign),
         ] {
-            let relation = resolved(row(relkind, "public", None)).expect(relkind);
+            let relation = resolved(&row(relkind, "public", None)).expect(relkind);
             assert_eq!(relation.kind, kind, "{relkind}");
             assert_eq!(relation.id, RelationId::new(DB, "public", "r"));
         }
         for relkind in ["i", "c", "t"] {
-            assert_eq!(resolved(row(relkind, "public", None)), None, "{relkind}");
+            assert_eq!(resolved(&row(relkind, "public", None)), None, "{relkind}");
         }
-        let system = resolved(row("v", "pg_catalog", None)).expect("system view");
+        let system = resolved(&row("v", "pg_catalog", None)).expect("system view");
         assert_eq!(system.kind, RelationKind::System);
         assert_eq!(system.view_sql, None);
     }
 
     #[test]
     fn system_columns_are_hidden_from_star() {
-        let relation = resolved(row("r", "public", None)).expect("table");
+        let relation = resolved(&row("r", "public", None)).expect("table");
         assert_eq!(
             relation.columns,
             vec![CatalogColumn::new("id"), CatalogColumn::hidden("ctid")]
@@ -775,21 +765,21 @@ mod tests {
 
     #[test]
     fn views_carry_their_query_or_are_absent() {
-        let view = resolved(row("v", "public", Some(" SELECT users.id\n   FROM users;"))).expect("view");
+        let view = resolved(&row("v", "public", Some(" SELECT users.id\n   FROM users;"))).expect("view");
         assert_eq!(view.kind, RelationKind::View);
         assert_eq!(view.view_sql.as_deref(), Some("SELECT users.id\n   FROM users"));
-        let matview = resolved(row("m", "public", Some(" SELECT 1;"))).expect("matview");
+        let matview = resolved(&row("m", "public", Some(" SELECT 1;"))).expect("matview");
         assert_eq!(matview.kind, RelationKind::MatView);
-        assert_eq!(resolved(row("v", "public", None)), None);
+        assert_eq!(resolved(&row("v", "public", None)), None);
     }
 
     #[test]
     fn unresolved_rows_fall_back_to_vacant() {
         let name = WrittenName::query(vec![NamePart::bare("n")]);
         let lookup = Lookup::new(&name, DB).expect("lookup");
-        let row: Resolved = (1, None, None, None, None, None, Vec::new(), Vec::new(), false);
+        let row: Resolved = (None, None, None, None, None, Vec::new(), Vec::new(), false);
         assert_eq!(
-            entry(&probe(Some("public")), &name, &lookup, row),
+            entry(&probe(Some("public")), &name, &lookup, &row),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
         );
     }

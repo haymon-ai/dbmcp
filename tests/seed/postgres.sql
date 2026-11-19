@@ -479,7 +479,6 @@ INSERT INTO invoices (user_id, billing_email) VALUES
 CREATE VIEW users_with_ssn AS
     SELECT id, email FROM users WHERE ssn IS NOT NULL;
 
--- `active_users` is owned by `app_user`, which cannot read `users`.
 CREATE VIEW user_emails AS
     SELECT id, email FROM users;
 
