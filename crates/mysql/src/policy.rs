@@ -39,14 +39,12 @@ use dbmcp_policy::{
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
-use futures_util::TryStreamExt as _;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
-use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult};
-use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Either, Executor as _, Row as _, SqlSafeStr as _, SqlStr};
-use sqlx_json::RowExt as _;
+use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult, MySqlRow};
+use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
@@ -493,30 +491,15 @@ async fn execute(
     owners: &[Owner],
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
-    let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
-    let mut stream = conn.fetch_many(query);
-    let mut names = None;
-    let mut results = Vec::new();
-    while let Some(item) = stream.try_next().await? {
-        match item {
-            Either::Left(result) => results.push(result),
-            Either::Right(row) => {
-                let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
-                if names.is_none()
-                    && let Some(planned) = planned
-                {
-                    check_origins(row.columns(), planned, probe, owners)?;
-                    check_columns(planned.plan(), &row_names)?;
-                }
-                names.get_or_insert(row_names);
-                sink(Value::Array(values));
-            }
+    let first = |row: &MySqlRow, names: &[String]| {
+        if let Some(planned) = planned {
+            check_origins(row.columns(), planned, probe, owners)?;
+            check_columns(planned.plan(), names)?;
         }
-    }
-    Ok(Executed {
-        names: names.unwrap_or_default(),
-        results,
-    })
+        Ok::<_, Stop>(())
+    };
+    let (names, results) = MysqlConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed { names, results })
 }
 
 /// Refuses a result column whose origin is ruled but not planned as ruled.

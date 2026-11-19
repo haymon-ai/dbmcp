@@ -13,7 +13,6 @@ dbmcp-pii = { workspace = true }
 dbmcp-policy = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
-futures-util = { workspace = true }
 indexmap = { workspace = true }
 moka = { workspace = true }
 rmcp = { workspace = true }
