@@ -128,9 +128,7 @@ impl Analyzed {
 
     /// Plans the statement's output columns under `config`'s column rules.
     ///
-    /// Runs every planner gate. Returns `None` for `EXPLAIN`, `SHOW`, and
-    /// `DESCRIBE`, whose rows are not positional: redact them globally.
-    /// The [`Planned`] stays bound to `config` for origin checks.
+    /// Runs every planner gate. `EXPLAIN`, `SHOW`, and `DESCRIBE` redact globally.
     ///
     /// # Errors
     ///
@@ -140,33 +138,27 @@ impl Analyzed {
     ///
     /// Panics when a rule's entity is not an [`Entity`](dbmcp_pii::Entity)
     /// name; the loader only accepts `ColumnRule::ENTITIES`.
-    pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Option<Planned<'c>>, Rejection> {
+    pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Planned<'c>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
-        Ok((!matches!(
-            self.lineage.statement,
+        let statement = &self.lineage.statement;
+        let positional = !matches!(
+            statement,
             StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-        ))
-        .then(|| Planned::new(plan, config)))
-    }
-
-    /// Reports whether the statement touches a relation with a ruled column.
-    ///
-    /// Every relation counts, those named inside view bodies included.
-    /// Backends use it to decide whether database errors must be sanitized.
-    #[must_use]
-    pub fn touches_ruled(&self, config: &PiiConfig) -> bool {
-        touches_ruled(&self.lineage, config)
+        );
+        // `PostgreSQL` runs `CREATE INDEX` after planning, where its names may rebind.
+        let withholds = touches_ruled(&self.lineage, config)
+            || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
+        Ok(Planned::new(positional.then_some(plan), config, withholds))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use dbmcp_config::{ColumnRule, PiiOperator};
-    use dbmcp_pii::cells::Position;
     use dbmcp_sql_lineage::{CatalogColumn, Relation, RelationKind};
 
     use super::*;
-    use crate::LineageClass;
+    use crate::{LineageClass, Unfit};
 
     /// Answers every missing name with `shop.public.<last part>`, columns `a` and `b`.
     fn table(name: &WrittenName) -> Entry {
@@ -244,33 +236,44 @@ mod tests {
         );
     }
 
+    /// The origin `shop.public.t.a` at `position`.
+    fn ruled_origin(position: usize) -> (usize, RelationId, Option<String>) {
+        (position, RelationId::new("shop", "public", "t"), Some("a".into()))
+    }
+
     #[test]
     fn queries_plan_by_position() {
         let config = ruled();
-        let planned = analyzed("SELECT a, b FROM t")
-            .plan(&config)
-            .expect("plan")
-            .expect("positional");
-        let positions: Vec<_> = planned.plan().columns.iter().map(|column| column.position).collect();
-        assert!(matches!(
-            positions[..],
-            [Position::Action(PiiOperator::Mask, _), Position::Global]
-        ));
+        let mut planned = analyzed("SELECT a, b FROM t").plan(&config).expect("plan");
+        let names = ["a", "b"].map(String::from);
+        assert_eq!(planned.check_first(&names, [ruled_origin(0)]), Ok(()));
+        assert_eq!(planned.check_first(&names, [ruled_origin(1)]), Err(Unfit::Unplanned(1)));
     }
 
     #[test]
     fn explain_show_and_describe_plan_globally() {
-        let config = PiiConfig::default();
-        for sql in ["EXPLAIN SELECT a FROM t", "SHOW TABLES", "DESCRIBE t"] {
-            let analyzed = analyzed_on(DatabaseBackend::Mysql, sql);
-            assert!(analyzed.plan(&config).expect("plan").is_none(), "{sql}");
+        let config = ruled();
+        let names = ["x", "y", "z"].map(String::from);
+        for sql in ["EXPLAIN SELECT b FROM u", "SHOW TABLES", "DESCRIBE u"] {
+            let mut planned = analyzed_on(DatabaseBackend::Mysql, sql).plan(&config).expect("plan");
+            assert_eq!(planned.check_first(&names, [ruled_origin(0)]), Ok(()), "{sql}");
         }
     }
 
     #[test]
-    fn touches_ruled_sees_the_ruled_relation() {
-        assert!(analyzed("SELECT b FROM t").touches_ruled(&ruled()));
-        assert!(!analyzed("SELECT b FROM u").touches_ruled(&ruled()));
+    fn statements_touching_a_ruled_relation_withhold_errors() {
+        let config = ruled();
+        assert!(analyzed("SELECT b FROM t").plan(&config).expect("plan").withholds());
+        assert!(!analyzed("SELECT b FROM u").plan(&config).expect("plan").withholds());
+    }
+
+    #[test]
+    fn every_postgres_create_index_withholds_errors() {
+        let config = ruled();
+        let index = "CREATE INDEX i ON u (a)";
+        assert!(analyzed(index).plan(&config).expect("plan").withholds());
+        let other = analyzed_on(DatabaseBackend::Sqlite, index);
+        assert!(!other.plan(&config).expect("plan").withholds());
     }
 
     #[test]

@@ -31,10 +31,9 @@ use std::collections::BTreeMap;
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, WrittenName,
+    StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::validation::validate_single_statement;
@@ -149,10 +148,7 @@ enum Stop {
     Rejected(#[from] Rejection),
     /// The result does not fit the plan; the transaction rolls back.
     #[error(transparent)]
-    Shape(#[from] ShapeError),
-    /// A ruled column came back where the plan does not rewrite it; the transaction rolls back.
-    #[error("column policy: result column {0} carries a ruled column the plan does not rewrite")]
-    Unplanned(usize),
+    Unfit(#[from] Unfit),
     /// A write reads a view but could not be undone.
     #[error(
         "column policy: a write that reads a view must be able to roll back \
@@ -171,8 +167,7 @@ enum Stop {
 }
 
 struct Run<'c> {
-    /// The result columns' plan; `None` for `EXPLAIN`, `SHOW`, `DESCRIBE`, detected globally.
-    plan: Option<Planned<'c>>,
+    planned: Planned<'c>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -343,9 +338,7 @@ impl MysqlHandler {
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
         let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = redactor
-            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
-            .await?;
+        let rows = run.planned.redact(redactor, run.names, rows).await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -376,16 +369,17 @@ async fn run<'c>(
         Access::Write => "START TRANSACTION",
     };
     let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
-    let plan = analyzed.plan(config)?;
+    let mut planned = analyzed.plan(config)?;
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
+    let withholds = planned.withholds();
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some((number, state)) if analyzed.touches_ruled(config) => Stop::Withheld { number, state },
+        Some((number, state)) if withholds => Stop::Withheld { number, state },
         _ => Stop::Sql(error),
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let executed = match execute(&mut tx, sql, plan.as_ref(), &probe, &owners, sink).await {
+    let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -405,7 +399,7 @@ async fn run<'c>(
     finished.map_err(failed)?;
     let (rows_affected, last_insert_id) = MysqlConnection::counts(sql, &executed.results);
     Ok(Run {
-        plan,
+        planned,
         names: executed.names,
         rows_affected,
         last_insert_id,
@@ -478,38 +472,35 @@ async fn views_unchanged(
     }))
 }
 
-/// Runs `sql`, feeding each row's values to `sink` and collecting its results.
+/// Runs `sql`, feeding each row's values to `sink`.
 ///
-/// With a plan, the first row's column origins, count, and names are
-/// checked before any row reaches `sink`, so a write that does not fit
-/// never commits.
+/// The first row is checked against `planned` before any row reaches `sink`.
 async fn execute(
     conn: &mut sqlx::MySqlConnection,
     sql: &str,
-    planned: Option<&Planned<'_>>,
+    planned: &mut Planned<'_>,
     probe: &Probe,
     owners: &[Owner],
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
     let first = |row: &MySqlRow, names: &[String]| {
-        if let Some(planned) = planned {
-            check_origins(row.columns(), planned, probe, owners)?;
-            check_columns(planned.plan(), names)?;
-        }
-        Ok::<_, Stop>(())
+        planned
+            .check_first(names, origins(row.columns(), probe, owners))
+            .map_err(Stop::from)
     };
     let (names, results) = MysqlConnection::execute_checked(conn, sql, first, sink).await?;
     Ok(Executed { names, results })
 }
 
-/// Refuses a result column whose origin is ruled but not planned as ruled.
+/// Translates the origin the server reports for each result column.
 ///
 /// Only an origin naming a relation the catalog reads described, and one of
-/// its columns, is checked. Below a derived table or CTE neither server
+/// its columns, is translated. Below a derived table or CTE neither server
 /// reports the physical column: `MySQL` names the base table with the
 /// derived column's alias, `MariaDB` the derived table's alias (without a
 /// schema once materialized). Those, and expressions, rest on the plan.
-fn check_origins(columns: &[MySqlColumn], planned: &Planned<'_>, probe: &Probe, owners: &[Owner]) -> Result<(), Stop> {
+fn origins(columns: &[MySqlColumn], probe: &Probe, owners: &[Owner]) -> Vec<(usize, RelationId, Option<String>)> {
+    let mut origins = Vec::new();
     for column in columns {
         let position = column.ordinal();
         let ColumnOrigin::Table(origin) = column.origin() else {
@@ -532,11 +523,9 @@ fn check_origins(columns: &[MySqlColumn], planned: &Planned<'_>, probe: &Probe, 
         }) else {
             continue;
         };
-        if !planned.admits(position, &owner.id, Some(name)) {
-            return Err(Stop::Unplanned(position));
-        }
+        origins.push((position, owner.id.clone(), Some(name.clone())));
     }
-    Ok(())
+    origins
 }
 
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
@@ -769,7 +758,6 @@ fn withheld(error: &sqlx::Error) -> Option<(u16, String)> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PiiOperator};
     use dbmcp_policy::NamePart;
 
     use super::*;
@@ -974,20 +962,6 @@ mod tests {
         assert!(rolls_back(&StatementKind::CreateTableAs, Some(&target), &owners));
     }
 
-    /// Rules `def.app.users.email` of the functional seed.
-    fn email_ruled() -> PiiConfig {
-        PiiConfig {
-            rules: vec![ColumnRule {
-                name: "email".into(),
-                item: 0,
-                key: ["def", "app", "users", "email"].map(String::from),
-                entity: "EMAIL_ADDRESS",
-                operator: PiiOperator::Hash,
-            }],
-            ..PiiConfig::default()
-        }
-    }
-
     /// Connects to the seeded `app` database that `./tests/run.sh` starts.
     async fn seeded() -> sqlx::MySqlConnection {
         let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
@@ -1007,43 +981,23 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
-    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+    async fn origins_translate_described_columns() {
         let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
             Ok("mariadb") => DatabaseBackend::Mariadb,
             _ => DatabaseBackend::Mysql,
         };
         let mut conn = seeded().await;
-        let rules = email_ruled();
-        // Each plan comes from another statement, so it disagrees with the row's origins.
-        for (planned_sql, unplanned) in [
-            ("SELECT name, name FROM users", Some(1)),
-            ("SELECT name, email FROM users", None),
-            ("SELECT name FROM users", Some(1)),
-        ] {
-            let (analyzed, probe, owners) = resolve(&mut conn, backend, planned_sql).await.expect("resolve");
-            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
-            let mut sunk = 0;
-            let executed = execute(
-                &mut conn,
-                "SELECT name, email FROM users",
-                Some(&planned),
-                &probe,
-                &owners,
-                &mut |_| sunk += 1,
-            )
-            .await;
-            match unplanned {
-                Some(position) => {
-                    assert!(
-                        matches!(executed, Err(Stop::Unplanned(at)) if at == position),
-                        "{planned_sql}"
-                    );
-                    assert_eq!(sunk, 0, "{planned_sql}");
-                }
-                None => {
-                    executed.expect("admitted");
-                }
-            }
-        }
+        let sql = "SELECT name, email, 1 FROM users";
+        let (_, probe, owners) = resolve(&mut conn, backend, sql).await.expect("resolve");
+        let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
+        let users = RelationId::new(CATALOG, "app", "users");
+        assert_eq!(
+            origins(row.columns(), &probe, &owners),
+            [
+                (0, users.clone(), Some("name".to_owned())),
+                (1, users, Some("email".to_owned())),
+            ]
+        );
+        assert_eq!(origins(row.columns(), &probe, &[]), []);
     }
 }

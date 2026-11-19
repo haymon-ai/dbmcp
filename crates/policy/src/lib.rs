@@ -6,9 +6,9 @@
 //! connection and passes back an [`Entry`] for each. The finished
 //! [`Analyzed`] statement then plans with [`Analyzed::plan`] under the
 //! `pii.rules` of a [`PiiConfig`]: one [`Position`] per output column saying
-//! how its values are redacted, bound to those rules as a [`Planned`] that
-//! also checks the origins the server reports for each result column. It rejects the statement instead, before it
-//! runs, when any gate fails. The gates run in this order, all fail closed:
+//! how its values are redacted, bound to those rules as a [`Planned`], which
+//! checks, withholds errors for, and redacts the result. Planning rejects the
+//! statement instead, before it runs, when any gate fails. The gates run in this order, all fail closed:
 //!
 //! 1. Lineage errors reject, and so do names still missing after
 //!    [`CATALOG_ROUNDS`] catalog rounds.
@@ -49,5 +49,5 @@ pub use dbmcp_sql_lineage::{
 };
 
 pub use self::analysis::{Analysis, Analyzed, Step};
-pub use self::planned::Planned;
+pub use self::planned::{Planned, Unfit};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};
