@@ -5,7 +5,7 @@
 //! surface and a small set of thin delegators that per-tool
 //! implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig};
+use dbmcp_config::{Config, DatabaseConfig, PiiConfig};
 use dbmcp_pii::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
@@ -77,6 +77,8 @@ pub struct MysqlHandler {
     pub(crate) config: DatabaseConfig,
     pub(crate) connection: MysqlConnection,
     pub(crate) redactor: Option<Redactor>,
+    /// PII settings with column rules; `None` without rules.
+    pub(crate) policy: Option<PiiConfig>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -85,6 +87,7 @@ impl std::fmt::Debug for MysqlHandler {
         f.debug_struct("MysqlHandler")
             .field("read_only", &self.config.read_only)
             .field("redact_pii", &self.redactor.is_some())
+            .field("column_rules", &self.policy.is_some())
             .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
@@ -104,6 +107,7 @@ impl MysqlHandler {
             config: config.database.clone(),
             connection: MysqlConnection::new(&config.database),
             redactor: Redactor::from_config(config.pii.as_ref())?,
+            policy: config.pii.clone().filter(|pii| !pii.rules.is_empty()),
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })
     }
@@ -195,6 +199,34 @@ mod tests {
             ssh: None,
         })
         .expect("handler builds in test")
+    }
+
+    #[test]
+    fn policy_exists_only_with_column_rules() {
+        let with = |rules| {
+            MysqlHandler::new(&Config {
+                transport: dbmcp_config::Transport::Stdio,
+                database: base_config(),
+                http: None,
+                pii: Some(PiiConfig {
+                    operator: dbmcp_config::PiiOperator::Mask,
+                    rules,
+                    ..PiiConfig::default()
+                }),
+                ssh: None,
+            })
+            .expect("handler builds in test")
+        };
+        assert!(handler(false).policy.is_none());
+        assert!(with(Vec::new()).policy.is_none());
+        let rule = dbmcp_config::ColumnRule {
+            name: "emails".into(),
+            item: 0,
+            key: ["def", "app", "users", "email"].map(String::from),
+            entity: "EMAIL_ADDRESS",
+            operator: dbmcp_config::PiiOperator::Mask,
+        };
+        assert!(with(vec![rule]).policy.is_some());
     }
 
     #[tokio::test]

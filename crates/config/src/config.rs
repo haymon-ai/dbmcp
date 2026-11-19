@@ -39,7 +39,6 @@ impl Config {
     ///
     /// Rules enforced, besides each present section's own `validate()`:
     /// - an SSH tunnel is not supported with the `SQLite` backend;
-    /// - column rules are not yet supported on `MySQL`/`MariaDB`;
     /// - a column rule's catalog segment must be `def` on `MySQL`/`MariaDB`,
     ///   `main` on `SQLite`, and the pinned `database.name` on `PostgreSQL`.
     ///
@@ -55,17 +54,6 @@ impl Config {
         if let Some(pii) = &self.pii {
             errors.extend(pii.validate().err().into_iter().flatten());
             errors.extend(self.rule_catalogs(&pii.rules));
-            if !pii.rules.is_empty()
-                && !matches!(
-                    self.database.backend,
-                    DatabaseBackend::Sqlite | DatabaseBackend::Postgres
-                )
-            {
-                errors.push(
-                    Diagnostic::new(ConfigError::PiiRulesUnsupported(self.database.backend))
-                        .involving(&[env::PII_RULES, env::DB_BACKEND]),
-                );
-            }
         }
         if let Some(ssh) = &self.ssh {
             if self.database.backend == DatabaseBackend::Sqlite {

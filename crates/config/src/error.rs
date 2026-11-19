@@ -78,10 +78,6 @@ pub enum ConfigError {
     #[error("pii.rules requires pii.enabled")]
     PiiRulesWithoutPii,
 
-    /// The backend cannot enforce column rules yet.
-    #[error("pii.rules: column rules are not yet supported on {0}")]
-    PiiRulesUnsupported(DatabaseBackend),
-
     /// A rule's catalog segment does not fit the backend.
     #[error("pii.rules: {rule}: columns: {items}: catalog segment must be {expected} on {backend}")]
     PiiRuleCatalog {
