@@ -2952,3 +2952,39 @@ async fn column_rules_follow_renamed_cte_columns() {
     assert!(is_email_token(&rows[0]["a"]), "{}", rows[0]);
     assert_eq!(rows[0]["b"], "Alice Johnson");
 }
+
+#[tokio::test]
+async fn column_rules_replace_and_drop_views() {
+    // A private copy keeps the views out of `test_list_views_pagination_traverses_pages`,
+    // which compares two live listings; temp views are refused under rules.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let copy = dir.path().join("copy.db");
+    std::fs::copy(std::env::var("DB_PATH").expect("DB_PATH must be set"), &copy).expect("copy fixture database");
+    let handler = SqliteHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            name: Some(copy.display().to_string()),
+            ..base_db_config(false)
+        },
+        http: None,
+        pii: Some(PiiConfig {
+            key: Some(PII_TEST_KEY.into()),
+            rules: vec![column_rule("users", "email", "EMAIL_ADDRESS", PiiOperator::Hash)],
+            ..PiiConfig::default()
+        }),
+        ssh: None,
+    })
+    .expect("handler builds");
+    // SQLite has no `CREATE OR REPLACE VIEW`: a view is replaced by dropping and recreating it.
+    for query in [
+        "CREATE VIEW policy_audit_view AS SELECT id FROM audit",
+        "DROP VIEW policy_audit_view",
+        "CREATE VIEW IF NOT EXISTS policy_audit_view AS SELECT id, note FROM audit",
+        "DROP VIEW IF EXISTS policy_audit_view",
+    ] {
+        handler
+            .write_query(QueryRequest { query: query.into() })
+            .await
+            .expect(query);
+    }
+}
