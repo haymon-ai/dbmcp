@@ -305,10 +305,6 @@ async fn run<'c>(
         tx.rollback().await?;
         return autocommit(conn, sql, planned, &owners, sink).await;
     }
-    let failed = |planned: &Planned<'_>, error: sqlx::Error| match planned.withheld(echoing(&error)) {
-        Some(code) => Stop::Withheld(code),
-        None => Stop::Sql(error),
-    };
     let executed = match execute(&mut tx, sql, &mut planned, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
@@ -336,9 +332,7 @@ async fn run<'c>(
     })
 }
 
-/// Runs a planned `CREATE INDEX` outside a transaction block.
-///
-/// It returns no rows; its plan withholds every value-echoing error.
+/// Runs a planned `CREATE INDEX` outside a transaction block; it returns no rows.
 async fn autocommit<'c>(
     conn: &mut sqlx::PgConnection,
     sql: &str,
@@ -348,12 +342,7 @@ async fn autocommit<'c>(
 ) -> Result<Run<'c>, Stop> {
     let executed = match execute(conn, sql, &mut planned, owners, sink).await {
         Ok(executed) => executed,
-        Err(Stop::Sql(error)) => {
-            return Err(match planned.withheld(echoing(&error)) {
-                Some(code) => Stop::Withheld(code),
-                None => Stop::Sql(error),
-            });
-        }
+        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => return Err(stop),
     };
     let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
@@ -597,9 +586,16 @@ fn view_query(body: &str) -> String {
     body.strip_suffix(';').unwrap_or(body).trim().to_owned()
 }
 
+/// Withholds `error` when it may echo a value and the plan withholds.
+fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
+    planned
+        .withheld(echoing(&error))
+        .map_or(Stop::Sql(error), Stop::Withheld)
+}
+
 /// Returns the `SQLSTATE` of a database error that may echo a value.
 ///
-/// Timeouts and non-database errors are never withheld.
+/// Timeouts and non-database errors return `None`.
 fn echoing(error: &sqlx::Error) -> Option<String> {
     if PostgresConnection::is_timeout(error) {
         return None;

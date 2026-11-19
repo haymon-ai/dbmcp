@@ -204,10 +204,6 @@ async fn run<'c>(
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
-    let failed = |planned: &Planned<'_>, error: sqlx::Error| match planned.withheld(echoing(&error)) {
-        Some(code) => Stop::Withheld(code),
-        None => Stop::Sql(error),
-    };
     let executed = match execute(&mut tx, sql, &mut planned, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
@@ -430,9 +426,16 @@ fn view_query(create: &str) -> Option<String> {
     }
 }
 
+/// Withholds `error` when it may echo a value and the plan withholds.
+fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
+    planned
+        .withheld(echoing(&error))
+        .map_or(Stop::Sql(error), Stop::Withheld)
+}
+
 /// Returns the extended code of a database error that may echo a value.
 ///
-/// Timeouts and non-database errors are never withheld.
+/// Timeouts and non-database errors return `None`.
 fn echoing(error: &sqlx::Error) -> Option<String> {
     if SqliteConnection::is_timeout(error) {
         return None;

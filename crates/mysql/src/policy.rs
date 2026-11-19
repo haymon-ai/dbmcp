@@ -373,10 +373,6 @@ async fn run<'c>(
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
-    let failed = |planned: &Planned<'_>, error: sqlx::Error| match planned.withheld(echoing(&error)) {
-        Some((number, state)) => Stop::Withheld { number, state },
-        None => Stop::Sql(error),
-    };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
         Ok(executed) => executed,
@@ -743,9 +739,16 @@ async fn vacant(
     Ok(entries)
 }
 
+/// Withholds `error` when it may echo a value and the plan withholds.
+fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
+    planned
+        .withheld(echoing(&error))
+        .map_or(Stop::Sql(error), |(number, state)| Stop::Withheld { number, state })
+}
+
 /// Returns the error number and `SQLSTATE` of an error that may echo a value.
 ///
-/// Timeouts and non-database errors are never withheld.
+/// Timeouts and non-database errors return `None`.
 fn echoing(error: &sqlx::Error) -> Option<(u16, String)> {
     if MysqlConnection::is_timeout(error) {
         return None;

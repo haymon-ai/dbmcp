@@ -145,8 +145,7 @@ impl Analyzed {
             statement,
             StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
         );
-        // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction,
-        // where its names may rebind, so its errors are withheld whatever it touches.
+        // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction, where names may rebind.
         let withholds = touches_ruled(&self.lineage, config)
             || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
         Ok(Planned::new(positional.then_some(plan), config, withholds))
@@ -277,7 +276,7 @@ mod tests {
         let postgres = analyzed(index).plan(&config).expect("plan");
         assert_eq!(postgres.withheld(Some("23505")), Some("23505"));
         let other = analyzed_on(DatabaseBackend::Sqlite, index);
-        assert_eq!(other.plan(&config).expect("plan").withheld(Some("19")), None);
+        assert_eq!(other.plan(&config).expect("plan").withheld(Some("23505")), None);
     }
 
     #[test]

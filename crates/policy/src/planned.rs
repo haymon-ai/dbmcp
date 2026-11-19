@@ -42,11 +42,9 @@ impl<'c> Planned<'c> {
         }
     }
 
-    /// Returns the code of a value-echoing database error this plan withholds.
+    /// Returns `code` when this plan withholds value-echoing errors.
     ///
-    /// `code` is the backend's code for an error that may echo a value, `None`
-    /// for one that cannot. Errors are withheld when the statement touches a
-    /// ruled relation, and for every `PostgreSQL` `CREATE INDEX`.
+    /// `code` is `None` for errors that cannot echo a value.
     #[must_use]
     pub fn withheld<C>(&self, code: Option<C>) -> Option<C> {
         code.filter(|_| self.withholds)
