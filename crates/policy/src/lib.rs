@@ -24,8 +24,10 @@
 //!    window rejects, in the statement or in a view body it reads.
 //! 8. Each output column takes the `(operator, entity)` of its ruled
 //!    sources; two different pairs reject.
-//! 9. A write copying ruled values needs a target column ruled with the same
-//!    pair and named so a rule can match it; `CREATE VIEW` is exempt.
+//! 9. A create whose bare target name resolved outside
+//!    [`Analysis::creates_in`] rejects.
+//! 10. A write copying ruled values needs a target column ruled with the same
+//!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
 //!
 //! Each column matches the rule whose folded key equals its folded
 //! `catalog.schema.table.column`. The planner is pure and sync: it never

@@ -174,8 +174,6 @@ struct Owner {
     columns: HashMap<i16, String>,
     /// The `pg_get_viewdef` body planned from, for a view or materialized view.
     view: Option<String>,
-    /// Whether a bare name resolved here, outside the creation schema.
-    shadowed: bool,
 }
 
 /// The relations a statement's result columns may come from, by OID.
@@ -310,17 +308,6 @@ async fn run<'c>(
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let (analyzed, owners) = resolve(&mut tx, sql).await?;
-    // A bare create target resolves through the whole `search_path`, but the
-    // relation is created in the creation schema: a name taken further along
-    // would check the rules of the wrong target.
-    if let (
-        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView | StatementKind::CreateView,
-        Some(target),
-    ) = (analyzed.statement(), analyzed.target())
-        && owners.values().any(|owner| owner.shadowed && owner.id == *target)
-    {
-        return Err(Rejection::shadowed(target).into());
-    }
     let plan = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
         tx.rollback().await?;
@@ -466,6 +453,7 @@ async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, 
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
     let mut analysis = Analysis::new(sql, DatabaseBackend::Postgres);
+    analysis.creates_in(probe.creation.clone());
     if conforming != "on" {
         analysis.mismatch("standard_conforming_strings is off");
     }
@@ -537,16 +525,11 @@ async fn fetch(
         let entry = entry(probe, &name, &lookup, &row);
         let (_, _, _, oid, body, names, numbers, _) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
-            let shadowed = lookup.schema.is_none() && probe.creation.as_ref() != Some(&relation.id.schema);
-            owners
-                .entry(oid)
-                .or_insert_with(|| Owner {
-                    id: relation.id.clone(),
-                    columns: numbers.into_iter().zip(names).collect(),
-                    view: body,
-                    shadowed: false,
-                })
-                .shadowed |= shadowed;
+            owners.entry(oid).or_insert_with(|| Owner {
+                id: relation.id.clone(),
+                columns: numbers.into_iter().zip(names).collect(),
+                view: body,
+            });
         }
         entries.push((name, entry));
     }
