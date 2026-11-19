@@ -2,6 +2,7 @@
   "pages": [
     "index",
     "redaction",
+    "rules",
     "machine-learning",
     "data-types"
   ]
