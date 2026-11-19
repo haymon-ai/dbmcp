@@ -29,10 +29,9 @@ use std::collections::HashMap;
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, NamePart, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, WrittenName,
+    StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -127,10 +126,7 @@ enum Stop {
     Rejected(#[from] Rejection),
     /// The result does not fit the plan; nothing was committed.
     #[error(transparent)]
-    Shape(#[from] ShapeError),
-    /// A ruled column came back where the plan does not rewrite it; nothing was committed.
-    #[error("column policy: result column {0} carries a ruled column the plan does not rewrite")]
-    Unplanned(usize),
+    Unfit(#[from] Unfit),
     /// A result column came from a relation the catalog reads did not describe.
     #[error("column policy: result column {0} comes from a relation the policy did not resolve")]
     Unresolved(usize),
@@ -146,9 +142,7 @@ enum Stop {
 }
 
 struct Run<'c> {
-    /// The plan when the result columns are the planned ones; `EXPLAIN`,
-    /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
-    plan: Option<Planned<'c>>,
+    planned: Planned<'c>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -275,9 +269,7 @@ impl PostgresHandler {
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
         let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = redactor
-            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
-            .await?;
+        let rows = run.planned.redact(redactor, run.names, rows).await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -308,16 +300,17 @@ async fn run<'c>(
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let (analyzed, owners) = resolve(&mut tx, sql).await?;
-    let plan = analyzed.plan(config)?;
+    let mut planned = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
         tx.rollback().await?;
-        return autocommit(conn, sql, &owners, sink).await;
+        return autocommit(conn, sql, planned, &owners, sink).await;
     }
+    let withholds = planned.withholds();
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
+        Some(code) if withholds => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
-    let executed = match execute(&mut tx, sql, plan.as_ref(), &owners, sink).await {
+    let executed = match execute(&mut tx, sql, &mut planned, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -337,7 +330,7 @@ async fn run<'c>(
     finished.map_err(failed)?;
     let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
     Ok(Run {
-        plan,
+        planned,
         names: executed.names,
         rows_affected,
         last_insert_id,
@@ -348,13 +341,14 @@ async fn run<'c>(
 ///
 /// It returns no rows. Its names may rebind once the planning transaction
 /// ends, so value-echoing errors are withheld whatever it touched.
-async fn autocommit(
+async fn autocommit<'c>(
     conn: &mut sqlx::PgConnection,
     sql: &str,
+    mut planned: Planned<'c>,
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run<'static>, Stop> {
-    let executed = execute(conn, sql, None, owners, sink)
+) -> Result<Run<'c>, Stop> {
+    let executed = execute(conn, sql, &mut planned, owners, sink)
         .await
         .map_err(|stop| match stop {
             Stop::Sql(error) => withheld(&error).map_or(Stop::Sql(error), Stop::Withheld),
@@ -362,7 +356,7 @@ async fn autocommit(
         })?;
     let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
     Ok(Run {
-        plan: None,
+        planned,
         names: executed.names,
         rows_affected,
         last_insert_id,
@@ -391,35 +385,33 @@ async fn views_unchanged(
     Ok(current.iter().map(Option::as_deref).eq(bodies.into_iter().map(Some)))
 }
 
-/// Runs `sql`, feeding each row's values to `sink` and collecting its results.
+/// Runs `sql`, feeding each row's values to `sink`.
 ///
-/// With `plan`, the first row's column origins, count, and names are checked
-/// before any row reaches `sink`, so a write that does not fit never commits.
+/// The first row is checked against `planned` before any row reaches `sink`.
 async fn execute(
     conn: &mut sqlx::PgConnection,
     sql: &str,
-    planned: Option<&Planned<'_>>,
+    planned: &mut Planned<'_>,
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
     let first = |row: &PgRow, names: &[String]| {
-        if let Some(planned) = planned {
-            check_origins(row.columns(), planned, owners)?;
-            check_columns(planned.plan(), names)?;
-        }
+        planned.check_first(names, origins(row.columns(), owners)?)?;
         Ok::<_, Stop>(())
     };
     let (names, results) = PostgresConnection::execute_checked(conn, sql, first, sink).await?;
     Ok(Executed { names, results })
 }
 
-/// Refuses a result column whose origin is ruled but not planned as ruled.
+/// Translates each result column's OID and attribute number into its origin.
 ///
-/// `PostgreSQL` reports a column's origin as its table's OID and attribute
-/// number, through subqueries and CTEs; a view column reports the view. A
-/// whole-row reference reports attribute zero and is ruled when any column
-/// is. An origin the catalog reads did not describe is refused too.
-fn check_origins(columns: &[PgColumn], planned: &Planned<'_>, owners: &Owners) -> Result<(), Stop> {
+/// A view column reports the view; a whole-row reference has no column.
+///
+/// # Errors
+///
+/// Returns [`Stop::Unresolved`] for an origin the catalog reads did not describe.
+fn origins(columns: &[PgColumn], owners: &Owners) -> Result<Vec<(usize, RelationId, Option<String>)>, Stop> {
+    let mut origins = Vec::new();
     for column in columns {
         let position = column.ordinal();
         let Some(oid) = column.relation_id() else {
@@ -430,16 +422,14 @@ fn check_origins(columns: &[PgColumn], planned: &Planned<'_>, owners: &Owners) -
         };
         let name = match column.relation_attribute_no() {
             Some(number) => match owner.columns.get(&number) {
-                Some(name) => Some(name.as_str()),
+                Some(name) => Some(name.clone()),
                 None => return Err(Stop::Unresolved(position)),
             },
             None => None,
         };
-        if !planned.admits(position, &owner.id, name) {
-            return Err(Stop::Unplanned(position));
-        }
+        origins.push((position, owner.id.clone(), name));
     }
-    Ok(())
+    Ok(origins)
 }
 
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
@@ -620,7 +610,6 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PiiOperator};
 
     use super::*;
 
@@ -822,20 +811,6 @@ mod tests {
         );
     }
 
-    /// Rules `app.public.users.email` of the functional seed.
-    fn email_ruled() -> PiiConfig {
-        PiiConfig {
-            rules: vec![ColumnRule {
-                name: "email".into(),
-                item: 0,
-                key: ["app", "public", "users", "email"].map(String::from),
-                entity: "EMAIL_ADDRESS",
-                operator: PiiOperator::Hash,
-            }],
-            ..PiiConfig::default()
-        }
-    }
-
     /// Connects to the seeded `app` database that `./tests/run.sh` starts.
     async fn seeded() -> sqlx::PgConnection {
         let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
@@ -855,38 +830,22 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+    async fn origins_translate_oids_and_attribute_numbers() {
         let mut conn = seeded().await;
-        let rules = email_ruled();
-        // Each plan comes from another statement, so it disagrees with the row's origins.
-        for (planned_sql, unplanned) in [
-            ("SELECT name, name FROM users", Some(1)),
-            ("SELECT name, email FROM users", None),
-            ("SELECT name FROM users", Some(1)),
-        ] {
-            let (analyzed, owners) = resolve(&mut conn, planned_sql).await.expect("resolve");
-            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
-            let mut sunk = 0;
-            let executed = execute(
-                &mut conn,
-                "SELECT name, email FROM users",
-                Some(&planned),
-                &owners,
-                &mut |_| sunk += 1,
-            )
-            .await;
-            match unplanned {
-                Some(position) => {
-                    assert!(
-                        matches!(executed, Err(Stop::Unplanned(at)) if at == position),
-                        "{planned_sql}"
-                    );
-                    assert_eq!(sunk, 0, "{planned_sql}");
-                }
-                None => {
-                    executed.expect("admitted");
-                }
-            }
-        }
+        let sql = "SELECT name, email, 1 FROM users";
+        let (_, owners) = resolve(&mut conn, sql).await.expect("resolve");
+        let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
+        let users = RelationId::new("app", "public", "users");
+        assert_eq!(
+            origins(row.columns(), &owners).expect("described"),
+            [
+                (0, users.clone(), Some("name".to_owned())),
+                (1, users, Some("email".to_owned())),
+            ]
+        );
+        assert!(matches!(
+            origins(row.columns(), &Owners::new()),
+            Err(Stop::Unresolved(0))
+        ));
     }
 }

@@ -11,8 +11,12 @@ repository.workspace = true
 dbmcp-config = { workspace = true }
 dbmcp-pii = { workspace = true }
 dbmcp-sql-lineage = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
 
 [lints]
 workspace = true

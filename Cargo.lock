@@ -1122,7 +1122,9 @@ dependencies = [
  "dbmcp-config",
  "dbmcp-pii",
  "dbmcp-sql-lineage",
+ "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

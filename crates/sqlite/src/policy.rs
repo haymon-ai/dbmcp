@@ -21,10 +21,9 @@
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind, Step,
-    WrittenName,
+    Unfit, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -96,10 +95,7 @@ enum Stop {
     Rejected(#[from] Rejection),
     /// The result does not fit the plan; nothing was committed.
     #[error(transparent)]
-    Shape(#[from] ShapeError),
-    /// A ruled column came back where the plan does not rewrite it; nothing was committed.
-    #[error("column policy: result column {0} carries a ruled column the plan does not rewrite")]
-    Unplanned(usize),
+    Unfit(#[from] Unfit),
     /// The statement failed with an error that may echo a ruled value.
     #[error("query failed (SQLite code {0}): error detail withheld under column policy")]
     Withheld(String),
@@ -109,9 +105,7 @@ enum Stop {
 }
 
 struct Run<'c> {
-    /// The plan when the result columns are the planned ones; `EXPLAIN`,
-    /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
-    plan: Option<Planned<'c>>,
+    planned: Planned<'c>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -171,9 +165,7 @@ impl SqliteHandler {
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
         let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = redactor
-            .redact_cells(Cells::new(run.names, rows), run.plan.as_ref().map(Planned::plan))
-            .await?;
+        let rows = run.planned.redact(redactor, run.names, rows).await?;
         Ok(Enforced {
             rows,
             rows_affected: run.rows_affected,
@@ -211,12 +203,13 @@ async fn run<'c>(
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
-    let plan = analyzed.plan(config)?;
+    let mut planned = analyzed.plan(config)?;
+    let withholds = planned.withholds();
     let failed = |error: sqlx::Error| match withheld(&error) {
-        Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
+        Some(code) if withholds => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
-    let executed = match execute(&mut tx, sql, plan.as_ref(), sink).await {
+    let executed = match execute(&mut tx, sql, &mut planned, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -232,54 +225,44 @@ async fn run<'c>(
     finished.map_err(failed)?;
     let (rows_affected, last_insert_id) = SqliteConnection::counts(sql, &executed.results);
     Ok(Run {
-        plan,
+        planned,
         names: executed.names,
         rows_affected,
         last_insert_id,
     })
 }
 
-/// Runs `sql`, feeding each row's values to `sink` and collecting its results.
+/// Runs `sql`, feeding each row's values to `sink`.
 ///
-/// With `plan`, the first row's column origins, count, and names are checked
-/// before any row reaches `sink`, so a write that does not fit never commits.
+/// The first row is checked against `planned` before any row reaches `sink`.
 async fn execute(
     conn: &mut sqlx::SqliteConnection,
     sql: &str,
-    planned: Option<&Planned<'_>>,
+    planned: &mut Planned<'_>,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
-    let first = |row: &SqliteRow, names: &[String]| {
-        if let Some(planned) = planned {
-            if let Some(position) = unplanned_ruled(row.columns(), planned) {
-                return Err(Stop::Unplanned(position));
-            }
-            check_columns(planned.plan(), names)?;
-        }
-        Ok::<_, Stop>(())
-    };
+    let first =
+        |row: &SqliteRow, names: &[String]| planned.check_first(names, origins(row.columns())).map_err(Stop::from);
     let (names, results) = SqliteConnection::execute_checked(conn, sql, first, sink).await?;
     Ok(Executed { names, results })
 }
 
-/// Returns the first result position whose origin the plan does not admit.
+/// Translates each result column's base-table origin, one entry per reading.
 ///
-/// `SQLite` reports a column's origin through views and subqueries down to
-/// its base table, as `table` in `main` and `schema.table` elsewhere. A
-/// table name holding a `.` reads both ways; each reading must be admitted.
-fn unplanned_ruled(columns: &[SqliteColumn], planned: &Planned<'_>) -> Option<usize> {
-    columns.iter().position(|column| {
+/// `SQLite` reports `table` in `main` and `schema.table` elsewhere; a table
+/// name holding a `.` reads both ways.
+fn origins(columns: &[SqliteColumn]) -> Vec<(usize, RelationId, Option<String>)> {
+    let mut origins = Vec::new();
+    for column in columns {
         let ColumnOrigin::Table(origin) = column.origin() else {
-            return false;
+            continue;
         };
-        readings(&origin.table).any(|(schema, table)| {
-            !planned.admits(
-                column.ordinal(),
-                &RelationId::new(CATALOG, schema, table),
-                Some(&origin.name),
-            )
-        })
-    })
+        for (schema, table) in readings(&origin.table) {
+            let relation = RelationId::new(CATALOG, schema, table);
+            origins.push((column.ordinal(), relation, Some(origin.name.to_string())));
+        }
+    }
+    origins
 }
 
 /// Splits an origin table into each `(schema, table)` reading it allows.
@@ -466,6 +449,7 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PiiOperator, Transport};
+    use dbmcp_pii::cells::ShapeError;
     use dbmcp_policy::NamePart;
     use sqlx::Connection as _;
 
@@ -738,23 +722,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+    async fn origins_name_each_result_columns_base_table() {
         let mut conn = memory(SETUP).await;
-        let row = sqlx::query("SELECT name, email FROM users")
+        let row = sqlx::query("SELECT name, email, 1 FROM users")
             .fetch_one(&mut conn)
             .await
             .expect("row");
-        let rules = rules_config();
-        // Each plan comes from another statement, so it disagrees with the row's origins.
-        for (planned_sql, unplanned) in [
-            ("SELECT name, name FROM users", Some(1)),
-            ("SELECT name, email FROM users", None),
-            ("SELECT name FROM users", Some(1)),
-        ] {
-            let analyzed = resolve(&mut conn, planned_sql).await.expect("resolve");
-            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
-            assert_eq!(unplanned_ruled(row.columns(), &planned), unplanned, "{planned_sql}");
-        }
+        let users = RelationId::new(CATALOG, "main", "users");
+        assert_eq!(
+            origins(row.columns()),
+            [
+                (0, users.clone(), Some("name".to_owned())),
+                (1, users, Some("email".to_owned())),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -764,19 +745,22 @@ mod tests {
         let rules = rules_config();
         // A one-column plan from another statement.
         let analyzed = resolve(&mut tx, "SELECT id FROM audit").await.expect("resolve");
-        let one = analyzed.plan(&rules).expect("plan").expect("positional");
+        let mut one = analyzed.plan(&rules).expect("plan");
         let mut sunk = 0;
         let stop = execute(
             &mut tx,
             "UPDATE audit SET note = 'x' WHERE id = 1 RETURNING id, note",
-            Some(&one),
+            &mut one,
             &mut |_| sunk += 1,
         )
         .await
         .err()
         .expect("shape refused");
         assert!(
-            matches!(stop, Stop::Shape(ShapeError::ColumnCount { expected: 1, actual: 2 })),
+            matches!(
+                stop,
+                Stop::Unfit(Unfit::Shape(ShapeError::ColumnCount { expected: 1, actual: 2 }))
+            ),
             "{stop}"
         );
         assert_eq!(sunk, 0);
