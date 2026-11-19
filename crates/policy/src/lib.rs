@@ -6,7 +6,8 @@
 //! connection and passes back an [`Entry`] for each. The finished
 //! [`Analyzed`] statement then plans with [`Analyzed::plan`] under the
 //! `pii.rules` of a [`PiiConfig`]: one [`Position`] per output column saying
-//! how its values are redacted. It rejects the statement instead, before it
+//! how its values are redacted, bound to those rules as a [`Planned`] that
+//! also checks the origins the server reports for each result column. It rejects the statement instead, before it
 //! runs, when any gate fails. The gates run in this order, all fail closed:
 //!
 //! 1. Lineage errors reject, and so do names still missing after
@@ -37,6 +38,7 @@
 mod analysis;
 mod deny;
 mod plan;
+mod planned;
 mod rejection;
 #[cfg(test)]
 mod tests;
@@ -46,5 +48,5 @@ pub use dbmcp_sql_lineage::{
 };
 
 pub use self::analysis::{Analysis, Analyzed, Step};
-pub use self::plan::rule;
+pub use self::planned::Planned;
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};

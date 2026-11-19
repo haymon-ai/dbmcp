@@ -21,10 +21,10 @@
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
+use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, LineageClass, Origin, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, WrittenName, rule,
+    Analysis, Analyzed, CatalogColumn, Entry, LineageClass, Origin, Planned, Rejection, Relation, RelationId,
+    RelationKind, StatementKind, Step, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -110,10 +110,10 @@ enum Stop {
     Sql(#[from] sqlx::Error),
 }
 
-struct Run {
+struct Run<'c> {
     /// The plan when the result columns are the planned ones; `EXPLAIN`,
     /// `SHOW`, and `DESCRIBE` rows are detected globally instead.
-    plan: Option<Plan>,
+    plan: Option<Planned<'c>>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -173,8 +173,10 @@ impl SqliteHandler {
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
         let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(plan) = run.plan {
-            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
+        let rows = if let Some(planned) = run.plan {
+            redactor
+                .redact_cells(Cells::new(run.names, rows), planned.plan())
+                .await?
         } else {
             let rows = rows
                 .into_iter()
@@ -199,14 +201,14 @@ fn values(row: Value) -> Vec<Value> {
 }
 
 /// Plans and executes one statement inside a transaction on `conn`.
-async fn run(
+async fn run<'c>(
     conn: &mut sqlx::SqliteConnection,
     read_only: bool,
-    config: &PiiConfig,
+    config: &'c PiiConfig,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
+) -> Result<Run<'c>, Stop> {
     let begin = match access {
         Access::Read => {
             // A file opened read-only needs no pragma; `before_acquire` switches it off again.
@@ -231,7 +233,7 @@ async fn run(
         Some(code) if analyzed.touches_ruled(config) => Stop::Withheld(code),
         _ => Stop::Sql(error),
     };
-    let executed = match execute(&mut tx, sql, plan.as_ref(), config, sink).await {
+    let executed = match execute(&mut tx, sql, plan.as_ref(), sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -261,8 +263,7 @@ async fn run(
 async fn execute(
     conn: &mut sqlx::SqliteConnection,
     sql: &str,
-    plan: Option<&Plan>,
-    config: &PiiConfig,
+    planned: Option<&Planned<'_>>,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Executed, Stop> {
     let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
@@ -275,12 +276,12 @@ async fn execute(
             Either::Right(row) => {
                 let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
                 if names.is_none()
-                    && let Some(plan) = plan
+                    && let Some(planned) = planned
                 {
-                    if let Some(position) = unplanned_ruled(row.columns(), plan, config) {
+                    if let Some(position) = unplanned_ruled(row.columns(), planned) {
                         return Err(Stop::Unplanned(position));
                     }
-                    check_columns(plan, &row_names)?;
+                    check_columns(planned.plan(), &row_names)?;
                 }
                 names.get_or_insert(row_names);
                 sink(Value::Array(values));
@@ -293,23 +294,23 @@ async fn execute(
     })
 }
 
-/// Returns the first result position whose origin is ruled but not planned as ruled.
+/// Returns the first result position whose origin the plan does not admit.
 ///
 /// `SQLite` reports a column's origin through views and subqueries down to
 /// its base table, as `table` in `main` and `schema.table` elsewhere. A
-/// table name holding a `.` reads both ways; either reading counts.
-fn unplanned_ruled(columns: &[SqliteColumn], plan: &Plan, config: &PiiConfig) -> Option<usize> {
+/// table name holding a `.` reads both ways; each reading must be admitted.
+fn unplanned_ruled(columns: &[SqliteColumn], planned: &Planned<'_>) -> Option<usize> {
     columns.iter().position(|column| {
         let ColumnOrigin::Table(origin) = column.origin() else {
             return false;
         };
-        let is_ruled = readings(&origin.table)
-            .any(|(schema, table)| rule(config, &RelationId::new(CATALOG, schema, table), &origin.name).is_some());
-        is_ruled
-            && !matches!(
-                plan.columns.get(column.ordinal()).map(|planned| planned.position),
-                Some(Position::Action(..))
+        readings(&origin.table).any(|(schema, table)| {
+            !planned.admits(
+                column.ordinal(),
+                &RelationId::new(CATALOG, schema, table),
+                Some(&origin.name),
             )
+        })
     })
 }
 
@@ -496,8 +497,6 @@ fn withheld(error: &sqlx::Error) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PiiOperator, Transport};
-    use dbmcp_pii::Entity;
-    use dbmcp_pii::cells::PlannedColumn;
     use dbmcp_policy::NamePart;
     use sqlx::Connection as _;
 
@@ -776,39 +775,32 @@ mod tests {
             .fetch_one(&mut conn)
             .await
             .expect("row");
-        let planned = |position| PlannedColumn { position, name: None };
-        let action = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
         let rules = rules_config();
-        let global = Plan {
-            columns: vec![planned(Position::Global), planned(Position::Global)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &global, &rules), Some(1));
-        let rewritten = Plan {
-            columns: vec![planned(Position::Global), planned(action)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &rewritten, &rules), None);
-        let short = Plan {
-            columns: vec![planned(Position::Global)],
-        };
-        assert_eq!(unplanned_ruled(row.columns(), &short, &rules), Some(1));
+        // Each plan comes from another statement, so it disagrees with the row's origins.
+        for (planned_sql, unplanned) in [
+            ("SELECT name, name FROM users", Some(1)),
+            ("SELECT name, email FROM users", None),
+            ("SELECT name FROM users", Some(1)),
+        ] {
+            let analyzed = resolve(&mut conn, planned_sql).await.expect("resolve");
+            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
+            assert_eq!(unplanned_ruled(row.columns(), &planned), unplanned, "{planned_sql}");
+        }
     }
 
     #[tokio::test]
     async fn results_that_do_not_fit_the_plan_stop_before_any_row() {
         let mut conn = memory(SETUP).await;
         let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
-        let one = Plan {
-            columns: vec![PlannedColumn {
-                position: Position::Global,
-                name: None,
-            }],
-        };
+        let rules = rules_config();
+        // A one-column plan from another statement.
+        let analyzed = resolve(&mut tx, "SELECT id FROM audit").await.expect("resolve");
+        let one = analyzed.plan(&rules).expect("plan").expect("positional");
         let mut sunk = 0;
         let stop = execute(
             &mut tx,
             "UPDATE audit SET note = 'x' WHERE id = 1 RETURNING id, note",
             Some(&one),
-            &rules_config(),
             &mut |_| sunk += 1,
         )
         .await

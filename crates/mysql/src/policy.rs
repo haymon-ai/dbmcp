@@ -31,10 +31,10 @@ use std::collections::BTreeMap;
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
+use dbmcp_pii::cells::{Cells, ShapeError, check_columns};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Rejection, Relation, RelationId, RelationKind, StatementKind,
-    Step, WrittenName, rule,
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    StatementKind, Step, WrittenName,
 };
 use dbmcp_server::truncate::Window;
 use dbmcp_sql::validation::validate_single_statement;
@@ -172,9 +172,9 @@ enum Stop {
     Sql(#[from] sqlx::Error),
 }
 
-struct Run {
+struct Run<'c> {
     /// The result columns' plan; `None` for `EXPLAIN`, `SHOW`, `DESCRIBE`, detected globally.
-    plan: Option<Plan>,
+    plan: Option<Planned<'c>>,
     names: Vec<String>,
     rows_affected: u64,
     last_insert_id: Option<u64>,
@@ -345,8 +345,10 @@ impl MysqlHandler {
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
         let rows: Vec<Vec<Value>> = mem::take(&mut window.rows).into_iter().map(values).collect();
-        let rows = if let Some(plan) = run.plan {
-            redactor.redact_cells(Cells::new(run.names, rows), &plan).await?
+        let rows = if let Some(planned) = run.plan {
+            redactor
+                .redact_cells(Cells::new(run.names, rows), planned.plan())
+                .await?
         } else {
             let rows = rows
                 .into_iter()
@@ -371,14 +373,14 @@ fn values(row: Value) -> Vec<Value> {
 }
 
 /// Plans one statement on `conn`, then executes it inside a transaction.
-async fn run(
+async fn run<'c>(
     conn: &mut sqlx::MySqlConnection,
-    config: &PiiConfig,
+    config: &'c PiiConfig,
     backend: DatabaseBackend,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
-) -> Result<Run, Stop> {
+) -> Result<Run<'c>, Stop> {
     let begin = match access {
         Access::Read => "START TRANSACTION READ ONLY",
         Access::Write => "START TRANSACTION",
@@ -393,7 +395,7 @@ async fn run(
         _ => Stop::Sql(error),
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let executed = match execute(&mut tx, sql, plan.as_ref(), config, &probe, &owners, sink).await {
+    let executed = match execute(&mut tx, sql, plan.as_ref(), &probe, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(error)),
         Err(stop) => {
@@ -494,8 +496,7 @@ async fn views_unchanged(
 async fn execute(
     conn: &mut sqlx::MySqlConnection,
     sql: &str,
-    plan: Option<&Plan>,
-    config: &PiiConfig,
+    planned: Option<&Planned<'_>>,
     probe: &Probe,
     owners: &[Owner],
     sink: &mut (impl FnMut(Value) + Send),
@@ -510,10 +511,10 @@ async fn execute(
             Either::Right(row) => {
                 let (row_names, values): (Vec<String>, Vec<Value>) = row.to_entries().into_iter().unzip();
                 if names.is_none()
-                    && let Some(plan) = plan
+                    && let Some(planned) = planned
                 {
-                    check_origins(row.columns(), plan, config, probe, owners)?;
-                    check_columns(plan, &row_names)?;
+                    check_origins(row.columns(), planned, probe, owners)?;
+                    check_columns(planned.plan(), &row_names)?;
                 }
                 names.get_or_insert(row_names);
                 sink(Value::Array(values));
@@ -533,13 +534,7 @@ async fn execute(
 /// reports the physical column: `MySQL` names the base table with the
 /// derived column's alias, `MariaDB` the derived table's alias (without a
 /// schema once materialized). Those, and expressions, rest on the plan.
-fn check_origins(
-    columns: &[MySqlColumn],
-    plan: &Plan,
-    config: &PiiConfig,
-    probe: &Probe,
-    owners: &[Owner],
-) -> Result<(), Stop> {
+fn check_origins(columns: &[MySqlColumn], planned: &Planned<'_>, probe: &Probe, owners: &[Owner]) -> Result<(), Stop> {
     for column in columns {
         let position = column.ordinal();
         let ColumnOrigin::Table(origin) = column.origin() else {
@@ -562,12 +557,7 @@ fn check_origins(
         }) else {
             continue;
         };
-        let ruled = rule(config, &owner.id, name).is_some();
-        let planned = matches!(
-            plan.columns.get(position).map(|planned| planned.position),
-            Some(Position::Action(..))
-        );
-        if ruled && !planned {
+        if !planned.admits(position, &owner.id, Some(name)) {
             return Err(Stop::Unplanned(position));
         }
     }
@@ -803,6 +793,7 @@ fn withheld(error: &sqlx::Error) -> Option<(u16, String)> {
 
 #[cfg(test)]
 mod tests {
+    use dbmcp_config::{ColumnRule, PiiOperator};
     use dbmcp_policy::NamePart;
 
     use super::*;
@@ -1005,5 +996,78 @@ mod tests {
         let target = RelationId::new(CATALOG, "app", "source");
         let owners = [owner("source", None, Some("select 1"))];
         assert!(rolls_back(&StatementKind::CreateTableAs, Some(&target), &owners));
+    }
+
+    /// Rules `def.app.users.email` of the functional seed.
+    fn email_ruled() -> PiiConfig {
+        PiiConfig {
+            rules: vec![ColumnRule {
+                name: "email".into(),
+                item: 0,
+                key: ["def", "app", "users", "email"].map(String::from),
+                entity: "EMAIL_ADDRESS",
+                operator: PiiOperator::Hash,
+            }],
+            ..PiiConfig::default()
+        }
+    }
+
+    /// Connects to the seeded `app` database that `./tests/run.sh` starts.
+    async fn seeded() -> sqlx::MySqlConnection {
+        let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port = std::env::var("DBMCP_DB_PORT")
+            .ok()
+            .and_then(|port| port.parse().ok())
+            .unwrap_or(3306);
+        let options = sqlx::mysql::MySqlConnectOptions::new()
+            .host(&host)
+            .port(port)
+            .username("root")
+            .database("app");
+        <sqlx::MySqlConnection as sqlx::Connection>::connect_with(&options)
+            .await
+            .expect("connect to the seeded database")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+    async fn origin_check_refuses_ruled_columns_at_global_positions() {
+        let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+            Ok("mariadb") => DatabaseBackend::Mariadb,
+            _ => DatabaseBackend::Mysql,
+        };
+        let mut conn = seeded().await;
+        let rules = email_ruled();
+        // Each plan comes from another statement, so it disagrees with the row's origins.
+        for (planned_sql, unplanned) in [
+            ("SELECT name, name FROM users", Some(1)),
+            ("SELECT name, email FROM users", None),
+            ("SELECT name FROM users", Some(1)),
+        ] {
+            let (analyzed, probe, owners) = resolve(&mut conn, backend, planned_sql).await.expect("resolve");
+            let planned = analyzed.plan(&rules).expect("plan").expect("positional");
+            let mut sunk = 0;
+            let executed = execute(
+                &mut conn,
+                "SELECT name, email FROM users",
+                Some(&planned),
+                &probe,
+                &owners,
+                &mut |_| sunk += 1,
+            )
+            .await;
+            match unplanned {
+                Some(position) => {
+                    assert!(
+                        matches!(executed, Err(Stop::Unplanned(at)) if at == position),
+                        "{planned_sql}"
+                    );
+                    assert_eq!(sunk, 0, "{planned_sql}");
+                }
+                None => {
+                    executed.expect("admitted");
+                }
+            }
+        }
     }
 }

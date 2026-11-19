@@ -1,12 +1,12 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
-use dbmcp_pii::cells::Plan;
 use dbmcp_sql_lineage::{
     Catalog, Dialect, Entry, Lexical, Lineage, LineageError, RelationId, StatementKind, WrittenName, analyze,
 };
 
 use crate::plan::{plan, touches_ruled};
+use crate::planned::Planned;
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 
 /// One statement's lineage analysis, driven by the backend's catalog reads.
@@ -38,7 +38,7 @@ pub enum Step {
 
 /// A statement whose lineage analysis succeeded.
 ///
-/// Only [`Analysis::step`] builds one, so every [`Plan`] comes from an
+/// Only [`Analysis::step`] builds one, so every [`Planned`] comes from an
 /// analyzed statement.
 #[derive(Debug)]
 pub struct Analyzed {
@@ -116,6 +116,7 @@ impl Analyzed {
     ///
     /// Runs every planner gate. Returns `None` for `EXPLAIN`, `SHOW`, and
     /// `DESCRIBE`, whose rows are not positional: redact them globally.
+    /// The [`Planned`] stays bound to `config` for origin checks.
     ///
     /// # Errors
     ///
@@ -125,13 +126,13 @@ impl Analyzed {
     ///
     /// Panics when a rule's entity is not an [`Entity`](dbmcp_pii::Entity)
     /// name; the loader only accepts `ColumnRule::ENTITIES`.
-    pub fn plan(&self, config: &PiiConfig) -> Result<Option<Plan>, Rejection> {
+    pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Option<Planned<'c>>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config)?;
         Ok((!matches!(
             self.lineage.statement,
             StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
         ))
-        .then_some(plan))
+        .then(|| Planned::new(plan, config)))
     }
 
     /// Reports whether the statement touches a relation with a ruled column.
@@ -220,11 +221,12 @@ mod tests {
 
     #[test]
     fn queries_plan_by_position() {
-        let plan = analyzed("SELECT a, b FROM t")
-            .plan(&ruled())
+        let config = ruled();
+        let planned = analyzed("SELECT a, b FROM t")
+            .plan(&config)
             .expect("plan")
             .expect("positional");
-        let positions: Vec<_> = plan.columns.iter().map(|column| column.position).collect();
+        let positions: Vec<_> = planned.plan().columns.iter().map(|column| column.position).collect();
         assert!(matches!(
             positions[..],
             [Position::Action(PiiOperator::Mask, _), Position::Global]
@@ -236,7 +238,7 @@ mod tests {
         let config = PiiConfig::default();
         for sql in ["EXPLAIN SELECT a FROM t", "SHOW TABLES", "DESCRIBE t"] {
             let analyzed = analyzed_on(DatabaseBackend::Mysql, sql);
-            assert_eq!(analyzed.plan(&config).expect("plan"), None, "{sql}");
+            assert!(analyzed.plan(&config).expect("plan").is_none(), "{sql}");
         }
     }
 

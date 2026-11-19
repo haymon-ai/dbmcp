@@ -156,7 +156,7 @@ fn known_name(column: &OutputColumn) -> Option<String> {
 
 /// Returns the rule whose key is the folded `catalog.schema.table.column`.
 #[must_use]
-pub fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
+pub(crate) fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
     let key = [
         ColumnRule::fold(&relation.catalog),
         ColumnRule::fold(&relation.schema),
@@ -167,7 +167,7 @@ pub fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &str) -> O
 }
 
 /// Reports whether any rule names a column of `relation`.
-fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
+pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
     let key = [
         ColumnRule::fold(&relation.catalog),
         ColumnRule::fold(&relation.schema),

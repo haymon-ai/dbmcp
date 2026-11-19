@@ -32,6 +32,8 @@ TEST_TYPE="${TEST_TYPE:-all}"
 #   functional → functional_$type (e.g. "functional_mysql", "functional_sqlite")
 #   approval   → approval_$type   (e.g. "approval_mysql", "approval_sqlite")
 #   ssh        → functional_ssh for mysql/postgres, run through the sshd service
+#   policy     → policy_$type for mysql/postgres: the backend crate's ignored
+#                lib tests, which call private policy functions on the database
 MATRIX=(
     "mariadb_12:mysql:3306"
     "mysql_9:mysql:3306"
@@ -145,7 +147,7 @@ test_bins_for() {
     if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "functional" ]; then
         bins="functional_${db_type}"
         if [ "$db_type" != "sqlite" ]; then
-            bins="$bins functional_ssh"
+            bins="$bins functional_ssh policy_${db_type}"
         fi
     fi
     if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "approval" ]; then
@@ -249,6 +251,11 @@ run_entry() {
                     cargo test --test "$bin" -- --test-threads=1 2>&1
                 ) || test_exit=$?
                 rm -f "$tls_ca"
+            elif [ "$bin" = "policy_${db_type}" ]; then
+                test_output=$(
+                    DBMCP_DB_BACKEND="$backend" DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
+                    cargo test -p "dbmcp-${db_type}" --lib -- --ignored --test-threads=1 2>&1
+                ) || test_exit=$?
             else
                 test_output=$(
                     DBMCP_DB_BACKEND="$backend" DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
