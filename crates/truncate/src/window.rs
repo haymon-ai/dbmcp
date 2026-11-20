@@ -5,29 +5,23 @@ use serde_json::Value;
 use crate::caps::Caps;
 use crate::chars::{CharCount, cut_len};
 
-/// Most item slots [`Window::new`] reserves up front.
+/// Most item slots [`Window::new`] reserves, so a huge `take` cannot overflow.
 const RESERVE: usize = 1024;
 
 /// Items pushed into the budget, plus a count of the items past it.
 ///
-/// Feed every item to [`push`](Window::push). The window skips the first
-/// `skip` items, then keeps items while it holds fewer than `take` and
-/// their estimated size fits the budget. Once an item is not kept, the
-/// window is full: every later item only bumps [`rest`](Window::rest), so
-/// kept items stay contiguous.
+/// Once an item is not kept, every later item only bumps [`rest`](Window::rest).
 ///
 /// Read or take [`items`](Window::items) and [`rest`](Window::rest) only
 /// after the last `push`: the window tracks the size of the kept items
 /// itself, so changing them in between breaks the budget.
 #[derive(Debug)]
 pub struct Window {
-    /// Leading items still to skip.
     skip: u64,
     /// Most items to keep; `None` = bounded by the budget only.
     take: Option<usize>,
     /// Caps [`fit`](crate::fit) applies later; the estimate uses both.
     caps: Caps,
-    /// Items kept, uncut and in arrival order.
     pub items: Vec<Value>,
     /// Items pushed after the window was full; counted, not stored.
     pub rest: u64,
@@ -43,7 +37,6 @@ impl Window {
             skip,
             take,
             caps,
-            // Reserve at most `RESERVE` slots, so a huge `take` cannot overflow.
             items: Vec::with_capacity(take.unwrap_or(0).min(RESERVE)),
             rest: 0,
             // `[` and `]` around the items.
@@ -53,14 +46,8 @@ impl Window {
 
     /// Skips, keeps, or counts the next item.
     ///
-    /// The size estimate measures a copy of `item` cut to the string cap,
-    /// as [`fit`](crate::fit) will; the kept item stays uncut. The first
-    /// kept item is kept whatever its size.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: serializing a JSON value into the in-memory char
-    /// counter cannot fail.
+    /// The estimate counts `item` as [`fit`](crate::fit) will cut it; the kept
+    /// item stays uncut. The first kept item is kept whatever its size.
     pub fn push(&mut self, item: Value) {
         if self.skip > 0 {
             self.skip -= 1;
@@ -82,15 +69,9 @@ impl Window {
     }
 
     /// Serialized chars of `item` once [`fit`](crate::fit) cuts its long strings.
-    ///
-    /// Measures `item` in place, so a large value is never copied.
     fn estimate(&self, item: &Value) -> usize {
         let mut chars = CharCount(0);
-        if let Some(max) = self.caps.string {
-            cut_len(item, max, &mut chars);
-        } else {
-            serde_json::to_writer(&mut chars, item).expect("a JSON value serializes into a char counter");
-        }
+        cut_len(item, self.caps.string.unwrap_or(usize::MAX), &mut chars);
         chars.0
     }
 }

@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use crate::caps::Caps;
-use crate::chars::{CharCount, cut_strings};
+use crate::chars::{CharCount, count, cut_strings};
 
 /// Items after [`fit`] applied the caps.
 #[derive(Debug)]
@@ -18,13 +18,7 @@ pub struct Fitted {
 
 /// Cuts long string values and drops trailing items past the budget.
 ///
-/// Dropped items are always trailing, so `items.len()` of the result is
-/// the count of leading items kept.
-///
-/// # Panics
-///
-/// Never in practice: serializing a JSON value into the in-memory char
-/// counter cannot fail.
+/// At least one item is always kept.
 #[must_use]
 pub fn fit(mut items: Vec<Value>, caps: Caps) -> Fitted {
     let mut cut = false;
@@ -37,7 +31,7 @@ pub fn fit(mut items: Vec<Value>, caps: Caps) -> Fitted {
         let item_cut = caps.string.is_some_and(|max| cut_strings(item, max));
         if let Some(budget) = caps.budget {
             let mut chars = CharCount(0);
-            serde_json::to_writer(&mut chars, item).expect("a JSON value serializes into a char counter");
+            count(&mut chars, item);
             total += chars.0 + usize::from(index > 0);
             if index > 0 && total > budget {
                 kept = index;

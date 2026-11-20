@@ -264,12 +264,8 @@ pub const RESERVED_CHARS: usize = 1_500;
 
 /// Caps for query tool rows from the configured limits, `0` = off.
 ///
-/// `max_cell_chars` caps every string value at any depth (text, base64
-/// bytes, string leaves inside JSON columns). `max_response_chars` bounds
-/// the whole text result a client receives; the rows get all of it but
-/// [`RESERVED_CHARS`]. At least one row is always kept, so paging moves
-/// forward. Apply the caps after PII redaction, so a span cut by a cap is
-/// still seen whole by the redactor.
+/// The rows get all of `max_response_chars` but [`RESERVED_CHARS`]. Apply
+/// the caps after PII redaction, so the redactor sees every span whole.
 #[must_use]
 pub fn caps(max_cell_chars: usize, max_response_chars: usize) -> Caps {
     Caps {
@@ -299,9 +295,6 @@ pub struct Truncation {
 
 impl Truncation {
     /// Builds the cap fields from a cut flag and an omitted-row count.
-    ///
-    /// Either one marks the response truncated and adds [`HINT`]; `omitted`
-    /// of `0` leaves `rowsOmitted` out.
     #[must_use]
     pub fn new(cut: bool, omitted: u64) -> Self {
         let truncated = cut || omitted > 0;
@@ -627,7 +620,7 @@ mod tests {
                 budget: Some(17)
             }
         );
-        // A response cap below the reserve still keeps one row.
+        // A response cap below the reserve leaves a zero budget, not "off".
         assert_eq!(caps(0, 10).budget, Some(0));
     }
 

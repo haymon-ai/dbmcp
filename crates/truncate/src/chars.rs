@@ -20,13 +20,11 @@ pub(crate) fn cut_strings(value: &mut Value, max: usize) -> bool {
 
 /// Counts the serialized chars of `value` as if [`cut_strings`] had cut it to `max`.
 ///
-/// Measures in place: nothing is cloned or cut. Recursion depth is bounded
-/// by `serde_json`'s nesting limit.
+/// Measures in place: nothing is cloned or cut.
 pub(crate) fn cut_len(value: &Value, max: usize, chars: &mut CharCount) {
     match value {
         Value::String(text) => match cut_point(text, max) {
             Some((end, total)) => {
-                // The quotes around the kept prefix, plus the marker inside them.
                 count(chars, &text[..end]);
                 write!(chars, "{}", Marker(total)).expect("a char counter accepts every write");
             }
@@ -73,7 +71,7 @@ fn cut_point(text: &str, max: usize) -> Option<(usize, usize)> {
 }
 
 /// Adds the serialized chars of `value` to `chars`.
-fn count(chars: &mut CharCount, value: &(impl Serialize + ?Sized)) {
+pub(crate) fn count(chars: &mut CharCount, value: &(impl Serialize + ?Sized)) {
     serde_json::to_writer(chars, value).expect("a JSON value serializes into a char counter");
 }
 

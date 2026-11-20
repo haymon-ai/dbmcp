@@ -10,8 +10,6 @@
 //!   the array exceeds it. At least one item is always kept, so a caller
 //!   that resumes after the kept items always makes progress.
 //!
-//! A cap of `None` disables it.
-//!
 //! [`fit`] applies both caps to items already in memory. [`Window`] applies
 //! the budget while items arrive: it keeps only the items whose estimated
 //! size fits and counts the rest without storing them, so a large input
