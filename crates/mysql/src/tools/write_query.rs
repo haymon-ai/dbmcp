@@ -1,9 +1,10 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::truncate;
+use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 use dbmcp_sql::validation::validate_write;
+use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
 use crate::policy::Access;
@@ -117,7 +118,8 @@ impl MysqlHandler {
 
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let mut window = truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
+        let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
+        let mut window = Window::new(0, None, caps);
         let (rows, rows_affected, last_insert_id) = if let Some(policy) = &self.policy {
             let timeout = self.connection.query_timeout();
             let enforced = self
@@ -129,17 +131,16 @@ impl MysqlHandler {
                 .connection
                 .execute_json(query.as_str(), database, |row| window.push(row))
                 .await?;
-            let rows = self.redactor.redact_rows(window.rows).await?;
+            let rows = self.redactor.redact_rows(window.items).await?;
             (rows, rows_affected, last_insert_id)
         };
-        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
-        fitted.omit(window.rest);
+        let fitted = fit(rows, caps);
 
         Ok(WriteQueryResponse {
-            rows: fitted.rows,
+            rows: fitted.items,
             rows_affected,
             last_insert_id,
-            truncation: fitted.truncation,
+            truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })
     }
 }

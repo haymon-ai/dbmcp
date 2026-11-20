@@ -33,6 +33,7 @@ dbmcp-sql = { path = "crates/sql", version = "0.19.0" }
 dbmcp-sql-lineage = { path = "crates/sql-lineage", version = "0.19.0" }
 dbmcp-sqlite = { path = "crates/sqlite", version = "0.19.0" }
 dbmcp-ssh = { path = "crates/ssh", version = "0.19.0" }
+dbmcp-truncate = { path = "crates/truncate", version = "0.19.0" }
 sqlx-json = { path = "crates/sqlx-json", version = "0.19.0" }
 
 # External dependencies

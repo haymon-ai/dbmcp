@@ -2,8 +2,9 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
-use dbmcp_server::truncate;
+use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};
+use dbmcp_truncate::{Window, fit};
 
 use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
@@ -102,8 +103,8 @@ impl SqliteHandler {
             }
             StatementKind::NonSelect => (Cow::Borrowed(query.as_str()), 0, None),
         };
-        let mut window =
-            truncate::Window::new(offset, size, self.config.max_cell_chars, self.config.max_response_chars);
+        let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
+        let mut window = Window::new(offset, size, caps);
         let rows = if let Some(policy) = &self.policy {
             self.enforce(policy, &sql, Access::Read, timeout, &mut window)
                 .await?
@@ -112,30 +113,31 @@ impl SqliteHandler {
             self.connection
                 .read_json(&*sql, None, timeout, |row| window.push(row))
                 .await?;
-            self.redactor.redact_rows(window.rows).await?
+            self.redactor.redact_rows(window.items).await?
         };
-        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
+        let fitted = fit(rows, caps);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
-        let next_cursor = match kind {
+        let (next_cursor, truncation) = match kind {
             StatementKind::Select => {
                 // A short page with rows left over was cut by the budget, not by the page size.
-                if window.rest > 0 && fitted.rows.len() < usize::from(self.config.page_size) {
-                    fitted.truncation.truncated = true;
-                    fitted.truncation.hint = Some(truncate::HINT);
-                }
-                (fitted.truncation.rows_omitted.take().is_some() || window.rest > 0).then(|| Cursor {
-                    offset: start.saturating_add(fitted.rows.len() as u64),
-                })
+                let short = window.rest > 0 && fitted.items.len() < usize::from(self.config.page_size);
+                let next_cursor = (fitted.dropped > 0 || window.rest > 0).then(|| Cursor {
+                    offset: start.saturating_add(fitted.items.len() as u64),
+                });
+                (
+                    next_cursor,
+                    Truncation::new(fitted.cut || fitted.dropped > 0 || short, 0),
+                )
             }
-            StatementKind::NonSelect => {
-                fitted.omit(window.rest);
-                None
-            }
+            StatementKind::NonSelect => (
+                None,
+                Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
+            ),
         };
         Ok(ReadQueryResponse {
-            rows: fitted.rows,
+            rows: fitted.items,
             next_cursor,
-            truncation: fitted.truncation,
+            truncation,
         })
     }
 }

@@ -2,9 +2,8 @@
 //!
 //! Provides [`types`] for tool request/response schemas,
 //! [`listing`] cursor pagination, the [`tool`] registry, [`schema`] input
-//! and output schema generators, [`truncate`] character caps for query
-//! rows, and the [`Server`] wrapper plus [`server_info`] used by
-//! per-backend servers.
+//! and output schema generators, [`truncate`] caps for query rows, and
+//! the [`Server`] wrapper plus [`server_info`] used by per-backend servers.
 
 pub mod listing;
 pub mod schema;

@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+dbmcp-truncate = { workspace = true }
 indexmap = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
