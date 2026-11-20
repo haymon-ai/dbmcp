@@ -371,9 +371,44 @@ fn denied_show_statements_reject() {
 
 #[test]
 fn harmless_show_passes() {
-    let mut lineage = select(vec![]);
-    lineage.statement = StatementKind::Show("TABLES".into());
-    assert!(plan_on(&lineage, Dialect::Mysql, &config(vec![])).is_ok());
+    for what in ["TABLES", "tables"] {
+        let mut lineage = select(vec![]);
+        lineage.statement = StatementKind::Show(what.into());
+        assert!(plan_on(&lineage, Dialect::Mysql, &config(vec![])).is_ok(), "{what}");
+    }
+}
+
+#[test]
+fn analyzed_schema_show_forms_pass() {
+    let cases = [
+        ("SHOW DATABASES", Dialect::Mysql),
+        ("SHOW FULL TABLES", Dialect::Mysql),
+        ("SHOW TABLE STATUS", Dialect::Mariadb),
+        ("SHOW OPEN TABLES", Dialect::Mysql),
+        ("SHOW FULL COLUMNS FROM users", Dialect::Mysql),
+        ("SHOW INDEX FROM users", Dialect::Mysql),
+        ("SHOW KEYS FROM users", Dialect::Mariadb),
+        ("SHOW CREATE TABLE users", Dialect::Mysql),
+        ("SHOW TRIGGERS", Dialect::Mysql),
+        ("SHOW EVENTS", Dialect::Mariadb),
+        ("SHOW PROCEDURE STATUS", Dialect::Mysql),
+        ("SHOW FUNCTION STATUS", Dialect::Mysql),
+        ("SHOW GLOBAL VARIABLES LIKE 'max%'", Dialect::Mysql),
+        ("SHOW SESSION STATUS", Dialect::Mariadb),
+        ("SHOW CHARACTER SET", Dialect::Mysql),
+        ("SHOW COLLATION", Dialect::Mysql),
+        ("SHOW STORAGE ENGINES", Dialect::Mariadb),
+        ("SHOW PLUGINS", Dialect::Mysql),
+        ("SHOW PRIVILEGES", Dialect::Mysql),
+    ];
+    for (sql, dialect) in cases {
+        let lineage = analyze(sql, dialect, &Catalog::new()).expect(sql);
+        assert!(
+            plan_on(&lineage, dialect, &config(vec![])).is_ok(),
+            "{sql}: {:?}",
+            lineage.statement
+        );
+    }
 }
 
 #[test]
@@ -387,7 +422,7 @@ fn explain_of_show_unwraps_to_the_show_deny() {
 }
 
 #[test]
-fn analyzed_log_show_forms_reject() {
+fn analyzed_value_show_forms_reject() {
     let cases = [
         ("SHOW BINLOG EVENTS", Dialect::Mysql),
         ("SHOW RELAYLOG EVENTS", Dialect::Mysql),
@@ -395,6 +430,17 @@ fn analyzed_log_show_forms_reject() {
         ("SHOW ANALYZE FOR 1", Dialect::Mariadb),
         ("SHOW REPLICA STATUS", Dialect::Mysql),
         ("SHOW SLAVE STATUS", Dialect::Mariadb),
+        ("SHOW SESSION SLAVE STATUS", Dialect::Mariadb),
+        ("SHOW ALL SLAVES STATUS", Dialect::Mariadb),
+        ("SHOW REPLICAS", Dialect::Mysql),
+        ("SHOW ENGINE INNODB STATUS", Dialect::Mysql),
+        ("SHOW FULL PROCESSLIST", Dialect::Mariadb),
+        ("SHOW COUNT(*) WARNINGS", Dialect::Mysql),
+        ("SHOW PROFILES", Dialect::Mysql),
+        ("SHOW GRANTS", Dialect::Mariadb),
+        ("SHOW USER_VARIABLES", Dialect::Mariadb),
+        ("SHOW `user_variables`", Dialect::Mariadb),
+        ("SHOW MASTER STATUS", Dialect::Mysql),
     ];
     for (sql, dialect) in cases {
         let lineage = analyze(sql, dialect, &Catalog::new()).expect(sql);
