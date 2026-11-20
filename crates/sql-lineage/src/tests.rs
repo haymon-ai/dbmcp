@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
-    RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
+    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Lexical, Lineage, LineageError, NamePart, Origin, Relation,
+    RelationId, RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
 };
 
 /// Builds a relation in schema `public`; a leading `~` marks a star-invisible column.
@@ -1368,9 +1368,9 @@ fn relations(lineage: &Lineage) -> Vec<(String, RelationKind)> {
     lineage.relations.iter().map(|r| (r.id.name.clone(), r.kind)).collect()
 }
 
-/// Shorthand for an `EXPLAIN` statement kind.
+/// Shorthand for an `EXPLAIN` statement kind of [`ExplainForm::Other`].
 fn explain(inner: StatementKind) -> StatementKind {
-    StatementKind::Explain(Box::new(inner))
+    StatementKind::Explain(ExplainForm::Other, Box::new(inner))
 }
 
 #[test]
@@ -1876,22 +1876,119 @@ fn explain_carries_inner_lineage() {
 
 #[test]
 fn explain_forms_the_explain_tools_build_wrap_a_query() {
-    let cases: &[(&str, Dialect)] = &[
+    let cases: &[(&str, Dialect, ExplainForm)] = &[
         (
             "EXPLAIN (ANALYZE, FORMAT JSON) SELECT ssn FROM users",
             Dialect::Postgres,
+            ExplainForm::Analyze,
         ),
-        ("EXPLAIN ANALYZE SELECT ssn FROM users", Dialect::Mysql),
-        ("EXPLAIN FORMAT=JSON SELECT ssn FROM users", Dialect::Mysql),
-        ("EXPLAIN QUERY PLAN SELECT ssn FROM users", Dialect::Sqlite),
+        (
+            "EXPLAIN (FORMAT JSON) SELECT ssn FROM users",
+            Dialect::Postgres,
+            ExplainForm::Json,
+        ),
+        (
+            "EXPLAIN ANALYZE SELECT ssn FROM users",
+            Dialect::Mysql,
+            ExplainForm::Analyze,
+        ),
+        (
+            "EXPLAIN FORMAT=JSON SELECT ssn FROM users",
+            Dialect::Mysql,
+            ExplainForm::Json,
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT ssn FROM users",
+            Dialect::Sqlite,
+            ExplainForm::QueryPlan,
+        ),
     ];
-    for (sql, dialect) in cases {
+    for (sql, dialect, form) in cases {
         let lineage = on(sql, *dialect).expect(sql);
-        assert_eq!(lineage.statement, explain(StatementKind::Query), "{sql}");
+        assert_eq!(
+            lineage.statement,
+            StatementKind::Explain(*form, Box::new(StatementKind::Query)),
+            "{sql}"
+        );
         assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])], "{sql}");
     }
     let lineage = on("EXPLAIN SHOW TABLES", Dialect::Mysql).expect("analyze");
     assert_eq!(lineage.statement, explain(StatementKind::Show(Show::Tables)));
+}
+
+#[test]
+fn explain_forms_are_classified_strictly() {
+    let cases: &[(&str, Dialect, ExplainForm)] = &[
+        ("EXPLAIN (FORMAT JSON) SELECT 1", Dialect::Postgres, ExplainForm::Json),
+        ("EXPLAIN (format json) SELECT 1", Dialect::Postgres, ExplainForm::Json),
+        (
+            "EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Analyze,
+        ),
+        (
+            r#"EXPLAIN ("analyze", FORMAT JSON) SELECT 1"#,
+            Dialect::Postgres,
+            ExplainForm::Analyze,
+        ),
+        (
+            "EXPLAIN (ANALYZE off, FORMAT JSON) SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Analyze,
+        ),
+        (
+            "EXPLAIN (FORMAT JSON, ANALYZE 0) SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Analyze,
+        ),
+        ("EXPLAIN ANALYZE SELECT 1", Dialect::Postgres, ExplainForm::Analyze),
+        (
+            "EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Other,
+        ),
+        (
+            "EXPLAIN (COSTS false, FORMAT JSON) SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Other,
+        ),
+        ("EXPLAIN (FORMAT TEXT) SELECT 1", Dialect::Postgres, ExplainForm::Other),
+        (
+            "EXPLAIN (FORMAT 'json') SELECT 1",
+            Dialect::Postgres,
+            ExplainForm::Other,
+        ),
+        ("EXPLAIN SELECT 1", Dialect::Postgres, ExplainForm::Other),
+        ("EXPLAIN VERBOSE SELECT 1", Dialect::Postgres, ExplainForm::Other),
+        ("EXPLAIN FORMAT=JSON SELECT 1", Dialect::Mysql, ExplainForm::Json),
+        ("EXPLAIN FORMAT JSON SELECT 1", Dialect::Mysql, ExplainForm::Json),
+        ("EXPLAIN FORMAT=JSON SELECT 1", Dialect::Mariadb, ExplainForm::Json),
+        ("EXPLAIN ANALYZE SELECT 1", Dialect::Mysql, ExplainForm::Analyze),
+        (
+            "EXPLAIN ANALYZE FORMAT=JSON SELECT 1",
+            Dialect::Mysql,
+            ExplainForm::Analyze,
+        ),
+        ("EXPLAIN FORMAT=TREE SELECT 1", Dialect::Mysql, ExplainForm::Other),
+        (
+            "EXPLAIN VERBOSE FORMAT=JSON SELECT 1",
+            Dialect::Mysql,
+            ExplainForm::Other,
+        ),
+        ("DESCRIBE FORMAT=JSON SELECT 1", Dialect::Mysql, ExplainForm::Other),
+        ("EXPLAIN SELECT 1", Dialect::Mysql, ExplainForm::Other),
+        ("EXPLAIN QUERY PLAN SELECT 1", Dialect::Mysql, ExplainForm::Other),
+        ("EXPLAIN QUERY PLAN SELECT 1", Dialect::Sqlite, ExplainForm::QueryPlan),
+        ("EXPLAIN SELECT 1", Dialect::Sqlite, ExplainForm::Other),
+    ];
+    for (sql, dialect, form) in cases {
+        let lineage = on(sql, *dialect).expect(sql);
+        assert_eq!(
+            lineage.statement,
+            StatementKind::Explain(*form, Box::new(StatementKind::Query)),
+            "{sql} on {dialect:?}"
+        );
+    }
 }
 
 #[test]

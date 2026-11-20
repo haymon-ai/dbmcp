@@ -51,6 +51,7 @@ mod bind;
 mod catalog;
 mod dialect;
 mod error;
+mod explain;
 mod expr;
 mod functions;
 mod model;
@@ -64,6 +65,7 @@ pub use crate::analyze::analyze;
 pub use crate::catalog::{Catalog, CatalogColumn, Entry, Lexical, NamePart, Relation, WrittenName};
 pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
+pub use crate::explain::ExplainForm;
 pub use crate::model::{
     FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
     StatementKind, TargetColumn,

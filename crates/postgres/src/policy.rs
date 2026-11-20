@@ -103,11 +103,6 @@ const SYSTEM_SCHEMAS: &[&str] = &["pg_catalog", "information_schema"];
 pub(crate) enum Access {
     /// Runs in a read-only transaction and rolls back.
     Read,
-    /// `explainQuery`'s own `EXPLAIN`, with or without `ANALYZE`; runs like [`Access::Read`].
-    Explain {
-        /// Whether the plan runs the statement.
-        analyze: bool,
-    },
     /// Commits; refused in read-only mode.
     Write,
 }
@@ -263,11 +258,11 @@ async fn run<'c>(
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
     let begin = match access {
-        Access::Read | Access::Explain { .. } => "START TRANSACTION READ ONLY",
+        Access::Read => "START TRANSACTION READ ONLY",
         Access::Write => "BEGIN",
     };
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let (analyzed, owners) = resolve(&mut tx, sql, access).await?;
+    let (analyzed, owners) = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     if *analyzed.statement() == StatementKind::CreateIndex {
         tx.rollback().await?;
@@ -287,7 +282,7 @@ async fn run<'c>(
     }
     // Deferred constraints fail at `COMMIT`, with messages as revealing.
     let finished = match access {
-        Access::Read | Access::Explain { .. } => tx.rollback().await,
+        Access::Read => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
     finished.map_err(|error| failed(&planned, error))?;
@@ -394,9 +389,7 @@ fn origins(columns: &[PgColumn], owners: &Owners) -> Result<Vec<(usize, Relation
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the relations it described, by OID.
-///
-/// [`Access::Explain`] marks the statement as `explainQuery`'s own.
-async fn resolve(conn: &mut sqlx::PgConnection, sql: &str, access: Access) -> Result<(Analyzed, Owners), Stop> {
+async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, Owners), Stop> {
     let (database, conforming, first, search_path, user): (String, String, Option<String>, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe {
@@ -408,9 +401,6 @@ async fn resolve(conn: &mut sqlx::PgConnection, sql: &str, access: Access) -> Re
     analysis.creates_in(probe.creation.clone());
     if conforming != "on" {
         analysis.mismatch("standard_conforming_strings is off");
-    }
-    if let Access::Explain { analyze } = access {
-        analysis.explain(analyze);
     }
     let mut owners = Owners::new();
     let mut entries = Vec::new();
@@ -750,7 +740,7 @@ mod tests {
     async fn origins_translate_oids_and_attribute_numbers() {
         let mut conn = seeded().await;
         let sql = "SELECT name, email, 1 FROM users";
-        let (_, owners) = resolve(&mut conn, sql, Access::Read).await.expect("resolve");
+        let (_, owners) = resolve(&mut conn, sql).await.expect("resolve");
         let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
         let users = RelationId::new("app", "public", "users");
         assert_eq!(

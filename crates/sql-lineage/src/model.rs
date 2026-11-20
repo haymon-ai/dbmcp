@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::explain::ExplainForm;
 use crate::show::Show;
 
 /// Canonical identity of a relation, as the backend reports it.
@@ -167,11 +168,11 @@ pub enum StatementKind {
     Show(Show),
     /// `DESCRIBE`, `DESC`, or `EXPLAIN` of a table.
     Describe,
-    /// `EXPLAIN` of the inner statement, whose lineage this one carries.
+    /// `EXPLAIN` in its [`ExplainForm`] of the inner statement, whose lineage this one carries.
     ///
     /// The lineage's columns are the explained statement's, not the plan's
     /// result set, so they do not match output positions.
-    Explain(Box<StatementKind>),
+    Explain(ExplainForm, Box<StatementKind>),
 }
 
 /// A column a statement writes, with the physical columns feeding it.

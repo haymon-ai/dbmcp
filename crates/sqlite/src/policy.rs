@@ -75,8 +75,6 @@ const VALUE_FREE_JSON: &[&str] = &["malformed JSON", "JSON cannot hold BLOB valu
 pub(crate) enum Access {
     /// Runs under `query_only` and rolls back.
     Read,
-    /// `explainQuery`'s own `EXPLAIN QUERY PLAN`; runs like [`Access::Read`].
-    Explain,
     /// Commits; refused in read-only mode.
     Write,
 }
@@ -194,7 +192,7 @@ async fn run<'c>(
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
     let begin = match access {
-        Access::Read | Access::Explain => {
+        Access::Read => {
             // A file opened read-only needs no pragma; `before_acquire` switches it off again.
             if !read_only {
                 sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
@@ -204,7 +202,7 @@ async fn run<'c>(
         Access::Write => "BEGIN IMMEDIATE",
     };
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
-    let analyzed = resolve(&mut tx, sql, access).await?;
+    let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     let executed = match execute(&mut tx, sql, &mut planned, sink).await {
         Ok(executed) => executed,
@@ -216,7 +214,7 @@ async fn run<'c>(
     };
     // Deferred foreign keys fail at `COMMIT`, so its error is filtered too.
     let finished = match access {
-        Access::Read | Access::Explain => tx.rollback().await,
+        Access::Read => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
     finished.map_err(|error| failed(&planned, error))?;
@@ -272,15 +270,10 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
 }
 
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
-///
-/// [`Access::Explain`] marks the statement as `explainQuery`'s own, without `ANALYZE`.
-async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str, access: Access) -> Result<Analyzed, Stop> {
+async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
     let mut analysis = Analysis::new(sql, DatabaseBackend::Sqlite);
     analysis.creates_in(Some("main".into()));
-    if access == Access::Explain {
-        analysis.explain(false);
-    }
     let mut entries = Vec::new();
     loop {
         match analysis.step(entries)? {
@@ -731,9 +724,7 @@ mod tests {
         let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
         let rules = rules_config();
         // A one-column plan from another statement.
-        let analyzed = resolve(&mut tx, "SELECT id FROM audit", Access::Read)
-            .await
-            .expect("resolve");
+        let analyzed = resolve(&mut tx, "SELECT id FROM audit").await.expect("resolve");
         let mut one = analyzed.plan(&rules).expect("plan");
         let mut sunk = 0;
         let stop = execute(

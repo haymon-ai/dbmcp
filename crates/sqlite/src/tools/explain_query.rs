@@ -85,7 +85,7 @@ impl SqliteHandler {
             self.enforce(
                 policy,
                 &explain_sql,
-                Access::Explain,
+                Access::Read,
                 self.config.query_timeout,
                 &mut window,
             )

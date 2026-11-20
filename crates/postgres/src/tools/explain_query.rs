@@ -146,7 +146,7 @@ impl PostgresHandler {
             self.enforce(
                 policy,
                 &explain_sql,
-                Access::Explain { analyze },
+                Access::Read,
                 self.config.query_timeout,
                 database,
                 &mut window,
