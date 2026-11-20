@@ -13,7 +13,9 @@
 //!    columns hidden from `*`, `VIEWS` bodies) for at most
 //!    [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
-//! 4. refuses a write that reads a view but cannot roll back,
+//! 4. refuses a write that reads a view but cannot roll back, and on
+//!    `MySQL` pins the session's `EXPLAIN` JSON format to version 1 for
+//!    `explainQuery`'s plain plans,
 //! 5. opens a transaction (read-only for reads) and executes it, refusing a
 //!    result that does not fit the plan before any row is kept,
 //! 6. refuses the result when a view body it planned from has changed,
@@ -130,6 +132,11 @@ const VALUE_FREE_ERRORS: &[u16] = &[
 pub(crate) enum Access {
     /// Runs in a read-only transaction and rolls back.
     Read,
+    /// `explainQuery`'s own `EXPLAIN`, with or without `ANALYZE`; runs like [`Access::Read`].
+    Explain {
+        /// Whether the plan runs the statement.
+        analyze: bool,
+    },
     /// Commits; refused in read-only mode.
     Write,
 }
@@ -405,13 +412,16 @@ async fn run<'c>(
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
     let begin = match access {
-        Access::Read => "START TRANSACTION READ ONLY",
+        Access::Read | Access::Explain { .. } => "START TRANSACTION READ ONLY",
         Access::Write => "START TRANSACTION",
     };
-    let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
+    let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql, access).await?;
     let mut planned = analyzed.plan(config)?;
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
+    }
+    if backend == DatabaseBackend::Mysql && access == (Access::Explain { analyze: false }) {
+        pin_explain_format(&mut *conn).await?;
     }
     let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
     let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
@@ -428,7 +438,7 @@ async fn run<'c>(
         return Err(Stop::ViewChanged);
     }
     let finished = match access {
-        Access::Read => tx.rollback().await,
+        Access::Read | Access::Explain { .. } => tx.rollback().await,
         Access::Write => tx.commit().await,
     };
     finished.map_err(|error| failed(&planned, error))?;
@@ -567,10 +577,13 @@ fn origins(columns: &[MySqlColumn], probe: &Probe, owners: &[Owner]) -> Vec<(usi
 ///
 /// Also returns the session probe and the relations it described.
 /// Refuses before analysis when the server is not the configured `backend`.
+///
+/// [`Access::Explain`] marks the statement as `explainQuery`'s own.
 async fn resolve(
     conn: &mut sqlx::MySqlConnection,
     backend: DatabaseBackend,
     sql: &str,
+    access: Access,
 ) -> Result<(Analyzed, Probe, Vec<Owner>), Stop> {
     let probe = Probe::read(&mut *conn, backend).await?;
     let mut analysis = Analysis::new(sql, backend);
@@ -578,6 +591,9 @@ async fn resolve(
     analysis.creates_in(probe.database.as_deref().map(|database| probe.created(database)));
     if let Some(reason) = probe.mismatch(sql) {
         analysis.mismatch(reason);
+    }
+    if let Access::Explain { analyze } = access {
+        analysis.explain(analyze);
     }
     let mut owners = Vec::new();
     let mut entries = Vec::new();
@@ -749,6 +765,29 @@ async fn vacant(
         entries.push((name, entry));
     }
     Ok(entries)
+}
+
+/// Pins `EXPLAIN FORMAT=JSON` to format version 1 for this session; never restored.
+///
+/// Version 2 (`MySQL` 9.x) carries the statement text, which the prune cannot
+/// read. `MySQL` 8.0 has no such variable (error 1193) and only speaks version 1.
+async fn pin_explain_format(conn: &mut sqlx::MySqlConnection) -> Result<(), Stop> {
+    match sqlx::query("SET SESSION explain_json_format_version = 1")
+        .execute(conn)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) if unknown_variable(&error) => Ok(()),
+        Err(error) => Err(Stop::Sql(error)),
+    }
+}
+
+/// Whether `error` is `ER_UNKNOWN_SYSTEM_VARIABLE` (1193).
+fn unknown_variable(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|error| error.try_downcast_ref::<MySqlDatabaseError>())
+        .is_some_and(|error| error.number() == 1193)
 }
 
 /// Withholds `error` when it may echo a value and the plan withholds.
@@ -971,7 +1010,7 @@ mod tests {
         };
         let mut conn = seeded().await;
         let sql = "SELECT name, email, 1 FROM users";
-        let (_, probe, owners) = resolve(&mut conn, backend, sql).await.expect("resolve");
+        let (_, probe, owners) = resolve(&mut conn, backend, sql, Access::Read).await.expect("resolve");
         let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
         let users = RelationId::new(CATALOG, "app", "users");
         assert_eq!(
