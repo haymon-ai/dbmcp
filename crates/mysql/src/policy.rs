@@ -4,9 +4,10 @@
 //! statement through [`MysqlHandler::enforce`]. On one pooled connection of
 //! the target database and under one deadline, it:
 //!
-//! 1. probes the session: the default database, `lower_case_table_names`,
-//!    and whether `sql_mode` and the client charset let the parser read
-//!    quotes and escapes as the server does,
+//! 1. probes the session: the server version (a [`BackendMismatch`]
+//!    refuses), the default database, `lower_case_table_names`, and whether
+//!    `sql_mode` and the client charset let the parser read quotes and
+//!    escapes as the server does,
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing in `information_schema` (`TABLES`, `COLUMNS` with `INVISIBLE`
 //!    columns hidden from `*`, `VIEWS` bodies) for at most
@@ -47,14 +48,15 @@ use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
+use crate::flavour::{self, BackendMismatch};
 
 /// Catalog name of every `MySQL` relation in rule keys (`TABLE_CATALOG`).
 const CATALOG: &str = "def";
 
-/// Reads the default database, `lower_case_table_names`, `sql_mode`, and the client charset.
+/// Reads the default database, `lower_case_table_names`, `sql_mode`, client charset, and server version.
 const PROBE_SQL: &str = "SELECT CAST(DATABASE() AS CHAR), \
      CAST(@@lower_case_table_names AS SIGNED), CAST(@@sql_mode AS CHAR), \
-     CAST(@@character_set_client AS CHAR)";
+     CAST(@@character_set_client AS CHAR), CAST(VERSION() AS CHAR)";
 
 /// `sql_mode` flags under which the server lexes quotes or escapes unlike the parser.
 const LEXICAL_MODES: &[&str] = &["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES"];
@@ -149,6 +151,9 @@ enum Stop {
     /// The result does not fit the plan; the transaction rolls back.
     #[error(transparent)]
     Unfit(#[from] Unfit),
+    /// The server is not the configured backend; nothing ran.
+    #[error("column policy: {0}")]
+    BackendMismatch(BackendMismatch),
     /// A write reads a view but could not be undone.
     #[error(
         "column policy: a write that reads a view must be able to roll back \
@@ -500,13 +505,21 @@ fn origins(columns: &[MySqlColumn], probe: &Probe, owners: &[Owner]) -> Vec<(usi
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the session probe and the relations it described.
+/// Refuses before analysis when the server is not the configured `backend`.
 async fn resolve(
     conn: &mut sqlx::MySqlConnection,
     backend: DatabaseBackend,
     sql: &str,
 ) -> Result<(Analyzed, Probe, Vec<Owner>), Stop> {
-    let (database, lower_case, sql_mode, charset): (Option<String>, i64, String, String) =
+    let (database, lower_case, sql_mode, charset, version): (Option<String>, i64, String, String, String) =
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
+    let server = flavour::of(&version);
+    if server != backend {
+        return Err(Stop::BackendMismatch(BackendMismatch {
+            configured: backend,
+            server,
+        }));
+    }
     let probe = Probe { database, lower_case };
     let mut analysis = Analysis::new(sql, backend);
     analysis.connected_to(probe.database.clone());
@@ -939,5 +952,23 @@ mod tests {
             ]
         );
         assert_eq!(origins(row.columns(), &probe, &[]), []);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+    async fn opposite_backend_refuses_before_analysis() {
+        let (configured, server) = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+            Ok("mariadb") => (DatabaseBackend::Mysql, DatabaseBackend::Mariadb),
+            _ => (DatabaseBackend::Mariadb, DatabaseBackend::Mysql),
+        };
+        let mut conn = seeded().await;
+        let stop = resolve(&mut conn, configured, "SELECT name FROM no_such_table")
+            .await
+            .err()
+            .expect("mismatch refuses");
+        assert!(
+            matches!(stop, Stop::BackendMismatch(BackendMismatch { configured: c, server: s }) if c == configured && s == server),
+            "{stop:?}"
+        );
     }
 }
