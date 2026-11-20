@@ -5,6 +5,7 @@ use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate;
 use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};
 
+use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
@@ -86,7 +87,7 @@ impl SqliteHandler {
         &self,
         ReadQueryRequest { query, cursor, timeout }: ReadQueryRequest,
     ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read(&query, &sqlparser::dialect::SQLiteDialect {})?;
+        let kind = validate_read(&query, Dialect::Sqlite)?;
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
 
         let start = cursor.map_or(0, |c| c.offset);

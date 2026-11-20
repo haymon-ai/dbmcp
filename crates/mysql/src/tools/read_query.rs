@@ -1,9 +1,11 @@
 //! MCP tool: `readQuery`.
 
+use dbmcp_config::DatabaseBackend;
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate;
 use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, resolve_timeout};
+use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
@@ -134,7 +136,13 @@ impl MysqlHandler {
         cursor: Option<Cursor>,
         timeout: Option<u64>,
     ) -> Result<ReadQueryResponse, ErrorData> {
-        let kind = validate_read(&query, &sqlparser::dialect::MySqlDialect {})?;
+        let kind = validate_read(
+            &query,
+            match self.config.backend {
+                DatabaseBackend::Mariadb => Dialect::Mariadb,
+                _ => Dialect::Mysql,
+            },
+        )?;
 
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
