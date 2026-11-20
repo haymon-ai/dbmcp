@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::listing::Cursor;
-use crate::truncation::Truncation;
+use crate::truncate::Truncation;
 
 /// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///

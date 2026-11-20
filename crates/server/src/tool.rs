@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn reserved_chars_cover_the_envelope_and_every_field_beside_rows() {
         use crate::listing::Cursor;
-        use crate::truncation::{HINT, RESERVED_CHARS, Truncation};
+        use crate::truncate::{HINT, RESERVED_CHARS, Truncation};
         use crate::types::{ReadQueryResponse, WriteQueryResponse};
 
         let read = serde_json::to_value(ReadQueryResponse {

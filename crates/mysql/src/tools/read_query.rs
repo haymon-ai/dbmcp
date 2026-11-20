@@ -3,7 +3,7 @@
 use dbmcp_config::DatabaseBackend;
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
-use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;

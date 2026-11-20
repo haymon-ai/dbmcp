@@ -1,7 +1,7 @@
 //! MCP tool: `explainQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::QueryResponse;
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_truncate::{Window, fit};

@@ -1,7 +1,7 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::WriteQueryResponse;
 use dbmcp_truncate::{Window, fit};
 
