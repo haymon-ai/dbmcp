@@ -2020,6 +2020,26 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
 }
 
 #[tokio::test]
+async fn test_read_query_vector_is_number_array() {
+    // MySQL 9 tags VECTOR on the wire (0xf2): a JSON array of numbers.
+    // MariaDB sends VECTOR as plain VARBINARY, so it stays base64.
+    let (sql, expected) = match backend() {
+        DatabaseBackend::Mariadb => ("SELECT VEC_FromText('[1.5,2,3]') AS v", Value::from("AADAPwAAAEAAAEBA")),
+        _ => (
+            "SELECT STRING_TO_VECTOR('[1.5,2,3]') AS v",
+            serde_json::json!([1.5, 2.0, 3.0]),
+        ),
+    };
+
+    let response = handler(true)
+        .read_query(sql.into(), Some("app".into()), None, None)
+        .await
+        .expect("VECTOR SELECT should succeed");
+
+    assert_eq!(response.rows[0]["v"], expected);
+}
+
+#[tokio::test]
 async fn test_read_query_describe_types_are_text() {
     // DESCRIBE's `Type` column is `_bin`-collated text that sqlx names BLOB.
     let handler = handler(false);
