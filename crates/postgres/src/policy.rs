@@ -30,8 +30,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, NamePart, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    RelationRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -87,9 +87,6 @@ const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
 /// `invalid_name` quotes configuration parameter and replication slot names
 /// taken from values.
 const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
-
-/// Longest identifier in bytes; `PostgreSQL` truncates longer ones.
-const MAX_IDENTIFIER_BYTES: usize = 63;
 
 /// Reads the current body of each view OID in `$1`, in order.
 const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
@@ -173,45 +170,11 @@ struct Owner {
 /// The relations a statement's result columns may come from, by OID.
 type Owners = HashMap<u32, Owner>;
 
-/// A written name as `PostgreSQL` reads it.
-#[derive(Debug, PartialEq, Eq)]
-struct Lookup {
-    /// The explicit schema, case-folded.
-    schema: Option<String>,
-    /// The relation name, case-folded.
-    name: String,
-}
-
-impl Lookup {
-    /// Folds `written` like the server; `None` when it can name no relation here.
-    ///
-    /// Unquoted parts fold to ASCII lowercase. A database qualifier must be
-    /// the connected `database`; four or more parts never resolve.
-    fn new(written: &WrittenName, database: &str) -> Option<Self> {
-        let fold = |part: &NamePart| {
-            let folded = if part.quoted {
-                part.value.clone()
-            } else {
-                part.value.to_ascii_lowercase()
-            };
-            truncate_identifier(folded)
-        };
-        let mut parts: Vec<String> = written.parts.iter().map(fold).collect();
-        let name = parts.pop()?;
-        let schema = parts.pop();
-        match parts.as_slice() {
-            [] => Some(Self { schema, name }),
-            [catalog] if catalog == database => Some(Self { schema, name }),
-            _ => None,
-        }
-    }
-
-    /// Returns the quoted, qualified name `to_regclass` reads.
-    fn regclass(&self) -> String {
-        match &self.schema {
-            Some(schema) => format!("{}.{}", quote_ident(schema), quote_ident(&self.name)),
-            None => quote_ident(&self.name),
-        }
+/// Returns the quoted, qualified name `to_regclass` reads for `reference`.
+fn regclass(reference: &RelationRef) -> String {
+    match &reference.schema {
+        Some(schema) => format!("{}.{}", quote_ident(schema), quote_ident(&reference.name)),
+        None => quote_ident(&reference.name),
     }
 }
 
@@ -434,6 +397,7 @@ async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, 
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
     let mut analysis = Analysis::new(sql, DatabaseBackend::Postgres);
+    analysis.connected_to(Some(probe.database.clone()));
     analysis.creates_in(probe.creation.clone());
     if conforming != "on" {
         analysis.mismatch("standard_conforming_strings is off");
@@ -475,35 +439,25 @@ fn temp_first(search_path: &str, first: &str, user: &str) -> bool {
 async fn fetch(
     conn: &mut sqlx::PgConnection,
     probe: &Probe,
-    names: Vec<WrittenName>,
+    names: Vec<(WrittenName, RelationRef)>,
     owners: &mut Owners,
 ) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
-    let mut entries = Vec::new();
-    let lookups: Vec<(WrittenName, Lookup)> = names
-        .into_iter()
-        .filter_map(|name| {
-            if let Some(lookup) = Lookup::new(&name, &probe.database) {
-                return Some((name, lookup));
-            }
-            entries.push((name, Entry::Absent));
-            None
-        })
-        .collect();
-    if lookups.is_empty() {
-        return Ok(entries);
+    if names.is_empty() {
+        return Ok(Vec::new());
     }
-    let regclasses: Vec<String> = lookups.iter().map(|(_, lookup)| lookup.regclass()).collect();
-    let schemas: Vec<Option<String>> = lookups
+    let regclasses: Vec<String> = names.iter().map(|(_, reference)| regclass(reference)).collect();
+    let schemas: Vec<Option<String>> = names
         .iter()
-        .map(|(_, lookup)| lookup.schema.as_deref().map(quote_ident))
+        .map(|(_, reference)| reference.schema.as_deref().map(quote_ident))
         .collect();
     let rows: Vec<Resolved> = sqlx::query_as(RESOLVE_SQL)
         .bind(regclasses)
         .bind(schemas)
         .fetch_all(&mut *conn)
         .await?;
-    for ((name, lookup), row) in lookups.into_iter().zip(rows) {
-        let entry = entry(probe, &name, &lookup, &row);
+    let mut entries = Vec::new();
+    for ((name, reference), row) in names.into_iter().zip(rows) {
+        let entry = entry(probe, &name, &reference, &row);
         let (_, _, _, oid, body, names, numbers, _) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.entry(oid).or_insert_with(|| Owner {
@@ -518,10 +472,10 @@ async fn fetch(
 }
 
 /// Builds the catalog entry of one resolved row.
-fn entry(probe: &Probe, name: &WrittenName, lookup: &Lookup, row: &Resolved) -> Entry {
+fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
     let (schema, relname, relkind, _, body, columns, numbers, schema_exists) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
-        return vacant(probe, name, lookup, *schema_exists);
+        return vacant(probe, name, reference, *schema_exists);
     };
     let system = SYSTEM_SCHEMAS.contains(&schema.as_str());
     let kind = match relkind.as_str() {
@@ -559,25 +513,19 @@ fn entry(probe: &Probe, name: &WrittenName, lookup: &Lookup, row: &Resolved) -> 
 /// A relation created under a bare name lands in the session's creation
 /// schema; under a qualified name, in that schema when it exists. Temporary
 /// schemas, names in view bodies, and names without a schema are absent.
-fn vacant(probe: &Probe, name: &WrittenName, lookup: &Lookup, schema_exists: bool) -> Entry {
+fn vacant(probe: &Probe, name: &WrittenName, reference: &RelationRef, schema_exists: bool) -> Entry {
     if name.context != Origin::Query {
         return Entry::Absent;
     }
-    let schema = match &lookup.schema {
+    let schema = match &reference.schema {
         None => probe.creation.as_deref(),
         Some(schema) => schema_exists.then_some(schema.as_str()),
     };
     schema
         .filter(|schema| !schema.starts_with("pg_temp") && !schema.starts_with("pg_toast_temp"))
         .map_or(Entry::Absent, |schema| {
-            Entry::Vacant(RelationId::new(&probe.database, schema, &lookup.name))
+            Entry::Vacant(RelationId::new(&probe.database, schema, &reference.name))
         })
-}
-
-/// Cuts `identifier` to [`MAX_IDENTIFIER_BYTES`] on a character boundary, as the server does.
-fn truncate_identifier(mut identifier: String) -> String {
-    identifier.truncate(identifier.floor_char_boundary(MAX_IDENTIFIER_BYTES));
-    identifier
 }
 
 /// Strips the whitespace and trailing semicolon `pg_get_viewdef` wraps a query in.
@@ -608,63 +556,25 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use dbmcp_policy::NamePart;
 
     use super::*;
 
     const DB: &str = "app";
 
-    fn lookup(parts: Vec<NamePart>) -> Option<Lookup> {
-        Lookup::new(&WrittenName::query(parts), DB)
+    /// A reference to `name`, in `schema` when given.
+    fn reference(schema: Option<&str>, name: &str) -> RelationRef {
+        RelationRef {
+            schema: schema.map(Into::into),
+            name: name.into(),
+        }
     }
 
     #[test]
-    fn unquoted_parts_fold_and_quoted_parts_stay() {
-        let found = lookup(vec![NamePart::bare("Public"), NamePart::quoted("Users")]).expect("two parts");
-        assert_eq!(
-            found,
-            Lookup {
-                schema: Some("public".into()),
-                name: "Users".into(),
-            }
-        );
-        assert_eq!(found.regclass(), "\"public\".\"Users\"");
-        let bare = lookup(vec![NamePart::bare("USERS")]).expect("one part");
-        assert_eq!(bare.regclass(), "\"users\"");
-    }
-
-    #[test]
-    fn quotes_inside_names_are_escaped() {
-        let found = lookup(vec![NamePart::quoted("a\"b")]).expect("one part");
-        assert_eq!(found.regclass(), "\"a\"\"b\"");
-    }
-
-    #[test]
-    fn database_qualifier_must_be_the_connected_database() {
-        let three = |catalog: NamePart| lookup(vec![catalog, NamePart::bare("public"), NamePart::bare("users")]);
-        assert_eq!(
-            three(NamePart::bare("APP")),
-            Some(Lookup {
-                schema: Some("public".into()),
-                name: "users".into(),
-            })
-        );
-        assert_eq!(three(NamePart::quoted("APP")), None);
-        assert_eq!(three(NamePart::bare("other")), None);
-        let four = vec![
-            NamePart::bare("app"),
-            NamePart::bare("a"),
-            NamePart::bare("b"),
-            NamePart::bare("c"),
-        ];
-        assert_eq!(lookup(four), None);
-    }
-
-    #[test]
-    fn long_identifiers_truncate_to_63_bytes_on_char_boundaries() {
-        let long = lookup(vec![NamePart::bare("a".repeat(70))]).expect("one part");
-        assert_eq!(long.name, "a".repeat(63));
-        let wide = lookup(vec![NamePart::quoted(format!("{}é", "b".repeat(62)))]).expect("one part");
-        assert_eq!(wide.name, "b".repeat(62), "é straddles byte 63");
+    fn regclass_quotes_each_part() {
+        assert_eq!(regclass(&reference(Some("public"), "Users")), "\"public\".\"Users\"");
+        assert_eq!(regclass(&reference(None, "users")), "\"users\"");
+        assert_eq!(regclass(&reference(None, "a\"b")), "\"a\"\"b\"");
     }
 
     #[test]
@@ -696,9 +606,8 @@ mod tests {
         }
     }
 
-    fn vacant_id(probe: &Probe, name: &WrittenName, exists: bool) -> Option<String> {
-        let lookup = Lookup::new(name, DB).expect("lookup");
-        match vacant(probe, name, &lookup, exists) {
+    fn vacant_id(probe: &Probe, name: &WrittenName, reference: &RelationRef, exists: bool) -> Option<String> {
+        match vacant(probe, name, reference, exists) {
             Entry::Vacant(id) => Some(format!("{}.{}.{}", id.catalog, id.schema, id.name)),
             _ => None,
         }
@@ -707,24 +616,22 @@ mod tests {
     #[test]
     fn bare_creates_land_in_the_creation_schema() {
         let name = WrittenName::query(vec![NamePart::bare("New")]);
+        let new = reference(None, "new");
         assert_eq!(
-            vacant_id(&probe(Some("public")), &name, false).as_deref(),
+            vacant_id(&probe(Some("public")), &name, &new, false).as_deref(),
             Some("app.public.new")
         );
-        assert_eq!(vacant_id(&probe(None), &name, false), None);
-        assert_eq!(vacant_id(&probe(Some("pg_temp_3")), &name, false), None);
+        assert_eq!(vacant_id(&probe(None), &name, &new, false), None);
+        assert_eq!(vacant_id(&probe(Some("pg_temp_3")), &name, &new, false), None);
     }
 
     #[test]
     fn qualified_creates_need_an_existing_non_temporary_schema() {
-        let name = |schema: &str| WrittenName::query(vec![NamePart::bare(schema), NamePart::bare("n")]);
-        let probe = probe(Some("public"));
-        assert_eq!(
-            vacant_id(&probe, &name("shadow"), true).as_deref(),
-            Some("app.shadow.n")
-        );
-        assert_eq!(vacant_id(&probe, &name("nope"), false), None);
-        assert_eq!(vacant_id(&probe, &name("PG_TEMP"), true), None);
+        let name = WrittenName::query(vec![NamePart::bare("s"), NamePart::bare("n")]);
+        let id = |schema, exists| vacant_id(&probe(Some("public")), &name, &reference(Some(schema), "n"), exists);
+        assert_eq!(id("shadow", true).as_deref(), Some("app.shadow.n"));
+        assert_eq!(id("nope", false), None);
+        assert_eq!(id("pg_temp", true), None);
     }
 
     #[test]
@@ -733,7 +640,10 @@ mod tests {
             parts: vec![NamePart::bare("n")],
             context: Origin::View(RelationId::new(DB, "public", "v")),
         };
-        assert_eq!(vacant_id(&probe(Some("public")), &name, false), None);
+        assert_eq!(
+            vacant_id(&probe(Some("public")), &name, &reference(None, "n"), false),
+            None
+        );
     }
 
     fn row(relkind: &str, schema: &str, body: Option<&str>) -> Resolved {
@@ -751,8 +661,7 @@ mod tests {
 
     fn resolved(row: &Resolved) -> Option<Relation> {
         let name = WrittenName::query(vec![NamePart::bare("r")]);
-        let lookup = Lookup::new(&name, DB).expect("lookup");
-        match entry(&probe(Some("public")), &name, &lookup, row) {
+        match entry(&probe(Some("public")), &name, &reference(None, "r"), row) {
             Entry::Resolved(relation) => Some(relation),
             _ => None,
         }
@@ -801,10 +710,10 @@ mod tests {
     #[test]
     fn unresolved_rows_fall_back_to_vacant() {
         let name = WrittenName::query(vec![NamePart::bare("n")]);
-        let lookup = Lookup::new(&name, DB).expect("lookup");
+
         let row: Resolved = (None, None, None, None, None, Vec::new(), Vec::new(), false);
         assert_eq!(
-            entry(&probe(Some("public")), &name, &lookup, &row),
+            entry(&probe(Some("public")), &name, &reference(None, "n"), &row),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
         );
     }

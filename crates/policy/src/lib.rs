@@ -41,6 +41,7 @@ mod deny;
 mod plan;
 mod planned;
 mod rejection;
+mod relation;
 #[cfg(test)]
 mod tests;
 
@@ -51,3 +52,4 @@ pub use dbmcp_sql_lineage::{
 pub use self::analysis::{Analysis, Analyzed, Step};
 pub use self::planned::{Planned, Unfit};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};
+pub use self::relation::RelationRef;

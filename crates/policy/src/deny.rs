@@ -6,7 +6,11 @@
 //! shadow tables. `MySQL` `SHOW` forms are allowlisted instead. Names compare
 //! ASCII case-insensitively.
 
-use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse, Show, WrittenName};
+use dbmcp_sql_lineage::{Dialect, Lineage, RelationKind, Show, StatementKind, WrittenName};
+
+use crate::plan::relation_name;
+use crate::rejection::Rejection;
+use crate::relation::RelationRef;
 
 /// How a deny entry matches a relation name.
 enum Name {
@@ -70,38 +74,73 @@ const SQLITE: &[&str] = &[
     "sqlite_dbpage",
 ];
 
-/// Reports whether `relation` is denied on `dialect`.
-pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
-    (dialect == Dialect::Sqlite && relation.kind == RelationKind::Virtual)
-        || named(dialect, &relation.id.schema, &relation.id.name)
+/// Rejects the first missing name whose reading the deny tables name.
+///
+/// # Errors
+///
+/// Returns [`Rejection::DeniedRelation`] with the name as written.
+pub(crate) fn names(dialect: Dialect, names: &[(WrittenName, RelationRef)]) -> Result<(), Rejection> {
+    let Some((name, _)) = names
+        .iter()
+        .find(|(_, reference)| named(dialect, reference.schema.as_deref(), &reference.name))
+    else {
+        return Ok(());
+    };
+    let parts: Vec<&str> = name.parts.iter().map(|part| part.value.as_str()).collect();
+    Err(Rejection::DeniedRelation {
+        relation: parts.join("."),
+    })
 }
 
-/// Returns the written name to report when the deny tables name it.
+/// Rejects a denied relation in `lineage`, then a denied `SHOW` form.
 ///
-/// Checks two-part `MySQL` and `MariaDB` names, and the last part of a
-/// one- to three-part `PostgreSQL` or one- or two-part `SQLite` name. Other
-/// names wait for the catalog: their schema or relation kind is unknown.
-pub(crate) fn written(dialect: Dialect, name: &WrittenName) -> Option<String> {
-    let denied = match (dialect, name.parts.as_slice()) {
-        (Dialect::Mysql | Dialect::Mariadb, [schema, relation]) => named(dialect, &schema.value, &relation.value),
-        (Dialect::Postgres, [relation] | [_, relation] | [_, _, relation])
-        | (Dialect::Sqlite, [relation] | [_, relation]) => named(dialect, "", &relation.value),
-        _ => false,
-    };
-    if !denied {
-        return None;
+/// Every `SQLite` virtual table is denied. Every `PostgreSQL` `SHOW` reads
+/// a setting; `MySQL` and `MariaDB` allow the listed [`Show`] forms that
+/// replay no values.
+///
+/// # Errors
+///
+/// Returns [`Rejection::DeniedRelation`] with the relation as `schema.name`,
+/// or [`Rejection::DeniedStatement`].
+pub(crate) fn lineage(dialect: Dialect, lineage: &Lineage) -> Result<(), Rejection> {
+    if let Some(relation) = lineage.relations.iter().find(|relation| {
+        (dialect == Dialect::Sqlite && relation.kind == RelationKind::Virtual)
+            || named(dialect, Some(&relation.id.schema), &relation.id.name)
+    }) {
+        return Err(Rejection::DeniedRelation {
+            relation: relation_name(&relation.id),
+        });
     }
-    let parts: Vec<&str> = name.parts.iter().map(|part| part.value.as_str()).collect();
-    Some(parts.join("."))
+    let mut statement = &lineage.statement;
+    while let StatementKind::Explain(inner) = statement {
+        statement = inner;
+    }
+    let StatementKind::Show(show) = statement else {
+        return Ok(());
+    };
+    let denied = match dialect {
+        Dialect::Postgres => true,
+        Dialect::Mysql | Dialect::Mariadb => *show == Show::Unsupported || show.replays_values(),
+        Dialect::Sqlite => false,
+    };
+    if denied {
+        Err(Rejection::DeniedStatement)
+    } else {
+        Ok(())
+    }
 }
 
 /// Reports whether the deny tables name `schema.name` on `dialect`.
 ///
-/// `PostgreSQL` and `SQLite` deny names in any schema.
-fn named(dialect: Dialect, schema: &str, name: &str) -> bool {
+/// `PostgreSQL` and `SQLite` deny names in any schema; `MySQL` and
+/// `MariaDB` only names in a known schema.
+fn named(dialect: Dialect, schema: Option<&str>, name: &str) -> bool {
     match dialect {
         Dialect::Postgres => POSTGRES.iter().any(|denied| name.eq_ignore_ascii_case(denied)),
         Dialect::Mysql | Dialect::Mariadb => {
+            let Some(schema) = schema else {
+                return false;
+            };
             let lower = name.to_ascii_lowercase();
             MYSQL.iter().any(|(denied, entry)| {
                 schema.eq_ignore_ascii_case(denied)
@@ -114,17 +153,5 @@ fn named(dialect: Dialect, schema: &str, name: &str) -> bool {
             })
         }
         Dialect::Sqlite => SQLITE.iter().any(|denied| name.eq_ignore_ascii_case(denied)),
-    }
-}
-
-/// Reports whether a `SHOW` form is denied on `dialect`.
-///
-/// Every `PostgreSQL` `SHOW` reads a setting; `MySQL` and `MariaDB` allow
-/// the listed [`Show`] forms that replay no values.
-pub(crate) fn show(dialect: Dialect, show: Show) -> bool {
-    match dialect {
-        Dialect::Postgres => true,
-        Dialect::Mysql | Dialect::Mariadb => show == Show::Unsupported || show.replays_values(),
-        Dialect::Sqlite => false,
     }
 }

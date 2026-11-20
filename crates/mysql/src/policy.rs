@@ -33,7 +33,7 @@ use std::mem;
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    StatementKind, Step, Unfit, WrittenName,
+    RelationRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -229,37 +229,11 @@ impl Probe {
     }
 }
 
-/// A written name as `MySQL` reads it.
+/// A [`RelationRef`] with its schema, as every `MySQL` reading has.
 #[derive(Debug, PartialEq, Eq)]
 struct Lookup {
     schema: String,
     name: String,
-}
-
-impl Lookup {
-    /// Reads `written` like the server; `None` when it can name no relation.
-    ///
-    /// A bare name resolves in the view's own schema inside a view body, else
-    /// in the default database. Three or more parts never resolve.
-    fn new(written: &WrittenName, database: Option<&str>) -> Option<Self> {
-        match written.parts.as_slice() {
-            [name] => {
-                let schema = match &written.context {
-                    Origin::View(view) => view.schema.clone(),
-                    Origin::Query => database?.to_owned(),
-                };
-                Some(Self {
-                    schema,
-                    name: name.value.clone(),
-                })
-            }
-            [schema, name] => Some(Self {
-                schema: schema.value.clone(),
-                name: name.value.clone(),
-            }),
-            _ => None,
-        }
-    }
 }
 
 /// One row of [`TABLES_EXACT`] / [`TABLES_FOLDED`].
@@ -535,6 +509,7 @@ async fn resolve(
         sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
     let probe = Probe { database, lower_case };
     let mut analysis = Analysis::new(sql, backend);
+    analysis.connected_to(probe.database.clone());
     analysis.creates_in(probe.database.as_deref().map(|database| probe.created(database)));
     if let Some(reason) = lexical_mismatch(&sql_mode, &charset, sql) {
         analysis.mismatch(reason);
@@ -585,20 +560,23 @@ fn lexical_mismatch(sql_mode: &str, charset: &str, sql: &str) -> Option<String> 
 async fn fetch(
     conn: &mut sqlx::MySqlConnection,
     probe: &Probe,
-    names: Vec<WrittenName>,
+    names: Vec<(WrittenName, RelationRef)>,
     owners: &mut Vec<Owner>,
 ) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
     let mut entries = Vec::new();
-    let lookups: Vec<(WrittenName, Lookup)> = names
-        .into_iter()
-        .filter_map(|name| {
-            if let Some(lookup) = Lookup::new(&name, probe.database.as_deref()) {
-                return Some((name, lookup));
-            }
-            entries.push((name, Entry::Absent));
-            None
-        })
-        .collect();
+    let mut lookups = Vec::new();
+    for (name, reference) in names {
+        match reference.schema {
+            Some(schema) => lookups.push((
+                name,
+                Lookup {
+                    schema,
+                    name: reference.name,
+                },
+            )),
+            None => entries.push((name, Entry::Absent)),
+        }
+    }
     if lookups.is_empty() {
         return Ok(entries);
     }
@@ -761,8 +739,6 @@ fn echoing(error: &sqlx::Error) -> Option<(u16, String)> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_policy::NamePart;
-
     use super::*;
 
     fn probe(lower_case: i64) -> Probe {
@@ -770,45 +746,6 @@ mod tests {
             database: Some("app".into()),
             lower_case,
         }
-    }
-
-    #[test]
-    fn bare_names_resolve_in_the_default_database_or_the_view_schema() {
-        let bare = WrittenName::query(vec![NamePart::bare("Users")]);
-        assert_eq!(
-            Lookup::new(&bare, Some("app")),
-            Some(Lookup {
-                schema: "app".into(),
-                name: "Users".into(),
-            })
-        );
-        assert_eq!(Lookup::new(&bare, None), None, "no database selected");
-        let in_view = WrittenName {
-            parts: vec![NamePart::quoted("users")],
-            context: Origin::View(RelationId::new(CATALOG, "other", "v")),
-        };
-        assert_eq!(
-            Lookup::new(&in_view, Some("app")).map(|lookup| lookup.schema),
-            Some("other".into())
-        );
-    }
-
-    #[test]
-    fn qualified_names_take_their_schema_and_three_parts_never_resolve() {
-        let two = WrittenName::query(vec![NamePart::bare("analytics"), NamePart::bare("events")]);
-        assert_eq!(
-            Lookup::new(&two, Some("app")),
-            Some(Lookup {
-                schema: "analytics".into(),
-                name: "events".into(),
-            })
-        );
-        let three = WrittenName::query(vec![
-            NamePart::bare("def"),
-            NamePart::bare("app"),
-            NamePart::bare("users"),
-        ]);
-        assert_eq!(Lookup::new(&three, Some("app")), None);
     }
 
     #[test]
