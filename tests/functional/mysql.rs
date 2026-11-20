@@ -993,6 +993,19 @@ async fn test_read_query_show_tables() {
 }
 
 #[tokio::test]
+async fn test_read_query_show_charset_and_processlist() {
+    let handler = handler(true);
+
+    for sql in ["SHOW CHARSET", "SHOW PROCESSLIST"] {
+        let response = handler
+            .read_query(sql.into(), Some("app".into()), None, None)
+            .await
+            .unwrap_or_else(|error| panic!("{sql} should pass readQuery: {error:?}"));
+        assert!(!response.rows.is_empty(), "{sql} should return rows");
+    }
+}
+
+#[tokio::test]
 async fn test_read_query_describe_table() {
     let handler = handler(false);
 

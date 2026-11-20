@@ -78,18 +78,21 @@ fn classify(stmt: &Statement, sql: &str, dialect: Dialect) -> Result<StatementKi
             classify(statement, sql, dialect)?;
             Ok(StatementKind::NonSelect)
         }
-        Statement::ShowTables { .. }
-        | Statement::ShowColumns { .. }
-        | Statement::ShowCreate { .. }
-        | Statement::ShowVariable { .. }
-        | Statement::ShowVariables { .. }
-        | Statement::ShowStatus { .. }
-        | Statement::ShowDatabases { .. }
-        | Statement::ShowSchemas { .. }
-        | Statement::ShowCollation { .. }
+        Statement::ShowVariable { .. }
         | Statement::ShowFunctions { .. }
+        | Statement::ShowStatus { .. }
+        | Statement::ShowVariables { .. }
+        | Statement::ShowCreate { .. }
+        | Statement::ShowColumns { .. }
+        | Statement::ShowCatalogs { .. }
+        | Statement::ShowDatabases { .. }
+        | Statement::ShowProcessList { .. }
+        | Statement::ShowSchemas { .. }
+        | Statement::ShowCharset(_)
+        | Statement::ShowObjects(_)
+        | Statement::ShowTables { .. }
         | Statement::ShowViews { .. }
-        | Statement::ShowObjects(_) => match Show::classify(sql, dialect) {
+        | Statement::ShowCollation { .. } => match Show::classify(sql, dialect) {
             Show::Warnings | Show::Errors => Err(SqlError::DiagnosticsBlocked),
             Show::Databases
             | Show::Tables
@@ -375,6 +378,23 @@ mod tests {
     fn test_show_allowed() {
         assert!(validate_read("SHOW DATABASES", Dialect::Mysql).is_ok());
         assert!(validate_read("SHOW TABLES", Dialect::Mysql).is_ok());
+    }
+
+    #[test]
+    fn every_parsed_show_passes() {
+        for sql in [
+            "SHOW CHARSET",
+            "SHOW CHARACTER SET",
+            "SHOW PROCESSLIST",
+            "SHOW FULL PROCESSLIST",
+            "SHOW CATALOGS",
+        ] {
+            assert_eq!(
+                validate_read(sql, Dialect::Mysql).ok(),
+                Some(StatementKind::NonSelect),
+                "{sql}"
+            );
+        }
     }
 
     #[test]
