@@ -1,0 +1,14 @@
+[package]
+name = "dbmcp-truncate"
+description = "Character caps that fit a list of JSON values into a char budget"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

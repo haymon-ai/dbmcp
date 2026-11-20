@@ -1,8 +1,7 @@
 //! MCP tool: `explainQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::truncate;
-use dbmcp_server::types::QueryResponse;
+use dbmcp_server::types::{QueryResponse, Truncation, caps};
 use dbmcp_sql::validation::validate_single_statement;
 
 use super::prelude::*;
@@ -78,7 +77,8 @@ impl SqliteHandler {
 
         let explain_sql = format!("EXPLAIN QUERY PLAN {query}");
 
-        let mut window = truncate::Window::new(0, None, self.config.max_cell_chars, self.config.max_response_chars);
+        let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
+        let mut window = dbmcp_truncate::Window::new(0, None, caps);
         let rows = if let Some(policy) = &self.policy {
             self.enforce(
                 policy,
@@ -95,14 +95,13 @@ impl SqliteHandler {
                     window.push(row);
                 })
                 .await?;
-            self.redactor.redact_rows(window.rows).await?
+            self.redactor.redact_rows(window.items).await?
         };
-        let mut fitted = truncate::fit(rows, self.config.max_cell_chars, self.config.max_response_chars);
-        fitted.omit(window.rest);
+        let fitted = dbmcp_truncate::fit(rows, caps);
 
         Ok(QueryResponse {
-            rows: fitted.rows,
-            truncation: fitted.truncation,
+            rows: fitted.items,
+            truncation: Truncation::new(fitted.cut, fitted.dropped.saturating_add(window.rest)),
         })
     }
 }

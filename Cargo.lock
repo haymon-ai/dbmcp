@@ -1076,6 +1076,7 @@ dependencies = [
  "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
+ "dbmcp-truncate",
  "moka",
  "rmcp",
  "schemars",
@@ -1137,6 +1138,7 @@ dependencies = [
  "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
+ "dbmcp-truncate",
  "indexmap",
  "moka",
  "rmcp",
@@ -1157,6 +1159,7 @@ name = "dbmcp-server"
 version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
+ "dbmcp-truncate",
  "indexmap",
  "rmcp",
  "schemars",
@@ -1200,6 +1203,7 @@ dependencies = [
  "dbmcp-policy",
  "dbmcp-server",
  "dbmcp-sql",
+ "dbmcp-truncate",
  "futures-util",
  "rmcp",
  "schemars",
@@ -1227,6 +1231,13 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "dbmcp-truncate"
+version = "0.19.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

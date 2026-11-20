@@ -25,8 +25,8 @@ use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind, Step,
     Unfit, WrittenName,
 };
-use dbmcp_server::truncate::Window;
 use dbmcp_sql::{Connection as _, SqlError};
+use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::ast::Statement;
@@ -164,7 +164,7 @@ impl SqliteHandler {
             })
             .await?
             .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows = mem::take(&mut window.rows).into_iter().map(values).collect();
+        let rows = mem::take(&mut window.items).into_iter().map(values).collect();
         let rows = run.planned.redact(redactor, run.names, rows).await?;
         Ok(Enforced {
             rows,

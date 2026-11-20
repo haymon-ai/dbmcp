@@ -13,6 +13,7 @@ dbmcp-pii = { workspace = true }
 dbmcp-policy = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
+dbmcp-truncate = { workspace = true }
 moka = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
