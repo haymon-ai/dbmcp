@@ -4,9 +4,10 @@
 //! statement through [`MysqlHandler::enforce`]. On one pooled connection of
 //! the target database and under one deadline, it:
 //!
-//! 1. probes the session: the default database, `lower_case_table_names`,
-//!    and whether `sql_mode` and the client charset let the parser read
-//!    quotes and escapes as the server does,
+//! 1. probes the session: the server version (a [`BackendMismatch`]
+//!    refuses), the default database, `lower_case_table_names`, and whether
+//!    `sql_mode` and the client charset let the parser read quotes and
+//!    escapes as the server does,
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing in `information_schema` (`TABLES`, `COLUMNS` with `INVISIBLE`
 //!    columns hidden from `*`, `VIEWS` bodies) for at most
@@ -47,14 +48,15 @@ use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
+use crate::flavour::{self, BackendMismatch};
 
 /// Catalog name of every `MySQL` relation in rule keys (`TABLE_CATALOG`).
 const CATALOG: &str = "def";
 
-/// Reads the default database, `lower_case_table_names`, `sql_mode`, and the client charset.
+/// Reads the default database, `lower_case_table_names`, `sql_mode`, client charset, and server version.
 const PROBE_SQL: &str = "SELECT CAST(DATABASE() AS CHAR), \
      CAST(@@lower_case_table_names AS SIGNED), CAST(@@sql_mode AS CHAR), \
-     CAST(@@character_set_client AS CHAR)";
+     CAST(@@character_set_client AS CHAR), CAST(VERSION() AS CHAR)";
 
 /// `sql_mode` flags under which the server lexes quotes or escapes unlike the parser.
 const LEXICAL_MODES: &[&str] = &["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES"];
@@ -149,6 +151,9 @@ enum Stop {
     /// The result does not fit the plan; the transaction rolls back.
     #[error(transparent)]
     Unfit(#[from] Unfit),
+    /// The server is not the configured backend; nothing ran.
+    #[error("column policy: {0}")]
+    BackendMismatch(BackendMismatch),
     /// A write reads a view but could not be undone.
     #[error(
         "column policy: a write that reads a view must be able to roll back \
@@ -184,9 +189,70 @@ struct Probe {
     database: Option<String>,
     /// `lower_case_table_names`: 0 as written, 1 stored lowercased, 2 compared lowercased.
     lower_case: i64,
+    /// `sql_mode`, as the server reads it back (comma-separated flags).
+    sql_mode: String,
+    /// The client charset (`character_set_client`).
+    charset: String,
 }
 
 impl Probe {
+    /// Reads the session state of `conn`.
+    ///
+    /// # Errors
+    ///
+    /// [`Stop::BackendMismatch`] when the server is not the configured
+    /// `backend`, [`Stop::Sql`] when the probe query fails.
+    async fn read(conn: &mut sqlx::MySqlConnection, backend: DatabaseBackend) -> Result<Self, Stop> {
+        let (database, lower_case, sql_mode, charset, version): (Option<String>, i64, String, String, String) =
+            sqlx::query_as(PROBE_SQL).fetch_one(conn).await?;
+        let server = flavour::of(&version);
+        if server != backend {
+            return Err(Stop::BackendMismatch(BackendMismatch {
+                configured: backend,
+                server,
+            }));
+        }
+        Ok(Self {
+            database,
+            lower_case,
+            sql_mode,
+            charset,
+        })
+    }
+
+    /// Returns why the server would lex `sql` unlike the parser, if it would.
+    ///
+    /// Session settings (`sql_mode` flags, multibyte client charsets) change
+    /// how quotes and escapes lex; the parser reads user and system variables
+    /// (`@x`, `@@x`) as column names. Executable comments and characters the
+    /// tokenizer cannot read are refused before analysis, by
+    /// [`validate_single_statement`].
+    fn mismatch(&self, sql: &str) -> Option<String> {
+        if let Some(mode) = LEXICAL_MODES.iter().find(|flag| {
+            self.sql_mode
+                .split(',')
+                .any(|set| set.trim().eq_ignore_ascii_case(flag))
+        }) {
+            return Some(format!("sql_mode {mode} is set"));
+        }
+        if LEXICAL_CHARSETS
+            .iter()
+            .any(|unsafe_charset| self.charset.eq_ignore_ascii_case(unsafe_charset))
+        {
+            return Some(format!("client charset {}", self.charset));
+        }
+        // A tokenizer error fails `analyze` too, which parses with the same dialect.
+        let tokens = Tokenizer::new(&MySqlDialect {}, sql).tokenize().ok()?;
+        tokens
+            .iter()
+            .any(|token| match token {
+                Token::Word(word) => word.quote_style.is_none() && word.value.starts_with('@'),
+                Token::AtSign => true,
+                _ => false,
+            })
+            .then(|| "user or system variable".into())
+    }
+
     /// Returns whether table and database names compare as written.
     fn case_sensitive(&self) -> bool {
         self.lower_case == 0
@@ -500,18 +566,17 @@ fn origins(columns: &[MySqlColumn], probe: &Probe, owners: &[Owner]) -> Vec<(usi
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 ///
 /// Also returns the session probe and the relations it described.
+/// Refuses before analysis when the server is not the configured `backend`.
 async fn resolve(
     conn: &mut sqlx::MySqlConnection,
     backend: DatabaseBackend,
     sql: &str,
 ) -> Result<(Analyzed, Probe, Vec<Owner>), Stop> {
-    let (database, lower_case, sql_mode, charset): (Option<String>, i64, String, String) =
-        sqlx::query_as(PROBE_SQL).fetch_one(&mut *conn).await?;
-    let probe = Probe { database, lower_case };
+    let probe = Probe::read(&mut *conn, backend).await?;
     let mut analysis = Analysis::new(sql, backend);
     analysis.connected_to(probe.database.clone());
     analysis.creates_in(probe.database.as_deref().map(|database| probe.created(database)));
-    if let Some(reason) = lexical_mismatch(&sql_mode, &charset, sql) {
+    if let Some(reason) = probe.mismatch(sql) {
         analysis.mismatch(reason);
     }
     let mut owners = Vec::new();
@@ -522,38 +587,6 @@ async fn resolve(
             Step::Done(analyzed) => return Ok((analyzed, probe, owners)),
         }
     }
-}
-
-/// Returns why the server would lex `sql` unlike the parser, if it would.
-///
-/// Session settings (`sql_mode` flags, multibyte client charsets) change
-/// how quotes and escapes lex; the parser reads user and system variables
-/// (`@x`, `@@x`) as column names. Executable comments and characters the
-/// tokenizer cannot read are refused before analysis, by
-/// [`validate_single_statement`].
-fn lexical_mismatch(sql_mode: &str, charset: &str, sql: &str) -> Option<String> {
-    if let Some(mode) = LEXICAL_MODES
-        .iter()
-        .find(|flag| sql_mode.split(',').any(|set| set.trim().eq_ignore_ascii_case(flag)))
-    {
-        return Some(format!("sql_mode {mode} is set"));
-    }
-    if LEXICAL_CHARSETS
-        .iter()
-        .any(|unsafe_charset| charset.eq_ignore_ascii_case(unsafe_charset))
-    {
-        return Some(format!("client charset {charset}"));
-    }
-    // A tokenizer error fails `analyze` too, which parses with the same dialect.
-    let tokens = Tokenizer::new(&MySqlDialect {}, sql).tokenize().ok()?;
-    tokens
-        .iter()
-        .any(|token| match token {
-            Token::Word(word) => word.quote_style.is_none() && word.value.starts_with('@'),
-            Token::AtSign => true,
-            _ => false,
-        })
-        .then(|| "user or system variable".into())
 }
 
 /// Builds a catalog entry for each of `names`, read in batched queries.
@@ -745,6 +778,16 @@ mod tests {
         Probe {
             database: Some("app".into()),
             lower_case,
+            sql_mode: String::new(),
+            charset: "utf8mb4".into(),
+        }
+    }
+
+    fn session(sql_mode: &str, charset: &str) -> Probe {
+        Probe {
+            sql_mode: sql_mode.into(),
+            charset: charset.into(),
+            ..probe(0)
         }
     }
 
@@ -770,7 +813,7 @@ mod tests {
 
     #[test]
     fn ansi_quotes_and_no_backslash_escapes_mismatch_the_parser() {
-        let mode = |sql_mode| lexical_mismatch(sql_mode, "utf8mb4", "SELECT 1");
+        let mode = |sql_mode| session(sql_mode, "utf8mb4").mismatch("SELECT 1");
         assert_eq!(mode("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"), None);
         assert_eq!(
             mode("STRICT_TRANS_TABLES,ANSI_QUOTES").as_deref(),
@@ -785,14 +828,14 @@ mod tests {
     #[test]
     fn multibyte_client_charsets_mismatch_the_parser() {
         for charset in ["gbk", "SJIS", "big5", "cp932", "gb18030"] {
-            assert!(lexical_mismatch("", charset, "SELECT 1").is_some(), "{charset}");
+            assert!(session("", charset).mismatch("SELECT 1").is_some(), "{charset}");
         }
-        assert_eq!(lexical_mismatch("", "latin1", "SELECT 1"), None);
+        assert_eq!(session("", "latin1").mismatch("SELECT 1"), None);
     }
 
     #[test]
     fn variables_mismatch_the_parser() {
-        let sql = |sql| lexical_mismatch("", "utf8mb4", sql);
+        let sql = |sql| probe(0).mismatch(sql);
         assert!(sql("SELECT @x := ssn AS a FROM users").is_some());
         assert!(sql("SELECT @@version").is_some());
         assert!(sql("SELECT @'x'").is_some());
@@ -939,5 +982,23 @@ mod tests {
             ]
         );
         assert_eq!(origins(row.columns(), &probe, &[]), []);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+    async fn opposite_backend_refuses_the_probe() {
+        let (configured, server) = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+            Ok("mariadb") => (DatabaseBackend::Mysql, DatabaseBackend::Mariadb),
+            _ => (DatabaseBackend::Mariadb, DatabaseBackend::Mysql),
+        };
+        let mut conn = seeded().await;
+        let stop = Probe::read(&mut conn, configured)
+            .await
+            .err()
+            .expect("mismatch refuses");
+        assert!(
+            matches!(stop, Stop::BackendMismatch(BackendMismatch { configured: c, server: s }) if c == configured && s == server),
+            "{stop:?}"
+        );
     }
 }

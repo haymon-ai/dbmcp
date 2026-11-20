@@ -4,6 +4,8 @@
 //! Hides every backend pool concern from [`MysqlHandler`](crate::MysqlHandler),
 //! which composes one [`MysqlConnection`] as a field.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
@@ -13,7 +15,9 @@ use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
-use tracing::info;
+use tracing::{debug, info, warn};
+
+use crate::flavour::{self, BackendMismatch};
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -23,6 +27,8 @@ pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 pub(crate) struct MysqlConnection {
     config: DatabaseConfig,
     pools: Cache<String, MySqlPool>,
+    /// Set once a connection read the server version, shared by every pool.
+    checked: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for MysqlConnection {
@@ -56,6 +62,7 @@ impl MysqlConnection {
         Self {
             config: config.clone(),
             pools,
+            checked: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -100,10 +107,99 @@ impl MysqlConnection {
 
         let pool = self
             .pools
-            .get_with(database.to_owned(), async { create_lazy_pool(&self.config, database) })
+            .get_with(database.to_owned(), async { self.lazy_pool(database) })
             .await;
 
         Ok(pool)
+    }
+
+    /// Creates a lazy `MySQL` pool for `database`.
+    ///
+    /// Combines pool lifecycle options with backend-specific connect
+    /// options into a single lazy pool that establishes connections on
+    /// first use. In read-only mode every new connection runs
+    /// `SET SESSION TRANSACTION READ ONLY`, so the server rejects writes
+    /// through any [`Connection`] method. Until `checked` is set, a new
+    /// connection also warns on a [`BackendMismatch`]; that check never fails it.
+    fn lazy_pool(&self, database: &str) -> MySqlPool {
+        let config = &self.config;
+        let checked = Arc::clone(&self.checked);
+        let mut conn_ops = MySqlConnectOptions::new()
+            .host(&config.host)
+            .port(config.port)
+            .username(&config.user);
+
+        if let Some(ref password) = config.password {
+            conn_ops = conn_ops.password(password.expose_secret());
+        }
+        if !database.is_empty() {
+            conn_ops = conn_ops.database(database);
+        }
+        if let Some(ref charset) = config.charset {
+            conn_ops = conn_ops.charset(charset);
+        }
+
+        if config.ssl {
+            conn_ops = if config.ssl_verify_cert {
+                conn_ops.ssl_mode(MySqlSslMode::VerifyCa)
+            } else {
+                conn_ops.ssl_mode(MySqlSslMode::Required)
+            };
+            if let Some(ref ca) = config.ssl_ca {
+                conn_ops = conn_ops.ssl_ca(ca);
+            }
+            if let Some(ref cert) = config.ssl_cert {
+                conn_ops = conn_ops.ssl_client_cert(cert);
+            }
+            if let Some(ref key) = config.ssl_key {
+                conn_ops = conn_ops.ssl_client_key(key);
+            }
+        }
+
+        let mut pool_ops = sqlx::pool::PoolOptions::new()
+            .max_connections(config.max_pool_size)
+            .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
+            .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
+            .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+
+        if let Some(timeout) = config.connection_timeout {
+            pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
+        }
+        let read_only = config.read_only;
+        let backend = config.backend;
+        pool_ops = pool_ops.after_connect(move |conn, _meta| {
+            let checked = Arc::clone(&checked);
+            Box::pin(async move {
+                if read_only {
+                    sqlx::raw_sql("SET SESSION TRANSACTION READ ONLY")
+                        .execute(&mut *conn)
+                        .await?;
+                }
+                if checked.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let Ok(version) = sqlx::query_scalar::<_, String>("SELECT CAST(VERSION() AS CHAR)")
+                    .fetch_one(&mut *conn)
+                    .await
+                else {
+                    debug!("could not read the server version; checking again on the next connection");
+                    return Ok(());
+                };
+                let server = flavour::of(&version);
+                if !checked.swap(true, Ordering::AcqRel) && server != backend {
+                    warn!(
+                        "{}",
+                        BackendMismatch {
+                            configured: backend,
+                            server
+                        }
+                    );
+                }
+                Ok(())
+            })
+        });
+
+        pool_ops.connect_lazy_with(conn_ops)
     }
 }
 
@@ -164,66 +260,6 @@ impl Connection for MysqlConnection {
         }
     }
 }
-/// Creates a lazy `MySQL` pool for `db_name`.
-///
-/// Combines pool lifecycle options with backend-specific connect
-/// options into a single lazy pool that establishes connections on
-/// first use. In read-only mode every new connection runs
-/// `SET SESSION TRANSACTION READ ONLY`, so the server rejects writes
-/// through any [`Connection`] method.
-fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> MySqlPool {
-    let mut conn_ops = MySqlConnectOptions::new()
-        .host(&config.host)
-        .port(config.port)
-        .username(&config.user);
-
-    if let Some(ref password) = config.password {
-        conn_ops = conn_ops.password(password.expose_secret());
-    }
-    if !database.is_empty() {
-        conn_ops = conn_ops.database(database);
-    }
-    if let Some(ref charset) = config.charset {
-        conn_ops = conn_ops.charset(charset);
-    }
-
-    if config.ssl {
-        conn_ops = if config.ssl_verify_cert {
-            conn_ops.ssl_mode(MySqlSslMode::VerifyCa)
-        } else {
-            conn_ops.ssl_mode(MySqlSslMode::Required)
-        };
-        if let Some(ref ca) = config.ssl_ca {
-            conn_ops = conn_ops.ssl_ca(ca);
-        }
-        if let Some(ref cert) = config.ssl_cert {
-            conn_ops = conn_ops.ssl_client_cert(cert);
-        }
-        if let Some(ref key) = config.ssl_key {
-            conn_ops = conn_ops.ssl_client_key(key);
-        }
-    }
-
-    let mut pool_ops = sqlx::pool::PoolOptions::new()
-        .max_connections(config.max_pool_size)
-        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
-        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
-        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
-
-    if let Some(timeout) = config.connection_timeout {
-        pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
-    }
-    if config.read_only {
-        pool_ops = pool_ops.after_connect(|conn, _meta| {
-            Box::pin(async move {
-                sqlx::raw_sql("SET SESSION TRANSACTION READ ONLY").execute(conn).await?;
-                Ok(())
-            })
-        });
-    }
-
-    pool_ops.connect_lazy_with(conn_ops)
-}
 
 /// Quotes `value` as a `MySQL` identifier (backtick-wrapped).
 #[must_use]
@@ -248,32 +284,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_lazy_pool_returns_idle_pool() {
-        let pool = create_lazy_pool(&base_config(), "mydb");
+    async fn pool_is_idle_until_first_use() {
+        let pool = MysqlConnection::new(&base_config())
+            .pool(Some("mydb"))
+            .await
+            .expect("pool");
         assert_eq!(pool.size(), 0, "pool should be lazy (no connections yet)");
     }
 
     #[tokio::test]
-    async fn create_lazy_pool_without_password() {
-        let pool = create_lazy_pool(
-            &DatabaseConfig {
-                password: None,
-                ..base_config()
-            },
-            "mydb",
-        );
+    async fn pool_without_password() {
+        let pool = MysqlConnection::new(&DatabaseConfig {
+            password: None,
+            ..base_config()
+        })
+        .pool(Some("mydb"))
+        .await
+        .expect("pool");
         assert_eq!(pool.size(), 0);
     }
 
     #[tokio::test]
-    async fn create_lazy_pool_without_database_name() {
-        let pool = create_lazy_pool(
-            &DatabaseConfig {
-                name: None,
-                ..base_config()
-            },
-            "",
-        );
+    async fn pool_without_database_name() {
+        let pool = MysqlConnection::new(&DatabaseConfig {
+            name: None,
+            ..base_config()
+        })
+        .pool(None)
+        .await
+        .expect("pool");
         assert_eq!(pool.size(), 0);
     }
 

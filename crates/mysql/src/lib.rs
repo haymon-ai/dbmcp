@@ -4,6 +4,7 @@
 //! tool registration via [`ServerHandler`](rmcp::ServerHandler).
 
 mod connection;
+mod flavour;
 mod handler;
 mod policy;
 mod tools;
