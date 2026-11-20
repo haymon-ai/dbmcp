@@ -7,8 +7,8 @@
 //! caller's source set.
 
 use sqlparser::ast::{
-    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, Query,
-    Subscript, WindowFrameBound, WindowSpec, WindowType,
+    AccessExpr, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, InTarget,
+    Query, Subscript, WindowFrameBound, WindowSpec, WindowType,
 };
 
 use crate::bind::{Clause, Level, Sources};
@@ -120,11 +120,19 @@ impl Ctx<'_> {
                 self.expr(pattern, level, clause, acc)?;
                 self.opt(escape_char.as_deref(), level, clause, acc)
             }
-            Expr::InList { expr, list, .. } => {
+            Expr::In {
+                expr,
+                target: InTarget::List(list),
+                ..
+            } => {
                 self.expr(expr, level, clause, acc)?;
                 self.all(list, level, clause, acc)
             }
-            Expr::InSubquery { expr, subquery, .. } => {
+            Expr::In {
+                expr,
+                target: InTarget::Subquery(subquery),
+                ..
+            } => {
                 self.expr(expr, level, clause, acc)?;
                 self.subquery(subquery, level, acc)
             }
@@ -208,7 +216,14 @@ impl Ctx<'_> {
             }
             Expr::Wildcard(_) | Expr::QualifiedWildcard(..) => Err(unsupported("wildcard expression")),
             Expr::JsonAccess { .. } => Err(unsupported("JSON path access")),
-            Expr::InUnnest { .. } => Err(unsupported("IN UNNEST")),
+            Expr::In {
+                target: InTarget::Unnest(_),
+                ..
+            } => Err(unsupported("IN UNNEST")),
+            Expr::In {
+                target: InTarget::Table { .. },
+                ..
+            } => Err(unsupported("IN table")),
             Expr::Struct { .. } | Expr::Named { .. } | Expr::Dictionary(_) | Expr::Map(_) => {
                 Err(unsupported("struct or map literal"))
             }

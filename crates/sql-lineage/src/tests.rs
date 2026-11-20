@@ -1931,6 +1931,15 @@ fn unmodeled_statements_are_unsupported() {
         ("DROP SCHEMA public CASCADE", Dialect::Postgres),
         ("DROP DATABASE app", Dialect::Mysql),
         ("TRUNCATE users CASCADE", Dialect::Postgres),
+        ("CREATE RULE r AS ON INSERT TO users DO NOTHING", Dialect::Postgres),
+        ("SELECT id FROM ONLY users", Dialect::Postgres),
+        ("SELECT id FROM users *", Dialect::Postgres),
+        ("SELECT id FROM users WHERE id IN orders", Dialect::Sqlite),
+        ("SELECT id FROM users JOIN orders USING (id) AS j", Dialect::Postgres),
+        (
+            "INSERT INTO users (id) OVERRIDING SYSTEM VALUE VALUES (1)",
+            Dialect::Postgres,
+        ),
     ];
     for (sql, dialect) in cases {
         assert_unsupported(sql, *dialect, &fixture);
@@ -1941,7 +1950,6 @@ fn unmodeled_statements_are_unsupported() {
 fn statements_the_parser_rejects_fail_closed() {
     for (sql, dialect) in [
         ("LOAD DATA INFILE 'x' INTO TABLE users", Dialect::Mysql),
-        ("CREATE RULE r AS ON INSERT TO users DO NOTHING", Dialect::Postgres),
         (
             "CREATE EVENT e ON SCHEDULE EVERY 1 HOUR DO DELETE FROM users",
             Dialect::Mysql,

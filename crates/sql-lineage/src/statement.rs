@@ -337,6 +337,8 @@ impl Ctx<'_> {
             replace_into: _,
             priority: _,
             insert_alias,
+            by_name,
+            overriding,
             settings,
             format_clause,
             multi_table_insert_type,
@@ -349,6 +351,8 @@ impl Ctx<'_> {
             || !after_columns.is_empty()
             || output.is_some()
             || insert_alias.is_some()
+            || *by_name
+            || overriding.is_some()
             || settings.is_some()
             || format_clause.is_some()
             || multi_table_insert_type.is_some()
@@ -491,6 +495,7 @@ impl Ctx<'_> {
             update_token: _,
             optimizer_hints: _,
             table,
+            on_cluster,
             assignments,
             from,
             selection,
@@ -499,7 +504,11 @@ impl Ctx<'_> {
             or: _,
             order_by,
             limit,
+            settings,
         } = update;
+        if on_cluster.is_some() || settings.is_some() {
+            return Err(unsupported("ON CLUSTER or SETTINGS"));
+        }
         if output.is_some() {
             return Err(unsupported("OUTPUT clause"));
         }
@@ -537,13 +546,18 @@ impl Ctx<'_> {
             optimizer_hints: _,
             tables,
             from,
+            on_cluster,
             using,
             selection,
             returning,
             output,
             order_by,
             limit,
+            settings,
         } = delete;
+        if on_cluster.is_some() || settings.is_some() {
+            return Err(unsupported("ON CLUSTER or SETTINGS"));
+        }
         if output.is_some() {
             return Err(unsupported("OUTPUT clause"));
         }
