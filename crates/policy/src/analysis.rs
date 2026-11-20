@@ -5,6 +5,7 @@ use dbmcp_sql_lineage::{
     Catalog, Dialect, Entry, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName, analyze,
 };
 
+use crate::deny;
 use crate::plan::{Names, plan, touches_ruled};
 use crate::planned::Planned;
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
@@ -87,8 +88,10 @@ impl<'a> Analysis<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Rejection::CatalogRounds`] when names are still missing after
-    /// [`CATALOG_ROUNDS`] rounds, and the lineage failure's class otherwise.
+    /// Returns [`Rejection::DeniedRelation`] when a missing name is denied,
+    /// before any fetch; [`Rejection::CatalogRounds`] when names are still
+    /// missing after [`CATALOG_ROUNDS`] rounds; and the lineage failure's
+    /// class otherwise.
     /// Each rejection is logged.
     pub fn step(&mut self, entries: Vec<(WrittenName, Entry)>) -> Result<Step, Rejection> {
         for (name, entry) in entries {
@@ -103,6 +106,11 @@ impl<'a> Analysis<'a> {
                 dialect: self.dialect,
                 names: std::mem::take(&mut self.names),
             })),
+            Err(LineageError::Missing(names))
+                if let Some(relation) = names.iter().find_map(|name| deny::written(self.dialect, name)) =>
+            {
+                Err(Rejection::DeniedRelation { relation }.logged())
+            }
             Err(LineageError::Missing(_)) if self.rounds == CATALOG_ROUNDS => Err(Rejection::CatalogRounds.logged()),
             Err(LineageError::Missing(names)) => {
                 self.rounds += 1;
@@ -295,6 +303,91 @@ mod tests {
         assert!(!plans(bare, Some("app"), table));
         assert!(plans(bare, Some("app"), vacant));
         assert!(plans("CREATE TABLE public.c AS SELECT a FROM t", Some("app"), table));
+    }
+
+    /// The relation the first step of `sql` on `backend` denies, if any.
+    fn denied_first(backend: DatabaseBackend, sql: &str) -> Option<String> {
+        match Analysis::new(sql, backend).step(Vec::new()) {
+            Err(Rejection::DeniedRelation { relation }) => Some(relation),
+            Ok(Step::Missing(_)) => None,
+            other => panic!("{sql}: unexpected step {other:?}"),
+        }
+    }
+
+    #[test]
+    fn denied_written_names_reject_before_the_fetch() {
+        let cases = [
+            (
+                DatabaseBackend::Mysql,
+                "SELECT * FROM mysql.help_topic",
+                "mysql.help_topic",
+            ),
+            (
+                DatabaseBackend::Mariadb,
+                "SELECT * FROM MySQL.Help_Topic",
+                "MySQL.Help_Topic",
+            ),
+            (
+                DatabaseBackend::Mysql,
+                "SELECT * FROM `mysql`.`help_topic`",
+                "mysql.help_topic",
+            ),
+            (
+                DatabaseBackend::Mysql,
+                "SELECT * FROM information_schema.innodb_locks",
+                "information_schema.innodb_locks",
+            ),
+            (DatabaseBackend::Postgres, "SELECT * FROM pg_stats", "pg_stats"),
+            (
+                DatabaseBackend::Postgres,
+                "SELECT * FROM pg_catalog.pg_stats",
+                "pg_catalog.pg_stats",
+            ),
+            (
+                DatabaseBackend::Postgres,
+                "SELECT * FROM \"x\ny\".pg_stats",
+                "x\\ny.pg_stats",
+            ),
+            (
+                DatabaseBackend::Sqlite,
+                "SELECT * FROM main.sqlite_stat1",
+                "main.sqlite_stat1",
+            ),
+        ];
+        for (backend, sql, relation) in cases {
+            assert_eq!(denied_first(backend, sql).as_deref(), Some(relation), "{sql}");
+        }
+    }
+
+    #[test]
+    fn names_the_deny_tables_cannot_match_unresolved_are_fetched() {
+        for sql in ["SELECT * FROM help_topic", "SELECT * FROM app.mysql_notes"] {
+            assert_eq!(denied_first(DatabaseBackend::Mysql, sql), None, "{sql}");
+        }
+    }
+
+    #[test]
+    fn denied_names_in_a_view_body_reject_in_the_next_round() {
+        let mut analysis = Analysis::new("SELECT host FROM v", DatabaseBackend::Mysql);
+        let Ok(Step::Missing(names)) = analysis.step(Vec::new()) else {
+            panic!("the view is missing first");
+        };
+        let view = Relation::new(
+            RelationId::new("def", "app", "v"),
+            RelationKind::View,
+            vec![CatalogColumn::new("host")],
+        )
+        .with_view_sql("SELECT host FROM mysql.user");
+        let entries = names
+            .into_iter()
+            .map(|name| (name, Entry::Resolved(view.clone())))
+            .collect();
+        assert_eq!(
+            analysis.step(entries).expect_err("denied"),
+            Rejection::DeniedRelation {
+                relation: "mysql.user".into()
+            }
+        );
     }
 
     #[test]

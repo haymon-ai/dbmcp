@@ -6,7 +6,7 @@
 //! shadow tables. `MySQL` `SHOW` forms are allowlisted instead. Names compare
 //! ASCII case-insensitively.
 
-use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse, Show};
+use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse, Show, WrittenName};
 
 /// How a deny entry matches a relation name.
 enum Name {
@@ -72,24 +72,56 @@ const SQLITE: &[&str] = &[
 
 /// Reports whether `relation` is denied on `dialect`.
 pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
-    let id = &relation.id;
+    (dialect == Dialect::Sqlite && relation.kind == RelationKind::Virtual)
+        || named(dialect, &relation.id.schema, &relation.id.name)
+}
+
+/// Returns the written name to report when the deny tables name it.
+///
+/// Checks two-part `MySQL` and `MariaDB` names, and the last part of a
+/// one- to three-part `PostgreSQL` or one- or two-part `SQLite` name. Other
+/// names wait for the catalog: their schema or relation kind is unknown.
+pub(crate) fn written(dialect: Dialect, name: &WrittenName) -> Option<String> {
+    let denied = match (dialect, name.parts.as_slice()) {
+        (Dialect::Mysql | Dialect::Mariadb, [schema, relation]) => named(dialect, &schema.value, &relation.value),
+        (Dialect::Postgres, [relation] | [_, relation] | [_, _, relation])
+        | (Dialect::Sqlite, [relation] | [_, relation]) => named(dialect, "", &relation.value),
+        _ => false,
+    };
+    if !denied {
+        return None;
+    }
+    let parts: Vec<&str> = name.parts.iter().map(|part| part.value.as_str()).collect();
+    let mut rendered = String::new();
+    for c in parts.join(".").chars() {
+        if c.is_control() {
+            rendered.extend(c.escape_default());
+        } else {
+            rendered.push(c);
+        }
+    }
+    Some(rendered)
+}
+
+/// Reports whether the deny tables name `schema.name` on `dialect`.
+///
+/// `PostgreSQL` and `SQLite` deny names in any schema.
+fn named(dialect: Dialect, schema: &str, name: &str) -> bool {
     match dialect {
-        Dialect::Postgres => POSTGRES.iter().any(|name| id.name.eq_ignore_ascii_case(name)),
+        Dialect::Postgres => POSTGRES.iter().any(|denied| name.eq_ignore_ascii_case(denied)),
         Dialect::Mysql | Dialect::Mariadb => {
-            let lower = id.name.to_ascii_lowercase();
-            MYSQL.iter().any(|(schema, name)| {
-                id.schema.eq_ignore_ascii_case(schema)
-                    && match name {
+            let lower = name.to_ascii_lowercase();
+            MYSQL.iter().any(|(denied, entry)| {
+                schema.eq_ignore_ascii_case(denied)
+                    && match entry {
                         Name::Any => true,
-                        Name::Is(name) => lower == *name,
+                        Name::Is(denied) => lower == *denied,
                         Name::Prefix(prefix) => lower.starts_with(prefix),
                         Name::Contains(text) => lower.contains(text),
                     }
             })
         }
-        Dialect::Sqlite => {
-            relation.kind == RelationKind::Virtual || SQLITE.iter().any(|name| id.name.eq_ignore_ascii_case(name))
-        }
+        Dialect::Sqlite => SQLITE.iter().any(|denied| name.eq_ignore_ascii_case(denied)),
     }
 }
 

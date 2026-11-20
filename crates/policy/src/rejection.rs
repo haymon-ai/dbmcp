@@ -29,7 +29,7 @@ pub enum Rejection {
     /// A relation that exposes values outside column policy.
     #[error("column policy: relation \"{relation}\" is denied")]
     DeniedRelation {
-        /// The relation, as `schema.name`.
+        /// The relation as written, or as `schema.name` when resolved.
         relation: String,
     },
 
