@@ -2857,6 +2857,16 @@ async fn column_rules_refuse_unknown_functions_and_virtual_tables() {
 }
 
 #[tokio::test]
+async fn column_rules_deny_relations_not_yet_created() {
+    let handler = handler_with_rules(100);
+    let refusal = ruled_refusal(&handler, "SELECT * FROM sqlite_stat1").await;
+    assert!(
+        refusal.contains(r#"column policy: relation "sqlite_stat1" is denied"#),
+        "{refusal}"
+    );
+}
+
+#[tokio::test]
 async fn column_rules_refuse_explaining_ruled_relations() {
     let handler = handler_with_rules(100);
     let explain = |query: &str| handler.explain_query(ExplainQueryRequest { query: query.into() });

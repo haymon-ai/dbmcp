@@ -5289,14 +5289,33 @@ async fn column_rules_refuse_conflicting_rules_in_one_column() {
 #[tokio::test]
 async fn column_rules_refuse_unknown_functions_and_denied_relations() {
     let handler = ruled_handler(None, 100);
-    for query in [
-        "SELECT no_such_function(name) FROM users",
-        "SELECT * FROM performance_schema.threads",
-        "SELECT user FROM mysql.user",
+    for (query, reason) in [
+        (
+            "SELECT no_such_function(name) FROM users",
+            r#"column policy: function "no_such_function" is not a known built-in"#,
+        ),
+        (
+            "SELECT * FROM performance_schema.threads",
+            r#"column policy: relation "performance_schema.threads" is denied"#,
+        ),
+        (
+            "SELECT user FROM mysql.user",
+            r#"column policy: relation "mysql.user" is denied"#,
+        ),
     ] {
         let refusal = ruled_refusal(&handler, query).await;
-        assert!(refusal.contains("column policy"), "{query}: {refusal}");
+        assert!(refusal.contains(reason), "{query}: {refusal}");
     }
+}
+
+#[tokio::test]
+async fn column_rules_deny_relations_the_user_cannot_see() {
+    let handler = ruled_handler(Some("policy_viewer"), 100);
+    let refusal = ruled_refusal(&handler, "SELECT * FROM mysql.help_topic").await;
+    assert!(
+        refusal.contains(r#"column policy: relation "mysql.help_topic" is denied"#),
+        "{refusal}"
+    );
 }
 
 #[tokio::test]

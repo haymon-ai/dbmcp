@@ -58,23 +58,10 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
             name: function.name.clone(),
         });
     }
-    if let Some(relation) = lineage
-        .relations
-        .iter()
-        .find(|relation| deny::relation(dialect, relation))
-    {
-        return Err(Rejection::DeniedRelation {
-            relation: relation_name(&relation.id),
-        });
-    }
+    deny::lineage(dialect, lineage)?;
     let mut statement = &lineage.statement;
     while let StatementKind::Explain(inner) = statement {
         statement = inner;
-    }
-    if let StatementKind::Show(show) = statement
-        && deny::show(dialect, *show)
-    {
-        return Err(Rejection::DeniedStatement);
     }
     if matches!(lineage.statement, StatementKind::Explain(_))
         && let Some(relation) = ruled_relation(lineage, config)
@@ -105,8 +92,8 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 Role::Window => "a window",
             },
             view: match &reference.origin {
-                Origin::Query => String::new(),
-                Origin::View(view) => format!(" in view \"{}\"", relation_name(view)),
+                Origin::Query => None,
+                Origin::View(view) => Some(relation_name(view)),
             },
         });
     }
@@ -231,7 +218,7 @@ fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig) -> Option<Position
 }
 
 /// Renders a relation as `schema.name`.
-fn relation_name(id: &RelationId) -> String {
+pub(crate) fn relation_name(id: &RelationId) -> String {
     format!("{}.{}", id.schema, id.name)
 }
 

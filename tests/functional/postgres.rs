@@ -4818,6 +4818,16 @@ async fn column_rules_refuse_unknown_functions() {
 }
 
 #[tokio::test]
+async fn column_rules_deny_relations_missing_from_the_server() {
+    let handler = handler_with_rules(100);
+    let refusal = ruled_refusal(&handler, "SELECT * FROM pg_stat_statements").await;
+    assert!(
+        refusal.contains(r#"column policy: relation "pg_stat_statements" is denied"#),
+        "{refusal}"
+    );
+}
+
+#[tokio::test]
 async fn column_rules_refuse_explaining_ruled_relations() {
     let handler = handler_with_rules(100);
     for analyze in [false, true] {

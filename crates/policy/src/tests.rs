@@ -587,7 +587,7 @@ fn ruled_reference_rejects_in_every_role() {
             Err(Rejection::Reference {
                 column: "public.users.ssn".into(),
                 role: written,
-                view: String::new(),
+                view: None,
             })
         );
     }
@@ -603,7 +603,7 @@ fn ruled_reference_in_view_body_rejects_in_every_role() {
             Err(Rejection::Reference {
                 column: "public.users.ssn".into(),
                 role: written,
-                view: " in view \"public.v\"".into(),
+                view: Some("public.v".into()),
             })
         );
     }
@@ -927,6 +927,42 @@ fn rejection_messages_name_no_rule() {
         for leaked in ["secret-rule", "US_SSN", "hash", "mask", "replace", "redact"] {
             assert!(!message.contains(leaked), "{message}");
         }
+    }
+}
+
+#[test]
+fn rejection_messages_escape_identifiers() {
+    let name = "a\"b\\c\nd\u{1b}e\u{202e}f'g";
+    let escaped = r#""a\"b\\c\nd\u{1b}e\u{202e}f'g""#;
+    let cases = [
+        (
+            Rejection::UnknownFunction { name: name.into() },
+            format!("column policy: function {escaped} is not a known built-in"),
+        ),
+        (
+            Rejection::DeniedRelation { relation: name.into() },
+            format!("column policy: relation {escaped} is denied"),
+        ),
+        (
+            Rejection::Reference {
+                column: name.into(),
+                role: "WHERE",
+                view: Some(name.into()),
+            },
+            format!("column policy: column {escaped} (ruled) used in WHERE in view {escaped}"),
+        ),
+        (
+            Rejection::Unnamed {
+                relation: name.into(),
+                position: 0,
+            },
+            format!(
+                "column policy: created column 0 of {escaped} carries ruled values; alias the column so a rule can name it"
+            ),
+        ),
+    ];
+    for (rejection, message) in cases {
+        assert_eq!(rejection.to_string(), message);
     }
 }
 

@@ -22,8 +22,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind, Step,
-    Unfit, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
+    RelationRef, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -308,22 +308,17 @@ fn relation_kind(kind: &str) -> Option<RelationKind> {
     }
 }
 
-/// Finds the relation a written name resolves to, as `SQLite` would.
+/// Finds the relation `reference` resolves to, as `SQLite` would.
 ///
-/// A bare name searches `temp`, `main`, then attached schemas; inside a
-/// view stored in a schema other than `temp`, only that schema.
-fn locate<'a>(listed: &'a [Listed], name: &WrittenName) -> Option<&'a Listed> {
-    let (schema, table) = match name.parts.as_slice() {
-        [table] => match &name.context {
-            Origin::View(view) if !view.schema.eq_ignore_ascii_case("temp") => (Some(view.schema.as_str()), table),
-            _ => (None, table),
-        },
-        [schema, table] => (Some(schema.value.as_str()), table),
-        _ => return None,
-    };
+/// A reference without a schema searches `temp`, `main`, then attached
+/// schemas, the order `listed` comes in.
+fn locate<'a>(listed: &'a [Listed], reference: &RelationRef) -> Option<&'a Listed> {
     listed.iter().find(|relation| {
-        relation.name.eq_ignore_ascii_case(&table.value)
-            && schema.is_none_or(|schema| relation.schema.eq_ignore_ascii_case(schema))
+        relation.name.eq_ignore_ascii_case(&reference.name)
+            && reference
+                .schema
+                .as_deref()
+                .is_none_or(|schema| relation.schema.eq_ignore_ascii_case(schema))
     })
 }
 
@@ -331,17 +326,19 @@ fn locate<'a>(listed: &'a [Listed], name: &WrittenName) -> Option<&'a Listed> {
 ///
 /// A relation created under a bare name lands in `main`; under a qualified
 /// name, in that schema when it exists. Names in view bodies are absent.
-fn vacant(schemas: &[String], name: &WrittenName) -> Entry {
-    let schema = match (name.parts.as_slice(), &name.context) {
-        ([table], Origin::Query) => Some(("main", table)),
-        ([schema, table], Origin::Query) => schemas
+fn vacant(schemas: &[String], context: &Origin, reference: &RelationRef) -> Entry {
+    if *context != Origin::Query {
+        return Entry::Absent;
+    }
+    let schema = match &reference.schema {
+        None => Some("main"),
+        Some(schema) => schemas
             .iter()
-            .find(|known| known.eq_ignore_ascii_case(&schema.value))
-            .map(|known| (known.as_str(), table)),
-        _ => None,
+            .find(|known| known.eq_ignore_ascii_case(schema))
+            .map(String::as_str),
     };
-    schema.map_or(Entry::Absent, |(schema, table)| {
-        Entry::Vacant(RelationId::new(CATALOG, schema, &table.value))
+    schema.map_or(Entry::Absent, |schema| {
+        Entry::Vacant(RelationId::new(CATALOG, schema, &reference.name))
     })
 }
 
@@ -349,18 +346,15 @@ fn vacant(schemas: &[String], name: &WrittenName) -> Entry {
 async fn fetch(
     conn: &mut sqlx::SqliteConnection,
     schemas: &[String],
-    names: Vec<WrittenName>,
+    names: Vec<(WrittenName, RelationRef)>,
 ) -> Result<Vec<(WrittenName, Entry)>, sqlx::Error> {
-    let tables: Vec<&str> = names
-        .iter()
-        .filter_map(|name| name.parts.last().map(|part| part.value.as_str()))
-        .collect();
+    let tables: Vec<&str> = names.iter().map(|(_, reference)| reference.name.as_str()).collect();
     let listed = lookup(conn, &tables).await?;
     let mut entries = Vec::new();
     let mut found: Vec<(WrittenName, &Listed, RelationKind)> = Vec::new();
-    for name in names {
-        let Some(relation) = locate(&listed, &name) else {
-            let entry = vacant(schemas, &name);
+    for (name, reference) in names {
+        let Some(relation) = locate(&listed, &reference) else {
+            let entry = vacant(schemas, &name.context, &reference);
             entries.push((name, entry));
             continue;
         };
@@ -486,8 +480,16 @@ mod tests {
         .collect()
     }
 
-    fn located(name: &WrittenName) -> Option<String> {
-        locate(&listed(), name).map(|relation| format!("{}.{}", relation.schema, relation.name))
+    /// A reference to `name`, in `schema` when given.
+    fn reference(schema: Option<&str>, name: &str) -> RelationRef {
+        RelationRef {
+            schema: schema.map(Into::into),
+            name: name.into(),
+        }
+    }
+
+    fn located(schema: Option<&str>, name: &str) -> Option<String> {
+        locate(&listed(), &reference(schema, name)).map(|relation| format!("{}.{}", relation.schema, relation.name))
     }
 
     fn column_rule(key: [&str; 4], entity: &'static str) -> ColumnRule {
@@ -564,58 +566,32 @@ mod tests {
 
     #[test]
     fn bare_names_search_temp_main_then_attached() {
-        let name = |table: &str| WrittenName::query(vec![NamePart::bare(table)]);
-        assert_eq!(located(&name("T")), Some("temp.t".into()));
-        assert_eq!(located(&name("users")), Some("main.users".into()));
-        assert_eq!(located(&name("only_aux")), Some("aux.only_aux".into()));
-        assert_eq!(located(&name("missing")), None);
+        assert_eq!(located(None, "T"), Some("temp.t".into()));
+        assert_eq!(located(None, "users"), Some("main.users".into()));
+        assert_eq!(located(None, "only_aux"), Some("aux.only_aux".into()));
+        assert_eq!(located(None, "missing"), None);
     }
 
     #[test]
     fn qualified_names_pick_their_schema() {
-        let name =
-            |schema: &str, table: &str| WrittenName::query(vec![NamePart::bare(schema), NamePart::quoted(table)]);
-        assert_eq!(located(&name("AUX", "users")), Some("aux.users".into()));
-        assert_eq!(located(&name("main", "t")), Some("main.t".into()));
-        assert_eq!(located(&name("other", "t")), None);
-        let three = WrittenName::query(vec![NamePart::bare("a"), NamePart::bare("b"), NamePart::bare("c")]);
-        assert_eq!(located(&three), None);
-    }
-
-    #[test]
-    fn view_body_names_resolve_in_the_view_schema() {
-        let in_view = |schema: &str| WrittenName {
-            parts: vec![NamePart::bare("t")],
-            context: Origin::View(RelationId::new(CATALOG, schema, "v")),
-        };
-        assert_eq!(located(&in_view("main")), Some("main.t".into()));
-        assert_eq!(located(&in_view("temp")), Some("temp.t".into()));
+        assert_eq!(located(Some("AUX"), "users"), Some("aux.users".into()));
+        assert_eq!(located(Some("main"), "t"), Some("main.t".into()));
+        assert_eq!(located(Some("other"), "t"), None);
     }
 
     #[test]
     fn unlisted_names_are_vacant_where_sqlite_would_create_them() {
         let schemas: Vec<String> = ["main", "temp", "aux"].map(String::from).to_vec();
-        let id = |name: &WrittenName| match vacant(&schemas, name) {
+        let query = Origin::Query;
+        let id = |context: &Origin, schema, table| match vacant(&schemas, context, &reference(schema, table)) {
             Entry::Vacant(id) => Some(format!("{}.{}.{}", id.catalog, id.schema, id.name)),
             _ => None,
         };
-        assert_eq!(
-            id(&WrittenName::query(vec![NamePart::bare("New")])).as_deref(),
-            Some("main.main.New")
-        );
-        assert_eq!(
-            id(&WrittenName::query(vec![NamePart::bare("AUX"), NamePart::bare("n")])).as_deref(),
-            Some("main.aux.n")
-        );
-        assert_eq!(
-            id(&WrittenName::query(vec![NamePart::bare("nope"), NamePart::bare("n")])),
-            None
-        );
-        let in_view = WrittenName {
-            parts: vec![NamePart::bare("n")],
-            context: Origin::View(RelationId::new(CATALOG, "main", "v")),
-        };
-        assert_eq!(id(&in_view), None);
+        assert_eq!(id(&query, None, "New").as_deref(), Some("main.main.New"));
+        assert_eq!(id(&query, Some("AUX"), "n").as_deref(), Some("main.aux.n"));
+        assert_eq!(id(&query, Some("nope"), "n"), None);
+        let in_view = Origin::View(RelationId::new(CATALOG, "main", "v"));
+        assert_eq!(id(&in_view, Some("main"), "n"), None);
     }
 
     #[test]
@@ -691,7 +667,10 @@ mod tests {
         .await;
         let schemas = vec!["main".to_owned(), "temp".to_owned()];
         let names = ["g", "f", "v"].map(|table| WrittenName::query(vec![NamePart::bare(table)]));
-        let entries = fetch(&mut conn, &schemas, names.to_vec()).await.expect("fetch");
+        let missing = names
+            .iter()
+            .map(|name| (name.clone(), reference(None, &name.parts[0].value)));
+        let entries = fetch(&mut conn, &schemas, missing.collect()).await.expect("fetch");
         let resolved = |name: &WrittenName| match entries.iter().find(|(written, _)| written == name) {
             Some((_, Entry::Resolved(relation))) => relation.clone(),
             other => panic!("{name:?}: {other:?}"),
@@ -718,8 +697,7 @@ mod tests {
     async fn temp_tables_shadow_main_for_bare_names() {
         let mut conn = memory("CREATE TABLE t (a); CREATE TEMP TABLE t (b)").await;
         let listed = lookup(&mut conn, &["T"]).await.expect("lookup");
-        let name = WrittenName::query(vec![NamePart::bare("t")]);
-        let found = locate(&listed, &name).expect("listed");
+        let found = locate(&listed, &reference(None, "t")).expect("listed");
         assert_eq!((found.schema.as_str(), found.name.as_str()), ("temp", "t"));
     }
 
