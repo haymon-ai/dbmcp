@@ -92,35 +92,13 @@ fn classify(stmt: &Statement, sql: &str, dialect: Dialect) -> Result<StatementKi
         | Statement::ShowObjects(_)
         | Statement::ShowTables { .. }
         | Statement::ShowViews { .. }
-        | Statement::ShowCollation { .. } => match Show::classify(sql, dialect) {
-            Show::Warnings | Show::Errors => Err(SqlError::DiagnosticsBlocked),
-            Show::Databases
-            | Show::Tables
-            | Show::OpenTables
-            | Show::TableStatus
-            | Show::Columns
-            | Show::Index
-            | Show::CreateTable
-            | Show::CreateView
-            | Show::CreateTrigger
-            | Show::CreateFunction
-            | Show::CreateProcedure
-            | Show::CreateEvent
-            | Show::Triggers
-            | Show::Events
-            | Show::FunctionStatus
-            | Show::ProcedureStatus
-            | Show::FunctionCode
-            | Show::ProcedureCode
-            | Show::Variables
-            | Show::Status
-            | Show::Charset
-            | Show::Collation
-            | Show::Engines
-            | Show::Plugins
-            | Show::Privileges
-            | Show::Unsupported => Ok(StatementKind::NonSelect),
-        },
+        | Statement::ShowCollation { .. } => {
+            if Show::classify(sql, dialect).replays_values() {
+                Err(SqlError::DiagnosticsBlocked)
+            } else {
+                Ok(StatementKind::NonSelect)
+            }
+        }
         Statement::ExplainTable { .. } => Ok(StatementKind::NonSelect),
         Statement::Use(_) => Err(SqlError::UseBlocked),
         _ => Err(SqlError::ReadOnlyViolation),

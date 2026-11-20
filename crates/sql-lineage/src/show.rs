@@ -84,10 +84,51 @@ impl Show {
     /// missing unquoted `SHOW`, and unknown forms are [`Show::Unsupported`].
     #[must_use]
     pub fn classify(sql: &str, dialect: Dialect) -> Self {
-        let Ok(tokens) = dialect.tokenize(sql) else {
-            return Self::Unsupported;
-        };
-        let words = keywords(&tokens);
+        dialect
+            .tokenize(sql)
+            .map_or(Self::Unsupported, |tokens| Self::of(&tokens))
+    }
+
+    /// Returns whether the form replays earlier statements' values.
+    ///
+    /// `WARNINGS` and `ERRORS` quote the values the previous statement
+    /// touched; every other form, `Unsupported` included, does not.
+    #[must_use]
+    pub const fn replays_values(self) -> bool {
+        match self {
+            Self::Warnings | Self::Errors => true,
+            Self::Databases
+            | Self::Tables
+            | Self::OpenTables
+            | Self::TableStatus
+            | Self::Columns
+            | Self::Index
+            | Self::CreateTable
+            | Self::CreateView
+            | Self::CreateTrigger
+            | Self::CreateFunction
+            | Self::CreateProcedure
+            | Self::CreateEvent
+            | Self::Triggers
+            | Self::Events
+            | Self::FunctionStatus
+            | Self::ProcedureStatus
+            | Self::FunctionCode
+            | Self::ProcedureCode
+            | Self::Variables
+            | Self::Status
+            | Self::Charset
+            | Self::Collation
+            | Self::Engines
+            | Self::Plugins
+            | Self::Privileges
+            | Self::Unsupported => false,
+        }
+    }
+
+    /// Classifies the first `SHOW` in `tokens`, as [`Show::classify`] does.
+    pub(crate) fn of(tokens: &[Token]) -> Self {
+        let words = keywords(tokens);
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         match words.as_slice() {
             ["DATABASES" | "SCHEMAS", ..] => Self::Databases,
@@ -124,16 +165,13 @@ impl Show {
     }
 }
 
-/// Reports whether the `SHOW` in `sql` filters by more than a string literal.
+/// Reports whether the `SHOW` in `tokens` filters by more than a string literal.
 ///
 /// A `WHERE` filter evaluates an expression, subqueries included, so the
 /// rows returned can test any column's value; `LIKE` must be followed by a
-/// string literal. Tokenizer errors count as filtering (fail closed).
-pub(crate) fn computed_filter(sql: &str, dialect: Dialect) -> bool {
-    let Ok(tokens) = dialect.tokenize(sql) else {
-        return true;
-    };
-    let mut rest = after_show(&tokens).filter(|token| !matches!(token, Token::Whitespace(_)));
+/// string literal.
+pub(crate) fn computed_filter(tokens: &[Token]) -> bool {
+    let mut rest = after_show(tokens).filter(|token| !matches!(token, Token::Whitespace(_)));
     while let Some(token) = rest.next() {
         let Some(word) = unquoted(token) else {
             continue;

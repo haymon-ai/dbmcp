@@ -137,13 +137,14 @@ impl Ctx<'_> {
             | Statement::ShowTables { .. }
             | Statement::ShowViews { .. }
             | Statement::ShowCollation { .. } => {
-                if computed_filter(self.sql, self.dialect) {
+                let tokens = self
+                    .dialect
+                    .tokenize(self.sql)
+                    .map_err(|_| unsupported("SHOW tokens"))?;
+                if computed_filter(&tokens) {
                     return Err(unsupported("SHOW filter expression"));
                 }
-                Ok(Analysis::bare(
-                    StatementKind::Show(Show::classify(self.sql, self.dialect)),
-                    None,
-                ))
+                Ok(Analysis::bare(StatementKind::Show(Show::of(&tokens)), None))
             }
             Statement::ExplainTable { .. } => Ok(Analysis::bare(StatementKind::Describe, None)),
             Statement::Explain { statement, .. } => {

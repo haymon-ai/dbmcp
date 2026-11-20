@@ -1369,10 +1369,6 @@ fn relations(lineage: &Lineage) -> Vec<(String, RelationKind)> {
 }
 
 /// Shorthand for a `SHOW` statement kind.
-fn show(form: Show) -> StatementKind {
-    StatementKind::Show(form)
-}
-
 /// Shorthand for an `EXPLAIN` statement kind.
 fn explain(inner: StatementKind) -> StatementKind {
     StatementKind::Explain(Box::new(inner))
@@ -1675,10 +1671,18 @@ fn ddl_with_column_names_only_is_modeled() {
 #[test]
 fn show_and_describe_have_no_sources() {
     let cases: &[(&str, Dialect, StatementKind)] = &[
-        ("SHOW TABLES", Dialect::Mysql, show(Show::Tables)),
-        ("SHOW WARNINGS", Dialect::Mysql, show(Show::Warnings)),
-        ("SHOW PROCESSLIST", Dialect::Mysql, show(Show::Unsupported)),
-        ("SHOW search_path", Dialect::Postgres, show(Show::Unsupported)),
+        ("SHOW TABLES", Dialect::Mysql, StatementKind::Show(Show::Tables)),
+        ("SHOW WARNINGS", Dialect::Mysql, StatementKind::Show(Show::Warnings)),
+        (
+            "SHOW PROCESSLIST",
+            Dialect::Mysql,
+            StatementKind::Show(Show::Unsupported),
+        ),
+        (
+            "SHOW search_path",
+            Dialect::Postgres,
+            StatementKind::Show(Show::Unsupported),
+        ),
         ("DESCRIBE users", Dialect::Mysql, StatementKind::Describe),
     ];
     for (sql, dialect, kind) in cases {
@@ -1698,7 +1702,7 @@ fn show_quoted_words_are_not_keywords() {
     ];
     for (sql, dialect) in cases {
         let lineage = on(sql, *dialect).expect(sql);
-        assert_eq!(lineage.statement, show(Show::Unsupported), "{sql}");
+        assert_eq!(lineage.statement, StatementKind::Show(Show::Unsupported), "{sql}");
     }
     assert_unsupported("SHOW \"WARNINGS\"", Dialect::Mysql, &fixture());
 }
@@ -1736,7 +1740,7 @@ fn show_filter_expressions_are_unsupported() {
     ];
     for (sql, form) in literal {
         let lineage = on(sql, Dialect::Mysql).expect(sql);
-        assert_eq!(lineage.statement, show(*form), "{sql}");
+        assert_eq!(lineage.statement, StatementKind::Show(*form), "{sql}");
     }
 }
 
@@ -1842,7 +1846,7 @@ fn show_forms_classify_by_leading_keywords() {
         assert_eq!(Show::classify(&explained, *dialect), *form, "{explained}");
         // The parse still gates: forms sqlparser rejects never reach the classifier.
         if let Ok(lineage) = on(sql, *dialect) {
-            assert_eq!(lineage.statement, show(*form), "{sql}");
+            assert_eq!(lineage.statement, StatementKind::Show(*form), "{sql}");
         }
     }
 }
@@ -1888,7 +1892,7 @@ fn explain_forms_the_explain_tools_build_wrap_a_query() {
         assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])], "{sql}");
     }
     let lineage = on("EXPLAIN SHOW TABLES", Dialect::Mysql).expect("analyze");
-    assert_eq!(lineage.statement, explain(show(Show::Tables)));
+    assert_eq!(lineage.statement, explain(StatementKind::Show(Show::Tables)));
 }
 
 #[test]

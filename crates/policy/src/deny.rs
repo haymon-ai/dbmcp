@@ -101,34 +101,7 @@ pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
 pub(crate) fn show(dialect: Dialect, show: Show) -> bool {
     match dialect {
         Dialect::Postgres => true,
-        Dialect::Mysql | Dialect::Mariadb => match show {
-            Show::Databases
-            | Show::Tables
-            | Show::OpenTables
-            | Show::TableStatus
-            | Show::Columns
-            | Show::Index
-            | Show::CreateTable
-            | Show::CreateView
-            | Show::CreateTrigger
-            | Show::CreateFunction
-            | Show::CreateProcedure
-            | Show::CreateEvent
-            | Show::Triggers
-            | Show::Events
-            | Show::FunctionStatus
-            | Show::ProcedureStatus
-            | Show::FunctionCode
-            | Show::ProcedureCode
-            | Show::Variables
-            | Show::Status
-            | Show::Charset
-            | Show::Collation
-            | Show::Engines
-            | Show::Plugins
-            | Show::Privileges => false,
-            Show::Warnings | Show::Errors | Show::Unsupported => true,
-        },
+        Dialect::Mysql | Dialect::Mariadb => show == Show::Unsupported || show.replays_values(),
         Dialect::Sqlite => false,
     }
 }
