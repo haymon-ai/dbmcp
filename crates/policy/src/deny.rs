@@ -112,7 +112,7 @@ pub(crate) fn lineage(dialect: Dialect, lineage: &Lineage) -> Result<(), Rejecti
         });
     }
     let mut statement = &lineage.statement;
-    while let StatementKind::Explain(inner) = statement {
+    while let StatementKind::Explain(_, inner) = statement {
         statement = inner;
     }
     let StatementKind::Show(show) = statement else {

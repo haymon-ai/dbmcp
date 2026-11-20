@@ -4828,18 +4828,84 @@ async fn column_rules_deny_relations_missing_from_the_server() {
 }
 
 #[tokio::test]
-async fn column_rules_refuse_explaining_ruled_relations() {
+async fn column_rules_explain_ruled_relations_returns_pruned_plan() {
     let handler = handler_with_rules(100);
-    for analyze in [false, true] {
-        handler
-            .explain_query(None, "SELECT note FROM audit".into(), analyze)
-            .await
-            .expect("unruled explain");
-        let error = handler
-            .explain_query(None, "SELECT email FROM users".into(), analyze)
-            .await
-            .expect_err("ruled explain");
-        assert!(error.message.contains("EXPLAIN"), "{}", error.message);
+    let response = handler
+        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), false)
+        .await
+        .expect("ruled explain");
+    let plan = &response.rows[0]["QUERY PLAN"];
+    assert_eq!(plan[0]["Plan"]["Relation Name"], "users", "{plan}");
+    for key in ["Filter", "Index Cond", "Output"] {
+        assert!(!has_key(plan, key), "{key} in {plan}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
+    let handler = handler_with_rules(100);
+    let error = handler
+        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true)
+        .await
+        .expect_err("ruled analyze");
+    assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_read_query_explain_of_ruled_relations_in_other_forms() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "EXPLAIN SELECT email FROM users",
+        "EXPLAIN (VERBOSE, FORMAT JSON) SELECT email FROM users",
+    ] {
+        let error = ruled_refusal(&handler, query).await;
+        assert!(error.contains("use explainQuery"), "{query}: {error}");
+    }
+    let error = ruled_refusal(&handler, "EXPLAIN (ANALYZE, FORMAT JSON) SELECT email FROM users").await;
+    assert!(error.contains("explain without ANALYZE"), "{error}");
+}
+
+#[tokio::test]
+async fn column_rules_read_query_json_explain_of_ruled_relations_returns_pruned_plan() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "EXPLAIN (FORMAT JSON) SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("ruled explain");
+    let plan = &rows[0]["QUERY PLAN"];
+    assert_eq!(plan[0]["Plan"]["Relation Name"], "users", "{plan}");
+    for key in ["Filter", "Index Cond", "Output"] {
+        assert!(!has_key(plan, key), "{key} in {plan}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
+    let handler = handler_with_rules(100);
+    let error = handler
+        .explain_query(None, "SELECT id FROM users WHERE email = 'x'".into(), false)
+        .await
+        .expect_err("ruled condition");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    assert!(error.message.contains("WHERE"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_leave_unruled_explain_plans_whole() {
+    let handler = handler_with_rules(100);
+    let response = handler
+        .explain_query(None, "SELECT note FROM audit WHERE note = 'x'".into(), false)
+        .await
+        .expect("unruled explain");
+    let plan = &response.rows[0]["QUERY PLAN"];
+    assert!(has_key(plan, "Filter"), "{plan}");
+}
+
+/// Whether `key` appears in any object at any depth of `value`.
+fn has_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => map.contains_key(key) || map.values().any(|v| has_key(v, key)),
+        Value::Array(items) => items.iter().any(|v| has_key(v, key)),
+        _ => false,
     }
 }
 

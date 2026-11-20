@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, FunctionUse, Lineage, LineageError, Origin, OutputColumn, Reference, RelationId, RelationKind,
-    RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
+    Catalog, Dialect, ExplainForm, FunctionUse, Lineage, LineageError, Origin, OutputColumn, Reference, RelationId,
+    RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
 };
 
 use dbmcp_pii::Entity;
@@ -421,7 +421,7 @@ fn analyzed_schema_show_forms_pass() {
 #[test]
 fn explain_of_show_unwraps_to_the_show_deny() {
     let mut lineage = select(vec![]);
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Show(Show::Warnings)));
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Show(Show::Warnings)));
     assert_eq!(
         plan_on(&lineage, Dialect::Mysql, &config(vec![])),
         Err(Rejection::DeniedStatement)
@@ -468,7 +468,7 @@ fn analyzed_value_show_forms_reject() {
 fn explain_of_ruled_relation_rejects() {
     let config = config(vec![ssn("shop.public.users.ssn")]);
     let mut lineage = select(vec![vec![col("users", "name")]]);
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Query));
     assert_eq!(
         pg(&lineage, &config),
         Err(Rejection::Explain {
@@ -486,7 +486,7 @@ fn explain_of_relation_only_reached_through_a_view_rejects() {
         kind: RelationKind::Table,
         origin: Origin::View(table("v")),
     });
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Query));
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Explain { .. })));
 }
 
@@ -500,7 +500,7 @@ fn explain_wrapping_ddl_on_ruled_relation_rejects() {
         origin: Origin::Query,
     });
     lineage.target = Some(table("users"));
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Drop));
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Drop));
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Explain { .. })));
 }
 
@@ -508,8 +508,71 @@ fn explain_wrapping_ddl_on_ruled_relation_rejects() {
 fn explain_of_unruled_relation_passes() {
     let config = config(vec![ssn("shop.public.audit.x")]);
     let mut lineage = select(vec![vec![col("users", "name")]]);
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Query));
     assert!(pg(&lineage, &config).is_ok());
+}
+
+/// An `EXPLAIN` in `form` of a query selecting `users.name`.
+fn explained_users(form: ExplainForm) -> Lineage {
+    let mut lineage = select(vec![vec![col("users", "name")]]);
+    lineage.statement = StatementKind::Explain(form, Box::new(StatementKind::Query));
+    lineage
+}
+
+#[test]
+fn explain_analyze_of_ruled_relation_rejects() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let rejection = pg(&explained_users(ExplainForm::Analyze), &config).expect_err("rejected");
+    assert_eq!(
+        rejection,
+        Rejection::ExplainAnalyze {
+            relation: "public.users".into(),
+        }
+    );
+    assert_eq!(rejection.gate(), "explain-analyze");
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: EXPLAIN ANALYZE on ruled relation \"public.users\" is denied; actual row counts can reveal values, explain without ANALYZE"
+    );
+}
+
+#[test]
+fn other_explain_of_ruled_relation_points_to_explain_query() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let rejection = pg(&explained_users(ExplainForm::Other), &config).expect_err("rejected");
+    assert_eq!(rejection.gate(), "explain");
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: EXPLAIN touches ruled relation \"public.users\"; use explainQuery"
+    );
+}
+
+#[test]
+fn plain_explain_of_ruled_relation_passes() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    assert!(pg(&explained_users(ExplainForm::Json), &config).is_ok());
+    assert!(plan_on(&explained_users(ExplainForm::QueryPlan), Dialect::Sqlite, &config).is_ok());
+}
+
+#[test]
+fn plain_explain_still_runs_the_reference_gate() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    for origin in [Origin::Query, Origin::View(table("v"))] {
+        let mut lineage = referencing(col("users", "ssn"), Role::Filter, origin);
+        lineage.statement = StatementKind::Explain(ExplainForm::Json, Box::new(StatementKind::Query));
+        assert!(matches!(
+            pg(&lineage, &config),
+            Err(Rejection::Reference { role: "WHERE", .. })
+        ));
+    }
+}
+
+#[test]
+fn plain_explain_of_ruled_create_index_rejects() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let mut lineage = ddl(StatementKind::CreateIndex, "users");
+    lineage.statement = StatementKind::Explain(ExplainForm::Json, Box::new(StatementKind::CreateIndex));
+    assert!(matches!(pg(&lineage, &config), Err(Rejection::RuledIndex { .. })));
 }
 
 #[test]
@@ -739,7 +802,7 @@ fn other_statements_skip_the_create_target_gate() {
         let lineage = ddl(statement.clone(), "copy");
         assert!(pg_with(&lineage, &config(vec![]), &shadowing).is_ok(), "{statement:?}");
     }
-    let explained = StatementKind::Explain(Box::new(StatementKind::CreateTableAs));
+    let explained = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::CreateTableAs));
     assert!(create(explained, &shadowing).is_ok());
 }
 
@@ -916,7 +979,7 @@ fn rejection_messages_name_no_rule() {
         write("copy", "x", vec![col("users", "ssn")], StatementKind::Insert),
         {
             let mut lineage = select(vec![vec![col("users", "ssn")]]);
-            lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+            lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Query));
             lineage
         },
         ddl(StatementKind::CreateIndex, "users"),

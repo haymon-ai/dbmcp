@@ -3,7 +3,8 @@
 //! A query resolves to its output columns. Relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`)
 //! records its target and nothing else. `SHOW` records its [`Show`] form
-//! and `DESCRIBE` nothing; `EXPLAIN` carries its inner statement's lineage.
+//! and `DESCRIBE` nothing; `EXPLAIN` carries its [`ExplainForm`] and its
+//! inner statement's lineage.
 //!
 //! DDL that evaluates expressions or reads another relation's rows is
 //! rejected: index expressions, partial-index `WHERE`, column `DEFAULT`,
@@ -34,6 +35,7 @@ use crate::bind::{Clause, Col, Columns, Level, Sources, Tree};
 use crate::catalog::Entry;
 use crate::dialect::Dialect;
 use crate::error::LineageError;
+use crate::explain::ExplainForm;
 use crate::model::{RelationId, RelationKind, StatementKind, TargetColumn};
 use crate::resolve::{Ctx, idents, unsupported};
 use crate::show::{Show, computed_filter};
@@ -146,9 +148,12 @@ impl Ctx<'_> {
                 Ok(Analysis::bare(StatementKind::Show(Show::of(&tokens)), None))
             }
             Statement::ExplainTable { .. } => Ok(Analysis::bare(StatementKind::Describe, None)),
-            Statement::Explain { statement, .. } => {
-                let mut inner = self.statement(statement)?;
-                inner.kind = StatementKind::Explain(Box::new(inner.kind));
+            Statement::Explain {
+                statement: explained, ..
+            } => {
+                let form = ExplainForm::of(self.dialect, statement);
+                let mut inner = self.statement(explained)?;
+                inner.kind = StatementKind::Explain(form, Box::new(inner.kind));
                 Ok(inner)
             }
             other => Err(LineageError::Unsupported(format!("{} statement", variant(other)))),

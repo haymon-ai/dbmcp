@@ -109,8 +109,9 @@ impl MysqlHandler {
     ///
     /// The inner query must be a single statement, and read-only when
     /// `analyze` is true. The plan is always fetched so the database
-    /// rejects writes, in every mode. With column rules, explaining a
-    /// statement that touches a ruled relation is rejected.
+    /// rejects writes, in every mode. With column rules, the plan of a
+    /// statement touching a ruled relation is pruned to value-free keys,
+    /// and `analyze` on one is rejected.
     ///
     /// # Errors
     ///

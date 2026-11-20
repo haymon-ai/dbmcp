@@ -2867,12 +2867,58 @@ async fn column_rules_deny_relations_not_yet_created() {
 }
 
 #[tokio::test]
-async fn column_rules_refuse_explaining_ruled_relations() {
+async fn column_rules_explain_ruled_relations_returns_plan() {
     let handler = handler_with_rules(100);
-    let explain = |query: &str| handler.explain_query(ExplainQueryRequest { query: query.into() });
-    explain("SELECT note FROM audit").await.expect("unruled explain");
-    let error = explain("SELECT email FROM users").await.expect_err("ruled explain");
-    assert!(error.message.contains("EXPLAIN"), "{}", error.message);
+    let response = handler
+        .explain_query(ExplainQueryRequest {
+            query: "SELECT email FROM users WHERE id = 1".into(),
+        })
+        .await
+        .expect("ruled explain");
+    assert!(!response.rows.is_empty());
+    for row in &response.rows {
+        assert_eq!(keys(row), ["id", "parent", "notused", "detail"], "{row}");
+    }
+    assert!(
+        response
+            .rows
+            .iter()
+            .any(|row| row["detail"].as_str().is_some_and(|d| d.contains("users"))),
+        "{:?}",
+        response.rows
+    );
+}
+
+#[tokio::test]
+async fn column_rules_read_query_explain_query_plan_of_ruled_relations_returns_plan() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "EXPLAIN QUERY PLAN SELECT email FROM users")
+        .await
+        .expect("ruled explain");
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert_eq!(keys(row), ["id", "parent", "notused", "detail"], "{row}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_read_query_bytecode_explain_of_ruled_relations() {
+    let handler = handler_with_rules(100);
+    let error = ruled_refusal(&handler, "EXPLAIN SELECT email FROM users").await;
+    assert!(error.contains("use explainQuery"), "{error}");
+}
+
+#[tokio::test]
+async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
+    let handler = handler_with_rules(100);
+    let error = handler
+        .explain_query(ExplainQueryRequest {
+            query: "SELECT id FROM users WHERE email = 'x'".into(),
+        })
+        .await
+        .expect_err("ruled condition");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+    assert!(error.message.contains("WHERE"), "{}", error.message);
 }
 
 #[tokio::test]

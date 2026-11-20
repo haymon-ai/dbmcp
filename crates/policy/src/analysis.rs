@@ -2,12 +2,13 @@
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, Entry, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName, analyze,
+    Catalog, Dialect, Entry, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind,
+    WrittenName, analyze,
 };
 
 use crate::deny;
 use crate::plan::{Names, plan, touches_ruled};
-use crate::planned::Planned;
+use crate::planned::{Mode, Planned};
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 use crate::relation::RelationRef;
 
@@ -164,7 +165,9 @@ impl Analyzed {
 
     /// Plans the statement's output columns under `config`'s column rules.
     ///
-    /// Runs every planner gate. `EXPLAIN`, `SHOW`, and `DESCRIBE` redact globally.
+    /// Runs every planner gate. `EXPLAIN`, `SHOW`, and `DESCRIBE` redact globally;
+    /// a plain [`ExplainForm::Json`] or [`ExplainForm::QueryPlan`] plan touching a
+    /// ruled relation is pruned first.
     ///
     /// # Errors
     ///
@@ -177,14 +180,17 @@ impl Analyzed {
     pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Planned<'c>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
         let statement = &self.lineage.statement;
-        let positional = !matches!(
-            statement,
-            StatementKind::Explain(_) | StatementKind::Show(_) | StatementKind::Describe
-        );
+        let touches = touches_ruled(&self.lineage, config);
         // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction, where names may rebind.
-        let withholds = touches_ruled(&self.lineage, config)
-            || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
-        Ok(Planned::new(positional.then_some(plan), config, withholds))
+        let withholds = touches || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
+        let mode = match statement {
+            StatementKind::Explain(ExplainForm::Json | ExplainForm::QueryPlan, _) if touches => {
+                Mode::Pruned(self.dialect)
+            }
+            StatementKind::Explain(..) | StatementKind::Show(_) | StatementKind::Describe => Mode::Global,
+            _ => Mode::Positional(plan),
+        };
+        Ok(Planned::new(mode, config, withholds))
     }
 }
 
@@ -316,6 +322,43 @@ mod tests {
         for sql in ["EXPLAIN SELECT b FROM u", "SHOW TABLES", "DESCRIBE u"] {
             let mut planned = analyzed_on(DatabaseBackend::Mysql, sql).plan(&config).expect("plan");
             assert_eq!(planned.check_first(&names, [ruled_origin(0)]), Ok(()), "{sql}");
+        }
+    }
+
+    /// Plans `analyzed` under [`ruled`] and redacts one `PostgreSQL` plan holding a `Filter`.
+    async fn explain_output(analyzed: &Analyzed) -> Vec<serde_json::Value> {
+        let config = ruled();
+        let redactor = dbmcp_pii::Redactor::from_config(Some(&config))
+            .expect("builds")
+            .expect("configured");
+        let plan = serde_json::json!([{"Plan": {"Node Type": "Seq Scan", "Filter": "(b = 'x')"}}]);
+        analyzed
+            .plan(&config)
+            .expect("plan")
+            .redact(&redactor, vec!["QUERY PLAN".into()], vec![vec![plan]])
+            .await
+            .expect("redacts")
+    }
+
+    #[tokio::test]
+    async fn only_plain_explain_of_ruled_relations_prunes() {
+        let config = ruled();
+        let pruned = serde_json::json!([{"QUERY PLAN": [{"Plan": {"Node Type": "Seq Scan"}}]}]);
+        let kept = serde_json::json!([{"QUERY PLAN": [{"Plan": {"Node Type": "Seq Scan", "Filter": "(b = 'x')"}}]}]);
+        let ruled = analyzed("EXPLAIN (FORMAT JSON) SELECT b FROM t");
+        assert!(ruled.plan(&config).expect("plan").prunes());
+        assert_eq!(explain_output(&ruled).await, pruned.as_array().expect("array").clone());
+        for sql in [
+            "EXPLAIN (FORMAT JSON) SELECT b FROM u",
+            "EXPLAIN (ANALYZE, FORMAT JSON) SELECT b FROM u",
+        ] {
+            let unruled = analyzed(sql);
+            assert!(!unruled.plan(&config).expect("plan").prunes(), "{sql}");
+            assert_eq!(
+                explain_output(&unruled).await,
+                kept.as_array().expect("array").clone(),
+                "{sql}"
+            );
         }
     }
 

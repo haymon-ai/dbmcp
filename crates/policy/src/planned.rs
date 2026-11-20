@@ -3,9 +3,10 @@
 use dbmcp_config::PiiConfig;
 use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
 use dbmcp_pii::{RedactionError, Redactor};
-use dbmcp_sql_lineage::RelationId;
+use dbmcp_sql_lineage::{Dialect, RelationId};
 use serde_json::Value;
 
+use crate::explain;
 use crate::plan::{is_ruled, rule};
 
 /// A planned statement, bound to the `pii.rules` it was planned under.
@@ -13,12 +14,22 @@ use crate::plan::{is_ruled, rule};
 /// Only [`Analyzed::plan`](crate::Analyzed::plan) builds one.
 #[derive(Debug)]
 pub struct Planned<'c> {
-    /// `None` for `EXPLAIN`, `SHOW`, and `DESCRIBE`: redacted globally.
-    plan: Option<Plan>,
+    mode: Mode,
     config: &'c PiiConfig,
     withholds: bool,
     /// Whether a first row passed [`Planned::check_first`].
     fit: bool,
+}
+
+/// How a planned statement's rows are checked and redacted.
+#[derive(Debug)]
+pub(crate) enum Mode {
+    /// Checked against the plan, then rewritten by output position.
+    Positional(Plan),
+    /// `EXPLAIN`, `SHOW`, and `DESCRIBE`: unchecked, redacted globally.
+    Global,
+    /// An `EXPLAIN` plan of a ruled relation: pruned to the dialect's value-free keys, then redacted globally.
+    Pruned(Dialect),
 }
 
 /// Why a result does not fit its plan; names only a position.
@@ -33,13 +44,21 @@ pub enum Unfit {
 }
 
 impl<'c> Planned<'c> {
-    pub(crate) const fn new(plan: Option<Plan>, config: &'c PiiConfig, withholds: bool) -> Self {
+    pub(crate) const fn new(mode: Mode, config: &'c PiiConfig, withholds: bool) -> Self {
         Self {
-            plan,
+            mode,
             config,
             withholds,
             fit: false,
         }
+    }
+
+    /// Whether [`Planned::redact`] prunes the result to value-free `EXPLAIN` plan keys.
+    ///
+    /// `MySQL` must then emit format version 1 plans, the only ones the prune reads.
+    #[must_use]
+    pub const fn prunes(&self) -> bool {
+        matches!(self.mode, Mode::Pruned(_))
     }
 
     /// Returns `code` when this plan withholds value-echoing errors.
@@ -62,7 +81,7 @@ impl<'c> Planned<'c> {
         names: &[String],
         origins: impl IntoIterator<Item = (usize, RelationId, Option<String>)>,
     ) -> Result<(), Unfit> {
-        if let Some(plan) = &self.plan {
+        if let Mode::Positional(plan) = &self.mode {
             for (position, relation, column) in origins {
                 let ruled = match column.as_deref() {
                     Some(column) => rule(self.config, &relation, column).is_some(),
@@ -84,21 +103,32 @@ impl<'c> Planned<'c> {
 
     /// Redacts the rows by the plan and returns them as JSON objects.
     ///
+    /// A pruned `EXPLAIN` plan keeps only value-free keys before global detection.
+    ///
     /// # Errors
     ///
-    /// Returns [`RedactionError::Internal`] for positional rows never checked, else the redactor's error.
+    /// Returns [`RedactionError::Internal`] for positional rows never checked
+    /// or a pruned plan of unexpected shape, else the redactor's error.
     pub async fn redact(
         &self,
         redactor: &Redactor,
         names: Vec<String>,
-        rows: Vec<Vec<Value>>,
+        mut rows: Vec<Vec<Value>>,
     ) -> Result<Vec<Value>, RedactionError> {
-        if self.plan.is_some() && !self.fit && !rows.is_empty() {
-            return Err(RedactionError::Internal(
-                "column policy: result rows were not checked against the plan".into(),
-            ));
-        }
-        redactor.redact_cells(Cells::new(names, rows), self.plan.as_ref()).await
+        let plan = match &self.mode {
+            Mode::Positional(_) if !self.fit && !rows.is_empty() => {
+                return Err(RedactionError::Internal(
+                    "column policy: result rows were not checked against the plan".into(),
+                ));
+            }
+            Mode::Positional(plan) => Some(plan),
+            Mode::Global => None,
+            Mode::Pruned(dialect) => {
+                explain::prune(*dialect, &names, &mut rows)?;
+                None
+            }
+        };
+        redactor.redact_cells(Cells::new(names, rows), plan).await
     }
 }
 
@@ -160,10 +190,10 @@ mod tests {
     #[test]
     fn echoing_errors_are_withheld_only_when_the_plan_withholds() {
         let config = ruled();
-        let withholding = Planned::new(None, &config, true);
+        let withholding = Planned::new(Mode::Global, &config, true);
         assert_eq!(withholding.withheld(Some("23505")), Some("23505"));
         assert_eq!(withholding.withheld(None::<&str>), None);
-        let showing = Planned::new(None, &config, false);
+        let showing = Planned::new(Mode::Global, &config, false);
         assert_eq!(showing.withheld(Some("23505")), None);
         assert_eq!(showing.withheld(None::<&str>), None);
     }
@@ -171,7 +201,7 @@ mod tests {
     #[test]
     fn ruled_origins_need_an_action_position() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[Position::Global, ACTION])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[Position::Global, ACTION])), &config, true);
         assert_eq!(
             planned.check_first(&names(2), [origin(0, "t", Some("a"))]),
             Err(Unfit::Unplanned(0))
@@ -182,7 +212,7 @@ mod tests {
     #[test]
     fn positions_past_the_plan_admit_no_ruled_origin() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[ACTION])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[ACTION])), &config, true);
         assert_eq!(
             planned.check_first(&names(1), [origin(1, "t", Some("a"))]),
             Err(Unfit::Unplanned(1))
@@ -193,7 +223,7 @@ mod tests {
     #[test]
     fn unruled_origins_are_admitted_anywhere() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[Position::Global])), &config, false);
+        let mut planned = Planned::new(Mode::Positional(plan(&[Position::Global])), &config, false);
         let origins = [
             origin(0, "t", Some("b")),
             origin(0, "u", Some("a")),
@@ -205,19 +235,19 @@ mod tests {
     #[test]
     fn whole_rows_are_ruled_when_any_column_is() {
         let config = ruled();
-        let mut global = Planned::new(Some(plan(&[Position::Global])), &config, true);
+        let mut global = Planned::new(Mode::Positional(plan(&[Position::Global])), &config, true);
         assert_eq!(
             global.check_first(&names(1), [origin(0, "t", None)]),
             Err(Unfit::Unplanned(0))
         );
-        let mut action = Planned::new(Some(plan(&[ACTION])), &config, true);
+        let mut action = Planned::new(Mode::Positional(plan(&[ACTION])), &config, true);
         assert_eq!(action.check_first(&names(1), [origin(0, "t", None)]), Ok(()));
     }
 
     #[test]
     fn origins_match_rules_case_folded() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[Position::Global])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[Position::Global])), &config, true);
         let origin = (0, RelationId::new("SHOP", "Public", "T"), Some("A".to_owned()));
         assert_eq!(planned.check_first(&names(1), [origin]), Err(Unfit::Unplanned(0)));
     }
@@ -225,7 +255,7 @@ mod tests {
     #[test]
     fn every_reading_of_a_position_must_be_admitted() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[Position::Global])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[Position::Global])), &config, true);
         let readings = [origin(0, "u", Some("a")), origin(0, "t", Some("a"))];
         assert_eq!(planned.check_first(&names(1), readings), Err(Unfit::Unplanned(0)));
     }
@@ -233,7 +263,7 @@ mod tests {
     #[test]
     fn origins_are_checked_before_the_shape() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[Position::Global])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[Position::Global])), &config, true);
         assert_eq!(
             planned.check_first(&names(2), [origin(0, "t", Some("a"))]),
             Err(Unfit::Unplanned(0))
@@ -247,14 +277,14 @@ mod tests {
     #[test]
     fn non_positional_statements_check_nothing() {
         let config = ruled();
-        let mut planned = Planned::new(None, &config, true);
+        let mut planned = Planned::new(Mode::Global, &config, true);
         assert_eq!(planned.check_first(&names(3), [origin(0, "t", Some("a"))]), Ok(()));
     }
 
     #[tokio::test]
     async fn rows_never_checked_are_refused() {
         let config = ruled();
-        let planned = Planned::new(Some(plan(&[ACTION])), &config, true);
+        let planned = Planned::new(Mode::Positional(plan(&[ACTION])), &config, true);
         let refused = planned
             .redact(&redactor(&config), names(1), vec![vec![json!("123-45-6789")]])
             .await;
@@ -266,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn checked_rows_are_rewritten_by_position() {
         let config = ruled();
-        let mut planned = Planned::new(Some(plan(&[ACTION, Position::Global])), &config, true);
+        let mut planned = Planned::new(Mode::Positional(plan(&[ACTION, Position::Global])), &config, true);
         planned.check_first(&names(2), []).expect("fits");
         let rows = planned
             .redact(
@@ -280,9 +310,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pruned_plans_are_still_detected_globally() {
+        let config = ruled();
+        let planned = Planned::new(Mode::Pruned(Dialect::Postgres), &config, true);
+        let plan = json!([{"Plan": {"Alias": "ssn 123-45-6789", "Filter": "(a = 1)"}}]);
+        let rows = planned
+            .redact(&redactor(&config), vec!["QUERY PLAN".into()], vec![vec![plan]])
+            .await
+            .expect("redacts");
+        let alias = &rows[0]["QUERY PLAN"][0]["Plan"];
+        assert_eq!(alias.as_object().map(serde_json::Map::len), Some(1), "{rows:?}");
+        assert_ne!(alias["Alias"], json!("ssn 123-45-6789"));
+    }
+
+    #[tokio::test]
+    async fn pruning_refuses_unexpected_shapes() {
+        let config = ruled();
+        let planned = Planned::new(Mode::Pruned(Dialect::Postgres), &config, true);
+        let refused = planned
+            .redact(
+                &redactor(&config),
+                vec!["QUERY PLAN".into()],
+                vec![vec![json!("Seq Scan")]],
+            )
+            .await;
+        assert!(matches!(refused, Err(RedactionError::Internal(_))), "{refused:?}");
+    }
+
+    #[test]
+    fn only_pruned_plans_prune() {
+        let config = ruled();
+        assert!(Planned::new(Mode::Pruned(Dialect::Mysql), &config, true).prunes());
+        assert!(!Planned::new(Mode::Global, &config, true).prunes());
+        assert!(!Planned::new(Mode::Positional(plan(&[ACTION])), &config, true).prunes());
+    }
+
+    #[tokio::test]
     async fn non_positional_rows_are_detected_globally_unchecked() {
         let config = ruled();
-        let planned = Planned::new(None, &config, true);
+        let planned = Planned::new(Mode::Global, &config, true);
         let rows = planned
             .redact(
                 &redactor(&config),

@@ -17,7 +17,10 @@
 //!    tables) reject.
 //! 4. Denied statements (`SHOW WARNINGS` and friends, every `PostgreSQL`
 //!    `SHOW`) reject, also under `EXPLAIN`.
-//! 5. `EXPLAIN` of a statement touching a ruled relation rejects.
+//! 5. `EXPLAIN` of a statement touching a ruled relation rejects, unless it
+//!    is a plain JSON or `SQLite` query-plan form (the forms `explainQuery`
+//!    builds, read from the statement), whose plan [`Planned::redact`] prunes
+//!    to value-free keys; any `ANALYZE` on one rejects too.
 //! 6. `CREATE INDEX` on a ruled relation rejects: a unique key leaks values
 //!    through duplicate-key errors.
 //! 7. A ruled column used in `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, or a
@@ -38,6 +41,7 @@
 
 mod analysis;
 mod deny;
+mod explain;
 mod plan;
 mod planned;
 mod rejection;

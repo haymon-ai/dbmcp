@@ -13,7 +13,9 @@
 //!    columns hidden from `*`, `VIEWS` bodies) for at most
 //!    [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
-//! 4. refuses a write that reads a view but cannot roll back,
+//! 4. refuses a write that reads a view but cannot roll back, and on
+//!    `MySQL` pins the session's `EXPLAIN` JSON format to version 1 while a
+//!    pruned plan runs, restoring the server default afterwards,
 //! 5. opens a transaction (read-only for reads) and executes it, refusing a
 //!    result that does not fit the plan before any row is kept,
 //! 6. refuses the result when a view body it planned from has changed,
@@ -45,6 +47,7 @@ use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
 use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult, MySqlRow};
 use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
+use tracing::warn;
 
 use crate::MysqlHandler;
 use crate::connection::MysqlConnection;
@@ -413,32 +416,45 @@ async fn run<'c>(
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
-    let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-    let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
-        Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-        Err(stop) => {
-            tx.rollback().await?;
-            return Err(stop);
-        }
-    };
-    // A statement that commits implicitly cannot be undone, and moves no rows.
-    if !commits_implicitly(analyzed.statement()) && !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
-        tx.rollback().await?;
-        return Err(Stop::ViewChanged);
+    // The prune reads only format version 1 plans.
+    let pins = backend == DatabaseBackend::Mysql && planned.prunes();
+    if pins {
+        explain_format(&mut *conn, "SET SESSION explain_json_format_version = 1").await?;
     }
-    let finished = match access {
-        Access::Read => tx.rollback().await,
-        Access::Write => tx.commit().await,
-    };
-    finished.map_err(|error| failed(&planned, error))?;
-    let (rows_affected, last_insert_id) = MysqlConnection::counts(sql, &executed.results);
-    Ok(Run {
-        planned,
-        names: executed.names,
-        rows_affected,
-        last_insert_id,
-    })
+    let ran = async {
+        let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
+        let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
+            Ok(executed) => executed,
+            Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
+            Err(stop) => {
+                tx.rollback().await?;
+                return Err(stop);
+            }
+        };
+        // A statement that commits implicitly cannot be undone, and moves no rows.
+        if !commits_implicitly(analyzed.statement()) && !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
+            tx.rollback().await?;
+            return Err(Stop::ViewChanged);
+        }
+        let finished = match access {
+            Access::Read => tx.rollback().await,
+            Access::Write => tx.commit().await,
+        };
+        finished.map_err(|error| failed(&planned, error))?;
+        let (rows_affected, last_insert_id) = MysqlConnection::counts(sql, &executed.results);
+        Ok(Run {
+            planned,
+            names: executed.names,
+            rows_affected,
+            last_insert_id,
+        })
+    }
+    .await;
+    if pins && let Err(error) = explain_format(&mut *conn, "SET SESSION explain_json_format_version = DEFAULT").await {
+        // Only later unpruned plans on this connection see version 1; a dead one fails the pool's ping.
+        warn!(%error, "EXPLAIN JSON format version not restored");
+    }
+    ran
 }
 
 /// Reports whether a write to `target` can roll back should a view it reads change.
@@ -749,6 +765,27 @@ async fn vacant(
         entries.push((name, entry));
     }
     Ok(entries)
+}
+
+/// Sets this session's `EXPLAIN FORMAT=JSON` version with the static `set`.
+///
+/// Version 2 (the `MySQL` 9.5+ default) carries the statement text, which the
+/// prune cannot read. `MySQL` before 8.3 has no such variable (error 1193)
+/// and only speaks version 1. `SET_VAR` cannot scope it to one statement.
+async fn explain_format(conn: &mut sqlx::MySqlConnection, set: &'static str) -> Result<(), Stop> {
+    match sqlx::query(set).execute(conn).await {
+        Ok(_) => Ok(()),
+        Err(error) if unknown_variable(&error) => Ok(()),
+        Err(error) => Err(Stop::Sql(error)),
+    }
+}
+
+/// Whether `error` is `ER_UNKNOWN_SYSTEM_VARIABLE` (1193).
+fn unknown_variable(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|error| error.try_downcast_ref::<MySqlDatabaseError>())
+        .is_some_and(|error| error.number() == 1193)
 }
 
 /// Withholds `error` when it may echo a value and the plan withholds.

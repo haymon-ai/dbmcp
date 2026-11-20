@@ -6,3 +6,5 @@ description: Show the execution plan of a SQL query, with optional EXPLAIN ANALY
 Return the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics on PostgreSQL and MySQL/MariaDB. EXPLAIN ANALYZE is only allowed for read-only statements (SELECT, SHOW) since it actually executes the query, even when read-only mode is disabled. Every EXPLAIN runs read-only (see [Read-Only Transactions](/security/read-only#read-only-transactions)), so on MySQL/MariaDB plain EXPLAIN of write statements is rejected; PostgreSQL still plans them. SQLite always uses EXPLAIN QUERY PLAN and does not support ANALYZE. Always available regardless of read-only mode.
 
 Plan row keys follow the column order, as in [`readQuery`](/tools/read-query).
+
+With [column rules](/privacy/rules#plans-of-ruled-tables), the plan of a statement that touches a ruled table is pruned to value-free keys (plan structure, table and index names, access types, estimates), and `analyze` on such a statement is refused.

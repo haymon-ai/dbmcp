@@ -6,7 +6,9 @@ use std::str::FromStr;
 use dbmcp_config::{ColumnRule, PiiConfig};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
-use dbmcp_sql_lineage::{Dialect, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind};
+use dbmcp_sql_lineage::{
+    Dialect, ExplainForm, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
+};
 
 use crate::deny;
 use crate::rejection::Rejection;
@@ -14,16 +16,17 @@ use crate::rejection::Rejection;
 /// Plans a statement's output columns under `config`'s column rules.
 ///
 /// `lineage` must come from a successful analysis; map a failed one with
-/// [`reject_lineage`](crate::rejection::reject_lineage). Each rejection is logged at
-/// `info` under the `dbmcp::policy` target.
+/// [`reject_lineage`](crate::rejection::reject_lineage). Each rejection is
+/// logged at `info` under the `dbmcp::policy` target.
 ///
 /// # Errors
 ///
 /// Returns the first failing gate's [`Rejection`]: an unknown function, a
-/// denied relation or statement, `EXPLAIN` of a ruled relation, `CREATE
-/// INDEX` on one, a ruled column used outside the output, conflicting rules
-/// on one output column, a shadowed bare create target, or a write copying
-/// ruled values into a column not ruled the same way or not nameable by a rule.
+/// denied relation or statement, `EXPLAIN` of a ruled relation other than a
+/// plain JSON or query-plan form, `EXPLAIN ANALYZE` on one, `CREATE INDEX` on
+/// one, a ruled column used outside the output, conflicting rules on one
+/// output column, a shadowed bare create target, or a write copying ruled
+/// values into a column not ruled the same way or not nameable by a rule.
 ///
 /// # Panics
 ///
@@ -60,15 +63,18 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     }
     deny::lineage(dialect, lineage)?;
     let mut statement = &lineage.statement;
-    while let StatementKind::Explain(inner) = statement {
+    while let StatementKind::Explain(_, inner) = statement {
         statement = inner;
     }
-    if matches!(lineage.statement, StatementKind::Explain(_))
+    if let StatementKind::Explain(form, _) = &lineage.statement
         && let Some(relation) = ruled_relation(lineage, config)
     {
-        return Err(Rejection::Explain {
-            relation: relation_name(relation),
-        });
+        let relation = relation_name(relation);
+        match form {
+            ExplainForm::Json | ExplainForm::QueryPlan => {}
+            ExplainForm::Analyze => return Err(Rejection::ExplainAnalyze { relation }),
+            ExplainForm::Other => return Err(Rejection::Explain { relation }),
+        }
     }
     if *statement == StatementKind::CreateIndex
         && let Some(target) = &lineage.target
