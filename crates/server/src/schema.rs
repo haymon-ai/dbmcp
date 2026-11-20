@@ -84,6 +84,10 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
 /// root `database` property and remove it from the `required` array.
+///
+/// Serializes with `serde_json::to_value` on purpose: that path runs schemars'
+/// keyword ordering (`title`, `description`, `type`, … first); `to_value()`
+/// would not, and every tool schema's key order would change.
 fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
     let schema = SchemaSettings::draft2020_12()
         .with(|s| {
@@ -159,6 +163,34 @@ mod tests {
     #[derive(Deserialize, Serialize, JsonSchema)]
     struct Nested {
         value: u32,
+    }
+
+    /// Enum fixture schemars wraps in `anyOf` when optional.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    enum Mode {
+        /// First mode.
+        Fast,
+        /// Second mode.
+        Slow,
+    }
+
+    /// Flattened fixture whose `additionalProperties` schemars removes.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct Strict {
+        /// Required strict field.
+        strict: u32,
+    }
+
+    /// Fixture with the shapes where schemars removes keys while building.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct Removals {
+        /// Optional enum property.
+        mode: Option<Mode>,
+        /// Required plain property.
+        count: u32,
+        #[serde(flatten)]
+        strict: Strict,
     }
 
     /// Distinct fixture to confirm the cache keys by type, not by name.
@@ -315,5 +347,31 @@ mod tests {
         let keys = schema.keys().map(String::as_str).collect::<Vec<_>>();
 
         assert_eq!(keys, ["type", "properties", "required"]);
+    }
+
+    #[test]
+    fn build_keeps_key_order_around_schemars_removals() {
+        let text = serde_json::to_string(&build::<Removals>(false)).expect("serializes");
+        let integer = |description: &str| serde_json::json!({"description": description, "type": "integer", "format": "uint32", "minimum": 0});
+        let mode = |description: &str, name: &str| serde_json::json!({"description": description, "type": "string", "const": name});
+        let expected = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "description": "Optional enum property.",
+                    "anyOf": [
+                        {
+                            "description": "Enum fixture schemars wraps in `anyOf` when optional.",
+                            "oneOf": [mode("First mode.", "Fast"), mode("Second mode.", "Slow")]
+                        },
+                        {"type": "null"}
+                    ]
+                },
+                "count": integer("Required plain property."),
+                "strict": integer("Required strict field.")
+            },
+            "required": ["count", "strict"]
+        });
+        assert_eq!(text, expected.to_string());
     }
 }

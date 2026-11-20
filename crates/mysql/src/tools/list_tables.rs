@@ -1,6 +1,7 @@
 //! MCP tool: `listTables`.
 
 use dbmcp_server::listing::{self, Cursor};
+use serde_json::Value;
 
 use super::prelude::*;
 use crate::types::{ListEntriesResponse, ListTablesRequest};
@@ -25,7 +26,7 @@ const BRIEF_SQL: &str = r"
 ///
 /// Bind order: `database`, `pattern`, `pattern`, `limit`, `offset`, `database`.
 /// `MySQL`/`MariaDB` lack `QUOTE_IDENT`; backtick-quoting is inlined per identifier.
-/// `MySQL` 9 rejects inline `ORDER BY` in `JSON_ARRAYAGG`. `CAST(... AS JSON)` is
+/// `MySQL` 9 rejects inline `ORDER BY` in `JSON_ARRAYAGG`, so [`order_arrays`] sorts in Rust. `CAST(... AS JSON)` is
 /// avoided because `MariaDB` rejects it (its `JSON` type is a `LONGTEXT` alias,
 /// not a CAST target); `JSON_EXTRACT(text, '$')` re-parses to JSON on both.
 /// `JSON_QUOTE` inside `GROUP_CONCAT` returns empty on `MySQL` 9 (`information_schema`
@@ -284,6 +285,29 @@ LEFT JOIN partitions_info pi
  AND pi.TABLE_NAME   = ti.table_name
 ORDER BY ti.table_name"#;
 
+/// Sorts one detailed entry's arrays: `columns` by position, the rest by name.
+///
+/// `JSON_ARRAYAGG` has no ordering on `MySQL`, so element order otherwise
+/// follows the plan and can change between calls.
+fn order_arrays(entry: &mut Value) {
+    for (key, field) in [
+        ("columns", "ordinalPosition"),
+        ("constraints", "name"),
+        ("indexes", "name"),
+        ("triggers", "name"),
+    ] {
+        if let Some(Value::Array(items)) = entry.get_mut(key) {
+            items.sort_by(|a, b| {
+                let (a, b) = (&a[field], &b[field]);
+                match (a.as_u64(), b.as_u64()) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    _ => a.as_str().cmp(&b.as_str()),
+                }
+            });
+        }
+    }
+}
+
 const NAME: &str = "listTables";
 const TITLE: &str = "List Tables";
 const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_tables/pinned.md");
@@ -430,9 +454,42 @@ impl MysqlHandler {
                         None,
                     )
                     .await
+                    .map(|mut rows: Vec<(String, Value)>| {
+                        for (_, entry) in &mut rows {
+                            order_arrays(entry);
+                        }
+                        rows
+                    })
             },
         )
         .await
         .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::order_arrays;
+
+    #[test]
+    fn order_arrays_sorts_columns_by_position_and_the_rest_by_name() {
+        let mut entry = json!({
+            "columns": [{"name": "b", "ordinalPosition": 10}, {"name": "a", "ordinalPosition": 2}],
+            "constraints": [{"name": "uq_z"}, {"name": "PRIMARY"}, {"name": "fk_y"}],
+            "indexes": [{"name": "idx_b"}, {"name": "idx_a"}],
+            "triggers": [{"name": "t2"}, {"name": "t1"}],
+        });
+        order_arrays(&mut entry);
+        assert_eq!(
+            entry,
+            json!({
+                "columns": [{"name": "a", "ordinalPosition": 2}, {"name": "b", "ordinalPosition": 10}],
+                "constraints": [{"name": "PRIMARY"}, {"name": "fk_y"}, {"name": "uq_z"}],
+                "indexes": [{"name": "idx_a"}, {"name": "idx_b"}],
+                "triggers": [{"name": "t1"}, {"name": "t2"}],
+            })
+        );
     }
 }

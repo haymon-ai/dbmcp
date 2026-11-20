@@ -78,7 +78,7 @@ Rules name **table** columns. A query that reads through a view gets the rules o
 
 ## How values are rewritten
 
-Every non-null value of a ruled output column is rendered as text (JSON values included, keys and all) and replaced whole, so the result is always a string. JSON keys are sorted first:
+Every non-null value of a ruled output column is rendered as text (JSON values included, keys and all) and replaced whole, so the result is always a string. JSON the server returns as a JSON type (MySQL `JSON`, PostgreSQL `json`/`jsonb`) has its keys sorted first; JSON stored as text (MariaDB `JSON`, SQLite) is used as written:
 
 | Operator | Result for `jane.doe@example.com` |
 |----------|-----------------------------------|

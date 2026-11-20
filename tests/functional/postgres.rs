@@ -4742,6 +4742,15 @@ async fn column_rules_rewrite_each_operator_whole() {
 }
 
 #[tokio::test]
+async fn column_rules_keys_follow_select_order() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT phone, name, email FROM users WHERE id = 1")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["phone", "name", "email"]);
+}
+
+#[tokio::test]
 async fn column_rules_apply_to_star_and_keep_nulls() {
     let handler = handler_with_rules(100);
     let rows = ruled_read(&handler, "SELECT * FROM users WHERE id = 2")
