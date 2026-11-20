@@ -5192,6 +5192,15 @@ async fn column_rules_rewrite_each_operator_whole() {
 }
 
 #[tokio::test]
+async fn column_rules_keys_follow_select_order() {
+    let handler = ruled_handler(None, 100);
+    let rows = ruled_read(&handler, "SELECT phone, name, email FROM users WHERE id = 1")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["phone", "name", "email"]);
+}
+
+#[tokio::test]
 async fn column_rules_apply_to_star_and_keep_nulls() {
     let handler = ruled_handler(None, 100);
     let rows = ruled_read(&handler, "SELECT * FROM users WHERE id = 2")
@@ -5448,4 +5457,56 @@ async fn column_rules_refuse_writes_reading_views_that_cannot_roll_back() {
     for query in ["DROP TABLE policy_copy", "DROP TABLE policy_myisam"] {
         handler.write_query(query.into(), None).await.expect(query);
     }
+}
+
+fn keys(row: &Value) -> Vec<&str> {
+    row.as_object()
+        .expect("row object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+#[tokio::test]
+async fn read_query_keys_follow_select_order() {
+    let rows = ruled_read(&handler(true), "SELECT 3 AS c, 1 AS a, 2 AS b")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn json_object_comes_back_in_canonical_order() {
+    if backend() == DatabaseBackend::Mariadb {
+        eprintln!("skip: MariaDB returns JSON as text");
+        return;
+    }
+    let rows = ruled_read(&handler(true), "SELECT JSON_OBJECT('bb', 1, 'a', 2) AS j")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]["j"]), ["a", "bb"]);
+}
+
+#[tokio::test]
+async fn write_query_returning_keys_follow_returning_order() {
+    if backend() != DatabaseBackend::Mariadb {
+        eprintln!("skip: MySQL has no RETURNING");
+        return;
+    }
+    let handler = handler(false);
+    let response = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Order', 'order@test.com') RETURNING name, id, email".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("insert");
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email = 'order@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("clean up");
+    assert_eq!(keys(&response.rows[0]), ["name", "id", "email"]);
 }

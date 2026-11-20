@@ -703,7 +703,7 @@ mod tests {
         // own `Drop` is shallow).
         let mut head = rows.pop().expect("one row");
         while let Value::Object(ref mut m) = head {
-            let Some(child) = m.remove("a") else { break };
+            let Some(child) = m.shift_remove("a") else { break };
             head = child;
         }
 

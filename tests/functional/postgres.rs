@@ -4742,6 +4742,15 @@ async fn column_rules_rewrite_each_operator_whole() {
 }
 
 #[tokio::test]
+async fn column_rules_keys_follow_select_order() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT phone, name, email FROM users WHERE id = 1")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["phone", "name", "email"]);
+}
+
+#[tokio::test]
 async fn column_rules_apply_to_star_and_keep_nulls() {
     let handler = handler_with_rules(100);
     let rows = ruled_read(&handler, "SELECT * FROM users WHERE id = 2")
@@ -5092,4 +5101,55 @@ async fn column_rules_withhold_errors_raised_at_commit() {
     .expect_err("ruled commit");
     assert!(error.message.contains("withheld"), "{}", error.message);
     assert!(!error.message.contains("@example.com"), "{}", error.message);
+}
+
+fn keys(row: &Value) -> Vec<&str> {
+    row.as_object()
+        .expect("row object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+#[tokio::test]
+async fn read_query_keys_follow_select_order() {
+    let rows = ruled_read(&handler(true), "SELECT 3 AS c, 1 AS a, 2 AS b")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn write_query_returning_keys_follow_returning_order() {
+    let response = handler(false)
+        .write_query(
+            "UPDATE users SET name = name WHERE id = 1 RETURNING name, id, email".into(),
+            Some(PG_DB.into()),
+        )
+        .await
+        .expect("update");
+    assert_eq!(keys(&response.rows[0]), ["name", "id", "email"]);
+}
+
+#[tokio::test]
+async fn json_keeps_written_order_and_jsonb_canonical_order() {
+    let rows = ruled_read(
+        &handler(true),
+        r#"SELECT '{"b":1,"a":2}'::json AS j, '{"bb":1,"a":2}'::jsonb AS jb"#,
+    )
+    .await
+    .expect("read");
+    assert_eq!(keys(&rows[0]["j"]), ["b", "a"]);
+    assert_eq!(keys(&rows[0]["jb"]), ["a", "bb"]);
+}
+
+#[tokio::test]
+async fn list_tables_detailed_values_have_sorted_keys() {
+    let users = &detailed_entries(&handler(true), "users").await["users"];
+    let mut sorted = users.clone();
+    sorted.sort_all_objects();
+    assert_eq!(
+        serde_json::to_string(users).expect("serializes"),
+        serde_json::to_string(&sorted).expect("serializes")
+    );
 }

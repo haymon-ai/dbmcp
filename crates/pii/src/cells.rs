@@ -7,7 +7,7 @@
 //! - `Action`: every non-null value is replaced whole by the rule's operator,
 //!   labelled with its entity. A string is rewritten from its text, anything
 //!   else (numbers, booleans, `json`/`jsonb`, keys included) from its compact
-//!   JSON text. `NULL` stays `null`.
+//!   JSON text, object keys sorted. `NULL` stays `null`.
 //!
 //! Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not positional; redact them
 //! with no plan, which runs global detection on every cell.
@@ -234,7 +234,10 @@ fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool
     let text = match &mut *value {
         Value::Null => return false,
         Value::String(text) => std::mem::take(text),
-        other => other.to_string(),
+        other => {
+            other.sort_all_objects();
+            other.to_string()
+        }
     };
     *value = Value::String(operator.apply(entity, &text).into_owned());
     true
@@ -464,6 +467,32 @@ mod tests {
         );
     }
 
+    const SORTED: &str = r#"{"a":{"c":3,"d":2},"b":1}"#;
+
+    #[test]
+    fn a_ruled_json_cell_hashes_its_sorted_key_text() {
+        let redactor = keyed(PiiOperator::Hash);
+        let hashed = Position::Action(PiiOperator::Hash, Entity::UsSsn);
+        let values = redact(
+            &redactor,
+            vec![hashed, hashed, hashed],
+            vec![
+                json!({"b": 1, "a": {"d": 2, "c": 3}}),
+                json!({"a": {"c": 3, "d": 2}, "b": 1}),
+                json!(SORTED),
+            ],
+        );
+        assert_eq!(values[0], values[1]);
+        assert_eq!(values[0], values[2]);
+    }
+
+    #[test]
+    fn a_ruled_json_cell_masks_to_its_sorted_key_length() {
+        let redactor = keyed(PiiOperator::Mask);
+        let values = redact(&redactor, vec![MASKED], vec![json!({"b": 1, "a": {"d": 2, "c": 3}})]);
+        assert_eq!(values[0], json!("*".repeat(SORTED.len())));
+    }
+
     #[tokio::test]
     async fn redact_cells_returns_objects_and_the_last_duplicate_wins() {
         let mut cells = Cells::default();
@@ -504,5 +533,31 @@ mod tests {
             .expect("runs");
         assert_eq!(out, expected);
         assert_ne!(out[0]["contact"], json!("second jane@example.org"));
+    }
+
+    #[tokio::test]
+    async fn redact_cells_keys_follow_column_order_under_rules_and_global() {
+        let redactor = Redactor::with_defaults();
+        let cells = || {
+            let columns = ["c", "a", "b"].map(String::from).to_vec();
+            Cells::new(columns, vec![vec![json!("123-45-6789"), json!(EMAIL), json!(1)]])
+        };
+        let keys = |rows: Vec<Value>| {
+            rows[0]
+                .as_object()
+                .expect("row object")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        let ruled = redactor
+            .redact_cells(cells(), Some(&plan(vec![MASKED, Position::Global, Position::Global])))
+            .await
+            .expect("runs");
+        let global = redactor.redact_cells(cells(), None).await.expect("runs");
+
+        assert_eq!(keys(ruled), ["c", "a", "b"]);
+        assert_eq!(keys(global), ["c", "a", "b"]);
     }
 }

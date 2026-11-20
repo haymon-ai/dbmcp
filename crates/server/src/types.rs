@@ -86,7 +86,8 @@ impl ListEntriesResponse {
 
     /// Builds a detailed-mode response from a page of name → metadata entries.
     #[must_use]
-    pub fn detailed(entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+    pub fn detailed(mut entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        entries.values_mut().for_each(Value::sort_all_objects);
         Self {
             entries: ListEntries::Detailed(entries),
             next_cursor,
@@ -315,6 +316,16 @@ mod tests {
         Truncation, WriteQueryResponse, resolve_timeout,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn detailed_sorts_value_keys_and_keeps_entry_order() {
+        let value = json!({"z": 1, "a": {"y": 2, "b": 3}});
+        let entries = IndexMap::from([("users".to_string(), value.clone()), ("orders".to_string(), value)]);
+
+        let text = serde_json::to_string(&ListEntriesResponse::detailed(entries, None)).expect("serializes");
+        let sorted = r#"{"a":{"b":3,"y":2},"z":1}"#;
+        assert_eq!(text, format!(r#"{{"entries":{{"users":{sorted},"orders":{sorted}}}}}"#));
+    }
 
     #[test]
     fn list_triggers_request_defaults_to_brief_mode_without_search() {

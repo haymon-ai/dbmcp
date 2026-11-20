@@ -1,0 +1,8 @@
+# Covers workspace code only; dependency removals are guarded by the key-order
+# test in crates/server/src/schema.rs.
+disallowed-methods = [
+    { path = "serde_json::Map::remove", reason = "swap_remove under preserve_order; use shift_remove" },
+    { path = "serde_json::Map::remove_entry", reason = "swap_remove under preserve_order; use shift_remove_entry" },
+    { path = "serde_json::map::OccupiedEntry::remove", reason = "swap_remove under preserve_order; use shift_remove" },
+    { path = "serde_json::map::OccupiedEntry::remove_entry", reason = "swap_remove under preserve_order; use shift_remove_entry" },
+]

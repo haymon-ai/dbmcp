@@ -70,7 +70,15 @@ mod tests {
                 ("z".to_string(), Value::Null),
             ]
         );
-        assert_eq!(row.to_object(), json!({ "b": 1, "a": 1, "z": null }));
+        let object = row.to_object();
+        assert_eq!(object, json!({ "b": 1, "a": 1, "z": null }));
+        let keys = object
+            .as_object()
+            .expect("row object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["b", "a", "z"]);
     }
 
     #[tokio::test]

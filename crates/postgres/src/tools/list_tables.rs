@@ -231,7 +231,7 @@ const DETAILED_SQL: &str = r"
                 'definition',        cons.constraint_definition,
                 'referencedTable',   cons.referenced_table,
                 'referencedColumns', cons.referenced_columns
-            ))
+            ) ORDER BY cons.constraint_name)
             FROM constraints_info cons WHERE cons.table_oid = ti.table_oid
         ), '[]'::json),
         'indexes', COALESCE((
@@ -242,7 +242,7 @@ const DETAILED_SQL: &str = r"
                 'primary',    ii.is_primary,
                 'method',     ii.index_method,
                 'definition', ii.index_definition
-            ))
+            ) ORDER BY ii.index_name)
             FROM indexes_info ii WHERE ii.table_oid = ti.table_oid
         ), '[]'::json),
         'triggers', COALESCE((
@@ -250,7 +250,7 @@ const DETAILED_SQL: &str = r"
                 'name',       tri.trigger_name,
                 'definition', tri.trigger_definition,
                 'enabled',    tri.trigger_enabled
-            ))
+            ) ORDER BY tri.trigger_name)
             FROM triggers_info tri WHERE tri.table_oid = ti.table_oid
         ), '[]'::json)
     ) AS entry
