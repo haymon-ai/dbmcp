@@ -57,7 +57,7 @@ ort = { version = "=2.0.0-rc.10", default-features = false, features = [
     "std",
 ] }
 ring = "0.17"
-rmcp = { version = "3.5", features = [
+rmcp = { version = "3.11", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
