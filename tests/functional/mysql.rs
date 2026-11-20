@@ -4957,7 +4957,7 @@ async fn read_query_cuts_long_cells_and_reports_truncation() {
         .expect("read_query");
     assert_eq!(response.rows[0]["s"], "abcd…[truncated, 10 chars total]");
     assert!(response.truncation.truncated);
-    assert_eq!(response.truncation.hint, Some(dbmcp_server::types::HINT));
+    assert_eq!(response.truncation.hint, Some(dbmcp_server::truncation::HINT));
 }
 
 #[tokio::test]

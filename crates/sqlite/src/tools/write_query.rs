@@ -1,7 +1,9 @@
 //! MCP tool: `writeQuery`.
 
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::{Truncation, WriteQueryResponse, caps};
+use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::types::WriteQueryResponse;
+use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
 use crate::policy::Access;
@@ -66,7 +68,7 @@ impl SqliteHandler {
     /// policy's rejection or a withheld database error.
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
-        let mut window = dbmcp_truncate::Window::new(0, None, caps);
+        let mut window = Window::new(0, None, caps);
         let (rows, rows_affected, last_insert_id) = if let Some(policy) = &self.policy {
             let timeout = self.connection.query_timeout();
             let enforced = self
@@ -81,7 +83,7 @@ impl SqliteHandler {
             let rows = self.redactor.redact_rows(window.items).await?;
             (rows, rows_affected, last_insert_id)
         };
-        let fitted = dbmcp_truncate::fit(rows, caps);
+        let fitted = fit(rows, caps);
 
         Ok(WriteQueryResponse {
             rows: fitted.items,

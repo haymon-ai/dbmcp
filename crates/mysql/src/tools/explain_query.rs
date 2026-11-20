@@ -2,9 +2,11 @@
 
 use dbmcp_config::DatabaseBackend;
 use dbmcp_pii::MaybeRedact as _;
-use dbmcp_server::types::{ExplainQueryRequest, QueryResponse, Truncation, caps};
+use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
+use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
 use crate::policy::Access;
@@ -150,7 +152,7 @@ impl MysqlHandler {
 
         // ANALYZE executes the statement, and planning alone can run user functions.
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
-        let mut window = dbmcp_truncate::Window::new(0, None, caps);
+        let mut window = Window::new(0, None, caps);
         let rows = if let Some(policy) = &self.policy {
             self.enforce(
                 policy,
@@ -170,7 +172,7 @@ impl MysqlHandler {
                 .await?;
             self.redactor.redact_rows(window.items).await?
         };
-        let fitted = dbmcp_truncate::fit(rows, caps);
+        let fitted = fit(rows, caps);
 
         Ok(QueryResponse {
             rows: fitted.items,

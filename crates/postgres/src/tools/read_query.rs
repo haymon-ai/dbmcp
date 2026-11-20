@@ -2,11 +2,13 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
-use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, Truncation, caps, resolve_timeout};
+use dbmcp_server::truncation::{Truncation, caps};
+use dbmcp_server::types::{ReadQueryRequest, ReadQueryResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
+use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
 use crate::policy::Access;
@@ -150,7 +152,7 @@ impl PostgresHandler {
             StatementKind::NonSelect => (Cow::Borrowed(query.as_str()), 0, None),
         };
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
-        let mut window = dbmcp_truncate::Window::new(offset, size, caps);
+        let mut window = Window::new(offset, size, caps);
         let rows = if let Some(policy) = &self.policy {
             self.enforce(policy, &sql, Access::Read, timeout, database, &mut window)
                 .await?
@@ -161,7 +163,7 @@ impl PostgresHandler {
                 .await?;
             self.redactor.redact_rows(window.items).await?
         };
-        let fitted = dbmcp_truncate::fit(rows, caps);
+        let fitted = fit(rows, caps);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
         let (next_cursor, truncation) = match kind {
             StatementKind::Select => {
