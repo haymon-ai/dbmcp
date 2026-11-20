@@ -298,7 +298,7 @@ pub struct Truncation {
 }
 
 impl Truncation {
-    /// Builds the cap fields from whether a value was cut and how many rows were omitted.
+    /// Builds the cap fields from a cut flag and an omitted-row count.
     ///
     /// Either one marks the response truncated and adds [`HINT`]; `omitted`
     /// of `0` leaves `rowsOmitted` out.

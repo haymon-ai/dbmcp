@@ -10,7 +10,7 @@ use crate::chars::{CharCount, cut_strings};
 pub struct Fitted {
     /// Items kept, with long string values cut.
     pub items: Vec<Value>,
-    /// Whether the string cap cut any value.
+    /// Whether the string cap cut a value in a kept item.
     pub cut: bool,
     /// Trailing items the budget dropped.
     pub dropped: u64,
@@ -33,9 +33,8 @@ pub fn fit(mut items: Vec<Value>, caps: Caps) -> Fitted {
     let mut total = 2;
     let mut kept = items.len();
     for (index, item) in items.iter_mut().enumerate() {
-        if let Some(max) = caps.string {
-            cut |= cut_strings(item, max);
-        }
+        // Cut before measuring; the cut counts only if the item is kept.
+        let item_cut = caps.string.is_some_and(|max| cut_strings(item, max));
         if let Some(budget) = caps.budget {
             let mut chars = CharCount(0);
             serde_json::to_writer(&mut chars, item).expect("a JSON value serializes into a char counter");
@@ -45,6 +44,7 @@ pub fn fit(mut items: Vec<Value>, caps: Caps) -> Fitted {
                 break;
             }
         }
+        cut |= item_cut;
     }
 
     let dropped = (items.len() - kept) as u64;
@@ -113,5 +113,14 @@ mod tests {
         let fitted = fit(items, caps(None, Some(0)));
         assert_eq!(fitted.items.len(), 1);
         assert_eq!(fitted.dropped, 1);
+    }
+
+    #[test]
+    fn a_cut_in_a_dropped_item_is_not_reported() {
+        let items = vec![json!({"i": 0}), json!({"v": "x".repeat(1000)})];
+        let fitted = fit(items, caps(Some(2), Some(10)));
+        assert_eq!(fitted.items, vec![json!({"i": 0})]);
+        assert_eq!(fitted.dropped, 1);
+        assert!(!fitted.cut);
     }
 }

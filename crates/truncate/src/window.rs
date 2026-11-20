@@ -5,6 +5,9 @@ use serde_json::Value;
 use crate::caps::Caps;
 use crate::chars::{CharCount, cut_strings};
 
+/// Most item slots [`Window::new`] reserves up front.
+const RESERVE: usize = 1024;
+
 /// Items pushed into the budget, plus a count of the items past it.
 ///
 /// Feed every item to [`push`](Window::push). The window skips the first
@@ -12,6 +15,10 @@ use crate::chars::{CharCount, cut_strings};
 /// their estimated size fits the budget. Once an item is not kept, the
 /// window is full: every later item only bumps [`rest`](Window::rest), so
 /// kept items stay contiguous.
+///
+/// Read or take [`items`](Window::items) and [`rest`](Window::rest) only
+/// after the last `push`: the window tracks the size of the kept items
+/// itself, so changing them in between breaks the budget.
 #[derive(Debug)]
 pub struct Window {
     /// Leading items still to skip.
@@ -36,7 +43,8 @@ impl Window {
             skip,
             take,
             caps,
-            items: Vec::with_capacity(take.unwrap_or(0)),
+            // Reserve at most `RESERVE` slots, so a huge `take` cannot overflow.
+            items: Vec::with_capacity(take.unwrap_or(0).min(RESERVE)),
             rest: 0,
             // `[` and `]` around the items.
             chars: 2,
@@ -181,6 +189,13 @@ mod tests {
         );
         assert_eq!(window.items, numbered(1));
         assert_eq!(window.rest, 2);
+    }
+
+    #[test]
+    fn a_huge_take_does_not_reserve_it_up_front() {
+        let window = filled(Window::new(0, Some(usize::MAX), Caps::default()), numbered(3));
+        assert_eq!(window.items, numbered(3));
+        assert_eq!(window.rest, 0);
     }
 
     #[test]
