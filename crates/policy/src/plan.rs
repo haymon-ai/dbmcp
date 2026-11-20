@@ -14,23 +14,31 @@ use crate::rejection::Rejection;
 /// Plans a statement's output columns under `config`'s column rules.
 ///
 /// `lineage` must come from a successful analysis; map a failed one with
-/// [`reject_lineage`](crate::rejection::reject_lineage). Each rejection is logged at
-/// `info` under the `dbmcp::policy` target.
+/// [`reject_lineage`](crate::rejection::reject_lineage). `explain` marks
+/// `explainQuery`'s own `EXPLAIN`: `Some(analyze)`, `None` otherwise. Each
+/// rejection is logged at `info` under the `dbmcp::policy` target.
 ///
 /// # Errors
 ///
 /// Returns the first failing gate's [`Rejection`]: an unknown function, a
-/// denied relation or statement, `EXPLAIN` of a ruled relation, `CREATE
-/// INDEX` on one, a ruled column used outside the output, conflicting rules
-/// on one output column, a shadowed bare create target, or a write copying
-/// ruled values into a column not ruled the same way or not nameable by a rule.
+/// denied relation or statement, `EXPLAIN` of a ruled relation unless
+/// `explainQuery`'s plain form, `EXPLAIN ANALYZE` on one, `CREATE INDEX` on
+/// one, a ruled column used outside the output, conflicting rules on one
+/// output column, a shadowed bare create target, or a write copying ruled
+/// values into a column not ruled the same way or not nameable by a rule.
 ///
 /// # Panics
 ///
 /// Panics when a rule's entity is not an [`Entity`] name; the loader only
 /// accepts `ColumnRule::ENTITIES`, which a test ties to [`Entity`].
-pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
-    gate(lineage, dialect, config, names).map_err(Rejection::logged)
+pub(crate) fn plan(
+    lineage: &Lineage,
+    dialect: Dialect,
+    config: &PiiConfig,
+    names: &Names,
+    explain: Option<bool>,
+) -> Result<Plan, Rejection> {
+    gate(lineage, dialect, config, names, explain).map_err(Rejection::logged)
 }
 
 /// Bare-name resolutions and the creation schema.
@@ -52,7 +60,13 @@ pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig) -> bool {
 }
 
 /// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+fn gate(
+    lineage: &Lineage,
+    dialect: Dialect,
+    config: &PiiConfig,
+    names: &Names,
+    explain: Option<bool>,
+) -> Result<Plan, Rejection> {
     if let Some(function) = lineage.functions.iter().find(|function| !function.known) {
         return Err(Rejection::UnknownFunction {
             name: function.name.clone(),
@@ -63,12 +77,15 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     while let StatementKind::Explain(inner) = statement {
         statement = inner;
     }
-    if matches!(lineage.statement, StatementKind::Explain(_))
+    if let StatementKind::Explain(inner) = &lineage.statement
         && let Some(relation) = ruled_relation(lineage, config)
     {
-        return Err(Rejection::Explain {
-            relation: relation_name(relation),
-        });
+        let relation = relation_name(relation);
+        match explain {
+            Some(true) => return Err(Rejection::ExplainAnalyze { relation }),
+            Some(false) if !matches!(**inner, StatementKind::Explain(_)) => {}
+            _ => return Err(Rejection::Explain { relation }),
+        }
     }
     if *statement == StatementKind::CreateIndex
         && let Some(target) = &lineage.target

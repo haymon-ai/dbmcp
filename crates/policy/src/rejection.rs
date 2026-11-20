@@ -39,9 +39,18 @@ pub enum Rejection {
     #[error("column policy: this SHOW form is denied")]
     DeniedStatement,
 
-    /// `EXPLAIN` of a statement touching a ruled relation.
-    #[error("column policy: EXPLAIN touches ruled relation {relation:?}")]
+    /// `EXPLAIN` touching a ruled relation, other than `explainQuery`'s plain form.
+    #[error("column policy: EXPLAIN touches ruled relation {relation:?}; use explainQuery")]
     Explain {
+        /// The ruled relation, as `schema.name`.
+        relation: String,
+    },
+
+    /// `explainQuery` with `analyze` of a statement touching a ruled relation.
+    #[error(
+        "column policy: EXPLAIN ANALYZE on ruled relation {relation:?} is denied; actual row counts can reveal values, drop analyze"
+    )]
+    ExplainAnalyze {
         /// The ruled relation, as `schema.name`.
         relation: String,
     },
@@ -121,6 +130,7 @@ impl Rejection {
             Self::DeniedRelation { .. } => "relation",
             Self::DeniedStatement => "statement",
             Self::Explain { .. } => "explain",
+            Self::ExplainAnalyze { .. } => "explain-analyze",
             Self::RuledIndex { .. } => "index",
             Self::Reference { .. } => "reference",
             Self::Conflict { .. } => "combine",

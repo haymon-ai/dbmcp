@@ -85,7 +85,12 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
 
 /// Plans `lineage` without bare names.
 fn plan_on(lineage: &Lineage, dialect: Dialect, config: &PiiConfig) -> Result<Plan, Rejection> {
-    plan(lineage, dialect, config, &Names::default())
+    plan(lineage, dialect, config, &Names::default(), None)
+}
+
+/// Plans `lineage` on `PostgreSQL` with the `explainQuery` mark `explain`.
+fn pg_marked(lineage: &Lineage, config: &PiiConfig, explain: Option<bool>) -> Result<Plan, Rejection> {
+    plan(lineage, Dialect::Postgres, config, &Names::default(), explain)
 }
 
 /// Plans `lineage` on `PostgreSQL`.
@@ -95,7 +100,7 @@ fn pg(lineage: &Lineage, config: &PiiConfig) -> Result<Plan, Rejection> {
 
 /// Plans `lineage` on `PostgreSQL` under `names`.
 fn pg_with(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
-    plan(lineage, Dialect::Postgres, config, names)
+    plan(lineage, Dialect::Postgres, config, names, None)
 }
 
 /// The single position of a one-column plan.
@@ -510,6 +515,82 @@ fn explain_of_unruled_relation_passes() {
     let mut lineage = select(vec![vec![col("users", "name")]]);
     lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
     assert!(pg(&lineage, &config).is_ok());
+}
+
+/// An `EXPLAIN` of a query selecting `users.name`.
+fn explained_users() -> Lineage {
+    let mut lineage = select(vec![vec![col("users", "name")]]);
+    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+    lineage
+}
+
+#[test]
+fn marked_explain_analyze_of_ruled_relation_rejects() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let rejection = pg_marked(&explained_users(), &config, Some(true)).expect_err("rejected");
+    assert_eq!(
+        rejection,
+        Rejection::ExplainAnalyze {
+            relation: "public.users".into(),
+        }
+    );
+    assert_eq!(rejection.gate(), "explain-analyze");
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: EXPLAIN ANALYZE on ruled relation \"public.users\" is denied; actual row counts can reveal values, drop analyze"
+    );
+}
+
+#[test]
+fn unmarked_explain_of_ruled_relation_points_to_explain_query() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let rejection = pg(&explained_users(), &config).expect_err("rejected");
+    assert_eq!(rejection.gate(), "explain");
+    assert_eq!(
+        rejection.to_string(),
+        "column policy: EXPLAIN touches ruled relation \"public.users\"; use explainQuery"
+    );
+}
+
+#[test]
+fn marked_plain_explain_of_ruled_relation_passes() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    assert!(pg_marked(&explained_users(), &config, Some(false)).is_ok());
+}
+
+#[test]
+fn marked_plain_explain_still_runs_the_reference_gate() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    for origin in [Origin::Query, Origin::View(table("v"))] {
+        let mut lineage = referencing(col("users", "ssn"), Role::Filter, origin);
+        lineage.statement = StatementKind::Explain(Box::new(StatementKind::Query));
+        assert!(matches!(
+            pg_marked(&lineage, &config, Some(false)),
+            Err(Rejection::Reference { role: "WHERE", .. })
+        ));
+    }
+}
+
+#[test]
+fn marked_plain_explain_of_nested_explain_rejects() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let mut lineage = explained_users();
+    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Explain(Box::new(StatementKind::Query))));
+    assert!(matches!(
+        pg_marked(&lineage, &config, Some(false)),
+        Err(Rejection::Explain { .. })
+    ));
+}
+
+#[test]
+fn marked_plain_explain_of_ruled_create_index_rejects() {
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let mut lineage = ddl(StatementKind::CreateIndex, "users");
+    lineage.statement = StatementKind::Explain(Box::new(StatementKind::CreateIndex));
+    assert!(matches!(
+        pg_marked(&lineage, &config, Some(false)),
+        Err(Rejection::RuledIndex { .. })
+    ));
 }
 
 #[test]
