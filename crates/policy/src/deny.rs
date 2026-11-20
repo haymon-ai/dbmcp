@@ -3,7 +3,8 @@
 //! They expose values outside the columns lineage tracks: column statistics,
 //! statement text of other sessions, locked key values, binary logs, raw
 //! pages, large objects, server settings and state, and `SQLite` virtual and
-//! shadow tables. Names compare ASCII case-insensitively.
+//! shadow tables. `MySQL` `SHOW` forms are allowlisted instead. Names compare
+//! ASCII case-insensitively.
 
 use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse};
 
@@ -52,6 +53,7 @@ const MYSQL: &[(&str, Name)] = &[
     ("performance_schema", Name::Is("user_variables_by_thread")),
     // Replication errors quote row values.
     ("performance_schema", Name::Prefix("replication_applier_status")),
+    ("information_schema", Name::Is("slave_status")),
     ("sys", Name::Contains("statement")),
     ("sys", Name::Contains("processlist")),
     ("sys", Name::Contains("session")),
@@ -68,21 +70,33 @@ const SQLITE: &[&str] = &[
     "sqlite_dbpage",
 ];
 
-/// `MySQL` and `MariaDB` `SHOW` forms that echo values or other sessions' SQL.
+/// `MySQL` and `MariaDB` `SHOW` forms allowed, by first word.
 ///
-/// `EXPLAIN` and `ANALYZE` are `MariaDB`'s `SHOW EXPLAIN FOR` / `SHOW ANALYZE
-/// FOR`, which attach another connection's statement text; `MySQL` rejects them.
+/// Each lists schema objects or settings; any other word is denied.
+/// `FUNCTION` and `PROCEDURE` also start `SHOW … CODE`, which repeats `SHOW CREATE`.
 const MYSQL_SHOW: &[&str] = &[
-    "WARNINGS",
-    "ERRORS",
-    "ENGINE",
-    "PROCESSLIST",
-    "BINLOG",
-    "RELAYLOG",
-    "EXPLAIN",
-    "ANALYZE",
-    "REPLICA",
-    "SLAVE",
+    "DATABASES",
+    "SCHEMAS",
+    "TABLES",
+    "OPEN",
+    "TABLE",
+    "COLUMNS",
+    "INDEX",
+    "INDEXES",
+    "KEYS",
+    "CREATE",
+    "TRIGGERS",
+    "EVENTS",
+    "FUNCTION",
+    "PROCEDURE",
+    "VARIABLES",
+    "STATUS",
+    "CHARSET",
+    "COLLATION",
+    "ENGINES",
+    "STORAGE",
+    "PLUGINS",
+    "PRIVILEGES",
 ];
 
 /// Reports whether `relation` is denied on `dialect`.
@@ -112,7 +126,7 @@ pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
 pub(crate) fn show(dialect: Dialect, what: &str) -> bool {
     match dialect {
         Dialect::Postgres => true,
-        Dialect::Mysql | Dialect::Mariadb => MYSQL_SHOW.iter().any(|denied| what.eq_ignore_ascii_case(denied)),
+        Dialect::Mysql | Dialect::Mariadb => !MYSQL_SHOW.iter().any(|allowed| what.eq_ignore_ascii_case(allowed)),
         Dialect::Sqlite => false,
     }
 }
