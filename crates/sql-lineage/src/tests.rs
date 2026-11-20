@@ -610,10 +610,16 @@ fn nesting_resolves_up_to_the_parser_recursion_limit() {
         }
         sql
     };
-    let lineage = pg(&nested(20)).expect("analyze");
+    // Unoptimized aarch64-apple-darwin frames overflow the 2 MiB default
+    // test thread here; a release build fits.
+    let (lineage, result) = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || (pg(&nested(20)), pg(&nested(25))))
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow");
+    let lineage = lineage.expect("analyze");
     assert_eq!(columns(&lineage), vec![col("id", &["users.id"])]);
-
-    let result = pg(&nested(25));
     assert!(matches!(result, Err(LineageError::Parse(_))), "{result:?}");
 }
 
