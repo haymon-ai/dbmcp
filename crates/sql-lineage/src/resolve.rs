@@ -38,6 +38,8 @@ pub(crate) const MAX_EXPR_DEPTH: usize = 256;
 /// Mutable analysis state shared by the whole statement.
 #[derive(Debug)]
 pub(crate) struct Ctx<'c> {
+    /// The statement text, for token-level classification.
+    pub sql: &'c str,
     pub dialect: Dialect,
     catalog: &'c Catalog,
     /// Names absent from the snapshot, in discovery order.
@@ -59,8 +61,9 @@ pub(crate) struct Ctx<'c> {
 }
 
 impl<'c> Ctx<'c> {
-    pub(crate) fn new(dialect: Dialect, catalog: &'c Catalog) -> Self {
+    pub(crate) fn new(sql: &'c str, dialect: Dialect, catalog: &'c Catalog) -> Self {
         Self {
+            sql,
             dialect,
             catalog,
             missing: Vec::new(),

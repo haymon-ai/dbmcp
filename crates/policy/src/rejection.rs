@@ -34,11 +34,8 @@ pub enum Rejection {
     },
 
     /// A statement that exposes values outside column policy.
-    #[error("column policy: SHOW {statement} is denied")]
-    DeniedStatement {
-        /// The first keyword or name after `SHOW`.
-        statement: String,
-    },
+    #[error("column policy: this SHOW form is denied")]
+    DeniedStatement,
 
     /// `EXPLAIN` of a statement touching a ruled relation.
     #[error("column policy: EXPLAIN touches ruled relation \"{relation}\"")]
@@ -117,7 +114,7 @@ impl Rejection {
             Self::Lineage(_) | Self::CatalogRounds => "lineage",
             Self::UnknownFunction { .. } => "function",
             Self::DeniedRelation { .. } => "relation",
-            Self::DeniedStatement { .. } => "statement",
+            Self::DeniedStatement => "statement",
             Self::Explain { .. } => "explain",
             Self::RuledIndex { .. } => "index",
             Self::Reference { .. } => "reference",

@@ -3,6 +3,7 @@
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::truncate;
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
+use dbmcp_sql::Dialect;
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 
 use super::prelude::*;
@@ -123,7 +124,7 @@ impl PostgresHandler {
         analyze: bool,
     ) -> Result<QueryResponse, ErrorData> {
         if analyze {
-            let _ = validate_read(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
+            let _ = validate_read(&query, Dialect::Postgres)?;
         } else {
             validate_single_statement(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }

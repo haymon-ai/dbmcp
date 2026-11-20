@@ -55,6 +55,7 @@ mod expr;
 mod functions;
 mod model;
 mod resolve;
+mod show;
 mod statement;
 #[cfg(test)]
 mod tests;
@@ -67,3 +68,4 @@ pub use crate::model::{
     FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
     StatementKind, TargetColumn,
 };
+pub use crate::show::Show;

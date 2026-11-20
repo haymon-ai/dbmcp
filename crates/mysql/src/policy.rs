@@ -553,8 +553,9 @@ async fn resolve(
 ///
 /// Session settings (`sql_mode` flags, multibyte client charsets) change
 /// how quotes and escapes lex; the parser reads user and system variables
-/// (`@x`, `@@x`) as column names. Executable comments are refused before
-/// analysis, by [`validate_single_statement`].
+/// (`@x`, `@@x`) as column names. Executable comments and characters the
+/// tokenizer cannot read are refused before analysis, by
+/// [`validate_single_statement`].
 fn lexical_mismatch(sql_mode: &str, charset: &str, sql: &str) -> Option<String> {
     if let Some(mode) = LEXICAL_MODES
         .iter()

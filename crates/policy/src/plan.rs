@@ -71,12 +71,10 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     while let StatementKind::Explain(inner) = statement {
         statement = inner;
     }
-    if let StatementKind::Show(what) = statement
-        && deny::show(dialect, what)
+    if let StatementKind::Show(show) = statement
+        && deny::show(dialect, *show)
     {
-        return Err(Rejection::DeniedStatement {
-            statement: what.clone(),
-        });
+        return Err(Rejection::DeniedStatement);
     }
     if matches!(lineage.statement, StatementKind::Explain(_))
         && let Some(relation) = ruled_relation(lineage, config)

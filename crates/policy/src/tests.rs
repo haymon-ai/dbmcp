@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_sql_lineage::{
     Catalog, Dialect, FunctionUse, Lineage, LineageError, Origin, OutputColumn, Reference, RelationId, RelationKind,
-    RelationUse, Role, SourceRef, StatementKind, TargetColumn, analyze,
+    RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
 };
 
 use dbmcp_pii::Entity;
@@ -347,35 +347,41 @@ fn ordinary_relations_pass() {
 #[test]
 fn denied_show_statements_reject() {
     let cases = [
-        (Dialect::Mysql, "WARNINGS"),
-        (Dialect::Mysql, "ERRORS"),
-        (Dialect::Mysql, "ENGINE"),
-        (Dialect::Mariadb, "PROCESSLIST"),
-        (Dialect::Mysql, "BINLOG"),
-        (Dialect::Mariadb, "RELAYLOG"),
-        (Dialect::Mariadb, "EXPLAIN"),
-        (Dialect::Mariadb, "ANALYZE"),
-        (Dialect::Postgres, "SEARCH_PATH"),
-        (Dialect::Postgres, "TABLES"),
-        (Dialect::Postgres, "ALL"),
+        (Dialect::Mysql, Show::Warnings),
+        (Dialect::Mariadb, Show::Errors),
+        (Dialect::Mysql, Show::Unsupported),
+        (Dialect::Mariadb, Show::Unsupported),
+        (Dialect::Postgres, Show::Tables),
+        (Dialect::Postgres, Show::Variables),
+        (Dialect::Postgres, Show::Unsupported),
     ];
-    for (dialect, what) in cases {
+    for (dialect, form) in cases {
         let mut lineage = select(vec![]);
-        lineage.statement = StatementKind::Show(what.into());
+        lineage.statement = StatementKind::Show(form);
         assert_eq!(
             plan_on(&lineage, dialect, &config(vec![])),
-            Err(Rejection::DeniedStatement { statement: what.into() }),
-            "{dialect:?} {what}"
+            Err(Rejection::DeniedStatement),
+            "{dialect:?} {form:?}"
         );
     }
 }
 
 #[test]
 fn harmless_show_passes() {
-    for what in ["TABLES", "tables"] {
+    let cases = [
+        (Dialect::Mysql, Show::Tables),
+        (Dialect::Mariadb, Show::CreateTable),
+        (Dialect::Sqlite, Show::Tables),
+        (Dialect::Sqlite, Show::Warnings),
+        (Dialect::Sqlite, Show::Unsupported),
+    ];
+    for (dialect, form) in cases {
         let mut lineage = select(vec![]);
-        lineage.statement = StatementKind::Show(what.into());
-        assert!(plan_on(&lineage, Dialect::Mysql, &config(vec![])).is_ok(), "{what}");
+        lineage.statement = StatementKind::Show(form);
+        assert!(
+            plan_on(&lineage, dialect, &config(vec![])).is_ok(),
+            "{dialect:?} {form:?}"
+        );
     }
 }
 
@@ -415,11 +421,11 @@ fn analyzed_schema_show_forms_pass() {
 #[test]
 fn explain_of_show_unwraps_to_the_show_deny() {
     let mut lineage = select(vec![]);
-    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Show("WARNINGS".into())));
-    assert!(matches!(
+    lineage.statement = StatementKind::Explain(Box::new(StatementKind::Show(Show::Warnings)));
+    assert_eq!(
         plan_on(&lineage, Dialect::Mysql, &config(vec![])),
-        Err(Rejection::DeniedStatement { .. })
-    ));
+        Err(Rejection::DeniedStatement)
+    );
 }
 
 #[test]
@@ -442,14 +448,14 @@ fn analyzed_value_show_forms_reject() {
         ("SHOW USER_VARIABLES", Dialect::Mariadb),
         ("SHOW `user_variables`", Dialect::Mariadb),
         ("SHOW MASTER STATUS", Dialect::Mysql),
+        ("SHOW `TABLES`", Dialect::Mysql),
+        ("SHOW TABLE foo", Dialect::Mysql),
+        ("SHOW FUNCTION xyz", Dialect::Mysql),
     ];
     for (sql, dialect) in cases {
         let lineage = analyze(sql, dialect, &Catalog::new()).expect(sql);
         assert!(
-            matches!(
-                plan_on(&lineage, dialect, &config(vec![])),
-                Err(Rejection::DeniedStatement { .. })
-            ),
+            plan_on(&lineage, dialect, &config(vec![])) == Err(Rejection::DeniedStatement),
             "{sql}: {:?}",
             lineage.statement
         );

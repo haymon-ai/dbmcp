@@ -993,6 +993,19 @@ async fn test_read_query_show_tables() {
 }
 
 #[tokio::test]
+async fn test_read_query_show_charset_and_processlist() {
+    let handler = handler(true);
+
+    for sql in ["SHOW CHARSET", "SHOW PROCESSLIST"] {
+        let response = handler
+            .read_query(sql.into(), Some("app".into()), None, None)
+            .await
+            .unwrap_or_else(|error| panic!("{sql} should pass readQuery: {error:?}"));
+        assert!(!response.rows.is_empty(), "{sql} should return rows");
+    }
+}
+
+#[tokio::test]
 async fn test_read_query_describe_table() {
     let handler = handler(false);
 
@@ -1189,6 +1202,16 @@ async fn test_read_query_show_warnings_rejected() {
             error.message
         );
     }
+
+    let error = handler
+        .read_query("SHOW --\x01\nWARNINGS".into(), Some("app".into()), None, None)
+        .await
+        .expect_err("a control-character comment must not hide diagnostics");
+    assert!(
+        error.message.contains("characters the parser cannot read"),
+        "expected unreadable-character rejection, got: {}",
+        error.message
+    );
 }
 
 #[tokio::test]
