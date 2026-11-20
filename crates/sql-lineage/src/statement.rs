@@ -2,8 +2,8 @@
 //!
 //! A query resolves to its output columns. Relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`)
-//! records its target and nothing else. `SHOW` and `DESCRIBE` record
-//! nothing; `EXPLAIN` carries its inner statement's lineage.
+//! records its target and nothing else. `SHOW` records its [`Show`] form
+//! and `DESCRIBE` nothing; `EXPLAIN` carries its inner statement's lineage.
 //!
 //! DDL that evaluates expressions or reads another relation's rows is
 //! rejected: index expressions, partial-index `WHERE`, column `DEFAULT`,
@@ -36,6 +36,7 @@ use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{RelationId, RelationKind, StatementKind, TargetColumn};
 use crate::resolve::{Ctx, idents, unsupported};
+use crate::show::Show;
 
 /// What a statement resolves to, before output positions are numbered.
 #[derive(Debug)]
@@ -119,27 +120,24 @@ impl Ctx<'_> {
                 };
                 Ok(Analysis::bare(StatementKind::Drop, target))
             }
-            Statement::ShowVariable { variable } => {
-                let first = variable.first().ok_or_else(|| unsupported("empty SHOW"))?;
-                Ok(Analysis::bare(
-                    StatementKind::Show(first.value.to_ascii_uppercase()),
-                    None,
-                ))
-            }
-            Statement::ShowFunctions { .. } => Ok(show("FUNCTIONS")),
-            Statement::ShowStatus { .. } => Ok(show("STATUS")),
-            Statement::ShowVariables { .. } => Ok(show("VARIABLES")),
-            Statement::ShowCreate { .. } => Ok(show("CREATE")),
-            Statement::ShowColumns { .. } => Ok(show("COLUMNS")),
-            Statement::ShowCatalogs { .. } => Ok(show("CATALOGS")),
-            Statement::ShowDatabases { .. } => Ok(show("DATABASES")),
-            Statement::ShowProcessList { .. } => Ok(show("PROCESSLIST")),
-            Statement::ShowSchemas { .. } => Ok(show("SCHEMAS")),
-            Statement::ShowCharset(_) => Ok(show("CHARSET")),
-            Statement::ShowObjects(_) => Ok(show("OBJECTS")),
-            Statement::ShowTables { .. } => Ok(show("TABLES")),
-            Statement::ShowViews { .. } => Ok(show("VIEWS")),
-            Statement::ShowCollation { .. } => Ok(show("COLLATION")),
+            Statement::ShowVariable { .. }
+            | Statement::ShowFunctions { .. }
+            | Statement::ShowStatus { .. }
+            | Statement::ShowVariables { .. }
+            | Statement::ShowCreate { .. }
+            | Statement::ShowColumns { .. }
+            | Statement::ShowCatalogs { .. }
+            | Statement::ShowDatabases { .. }
+            | Statement::ShowProcessList { .. }
+            | Statement::ShowSchemas { .. }
+            | Statement::ShowCharset(_)
+            | Statement::ShowObjects(_)
+            | Statement::ShowTables { .. }
+            | Statement::ShowViews { .. }
+            | Statement::ShowCollation { .. } => Ok(Analysis::bare(
+                StatementKind::Show(Show::classify(self.sql, self.dialect)),
+                None,
+            )),
             Statement::ExplainTable { .. } => Ok(Analysis::bare(StatementKind::Describe, None)),
             Statement::Explain { statement, .. } => {
                 let mut inner = self.statement(statement)?;
@@ -887,11 +885,6 @@ fn calls_values(expr: &Expr) -> bool {
 /// Returns whether a value is the `DEFAULT` keyword.
 fn is_default(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier(ident) if ident.quote_style.is_none() && ident.value.eq_ignore_ascii_case("default"))
-}
-
-/// Builds a `SHOW` analysis.
-fn show(what: &str) -> Analysis {
-    Analysis::bare(StatementKind::Show(what.to_string()), None)
 }
 
 /// Returns a statement's variant name, which holds no identifiers or values.

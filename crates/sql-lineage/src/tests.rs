@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::{
     Catalog, CatalogColumn, Dialect, Entry, Lexical, Lineage, LineageError, NamePart, Origin, Relation, RelationId,
-    RelationKind, Role, SourceRef, StatementKind, WrittenName, analyze,
+    RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
 };
 
 /// Builds a relation in schema `public`; a leading `~` marks a star-invisible column.
@@ -1369,8 +1369,8 @@ fn relations(lineage: &Lineage) -> Vec<(String, RelationKind)> {
 }
 
 /// Shorthand for a `SHOW` statement kind.
-fn show(what: &str) -> StatementKind {
-    StatementKind::Show(what.to_string())
+fn show(form: Show) -> StatementKind {
+    StatementKind::Show(form)
 }
 
 /// Shorthand for an `EXPLAIN` statement kind.
@@ -1675,10 +1675,10 @@ fn ddl_with_column_names_only_is_modeled() {
 #[test]
 fn show_and_describe_have_no_sources() {
     let cases: &[(&str, Dialect, StatementKind)] = &[
-        ("SHOW TABLES", Dialect::Mysql, show("TABLES")),
-        ("SHOW WARNINGS", Dialect::Mysql, show("WARNINGS")),
-        ("SHOW PROCESSLIST", Dialect::Mysql, show("PROCESSLIST")),
-        ("SHOW search_path", Dialect::Postgres, show("SEARCH_PATH")),
+        ("SHOW TABLES", Dialect::Mysql, show(Show::Tables)),
+        ("SHOW WARNINGS", Dialect::Mysql, show(Show::Warnings)),
+        ("SHOW PROCESSLIST", Dialect::Mysql, show(Show::Unsupported)),
+        ("SHOW search_path", Dialect::Postgres, show(Show::Unsupported)),
         ("DESCRIBE users", Dialect::Mysql, StatementKind::Describe),
     ];
     for (sql, dialect, kind) in cases {
@@ -1690,17 +1690,137 @@ fn show_and_describe_have_no_sources() {
 }
 
 #[test]
-fn show_names_fold_ascii_only_and_ignore_quotes() {
-    let cases: &[(&str, Dialect, StatementKind)] = &[
-        ("SHOW `warnings`", Dialect::Mysql, show("WARNINGS")),
-        ("SHOW \"ALL\"", Dialect::Postgres, show("ALL")),
-        ("SHOW `ſtatus`", Dialect::Mysql, show("ſTATUS")),
+fn show_quoted_words_are_not_keywords() {
+    let cases: &[(&str, Dialect)] = &[
+        ("SHOW `warnings`", Dialect::Mysql),
+        ("SHOW \"ALL\"", Dialect::Postgres),
+        ("SHOW `ſtatus`", Dialect::Mysql),
+        ("SHOW \"WARNINGS\"", Dialect::Mysql),
     ];
-    for (sql, dialect, kind) in cases {
+    for (sql, dialect) in cases {
         let lineage = on(sql, *dialect).expect(sql);
-        assert_eq!(&lineage.statement, kind, "{sql}");
+        assert_eq!(lineage.statement, show(Show::Unsupported), "{sql}");
     }
-    assert_unsupported("SHOW \"WARNINGS\"", Dialect::Mysql, &fixture());
+}
+
+#[test]
+fn show_forms_classify_by_leading_keywords() {
+    let my = Dialect::Mysql;
+    let maria = Dialect::Mariadb;
+    let cases: &[(&str, Dialect, Show)] = &[
+        // Allowed forms, each synonym and modifier position.
+        ("SHOW DATABASES", my, Show::Databases),
+        ("SHOW SCHEMAS LIKE 'a%'", maria, Show::Databases),
+        ("SHOW TABLES", my, Show::Tables),
+        ("SHOW FULL TABLES FROM d", my, Show::Tables),
+        ("SHOW EXTENDED TABLES", my, Show::Tables),
+        ("SHOW EXTENDED FULL TABLES", my, Show::Tables),
+        ("SHOW OPEN TABLES", my, Show::OpenTables),
+        ("SHOW TABLE STATUS", maria, Show::TableStatus),
+        ("SHOW COLUMNS FROM users", my, Show::Columns),
+        ("SHOW FIELDS FROM users", my, Show::Columns),
+        ("SHOW FULL COLUMNS FROM users", my, Show::Columns),
+        ("SHOW EXTENDED COLUMNS FROM users", my, Show::Columns),
+        ("SHOW EXTENDED FULL FIELDS FROM users", my, Show::Columns),
+        ("SHOW INDEX FROM users", my, Show::Index),
+        ("SHOW INDEXES FROM users", my, Show::Index),
+        ("SHOW KEYS FROM users", maria, Show::Index),
+        ("SHOW EXTENDED INDEX FROM users", my, Show::Index),
+        ("SHOW CREATE TABLE users", my, Show::CreateTable),
+        ("SHOW CREATE VIEW v", my, Show::CreateView),
+        ("SHOW CREATE TRIGGER t", my, Show::CreateTrigger),
+        ("SHOW CREATE FUNCTION f", my, Show::CreateFunction),
+        ("SHOW CREATE PROCEDURE p", my, Show::CreateProcedure),
+        ("SHOW CREATE EVENT e", my, Show::CreateEvent),
+        ("SHOW TRIGGERS", my, Show::Triggers),
+        ("SHOW EVENTS", maria, Show::Events),
+        ("SHOW FUNCTION STATUS", my, Show::FunctionStatus),
+        ("SHOW PROCEDURE STATUS", my, Show::ProcedureStatus),
+        ("SHOW FUNCTION CODE f", maria, Show::FunctionCode),
+        ("SHOW PROCEDURE CODE p", maria, Show::ProcedureCode),
+        ("SHOW VARIABLES", my, Show::Variables),
+        ("SHOW GLOBAL VARIABLES", my, Show::Variables),
+        ("SHOW SESSION VARIABLES", my, Show::Variables),
+        ("SHOW STATUS", my, Show::Status),
+        ("SHOW GLOBAL STATUS", my, Show::Status),
+        ("SHOW SESSION STATUS", maria, Show::Status),
+        ("SHOW CHARSET", my, Show::Charset),
+        ("SHOW CHARACTER SET", my, Show::Charset),
+        ("SHOW COLLATION", my, Show::Collation),
+        ("SHOW ENGINES", my, Show::Engines),
+        ("SHOW STORAGE ENGINES", maria, Show::Engines),
+        ("SHOW PLUGINS", my, Show::Plugins),
+        ("SHOW PRIVILEGES", my, Show::Privileges),
+        ("SHOW WARNINGS", my, Show::Warnings),
+        ("SHOW COUNT(*) WARNINGS", my, Show::Warnings),
+        ("SHOW ERRORS", my, Show::Errors),
+        ("SHOW COUNT(*) ERRORS", maria, Show::Errors),
+        // Denied forms.
+        ("SHOW PROCESSLIST", my, Show::Unsupported),
+        ("SHOW FULL PROCESSLIST", maria, Show::Unsupported),
+        ("SHOW ENGINE INNODB STATUS", my, Show::Unsupported),
+        ("SHOW SLAVE STATUS", maria, Show::Unsupported),
+        ("SHOW ALL SLAVES STATUS", maria, Show::Unsupported),
+        ("SHOW REPLICA STATUS", my, Show::Unsupported),
+        ("SHOW REPLICAS", my, Show::Unsupported),
+        ("SHOW MASTER STATUS", my, Show::Unsupported),
+        ("SHOW BINLOG EVENTS", my, Show::Unsupported),
+        ("SHOW RELAYLOG EVENTS", my, Show::Unsupported),
+        ("SHOW GRANTS", maria, Show::Unsupported),
+        ("SHOW PROFILES", my, Show::Unsupported),
+        ("SHOW USER_VARIABLES", maria, Show::Unsupported),
+        ("SHOW EXPLAIN FOR 1", maria, Show::Unsupported),
+        ("SHOW ANALYZE FOR 1", maria, Show::Unsupported),
+        // Modifiers outside their positions.
+        ("SHOW TERSE STATUS", my, Show::Unsupported),
+        ("SHOW GLOBAL TABLE STATUS", my, Show::Unsupported),
+        ("SHOW FULL FULL TABLES", my, Show::Unsupported),
+        ("SHOW LOCAL VARIABLES", my, Show::Unsupported),
+        ("SHOW LOCAL STATUS", my, Show::Unsupported),
+        ("SHOW EXTERNAL TABLES", my, Show::Unsupported),
+        ("SHOW TABLE foo", my, Show::Unsupported),
+        ("SHOW FUNCTION xyz", my, Show::Unsupported),
+        // Quoted words are not keywords.
+        ("SHOW `TABLES`", my, Show::Unsupported),
+        ("SHOW `WARNINGS`", my, Show::Unsupported),
+        ("SHOW `user_variables`", maria, Show::Unsupported),
+        // Comments and whitespace.
+        ("SHOW /*x*/ WARNINGS", my, Show::Warnings),
+        ("SHOW\nWARNINGS", my, Show::Warnings),
+        ("SHOW COUNT ( * ) ERRORS", my, Show::Errors),
+        ("show count(*) errors", my, Show::Errors),
+        // Trailing tokens never change the class.
+        ("SHOW INDEX FROM errors", my, Show::Index),
+        ("SHOW VARIABLES LIKE 'warnings'", my, Show::Variables),
+        ("SHOW TABLE STATUS FROM warnings", my, Show::TableStatus),
+        ("SHOW WARNINGS_X", my, Show::Unsupported),
+        // One table for every dialect.
+        ("SHOW TABLES", Dialect::Postgres, Show::Tables),
+        ("SHOW search_path", Dialect::Postgres, Show::Unsupported),
+        ("SHOW ALL", Dialect::Postgres, Show::Unsupported),
+    ];
+    for (sql, dialect, form) in cases {
+        assert_eq!(Show::classify(sql, *dialect), *form, "{sql}");
+        let explained = format!("EXPLAIN {sql}");
+        assert_eq!(Show::classify(&explained, *dialect), *form, "{explained}");
+        // The parse still gates: forms sqlparser rejects never reach the classifier.
+        if let Ok(lineage) = on(sql, *dialect) {
+            assert_eq!(lineage.statement, show(*form), "{sql}");
+        }
+    }
+}
+
+#[test]
+fn show_classifies_from_tokens() {
+    let cases: &[(&str, Dialect, Show)] = &[
+        ("EXPLAIN SHOW WARNINGS", Dialect::Mysql, Show::Warnings),
+        ("SELECT 1", Dialect::Mysql, Show::Unsupported),
+        ("SHOW 'unterminated", Dialect::Mysql, Show::Unsupported),
+        ("SHOW", Dialect::Mysql, Show::Unsupported),
+    ];
+    for (sql, dialect, form) in cases {
+        assert_eq!(Show::classify(sql, *dialect), *form, "{sql}");
+    }
 }
 
 #[test]
@@ -1731,7 +1851,7 @@ fn explain_forms_the_explain_tools_build_wrap_a_query() {
         assert_eq!(columns(&lineage), vec![col("ssn", &["users.ssn"])], "{sql}");
     }
     let lineage = on("EXPLAIN SHOW TABLES", Dialect::Mysql).expect("analyze");
-    assert_eq!(lineage.statement, explain(show("TABLES")));
+    assert_eq!(lineage.statement, explain(show(Show::Tables)));
 }
 
 #[test]

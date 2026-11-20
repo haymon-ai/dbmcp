@@ -6,7 +6,7 @@
 //! shadow tables. `MySQL` `SHOW` forms are allowlisted instead. Names compare
 //! ASCII case-insensitively.
 
-use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse};
+use dbmcp_sql_lineage::{Dialect, RelationKind, RelationUse, Show};
 
 /// How a deny entry matches a relation name.
 enum Name {
@@ -70,35 +70,6 @@ const SQLITE: &[&str] = &[
     "sqlite_dbpage",
 ];
 
-/// `MySQL` and `MariaDB` `SHOW` forms allowed, by first word.
-///
-/// Each lists schema objects or settings; any other word is denied.
-/// `FUNCTION` and `PROCEDURE` also start `SHOW … CODE`, which repeats `SHOW CREATE`.
-const MYSQL_SHOW: &[&str] = &[
-    "DATABASES",
-    "SCHEMAS",
-    "TABLES",
-    "OPEN",
-    "TABLE",
-    "COLUMNS",
-    "INDEX",
-    "INDEXES",
-    "KEYS",
-    "CREATE",
-    "TRIGGERS",
-    "EVENTS",
-    "FUNCTION",
-    "PROCEDURE",
-    "VARIABLES",
-    "STATUS",
-    "CHARSET",
-    "COLLATION",
-    "ENGINES",
-    "STORAGE",
-    "PLUGINS",
-    "PRIVILEGES",
-];
-
 /// Reports whether `relation` is denied on `dialect`.
 pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
     let id = &relation.id;
@@ -122,11 +93,42 @@ pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
     }
 }
 
-/// Reports whether `SHOW <what>` is denied on `dialect`; every `PostgreSQL` `SHOW` reads a setting.
-pub(crate) fn show(dialect: Dialect, what: &str) -> bool {
+/// Reports whether a `SHOW` form is denied on `dialect`.
+///
+/// Every `PostgreSQL` `SHOW` reads a setting. `MySQL` and `MariaDB` allow
+/// the forms that list schema objects or settings; `WARNINGS` and `ERRORS`
+/// replay values, and every other form is denied.
+pub(crate) fn show(dialect: Dialect, show: Show) -> bool {
     match dialect {
         Dialect::Postgres => true,
-        Dialect::Mysql | Dialect::Mariadb => !MYSQL_SHOW.iter().any(|allowed| what.eq_ignore_ascii_case(allowed)),
+        Dialect::Mysql | Dialect::Mariadb => match show {
+            Show::Databases
+            | Show::Tables
+            | Show::OpenTables
+            | Show::TableStatus
+            | Show::Columns
+            | Show::Index
+            | Show::CreateTable
+            | Show::CreateView
+            | Show::CreateTrigger
+            | Show::CreateFunction
+            | Show::CreateProcedure
+            | Show::CreateEvent
+            | Show::Triggers
+            | Show::Events
+            | Show::FunctionStatus
+            | Show::ProcedureStatus
+            | Show::FunctionCode
+            | Show::ProcedureCode
+            | Show::Variables
+            | Show::Status
+            | Show::Charset
+            | Show::Collation
+            | Show::Engines
+            | Show::Plugins
+            | Show::Privileges => false,
+            Show::Warnings | Show::Errors | Show::Unsupported => true,
+        },
         Dialect::Sqlite => false,
     }
 }

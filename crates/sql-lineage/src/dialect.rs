@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlparser::ast::{Ident, Statement};
 use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::{Parser, ParserError};
+use sqlparser::tokenizer::{Token, Tokenizer, TokenizerError};
 
 /// The database dialect a statement is written for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -24,6 +25,15 @@ impl Dialect {
             Self::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, sql),
             Self::Mysql | Self::Mariadb => Parser::parse_sql(&MySqlDialect {}, sql),
             Self::Sqlite => Parser::parse_sql(&SQLiteDialect {}, sql),
+        }
+    }
+
+    /// Tokenizes `sql` as [`Dialect::parse`] reads it.
+    pub(crate) fn tokenize(self, sql: &str) -> Result<Vec<Token>, TokenizerError> {
+        match self {
+            Self::Postgres => Tokenizer::new(&PostgreSqlDialect {}, sql).tokenize(),
+            Self::Mysql | Self::Mariadb => Tokenizer::new(&MySqlDialect {}, sql).tokenize(),
+            Self::Sqlite => Tokenizer::new(&SQLiteDialect {}, sql).tokenize(),
         }
     }
 

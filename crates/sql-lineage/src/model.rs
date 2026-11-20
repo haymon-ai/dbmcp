@@ -7,6 +7,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::show::Show;
+
 /// Canonical identity of a relation, as the backend reports it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RelationId {
@@ -161,8 +163,8 @@ pub enum StatementKind {
     Truncate,
     /// `CREATE INDEX`.
     CreateIndex,
-    /// `SHOW`; holds the first keyword or name after `SHOW`, ASCII-uppercased.
-    Show(String),
+    /// `SHOW`, classified by its leading keywords.
+    Show(Show),
     /// `DESCRIBE`, `DESC`, or `EXPLAIN` of a table.
     Describe,
     /// `EXPLAIN` of the inner statement, whose lineage this one carries.

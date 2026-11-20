@@ -27,7 +27,7 @@ pub fn analyze(sql: &str, dialect: Dialect, catalog: &Catalog) -> Result<Lineage
         [] => return Err(LineageError::Parse("no statement".to_string())),
         _ => return Err(LineageError::MultiStatement),
     };
-    let mut ctx = Ctx::new(dialect, catalog);
+    let mut ctx = Ctx::new(sql, dialect, catalog);
     let analysis = ctx.statement(statement)?;
     ctx.finish(analysis)
 }
