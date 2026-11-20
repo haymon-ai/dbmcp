@@ -5093,3 +5093,68 @@ async fn column_rules_withhold_errors_raised_at_commit() {
     assert!(error.message.contains("withheld"), "{}", error.message);
     assert!(!error.message.contains("@example.com"), "{}", error.message);
 }
+
+fn keys(row: &Value) -> Vec<&str> {
+    row.as_object()
+        .expect("row object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+async fn first_row(sql: &str) -> Value {
+    let response = handler(true)
+        .read_query(sql.into(), Some("app".into()), None, None)
+        .await
+        .expect(sql);
+    response.rows.into_iter().next().expect("one row")
+}
+
+#[tokio::test]
+async fn read_query_keys_follow_select_order() {
+    let row = first_row("SELECT 3 AS c, 1 AS a, 2 AS b").await;
+    assert_eq!(keys(&row), ["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn write_query_returning_keys_follow_returning_order() {
+    let handler = handler(false);
+    let response = handler
+        .write_query(
+            "INSERT INTO users (name, email) VALUES ('Order', 'order@test.com') RETURNING name, id, email".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("insert");
+    handler
+        .write_query(
+            "DELETE FROM users WHERE email = 'order@test.com'".into(),
+            Some("app".into()),
+        )
+        .await
+        .expect("clean up");
+    assert_eq!(keys(&response.rows[0]), ["name", "id", "email"]);
+}
+
+#[tokio::test]
+async fn json_keeps_written_order_and_jsonb_canonical_order() {
+    let row = first_row(r#"SELECT '{"b":1,"a":2}'::json AS j, '{"bb":1,"a":2}'::jsonb AS jb"#).await;
+    assert_eq!(keys(&row["j"]), ["b", "a"]);
+    assert_eq!(keys(&row["jb"]), ["a", "bb"]);
+}
+
+#[tokio::test]
+async fn list_tables_detailed_values_have_sorted_keys() {
+    let response = handler(true)
+        .list_tables(Some("app".into()), None, Some("users".into()), true)
+        .await
+        .expect("list_tables detailed");
+    let users = &response.entries.as_detailed().expect("detailed mode")["users"];
+    let mut sorted = users.clone();
+    sorted.sort_all_objects();
+    assert_eq!(
+        serde_json::to_string(users).expect("serializes"),
+        serde_json::to_string(&sorted).expect("serializes")
+    );
+    assert!(keys(users).is_sorted(), "{users}");
+}

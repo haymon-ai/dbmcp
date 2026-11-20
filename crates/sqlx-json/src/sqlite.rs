@@ -74,6 +74,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_keys_follow_select_order() {
+        let row = fetch("", "SELECT 3 AS c, 1 AS a, 2 AS b").await;
+
+        let keys = row
+            .as_object()
+            .expect("row object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, ["c", "a", "b"]);
+    }
+
+    #[tokio::test]
     async fn declared_types_map_to_json_shapes() {
         let row = fetch(
             "CREATE TABLE t (b BOOLEAN, i INTEGER, r REAL, n NUMERIC, bl BLOB, tx TEXT, d DATE, ts TIMESTAMP);

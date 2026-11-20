@@ -552,4 +552,30 @@ mod tests {
         assert_eq!(out, expected);
         assert_ne!(out[0]["contact"], json!("second jane@example.org"));
     }
+
+    #[tokio::test]
+    async fn redact_cells_keys_follow_column_order_under_rules_and_global() {
+        let redactor = Redactor::with_defaults();
+        let cells = || {
+            let columns = ["c", "a", "b"].map(String::from).to_vec();
+            Cells::new(columns, vec![vec![json!("123-45-6789"), json!(EMAIL), json!(1)]])
+        };
+        let keys = |rows: Vec<Value>| {
+            rows[0]
+                .as_object()
+                .expect("row object")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        let ruled = redactor
+            .redact_cells(cells(), Some(&plan(vec![MASKED, Position::Global, Position::Global])))
+            .await
+            .expect("runs");
+        let global = redactor.redact_cells(cells(), None).await.expect("runs");
+
+        assert_eq!(keys(ruled), ["c", "a", "b"]);
+        assert_eq!(keys(global), ["c", "a", "b"]);
+    }
 }

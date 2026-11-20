@@ -2988,3 +2988,53 @@ async fn column_rules_replace_and_drop_views() {
             .expect(query);
     }
 }
+
+fn keys(row: &Value) -> Vec<&str> {
+    row.as_object()
+        .expect("row object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+#[tokio::test]
+async fn read_query_keys_follow_select_order() {
+    let handler = handler(true);
+    let response = handler
+        .read_query(ReadQueryRequest {
+            query: "SELECT 3 AS c, 1 AS a, 2 AS b".into(),
+            cursor: None,
+            timeout: None,
+        })
+        .await
+        .expect("read");
+    assert_eq!(keys(&response.rows[0]), ["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn write_query_returning_keys_follow_returning_order() {
+    let handler = handler(false);
+    let response = handler
+        .write_query(QueryRequest {
+            query: "INSERT INTO users (name, email) VALUES ('Order', 'order@test.com') RETURNING name, id, email"
+                .into(),
+        })
+        .await
+        .expect("insert");
+    handler
+        .write_query(QueryRequest {
+            query: "DELETE FROM users WHERE email = 'order@test.com'".into(),
+        })
+        .await
+        .expect("clean up");
+    assert_eq!(keys(&response.rows[0]), ["name", "id", "email"]);
+}
+
+#[tokio::test]
+async fn column_rules_keys_follow_select_order() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT phone, name, email FROM users WHERE id = 1")
+        .await
+        .expect("read");
+    assert_eq!(keys(&rows[0]), ["phone", "name", "email"]);
+}

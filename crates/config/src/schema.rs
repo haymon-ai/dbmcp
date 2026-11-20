@@ -88,7 +88,7 @@ fn strip_values(schema: &mut Value) {
             strip_values(property);
         } else if let Some(property) = property.as_object_mut() {
             for keyword in VALUE_KEYWORDS {
-                property.remove(keyword);
+                property.shift_remove(keyword);
             }
         }
     }

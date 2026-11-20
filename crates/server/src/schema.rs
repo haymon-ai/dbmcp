@@ -117,8 +117,8 @@ fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
 /// [`transform_subschemas`][schemars::transform::transform_subschemas].
 fn strip_root_metadata(schema: &mut Schema) {
     if let Some(object) = schema.as_object_mut() {
-        object.remove("title");
-        object.remove("description");
+        object.shift_remove("title");
+        object.shift_remove("description");
     }
 }
 
@@ -132,12 +132,12 @@ fn strip_root_database(schema: &mut Schema) {
         return;
     };
     if let Some(Value::Object(properties)) = object.get_mut("properties") {
-        properties.remove("database");
+        properties.shift_remove("database");
     }
     if let Some(Value::Array(required)) = object.get_mut("required") {
         required.retain(|value| value.as_str() != Some("database"));
         if required.is_empty() {
-            object.remove("required");
+            object.shift_remove("required");
         }
     }
 }
@@ -183,6 +183,16 @@ mod tests {
         query: String,
         #[serde(default)]
         database: Option<String>,
+    }
+
+    /// Fixture whose field order is not alphabetical, `database` in the middle.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct OrderFixture {
+        zeta: String,
+        #[serde(default)]
+        database: Option<String>,
+        alpha: String,
+        beta: String,
     }
 
     #[test]
@@ -282,5 +292,30 @@ mod tests {
                 "pinned schema must drop `database` from required: {required:?}"
             );
         }
+    }
+
+    #[test]
+    fn properties_follow_field_order_pinned_and_unpinned() {
+        let keys = |pinned| {
+            build::<OrderFixture>(pinned)
+                .get("properties")
+                .and_then(Value::as_object)
+                .expect("properties survive generation")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(keys(false), ["zeta", "database", "alpha", "beta"]);
+        assert_eq!(keys(true), ["zeta", "alpha", "beta"]);
+    }
+
+    #[test]
+    fn root_keywords_follow_schemars_order() {
+        let schema = build::<OrderFixture>(false);
+
+        let keys = schema.keys().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(keys, ["type", "properties", "required"]);
     }
 }

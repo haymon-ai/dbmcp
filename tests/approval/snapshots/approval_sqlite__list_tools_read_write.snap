@@ -8,6 +8,7 @@ expression: tools
     "title": "Drop Table",
     "description": "Drop a table from the database.\n\n<usecase>\nUse when:\n- Removing a table that is no longer needed\n- Cleaning up test or temporary tables\n</usecase>\n\n<examples>\n✓ \"Drop the temp_logs table\" → dropTable(table=\"temp_logs\")\n✗ \"Delete rows from a table\" → use writeQuery with DELETE\n</examples>\n\n<safety>\nIMPORTANT: This permanently deletes the table and ALL its data. This action cannot be undone.\n</safety>\n\n<what_it_returns>\nA confirmation message with the dropped table name.\n</what_it_returns>",
     "inputSchema": {
+      "type": "object",
       "properties": {
         "table": {
           "description": "Name of the table to drop. Must be non-empty.",
@@ -16,10 +17,10 @@ expression: tools
       },
       "required": [
         "table"
-      ],
-      "type": "object"
+      ]
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
         "message": {
           "description": "Description of the completed operation.",
@@ -28,8 +29,7 @@ expression: tools
       },
       "required": [
         "message"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": false,
@@ -43,6 +43,7 @@ expression: tools
     "title": "Explain Query",
     "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables with `detailed: true`\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explainQuery\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
     "inputSchema": {
+      "type": "object",
       "properties": {
         "query": {
           "description": "The SQL query to explain.",
@@ -51,11 +52,23 @@ expression: tools
       },
       "required": [
         "query"
-      ],
-      "type": "object"
+      ]
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
+        },
         "hint": {
           "description": "How to fetch less data; present only when `truncated` is `true`.",
           "type": [
@@ -63,32 +76,19 @@ expression: tools
             "null"
           ]
         },
-        "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.",
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "type": "array"
-        },
         "rowsOmitted": {
           "description": "Rows the response cap dropped that no cursor can fetch again.",
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
-        },
-        "truncated": {
-          "description": "Present and `true` when a character cap cut a value or dropped rows.",
-          "type": "boolean"
+          ],
+          "format": "uint64",
+          "minimum": 0
         }
       },
       "required": [
         "rows"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -102,49 +102,50 @@ expression: tools
     "title": "List Tables",
     "description": "List tables in the connected database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`).\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in this database?\" → listTables()\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"main\", \"kind\": \"TABLE\", ...}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
+      "type": "object",
       "properties": {
         "cursor": {
-          "default": null,
           "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
           "type": [
             "string",
             "null"
-          ]
-        },
-        "detailed": {
-          "default": false,
-          "description": "When `true`, each returned entry is a full metadata object (columns,\nconstraints, indexes, triggers); when `false` or omitted, each entry\nis the bare table-name string.",
-          "type": "boolean"
+          ],
+          "default": null
         },
         "search": {
-          "default": null,
           "description": "Optional case-insensitive filter on table names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
+        },
+        "detailed": {
+          "description": "When `true`, each returned entry is a full metadata object (columns,\nconstraints, indexes, triggers); when `false` or omitted, each entry\nis the bare table-name string.",
+          "type": "boolean",
+          "default": false
         }
-      },
-      "type": "object"
+      }
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
         "entries": {
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
+              "type": "array",
               "items": {
                 "type": "string"
-              },
-              "type": "array"
+              }
             },
             {
-              "additionalProperties": true,
               "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object"
+              "type": "object",
+              "additionalProperties": true
             }
-          ],
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+          ]
         },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
@@ -153,8 +154,7 @@ expression: tools
       },
       "required": [
         "entries"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -168,49 +168,50 @@ expression: tools
     "title": "List Triggers",
     "description": "List triggers in the connected SQLite database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Auditing trigger coverage across a database (brief mode, default).\n- Searching for a trigger by partial name (pass `search`).\n- Inspecting a trigger's table and full `CREATE TRIGGER` text before reasoning about side-effects (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `sqlite_schema`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on trigger names via `LIKE` (SQLite's `LIKE` is ASCII-case-insensitive by default). `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by trigger name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What triggers are in this database?\" → listTriggers()\n✓ \"Find the audit triggers\" → listTriggers(search=\"audit\")\n✓ \"What does orders_audit_after_insert do?\" → listTriggers(search=\"orders_audit_after_insert\", detailed=true)\n✗ \"Show me a trigger's body\" → use detailed mode; the `definition` field carries the full `CREATE TRIGGER` text\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of trigger-name strings, e.g. `[\"customers_audit_after_insert\", \"orders_audit_after_insert\"]`.\nDetailed mode: a JSON object keyed by trigger name; each value carries exactly three fields — `schema` (always `\"main\"`), `table` (`sqlite_schema.tbl_name` — may be a view name for `INSTEAD OF` triggers), and `definition` (the original `CREATE TRIGGER` text from `sqlite_schema.sql`, byte-for-byte). Internal `sqlite_*` triggers are excluded.\nThe detailed payload deliberately diverges from the Postgres and MySQL/MariaDB `listTriggers` detailed payloads — `timing`, `events`, `activationLevel`, `status`, `functionName`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`, and `created` are absent. SQLite's catalogue does not expose those concepts as columns, and this tool deliberately avoids parsing the stored DDL to derive them; clients that need the timing or event keyword can read it off the prefix of `definition`.\nTriggers whose stored `sqlite_schema.sql` is `NULL` (rare; produced by extension-generated rows or hand-edited catalogues) are silently omitted from detailed mode but still listed by name in brief mode.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
     "inputSchema": {
+      "type": "object",
       "properties": {
         "cursor": {
-          "default": null,
           "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
           "type": [
             "string",
             "null"
-          ]
-        },
-        "detailed": {
-          "default": false,
-          "description": "When `true`, each returned entry is a full metadata object (schema,\ntable, definition); when `false` or omitted, each entry is the bare\ntrigger-name string.",
-          "type": "boolean"
+          ],
+          "default": null
         },
         "search": {
-          "default": null,
           "description": "Optional case-insensitive filter on trigger names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
+        },
+        "detailed": {
+          "description": "When `true`, each returned entry is a full metadata object (schema,\ntable, definition); when `false` or omitted, each entry is the bare\ntrigger-name string.",
+          "type": "boolean",
+          "default": false
         }
-      },
-      "type": "object"
+      }
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
         "entries": {
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
+              "type": "array",
               "items": {
                 "type": "string"
-              },
-              "type": "array"
+              }
             },
             {
-              "additionalProperties": true,
               "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object"
+              "type": "object",
+              "additionalProperties": true
             }
-          ],
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+          ]
         },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
@@ -219,8 +220,7 @@ expression: tools
       },
       "required": [
         "entries"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -234,27 +234,28 @@ expression: tools
     "title": "List Views",
     "description": "List all views in the connected SQLite database.\n\n<usecase>\nUse when:\n- Exploring what views exist in the database alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are available\n</usecase>\n\n<examples>\n✓ \"What views are in this database?\"\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use listTables with `detailed: true` instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
     "inputSchema": {
-      "properties": {},
-      "type": "object"
+      "type": "object",
+      "properties": {}
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
         "entries": {
+          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
           "anyOf": [
             {
               "description": "Brief mode: sorted array of bare entity-name strings.",
+              "type": "array",
               "items": {
                 "type": "string"
-              },
-              "type": "array"
+              }
             },
             {
-              "additionalProperties": true,
               "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object"
+              "type": "object",
+              "additionalProperties": true
             }
-          ],
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag."
+          ]
         },
         "nextCursor": {
           "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
@@ -263,8 +264,7 @@ expression: tools
       },
       "required": [
         "entries"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -278,37 +278,54 @@ expression: tools
     "title": "Read Query",
     "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass `detailed: true` for columns)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
     "inputSchema": {
+      "type": "object",
       "properties": {
-        "cursor": {
-          "default": null,
-          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.\nIgnored for `EXPLAIN` statements.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "query": {
           "description": "The SQL query to execute.",
           "type": "string"
         },
+        "cursor": {
+          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.\nIgnored for `EXPLAIN` statements.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "timeout": {
-          "default": null,
           "description": "Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.",
-          "format": "uint64",
-          "minimum": 1,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "minimum": 1,
+          "default": null
         }
       },
       "required": [
         "query"
-      ],
-      "type": "object"
+      ]
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
+        "rows": {
+          "description": "Result rows, each a JSON object keyed by a column name.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "nextCursor": {
+          "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
+        },
         "hint": {
           "description": "How to fetch less data; present only when `truncated` is `true`.",
           "type": [
@@ -316,36 +333,19 @@ expression: tools
             "null"
           ]
         },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final\npage, when the result fits in one page, or when the statement is a\nnon-`SELECT` kind that does not paginate (e.g. `SHOW`, `EXPLAIN`).",
-          "type": "string"
-        },
-        "rows": {
-          "description": "Result rows, each a JSON object keyed by a column name.",
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "type": "array"
-        },
         "rowsOmitted": {
           "description": "Rows the response cap dropped that no cursor can fetch again.",
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
-        },
-        "truncated": {
-          "description": "Present and `true` when a character cap cut a value or dropped rows.",
-          "type": "boolean"
+          ],
+          "format": "uint64",
+          "minimum": 0
         }
       },
       "required": [
         "rows"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": true,
@@ -359,6 +359,7 @@ expression: tools
     "title": "Write Query",
     "description": "Execute a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP).\n\n<usecase>\nUse when:\n- Inserting, updating, or deleting rows\n- Creating or altering tables, indexes, views, or other schema objects\n- Any data modification operation\n</usecase>\n\n<when_not_to_use>\n- Read-only queries (SELECT) → use readQuery\n- Query performance analysis → use explainQuery\n</when_not_to_use>\n\n<examples>\n✓ \"INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')\"\n✓ \"UPDATE orders SET status = 'shipped' WHERE id = 42\"\n✓ \"CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT)\"\n✗ \"SELECT * FROM users\" → use readQuery\n</examples>\n\n<what_it_returns>\nAn object with:\n- `rows`: rows returned by a `RETURNING` clause, each keyed by column name; empty otherwise.\n- `rowsAffected`: rows inserted, updated, or deleted. `0` for schema changes.\n- `lastInsertId`: the rowid of the last row inserted by an `INSERT`/`REPLACE`. Absent after other statements; use `RETURNING` for `WITHOUT ROWID` tables and upserts.\n\nNo follow-up `SELECT` is needed to confirm a write.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
     "inputSchema": {
+      "type": "object",
       "properties": {
         "query": {
           "description": "The SQL query to execute.",
@@ -367,11 +368,38 @@ expression: tools
       },
       "required": [
         "query"
-      ],
-      "type": "object"
+      ]
     },
     "outputSchema": {
+      "type": "object",
       "properties": {
+        "rows": {
+          "description": "Rows returned by the statement (e.g. `RETURNING`), each a JSON object keyed by a column name.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "rowsAffected": {
+          "description": "Number of rows the statement inserted, updated, or deleted; `0` for schema changes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lastInsertId": {
+          "description": "Id generated by an `INSERT`; absent when none was generated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "Present and `true` when a character cap cut a value or dropped rows.",
+          "type": "boolean"
+        },
         "hint": {
           "description": "How to fetch less data; present only when `truncated` is `true`.",
           "type": [
@@ -379,48 +407,20 @@ expression: tools
             "null"
           ]
         },
-        "lastInsertId": {
-          "description": "Id generated by an `INSERT`; absent when none was generated.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "rows": {
-          "description": "Rows returned by the statement (e.g. `RETURNING`), each a JSON object keyed by a column name.",
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "rowsAffected": {
-          "description": "Number of rows the statement inserted, updated, or deleted; `0` for schema changes.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "rowsOmitted": {
           "description": "Rows the response cap dropped that no cursor can fetch again.",
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
-        },
-        "truncated": {
-          "description": "Present and `true` when a character cap cut a value or dropped rows.",
-          "type": "boolean"
+          ],
+          "format": "uint64",
+          "minimum": 0
         }
       },
       "required": [
         "rows",
         "rowsAffected"
-      ],
-      "type": "object"
+      ]
     },
     "annotations": {
       "readOnlyHint": false,
