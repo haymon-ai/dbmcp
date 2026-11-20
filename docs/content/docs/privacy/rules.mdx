@@ -78,7 +78,7 @@ Rules name **table** columns. A query that reads through a view gets the rules o
 
 ## How values are rewritten
 
-Every non-null value of a ruled output column is rendered as text (JSON values included, keys and all) and replaced whole, so the result is always a string:
+Every non-null value of a ruled output column is rendered as text (JSON values included, keys and all) and replaced whole, so the result is always a string. JSON is rendered with its keys sorted first, so a `hash` or `mask` result does not depend on key order:
 
 | Operator | Result for `jane.doe@example.com` |
 |----------|-----------------------------------|
