@@ -105,8 +105,8 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 Role::Window => "a window",
             },
             view: match &reference.origin {
-                Origin::Query => String::new(),
-                Origin::View(view) => format!(" in view \"{}\"", relation_name(view)),
+                Origin::Query => None,
+                Origin::View(view) => Some(relation_name(view)),
             },
         });
     }

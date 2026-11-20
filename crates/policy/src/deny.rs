@@ -92,15 +92,7 @@ pub(crate) fn written(dialect: Dialect, name: &WrittenName) -> Option<String> {
         return None;
     }
     let parts: Vec<&str> = name.parts.iter().map(|part| part.value.as_str()).collect();
-    let mut rendered = String::new();
-    for c in parts.join(".").chars() {
-        if c.is_control() {
-            rendered.extend(c.escape_default());
-        } else {
-            rendered.push(c);
-        }
-    }
-    Some(rendered)
+    Some(parts.join("."))
 }
 
 /// Reports whether the deny tables name `schema.name` on `dialect`.

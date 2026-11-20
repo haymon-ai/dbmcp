@@ -13,6 +13,8 @@ pub const CATALOG_ROUNDS: usize = 16;
 ///
 /// Messages start with `column policy:` and name only the gate and catalog
 /// identifiers (columns, roles, functions, relations, views), never a rule.
+/// Identifiers render as Rust string literals (`{:?}`): quoted, with control,
+/// invisible, and bidirectional characters, quotes, and backslashes escaped.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum Rejection {
     /// Lineage analysis failed, so the statement's columns cannot be checked.
@@ -20,14 +22,14 @@ pub enum Rejection {
     Lineage(LineageClass),
 
     /// A function missing from the dialect's built-in table.
-    #[error("column policy: function \"{name}\" is not a known built-in")]
+    #[error("column policy: function {name:?} is not a known built-in")]
     UnknownFunction {
         /// The function name, case-folded per dialect.
         name: String,
     },
 
     /// A relation that exposes values outside column policy.
-    #[error("column policy: relation \"{relation}\" is denied")]
+    #[error("column policy: relation {relation:?} is denied")]
     DeniedRelation {
         /// The relation as written, or as `schema.name` when resolved.
         relation: String,
@@ -38,28 +40,31 @@ pub enum Rejection {
     DeniedStatement,
 
     /// `EXPLAIN` of a statement touching a ruled relation.
-    #[error("column policy: EXPLAIN touches ruled relation \"{relation}\"")]
+    #[error("column policy: EXPLAIN touches ruled relation {relation:?}")]
     Explain {
         /// The ruled relation, as `schema.name`.
         relation: String,
     },
 
     /// `CREATE INDEX` on a relation with a ruled column.
-    #[error("column policy: CREATE INDEX on ruled relation \"{relation}\" is denied")]
+    #[error("column policy: CREATE INDEX on ruled relation {relation:?} is denied")]
     RuledIndex {
         /// The ruled relation, as `schema.name`.
         relation: String,
     },
 
     /// A ruled column used outside the output.
-    #[error("column policy: column \"{column}\" (ruled) used in {role}{view}")]
+    #[error(
+        "column policy: column {column:?} (ruled) used in {role}{}",
+        view.as_ref().map(|view| format!(" in view {view:?}")).unwrap_or_default()
+    )]
     Reference {
         /// The column, as `schema.table.column`.
         column: String,
         /// The clause, as written in SQL.
         role: &'static str,
-        /// ` in view "schema.name"` when the use sits in a view body, else empty.
-        view: String,
+        /// The view, as `schema.name`, when the use sits in a view body.
+        view: Option<String>,
     },
 
     /// An output column whose sources carry different rules.
@@ -77,7 +82,7 @@ pub enum Rejection {
     CatalogRounds,
 
     /// A write copying ruled values into a column not ruled the same way.
-    #[error("column policy: writing column \"{column}\" would weaken the rules of its source columns")]
+    #[error("column policy: writing column {column:?} would weaken the rules of its source columns")]
     Laundering {
         /// The target column, as `schema.table.column`.
         column: String,
@@ -87,7 +92,7 @@ pub enum Rejection {
     ///
     /// Names only the position: the column's name is expression text.
     #[error(
-        "column policy: created column {position} of \"{relation}\" carries ruled values; alias the column so a rule can name it"
+        "column policy: created column {position} of {relation:?} carries ruled values; alias the column so a rule can name it"
     )]
     Unnamed {
         /// The created relation, as `schema.name`.
@@ -99,7 +104,7 @@ pub enum Rejection {
     /// A bare create target that names another relation than the one created.
     ///
     /// The rules were checked against the relation the name resolved to.
-    #[error("column policy: create target \"{relation}\" resolves to another relation than it creates")]
+    #[error("column policy: create target {relation:?} resolves to another relation than it creates")]
     ShadowedTarget {
         /// The relation the name resolved to, as `schema.name`.
         relation: String,

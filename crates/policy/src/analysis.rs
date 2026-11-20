@@ -346,7 +346,7 @@ mod tests {
             (
                 DatabaseBackend::Postgres,
                 "SELECT * FROM \"x\ny\".pg_stats",
-                "x\\ny.pg_stats",
+                "x\ny.pg_stats",
             ),
             (
                 DatabaseBackend::Sqlite,
