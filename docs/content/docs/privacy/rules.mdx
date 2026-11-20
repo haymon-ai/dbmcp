@@ -140,23 +140,29 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
   - SQLite: `sqlite_stat1` to `sqlite_stat4`, `sqlite_dbpage`, and **every virtual table**, including full-text search (FTS) tables. FTS cannot be queried while rules exist.
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
-- **`EXPLAIN` of ruled tables**: `EXPLAIN` written through `readQuery`, and `explainQuery` with `analyze`, are refused when the statement touches a table with a ruled column. `explainQuery` without `analyze` returns a pruned plan instead (see [Plans of ruled tables](#plans-of-ruled-tables)). `CREATE INDEX` on a ruled table is refused too.
+- **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explainQuery` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
 - **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
 
 Output of `SHOW`, `DESCRIBE`, and `EXPLAIN` that is not refused gets global detection, as without rules.
 
 ## Plans of ruled tables
 
-`explainQuery` without `analyze` returns the plan of a statement that touches a ruled table, pruned to value-free keys: the plan structure, table and index names, access types, and row and cost estimates. Conditions, sort and group keys, and every other expression are dropped, since they can print literal values. Plans keep each engine's native shape; no flag marks what was dropped. Plans of statements that touch no ruled table are returned unchanged.
+The plan of a statement that touches a ruled table is pruned to value-free keys: the plan structure, table and index names, access types, and row and cost estimates. Conditions, sort and group keys, and every other expression are dropped, since they can print literal values. Plans keep each engine's native shape; no flag marks what was dropped. Plans of statements that touch no ruled table are returned unchanged.
 
-The statement inside must pass every other check, so a ruled column in a condition is still refused (see [Where a ruled column may appear](#where-a-ruled-column-may-appear)). Two forms are refused outright:
+Only these forms are pruned, whether `explainQuery` builds them or they are written through `readQuery`:
+
+- PostgreSQL: `EXPLAIN (FORMAT JSON) …`, with no other option.
+- MySQL and MariaDB: `EXPLAIN FORMAT=JSON …`.
+- SQLite: `EXPLAIN QUERY PLAN …`.
+
+The statement inside must pass every other check, so a ruled column in a condition is still refused (see [Where a ruled column may appear](#where-a-ruled-column-may-appear)). Every other form on a ruled table is refused:
 
 ```text
-column policy: EXPLAIN ANALYZE on ruled relation "public.users" is denied; actual row counts can reveal values, drop analyze
+column policy: EXPLAIN ANALYZE on ruled relation "public.users" is denied; actual row counts can reveal values, explain without ANALYZE
 column policy: EXPLAIN touches ruled relation "public.users"; use explainQuery
 ```
 
-The first answers `explainQuery` with `analyze`: actual row counts can reveal values. The second answers `EXPLAIN` written through `readQuery`, and an `EXPLAIN` nested inside `explainQuery`. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
+The first answers any `ANALYZE`, `explainQuery`'s `analyze` included: actual row counts can reveal values. The second answers every other form, such as a text plan, `VERBOSE`, or any other PostgreSQL option. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
 
 Estimates are kept, and they still say something about ruled columns:
 
@@ -165,7 +171,7 @@ Estimates are kept, and they still say something about ruled columns:
 - **Yes/no answers about unruled conditions.** MySQL and MariaDB `message` texts (such as `Impossible WHERE`) and the `const_row_not_found`, `unique_row_not_found`, and `impossible_on_condition` flags tell whether a condition on unruled columns matches.
 - **SQLite skip-scan.** After `ANALYZE`, a skip-scan in the `detail` text hints that a column has few distinct values.
 
-On MySQL, `explainQuery` pins `explain_json_format_version` to `1` for its session, since version 2 (MySQL 9.x) prints the statement text. The setting is not restored, so on MySQL 9.5 and later an `EXPLAIN FORMAT=JSON` of an unruled table through `readQuery` can return version 1 or 2, depending on which pooled connection it runs on. MySQL 8.0 has no such setting and always uses version 1. MariaDB is not affected.
+On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for its session, since version 2 (the MySQL 9.5 default) prints the statement text; the server default is restored afterwards. Plans of unruled tables keep the server's version. MySQL before 8.3 has no such setting and always uses version 1. MariaDB is not affected.
 
 ## Writes
 
