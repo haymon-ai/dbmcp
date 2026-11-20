@@ -63,8 +63,8 @@ impl SqliteHandler {
     /// Returns the execution plan for a query.
     ///
     /// Always uses `EXPLAIN QUERY PLAN` — `SQLite` does not support
-    /// `EXPLAIN ANALYZE`. With column rules, explaining a statement that
-    /// touches a ruled relation is rejected.
+    /// `EXPLAIN ANALYZE`. With column rules, the plan of a statement
+    /// touching a ruled relation is pruned to value-free keys.
     ///
     /// # Errors
     ///
@@ -85,7 +85,7 @@ impl SqliteHandler {
             self.enforce(
                 policy,
                 &explain_sql,
-                Access::Read,
+                Access::Explain,
                 self.config.query_timeout,
                 &mut window,
             )
