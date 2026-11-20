@@ -419,6 +419,30 @@ fn analyzed_schema_show_forms_pass() {
 }
 
 #[test]
+fn show_where_filters_reject() {
+    let cases = [
+        (
+            "SHOW DATABASES WHERE (SELECT ssn FROM users WHERE id = 1) LIKE '123%'",
+            Dialect::Mysql,
+        ),
+        (
+            "SHOW TABLES WHERE Tables_in_shop IN (SELECT ssn FROM users)",
+            Dialect::Mariadb,
+        ),
+        ("SHOW VARIABLES WHERE Variable_name = 'version'", Dialect::Mysql),
+    ];
+    for (sql, dialect) in cases {
+        assert!(
+            matches!(
+                analyze(sql, dialect, &Catalog::new()),
+                Err(LineageError::Unsupported(_))
+            ),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn explain_of_show_unwraps_to_the_show_deny() {
     let mut lineage = select(vec![]);
     lineage.statement = StatementKind::Explain(Box::new(StatementKind::Show(Show::Warnings)));

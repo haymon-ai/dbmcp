@@ -1695,11 +1695,48 @@ fn show_quoted_words_are_not_keywords() {
         ("SHOW `warnings`", Dialect::Mysql),
         ("SHOW \"ALL\"", Dialect::Postgres),
         ("SHOW `ſtatus`", Dialect::Mysql),
-        ("SHOW \"WARNINGS\"", Dialect::Mysql),
     ];
     for (sql, dialect) in cases {
         let lineage = on(sql, *dialect).expect(sql);
         assert_eq!(lineage.statement, show(Show::Unsupported), "{sql}");
+    }
+    assert_unsupported("SHOW \"WARNINGS\"", Dialect::Mysql, &fixture());
+}
+
+#[test]
+fn show_filter_expressions_are_unsupported() {
+    let fixture = create_fixture();
+    let cases: &[(&str, Dialect)] = &[
+        ("SHOW DATABASES WHERE `Database` = 'shop'", Dialect::Mysql),
+        (
+            "SHOW TABLES WHERE (SELECT ssn FROM users LIMIT 1) LIKE '1%'",
+            Dialect::Mysql,
+        ),
+        (
+            "SHOW FULL COLUMNS FROM users WHERE Field IN (SELECT ssn FROM users)",
+            Dialect::Mariadb,
+        ),
+        ("SHOW TABLE STATUS where Name <=> 'users'", Dialect::Mysql),
+        (
+            "SHOW GLOBAL VARIABLES /* c */ WHERE Variable_name IN ('a')",
+            Dialect::Mysql,
+        ),
+        ("EXPLAIN SHOW STATUS WHERE 1", Dialect::Mysql),
+        ("SHOW TABLE STATUS LIKE (SELECT ssn FROM users)", Dialect::Mysql),
+        ("SHOW OPEN TABLES LIKE N'u%'", Dialect::Mysql),
+    ];
+    for (sql, dialect) in cases {
+        assert_unsupported(sql, *dialect, &fixture);
+    }
+    let literal: &[(&str, Show)] = &[
+        ("SHOW TABLES LIKE 'u%'", Show::Tables),
+        ("SHOW VARIABLES LIKE \"max%\"", Show::Variables),
+        ("SHOW COLUMNS FROM `where` LIKE 'a'", Show::Columns),
+        ("SHOW TABLE STATUS FROM shop", Show::TableStatus),
+    ];
+    for (sql, form) in literal {
+        let lineage = on(sql, Dialect::Mysql).expect(sql);
+        assert_eq!(lineage.statement, show(*form), "{sql}");
     }
 }
 

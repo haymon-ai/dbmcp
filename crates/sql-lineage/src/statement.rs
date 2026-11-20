@@ -3,7 +3,8 @@
 //! A query resolves to its output columns. Relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`)
 //! records its target and nothing else. `SHOW` records its [`Show`] form
-//! and `DESCRIBE` nothing; `EXPLAIN` carries its inner statement's lineage.
+//! (a `WHERE` or non-literal `LIKE` filter is unsupported) and `DESCRIBE`
+//! nothing; `EXPLAIN` carries its inner statement's lineage.
 //!
 //! DDL that evaluates expressions or reads another relation's rows is
 //! rejected: index expressions, partial-index `WHERE`, column `DEFAULT`,
@@ -36,7 +37,7 @@ use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{RelationId, RelationKind, StatementKind, TargetColumn};
 use crate::resolve::{Ctx, idents, unsupported};
-use crate::show::Show;
+use crate::show::{Show, computed_filter};
 
 /// What a statement resolves to, before output positions are numbered.
 #[derive(Debug)]
@@ -120,6 +121,7 @@ impl Ctx<'_> {
                 };
                 Ok(Analysis::bare(StatementKind::Drop, target))
             }
+            Statement::ShowVariable { variable } if variable.is_empty() => Err(unsupported("empty SHOW")),
             Statement::ShowVariable { .. }
             | Statement::ShowFunctions { .. }
             | Statement::ShowStatus { .. }
@@ -134,10 +136,15 @@ impl Ctx<'_> {
             | Statement::ShowObjects(_)
             | Statement::ShowTables { .. }
             | Statement::ShowViews { .. }
-            | Statement::ShowCollation { .. } => Ok(Analysis::bare(
-                StatementKind::Show(Show::classify(self.sql, self.dialect)),
-                None,
-            )),
+            | Statement::ShowCollation { .. } => {
+                if computed_filter(self.sql, self.dialect) {
+                    return Err(unsupported("SHOW filter expression"));
+                }
+                Ok(Analysis::bare(
+                    StatementKind::Show(Show::classify(self.sql, self.dialect)),
+                    None,
+                ))
+            }
             Statement::ExplainTable { .. } => Ok(Analysis::bare(StatementKind::Describe, None)),
             Statement::Explain { statement, .. } => {
                 let mut inner = self.statement(statement)?;
