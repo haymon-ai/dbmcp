@@ -279,6 +279,7 @@ fn denied_relations_reject_per_backend() {
         (Dialect::Mysql, "performance_schema", "threads"),
         (Dialect::Mysql, "information_schema", "INNODB_TRX"),
         (Dialect::Mysql, "information_schema", "INNODB_LOCKS"),
+        (Dialect::Mariadb, "information_schema", "SLAVE_STATUS"),
         (Dialect::Mysql, "performance_schema", "data_locks"),
         (Dialect::Mysql, "performance_schema", "prepared_statements_instances"),
         (Dialect::Mysql, "performance_schema", "user_variables_by_thread"),

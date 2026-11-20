@@ -53,6 +53,7 @@ const MYSQL: &[(&str, Name)] = &[
     ("performance_schema", Name::Is("user_variables_by_thread")),
     // Replication errors quote row values.
     ("performance_schema", Name::Prefix("replication_applier_status")),
+    ("information_schema", Name::Is("slave_status")),
     ("sys", Name::Contains("statement")),
     ("sys", Name::Contains("processlist")),
     ("sys", Name::Contains("session")),
