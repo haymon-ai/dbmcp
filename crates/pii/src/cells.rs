@@ -7,7 +7,7 @@
 //! - `Action`: every non-null value is replaced whole by the rule's operator,
 //!   labelled with its entity. A string is rewritten from its text, anything
 //!   else (numbers, booleans, `json`/`jsonb`, keys included) from its compact
-//!   JSON text. `NULL` stays `null`.
+//!   JSON text, object keys sorted. `NULL` stays `null`.
 //!
 //! Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not positional; redact them
 //! with no plan, which runs global detection on every cell.
@@ -230,10 +230,18 @@ impl Redactor {
 }
 
 /// Rewrites a non-null `value` whole; returns `false` for `NULL`.
+///
+/// Objects and arrays render with their keys sorted at every depth: the
+/// token stands for the content, and JSON key order is not content.
 fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool {
     let text = match &mut *value {
         Value::Null => return false,
         Value::String(text) => std::mem::take(text),
+        Value::Object(_) | Value::Array(_) => {
+            let mut sorted = value.clone();
+            sorted.sort_all_objects();
+            sorted.to_string()
+        }
         other => other.to_string(),
     };
     *value = Value::String(operator.apply(entity, &text).into_owned());
@@ -462,6 +470,45 @@ mod tests {
             values[0].as_str().is_some_and(|t| t.starts_with("<EMAIL_ADDRESS_")),
             "{values:?}"
         );
+    }
+
+    /// `{"b": 1, "a": {"d": 2, "c": 3}}` with keys inserted in `order`.
+    fn nested(order: [&str; 2], inner: [&str; 2]) -> Value {
+        let mut a = serde_json::Map::new();
+        for key in inner {
+            a.insert(key.into(), json!(if key == "c" { 3 } else { 2 }));
+        }
+        let mut object = serde_json::Map::new();
+        for key in order {
+            object.insert(key.into(), if key == "a" { Value::Object(a.clone()) } else { json!(1) });
+        }
+        Value::Object(object)
+    }
+
+    const SORTED: &str = r#"{"a":{"c":3,"d":2},"b":1}"#;
+
+    #[test]
+    fn a_ruled_json_cell_hashes_its_sorted_key_text() {
+        let redactor = keyed(PiiOperator::Hash);
+        let hashed = Position::Action(PiiOperator::Hash, Entity::UsSsn);
+        let values = redact(
+            &redactor,
+            vec![hashed, hashed, hashed],
+            vec![
+                nested(["b", "a"], ["d", "c"]),
+                nested(["a", "b"], ["c", "d"]),
+                json!(SORTED),
+            ],
+        );
+        assert_eq!(values[0], values[1]);
+        assert_eq!(values[0], values[2]);
+    }
+
+    #[test]
+    fn a_ruled_json_cell_masks_to_its_sorted_key_length() {
+        let redactor = keyed(PiiOperator::Hash);
+        let values = redact(&redactor, vec![MASKED], vec![nested(["b", "a"], ["d", "c"])]);
+        assert_eq!(values[0], json!("*".repeat(SORTED.len())));
     }
 
     #[tokio::test]

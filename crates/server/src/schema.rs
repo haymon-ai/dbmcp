@@ -84,8 +84,10 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
 /// root `database` property and remove it from the `required` array.
+/// Serializes through schemars' `Serialize`, which emits root keywords in
+/// its fixed order.
 fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
-    let value = SchemaSettings::draft2020_12()
+    let schema = SchemaSettings::draft2020_12()
         .with(|s| {
             s.inline_subschemas = true;
             s.meta_schema = None;
@@ -97,8 +99,8 @@ fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
             }
         })
         .into_generator()
-        .into_root_schema_for::<T>()
-        .to_value();
+        .into_root_schema_for::<T>();
+    let value = serde_json::to_value(&schema).expect("schema serializes to JSON");
 
     let Value::Object(object) = value else {
         panic!("schema for `{}` did not produce a JSON object", type_name::<T>());

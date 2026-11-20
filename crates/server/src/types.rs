@@ -85,8 +85,12 @@ impl ListEntriesResponse {
     }
 
     /// Builds a detailed-mode response from a page of name → metadata entries.
+    ///
+    /// Sorts the keys of every metadata value at every depth, so detailed
+    /// output is alphabetical on every backend. Entry order is kept.
     #[must_use]
-    pub fn detailed(entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+    pub fn detailed(mut entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        entries.values_mut().for_each(Value::sort_all_objects);
         Self {
             entries: ListEntries::Detailed(entries),
             next_cursor,
@@ -315,6 +319,23 @@ mod tests {
         Truncation, WriteQueryResponse, resolve_timeout,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn detailed_sorts_value_keys_and_keeps_entry_order() {
+        let mut inner = serde_json::Map::new();
+        inner.insert("y".into(), json!(2));
+        inner.insert("b".into(), json!(3));
+        let mut value = serde_json::Map::new();
+        value.insert("z".into(), json!(1));
+        value.insert("a".into(), Value::Object(inner));
+        let mut entries = IndexMap::new();
+        entries.insert("users".to_string(), Value::Object(value.clone()));
+        entries.insert("orders".to_string(), Value::Object(value));
+
+        let text = serde_json::to_string(&ListEntriesResponse::detailed(entries, None)).expect("serializes");
+        let sorted = r#"{"a":{"b":3,"y":2},"z":1}"#;
+        assert_eq!(text, format!(r#"{{"entries":{{"users":{sorted},"orders":{sorted}}}}}"#));
+    }
 
     #[test]
     fn list_triggers_request_defaults_to_brief_mode_without_search() {
