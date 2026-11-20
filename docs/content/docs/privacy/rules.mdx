@@ -140,10 +140,32 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
   - SQLite: `sqlite_stat1` to `sqlite_stat4`, `sqlite_dbpage`, and **every virtual table**, including full-text search (FTS) tables. FTS cannot be queried while rules exist.
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
-- **`EXPLAIN` of ruled tables**: `explainQuery`, and `EXPLAIN` through `readQuery`, are refused when the statement touches a table with a ruled column: plans can print literal values and statistics. `EXPLAIN` of other tables works as before. `CREATE INDEX` on a ruled table is refused too.
+- **`EXPLAIN` of ruled tables**: `EXPLAIN` written through `readQuery`, and `explainQuery` with `analyze`, are refused when the statement touches a table with a ruled column. `explainQuery` without `analyze` returns a pruned plan instead (see [Plans of ruled tables](#plans-of-ruled-tables)). `CREATE INDEX` on a ruled table is refused too.
 - **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
 
 Output of `SHOW`, `DESCRIBE`, and `EXPLAIN` that is not refused gets global detection, as without rules.
+
+## Plans of ruled tables
+
+`explainQuery` without `analyze` returns the plan of a statement that touches a ruled table, pruned to value-free keys: the plan structure, table and index names, access types, and row and cost estimates. Conditions, sort and group keys, and every other expression are dropped, since they can print literal values. Plans keep each engine's native shape; no flag marks what was dropped. Plans of statements that touch no ruled table are returned unchanged.
+
+The statement inside must pass every other check, so a ruled column in a condition is still refused (see [Where a ruled column may appear](#where-a-ruled-column-may-appear)). Two forms are refused outright:
+
+```text
+column policy: EXPLAIN ANALYZE on ruled relation "public.users" is denied; actual row counts can reveal values, drop analyze
+column policy: EXPLAIN touches ruled relation "public.users"; use explainQuery
+```
+
+The first answers `explainQuery` with `analyze`: actual row counts can reveal values. The second answers `EXPLAIN` written through `readQuery`, and an `EXPLAIN` nested inside `explainQuery`. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
+
+Estimates are kept, and they still say something about ruled columns:
+
+- **Statistics of ruled columns.** Estimates come from column statistics: PostgreSQL `Plan Width` approximates the average width of a ruled value, `Plan Rows` over `DISTINCT` approximates its number of distinct values, and so do extended statistics and index cardinality on MySQL and MariaDB.
+- **Fixed literals in the schema.** PostgreSQL row estimates reflect the selectivity of literals in row-level security policies, partial-index predicates, and rules.
+- **Yes/no answers about unruled conditions.** MySQL and MariaDB `message` texts (such as `Impossible WHERE`) and the `const_row_not_found`, `unique_row_not_found`, and `impossible_on_condition` flags tell whether a condition on unruled columns matches.
+- **SQLite skip-scan.** After `ANALYZE`, a skip-scan in the `detail` text hints that a column has few distinct values.
+
+On MySQL, `explainQuery` pins `explain_json_format_version` to `1` for its session, since version 2 (MySQL 9.x) prints the statement text. The setting is not restored, so on MySQL 9.5 and later an `EXPLAIN FORMAT=JSON` of an unruled table through `readQuery` can return version 1 or 2, depending on which pooled connection it runs on. MySQL 8.0 has no such setting and always uses version 1. MariaDB is not affected.
 
 ## Writes
 
@@ -191,6 +213,7 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds personal data.
 - **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
 - **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds. Withholding the message does not hide that an error happened.
+- **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
 - **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
 - **`mask` length.** `mask` keeps the length of the value.
 - **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
