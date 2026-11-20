@@ -230,19 +230,14 @@ impl Redactor {
 }
 
 /// Rewrites a non-null `value` whole; returns `false` for `NULL`.
-///
-/// Objects and arrays render with their keys sorted at every depth: the
-/// token stands for the content, and JSON key order is not content.
 fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool {
     let text = match &mut *value {
         Value::Null => return false,
         Value::String(text) => std::mem::take(text),
-        Value::Object(_) | Value::Array(_) => {
-            let mut sorted = value.clone();
-            sorted.sort_all_objects();
-            sorted.to_string()
+        other => {
+            other.sort_all_objects();
+            other.to_string()
         }
-        other => other.to_string(),
     };
     *value = Value::String(operator.apply(entity, &text).into_owned());
     true
@@ -472,19 +467,6 @@ mod tests {
         );
     }
 
-    /// `{"b": 1, "a": {"d": 2, "c": 3}}` with keys inserted in `order`.
-    fn nested(order: [&str; 2], inner: [&str; 2]) -> Value {
-        let mut a = serde_json::Map::new();
-        for key in inner {
-            a.insert(key.into(), json!(if key == "c" { 3 } else { 2 }));
-        }
-        let mut object = serde_json::Map::new();
-        for key in order {
-            object.insert(key.into(), if key == "a" { Value::Object(a.clone()) } else { json!(1) });
-        }
-        Value::Object(object)
-    }
-
     const SORTED: &str = r#"{"a":{"c":3,"d":2},"b":1}"#;
 
     #[test]
@@ -495,8 +477,8 @@ mod tests {
             &redactor,
             vec![hashed, hashed, hashed],
             vec![
-                nested(["b", "a"], ["d", "c"]),
-                nested(["a", "b"], ["c", "d"]),
+                json!({"b": 1, "a": {"d": 2, "c": 3}}),
+                json!({"a": {"c": 3, "d": 2}, "b": 1}),
                 json!(SORTED),
             ],
         );
@@ -506,8 +488,8 @@ mod tests {
 
     #[test]
     fn a_ruled_json_cell_masks_to_its_sorted_key_length() {
-        let redactor = keyed(PiiOperator::Hash);
-        let values = redact(&redactor, vec![MASKED], vec![nested(["b", "a"], ["d", "c"])]);
+        let redactor = keyed(PiiOperator::Mask);
+        let values = redact(&redactor, vec![MASKED], vec![json!({"b": 1, "a": {"d": 2, "c": 3}})]);
         assert_eq!(values[0], json!("*".repeat(SORTED.len())));
     }
 

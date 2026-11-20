@@ -5460,11 +5460,10 @@ fn keys(row: &Value) -> Vec<&str> {
 
 #[tokio::test]
 async fn read_query_keys_follow_select_order() {
-    let response = handler(true)
-        .read_query("SELECT 3 AS c, 1 AS a, 2 AS b".into(), Some("app".into()), None, None)
+    let rows = ruled_read(&handler(true), "SELECT 3 AS c, 1 AS a, 2 AS b")
         .await
         .expect("read");
-    assert_eq!(keys(&response.rows[0]), ["c", "a", "b"]);
+    assert_eq!(keys(&rows[0]), ["c", "a", "b"]);
 }
 
 #[tokio::test]
@@ -5473,16 +5472,10 @@ async fn json_object_comes_back_in_canonical_order() {
         eprintln!("skip: MariaDB returns JSON as text");
         return;
     }
-    let response = handler(true)
-        .read_query(
-            "SELECT JSON_OBJECT('bb', 1, 'a', 2) AS j".into(),
-            Some("app".into()),
-            None,
-            None,
-        )
+    let rows = ruled_read(&handler(true), "SELECT JSON_OBJECT('bb', 1, 'a', 2) AS j")
         .await
         .expect("read");
-    assert_eq!(keys(&response.rows[0]["j"]), ["a", "bb"]);
+    assert_eq!(keys(&rows[0]["j"]), ["a", "bb"]);
 }
 
 #[tokio::test]

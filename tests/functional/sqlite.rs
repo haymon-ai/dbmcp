@@ -2999,34 +2999,20 @@ fn keys(row: &Value) -> Vec<&str> {
 
 #[tokio::test]
 async fn read_query_keys_follow_select_order() {
-    let handler = handler(true);
-    let response = handler
-        .read_query(ReadQueryRequest {
-            query: "SELECT 3 AS c, 1 AS a, 2 AS b".into(),
-            cursor: None,
-            timeout: None,
-        })
+    let rows = ruled_read(&handler(true), "SELECT 3 AS c, 1 AS a, 2 AS b")
         .await
         .expect("read");
-    assert_eq!(keys(&response.rows[0]), ["c", "a", "b"]);
+    assert_eq!(keys(&rows[0]), ["c", "a", "b"]);
 }
 
 #[tokio::test]
 async fn write_query_returning_keys_follow_returning_order() {
-    let handler = handler(false);
-    let response = handler
+    let response = handler(false)
         .write_query(QueryRequest {
-            query: "INSERT INTO users (name, email) VALUES ('Order', 'order@test.com') RETURNING name, id, email"
-                .into(),
+            query: "UPDATE users SET name = name WHERE id = 1 RETURNING name, id, email".into(),
         })
         .await
-        .expect("insert");
-    handler
-        .write_query(QueryRequest {
-            query: "DELETE FROM users WHERE email = 'order@test.com'".into(),
-        })
-        .await
-        .expect("clean up");
+        .expect("update");
     assert_eq!(keys(&response.rows[0]), ["name", "id", "email"]);
 }
 

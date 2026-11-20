@@ -70,21 +70,15 @@ mod tests {
                 ("z".to_string(), Value::Null),
             ]
         );
-        assert_eq!(row.to_object(), json!({ "b": 1, "a": 1, "z": null }));
-    }
-
-    #[tokio::test]
-    async fn object_keys_follow_select_order() {
-        let row = fetch("", "SELECT 3 AS c, 1 AS a, 2 AS b").await;
-
-        let keys = row
+        let object = row.to_object();
+        assert_eq!(object, json!({ "b": 1, "a": 1, "z": null }));
+        let keys = object
             .as_object()
             .expect("row object")
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>();
-
-        assert_eq!(keys, ["c", "a", "b"]);
+        assert_eq!(keys, ["b", "a", "z"]);
     }
 
     #[tokio::test]

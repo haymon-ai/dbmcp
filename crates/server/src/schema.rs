@@ -84,8 +84,6 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
 /// root `database` property and remove it from the `required` array.
-/// Serializes through schemars' `Serialize`, which emits root keywords in
-/// its fixed order.
 fn build<T: JsonSchema>(pinned: bool) -> JsonObject {
     let schema = SchemaSettings::draft2020_12()
         .with(|s| {
@@ -185,7 +183,7 @@ mod tests {
         database: Option<String>,
     }
 
-    /// Fixture whose field order is not alphabetical, `database` in the middle.
+    /// Fixture with non-alphabetical field order.
     #[derive(Deserialize, Serialize, JsonSchema)]
     struct OrderFixture {
         zeta: String,
