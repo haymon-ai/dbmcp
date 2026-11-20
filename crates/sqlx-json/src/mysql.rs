@@ -6,8 +6,12 @@
 //! column type), `TIMESTAMP` to `Cell::DateTimeUtc`, and binary-collation `BLOB`
 //! and `GEOMETRY` to `Cell::Bytes`. Text-like columns, including `MySQL` 9's
 //! `VARBINARY` `information_schema` columns, decode as `Cell::Text` when
-//! valid UTF-8 and `Cell::Bytes` otherwise.
+//! valid UTF-8 and `Cell::Bytes` otherwise. `MySQL` 9's `VECTOR` decodes to a
+//! `Cell::Json` array of numbers, or `Cell::Bytes` when its bytes are not
+//! whole finite `f32` values. `MariaDB` sends `VECTOR` as plain `VARBINARY`, so
+//! it stays bytes.
 
+use serde_json::Value;
 use sqlx::mysql::MySqlRow;
 
 use crate::prelude::*;
@@ -51,6 +55,8 @@ impl DecodeCell for MySqlRow {
                 .map(Cell::Text)
                 .or_else(|| self.try_get(idx).ok().map(Cell::Bytes)),
 
+            "VECTOR" => self.try_get_unchecked::<&[u8], _>(idx).ok().map(vector),
+
             // No sqlx type accepts GEOMETRY.
             "GEOMETRY" => self.try_get_unchecked(idx).ok().map(Cell::Bytes),
 
@@ -81,4 +87,56 @@ fn text_or_bytes(row: &MySqlRow, idx: usize) -> Option<Cell> {
             Ok(text) => Cell::Text(text.to_owned()),
             Err(_) => Cell::Bytes(bytes.to_vec()),
         })
+}
+
+/// Decodes `VECTOR` bytes as little-endian `f32` values, else keeps the bytes.
+///
+/// The server stores only whole, finite `f32` values; anything else (a
+/// length that is not a multiple of 4, `NaN`, infinity) stays base64 bytes,
+/// so no value is lost or cut.
+fn vector(bytes: &[u8]) -> Cell {
+    let floats = bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    if !bytes.len().is_multiple_of(4) || floats.clone().any(|f| !f.is_finite()) {
+        return Cell::Bytes(bytes.to_vec());
+    }
+    Cell::Json(Value::Array(floats.map(Value::from).collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn le(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn vector_decodes_little_endian_floats() {
+        let Cell::Json(value) = vector(&le(&[1.5, 2.0, 3.0])) else {
+            panic!("expected a JSON array");
+        };
+        assert_eq!(value, serde_json::json!([1.5, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn empty_vector_is_an_empty_array() {
+        assert!(matches!(vector(&[]), Cell::Json(Value::Array(items)) if items.is_empty()));
+    }
+
+    #[test]
+    fn vector_with_partial_float_stays_bytes() {
+        let mut bytes = le(&[1.5]);
+        bytes.push(0);
+        assert!(matches!(vector(&bytes), Cell::Bytes(b) if b == bytes));
+    }
+
+    #[test]
+    fn vector_with_non_finite_float_stays_bytes() {
+        for value in [f32::NAN, f32::INFINITY] {
+            let bytes = le(&[1.0, value]);
+            assert!(matches!(vector(&bytes), Cell::Bytes(b) if b == bytes));
+        }
+    }
 }

@@ -18,6 +18,12 @@ use crate::{Connection, SqlError};
 /// Also caps the kill of a timed-out statement.
 pub(crate) const GRACE: Duration = Duration::from_secs(5);
 
+/// Prefix of sqlx-mysql's protocol error for a column type it cannot decode.
+///
+/// Raised from `sqlx_mysql::protocol::text::column` while reading a result's
+/// column definitions: a query-level type limitation, not a connection fault.
+const UNKNOWN_COLUMN_TYPE: &str = "unknown column type ";
+
 /// Runs a query operation under the client-side timeout backstop.
 ///
 /// Resolves `connection`'s pool for `database`, acquires a connection, reads
@@ -41,7 +47,7 @@ pub(crate) const GRACE: Duration = Duration::from_secs(5);
 /// * [`SqlError::Connection`] — the database could not be reached
 ///   (I/O, TLS, protocol, or connection pool failure).
 /// * [`SqlError::Query`] — the underlying query failed for any other
-///   reason (e.g. syntax error).
+///   reason (e.g. syntax error, or a result column type sqlx cannot decode).
 pub(crate) async fn execute_with_timeout<C, Q, T>(
     connection: &C,
     database: Option<&str>,
@@ -72,6 +78,9 @@ where
         e if C::is_timeout(&e) => {
             debug!(error = %e, "backend statement timeout");
             timed_out()
+        }
+        sqlx::Error::Protocol(ref message) if message.starts_with(UNKNOWN_COLUMN_TYPE) => {
+            SqlError::Query(e.to_string())
         }
         sqlx::Error::Io(_)
         | sqlx::Error::Tls(_)
@@ -368,6 +377,20 @@ mod tests {
             matches!(err, SqlError::Query(ref msg) if msg.contains("syntax error")),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_column_type_is_a_query_error() {
+        let pool = pool().await;
+        let error = sqlx::Error::Protocol("unknown column type 0xf3".into());
+        let message = error.to_string();
+        let result: Result<i32, SqlError> =
+            execute_with_timeout(&Stub::new(&pool, Mode::Server, 0), None, 0, "SELECT 1", async |_, _| {
+                Err(error)
+            })
+            .await;
+        let err = result.expect_err("should fail");
+        assert!(matches!(err, SqlError::Query(ref m) if *m == message), "{err:?}");
     }
 
     #[tokio::test]
