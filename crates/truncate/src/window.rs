@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use crate::caps::Caps;
-use crate::chars::{CharCount, cut_strings};
+use crate::chars::{CharCount, cut_len};
 
 /// Most item slots [`Window::new`] reserves up front.
 const RESERVE: usize = 1024;
@@ -82,16 +82,15 @@ impl Window {
     }
 
     /// Serialized chars of `item` once [`fit`](crate::fit) cuts its long strings.
+    ///
+    /// Measures `item` in place, so a large value is never copied.
     fn estimate(&self, item: &Value) -> usize {
         let mut chars = CharCount(0);
         if let Some(max) = self.caps.string {
-            let mut cut = item.clone();
-            cut_strings(&mut cut, max);
-            serde_json::to_writer(&mut chars, &cut)
+            cut_len(item, max, &mut chars);
         } else {
-            serde_json::to_writer(&mut chars, item)
+            serde_json::to_writer(&mut chars, item).expect("a JSON value serializes into a char counter");
         }
-        .expect("a JSON value serializes into a char counter");
         chars.0
     }
 }
