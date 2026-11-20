@@ -2890,9 +2890,21 @@ async fn column_rules_explain_ruled_relations_returns_plan() {
 }
 
 #[tokio::test]
-async fn column_rules_refuse_read_query_explain_of_ruled_relations() {
+async fn column_rules_read_query_explain_query_plan_of_ruled_relations_returns_plan() {
     let handler = handler_with_rules(100);
-    let error = ruled_refusal(&handler, "EXPLAIN QUERY PLAN SELECT email FROM users").await;
+    let rows = ruled_read(&handler, "EXPLAIN QUERY PLAN SELECT email FROM users")
+        .await
+        .expect("ruled explain");
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert_eq!(keys(row), ["id", "parent", "notused", "detail"], "{row}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_read_query_bytecode_explain_of_ruled_relations() {
+    let handler = handler_with_rules(100);
+    let error = ruled_refusal(&handler, "EXPLAIN SELECT email FROM users").await;
     assert!(error.contains("use explainQuery"), "{error}");
 }
 

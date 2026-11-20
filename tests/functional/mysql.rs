@@ -5338,14 +5338,65 @@ async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
         .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true)
         .await
         .expect_err("ruled analyze");
-    assert!(error.message.contains("drop analyze"), "{}", error.message);
+    assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);
 }
 
 #[tokio::test]
-async fn column_rules_refuse_read_query_explain_of_ruled_relations() {
+async fn column_rules_refuse_read_query_explain_of_ruled_relations_in_other_forms() {
     let handler = ruled_handler(None, 100);
-    let error = ruled_refusal(&handler, "EXPLAIN SELECT email FROM users").await;
-    assert!(error.contains("use explainQuery"), "{error}");
+    for query in [
+        "EXPLAIN SELECT email FROM users",
+        "EXPLAIN FORMAT=TREE SELECT email FROM users",
+    ] {
+        let error = ruled_refusal(&handler, query).await;
+        assert!(error.contains("use explainQuery"), "{query}: {error}");
+    }
+    let error = ruled_refusal(&handler, "EXPLAIN ANALYZE SELECT email FROM users").await;
+    assert!(error.contains("explain without ANALYZE"), "{error}");
+}
+
+#[tokio::test]
+async fn column_rules_read_query_json_explain_of_ruled_relations_returns_pruned_plan() {
+    let handler = ruled_handler(None, 100);
+    let rows = ruled_read(&handler, "EXPLAIN FORMAT=JSON SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("ruled explain");
+    let plan = explain_plan(&rows);
+    assert!(plan.get("query_block").is_some(), "{plan}");
+    assert!(!has_key(&plan, "attached_condition"), "{plan}");
+}
+
+#[tokio::test]
+async fn column_rules_restore_the_explain_format_after_a_pruned_plan() {
+    // One pooled connection, so every call reuses the session the pin touched.
+    let handler = MysqlHandler::new(&Config {
+        transport: Transport::Stdio,
+        database: DatabaseConfig {
+            max_pool_size: 1,
+            ..base_db_config(false)
+        },
+        http: None,
+        pii: Some(PiiConfig {
+            key: Some(PII_TEST_KEY.into()),
+            rules: standard_rules(),
+            ..PiiConfig::default()
+        }),
+        ssh: None,
+    })
+    .expect("handler builds");
+    let unruled = async |handler: &MysqlHandler| {
+        let response = handler
+            .explain_query(None, "SELECT note FROM audit".into(), false)
+            .await
+            .expect("unruled explain");
+        explain_plan(&response.rows).get("query_block").is_some()
+    };
+    let before = unruled(&handler).await;
+    handler
+        .explain_query(None, "SELECT email FROM users".into(), false)
+        .await
+        .expect("ruled explain");
+    assert_eq!(unruled(&handler).await, before, "the server's format version is back");
 }
 
 #[tokio::test]
@@ -5366,9 +5417,9 @@ async fn column_rules_leave_unruled_explain_plans_whole() {
         .explain_query(None, "SELECT note FROM audit WHERE note = 'x'".into(), false)
         .await
         .expect("unruled explain");
+    // Unpruned plans keep the server's format version: `MySQL` 9.5+ defaults to 2.
     let plan = explain_plan(&response.rows);
-    assert!(plan.get("query_block").is_some(), "{plan}");
-    assert!(has_key(&plan, "attached_condition"), "{plan}");
+    assert!(plan.to_string().contains("'x'"), "{plan}");
 }
 
 /// Parses the single `EXPLAIN` cell of a `FORMAT=JSON` plan.
