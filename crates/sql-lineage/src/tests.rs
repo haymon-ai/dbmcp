@@ -610,10 +610,16 @@ fn nesting_resolves_up_to_the_parser_recursion_limit() {
         }
         sql
     };
-    let lineage = pg(&nested(20)).expect("analyze");
+    // Unoptimized aarch64-apple-darwin frames overflow the 2 MiB default
+    // test thread here; a release build fits.
+    let (lineage, result) = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || (pg(&nested(20)), pg(&nested(25))))
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow");
+    let lineage = lineage.expect("analyze");
     assert_eq!(columns(&lineage), vec![col("id", &["users.id"])]);
-
-    let result = pg(&nested(25));
     assert!(matches!(result, Err(LineageError::Parse(_))), "{result:?}");
 }
 
@@ -2028,6 +2034,15 @@ fn unmodeled_statements_are_unsupported() {
         ("DROP SCHEMA public CASCADE", Dialect::Postgres),
         ("DROP DATABASE app", Dialect::Mysql),
         ("TRUNCATE users CASCADE", Dialect::Postgres),
+        ("CREATE RULE r AS ON INSERT TO users DO NOTHING", Dialect::Postgres),
+        ("SELECT id FROM ONLY users", Dialect::Postgres),
+        ("SELECT id FROM users *", Dialect::Postgres),
+        ("SELECT id FROM users WHERE id IN orders", Dialect::Sqlite),
+        ("SELECT id FROM users JOIN orders USING (id) AS j", Dialect::Postgres),
+        (
+            "INSERT INTO users (id) OVERRIDING SYSTEM VALUE VALUES (1)",
+            Dialect::Postgres,
+        ),
     ];
     for (sql, dialect) in cases {
         assert_unsupported(sql, *dialect, &fixture);
@@ -2038,7 +2053,6 @@ fn unmodeled_statements_are_unsupported() {
 fn statements_the_parser_rejects_fail_closed() {
     for (sql, dialect) in [
         ("LOAD DATA INFILE 'x' INTO TABLE users", Dialect::Mysql),
-        ("CREATE RULE r AS ON INSERT TO users DO NOTHING", Dialect::Postgres),
         (
             "CREATE EVENT e ON SCHEDULE EVERY 1 HOUR DO DELETE FROM users",
             Dialect::Mysql,

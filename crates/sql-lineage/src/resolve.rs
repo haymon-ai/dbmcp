@@ -525,6 +525,7 @@ impl<'c> Ctx<'c> {
                     .collect::<Result<_, _>>()?,
             ),
             JoinConstraint::Natural => Keys::Natural,
+            JoinConstraint::UsingAlias(..) => return Err(unsupported("USING ... AS alias")),
         };
         let (tree, joined) = left.join(self.dialect, right, keys)?;
         self.refer(joined, Role::Join);
@@ -548,8 +549,12 @@ impl<'c> Ctx<'c> {
                 partitions: _,
                 json_path,
                 sample,
-                index_hints: _,
+                index_directives: _,
+                inheritance,
             } => {
+                if inheritance.is_some() {
+                    return Err(unsupported("ONLY or * inheritance marker"));
+                }
                 if args.is_some() || *with_ordinality {
                     return Err(unsupported("table function in FROM"));
                 }

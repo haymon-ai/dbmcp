@@ -503,11 +503,10 @@ mod tests {
     #[tokio::test]
     async fn execute_json_reports_zero_for_unparsable_sql() {
         let connection = memory_with_table().await;
-        counts(&connection, "CREATE INDEX idx ON t (a)").await;
         counts(&connection, "INSERT INTO t (a) VALUES (1)").await;
         // Valid SQLite that sqlparser rejects.
         assert_eq!(
-            counts(&connection, "DELETE FROM t INDEXED BY idx WHERE a = 1").await,
+            counts(&connection, "DELETE FROM t WHERE a ISNULL OR a = 1").await,
             (0, None)
         );
     }

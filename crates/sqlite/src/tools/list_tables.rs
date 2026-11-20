@@ -83,7 +83,10 @@ const BRIEF_SQL: &str = r"
 /// table-valued functions and aggregating each table's columns, constraints,
 /// indexes, and triggers into JSON via `json_object` / `json_group_array`.
 /// Every aggregate carries its own `ORDER BY` (`SQLite` 3.44+): columns by
-/// position, constraints, indexes, and triggers by name.
+/// position, constraints, indexes, and triggers by name. Every scalar
+/// subquery feeding `json_object` is wrapped in `json(...)`: `SQLite` 3.54.1
+/// drops the JSON subtype across a subquery, which would embed the array as
+/// a string.
 ///
 /// `LIMIT`/`OFFSET` are pushed into `table_info` so every downstream CTE scans
 /// at most `page_size + 1` tables, never the full schema.
@@ -163,8 +166,8 @@ const DETAILED_SQL: &str = r#"
             json_object(
                 'name',       i.name,
                 'type',       'UNIQUE',
-                'columns',    (SELECT json_group_array(ii.name ORDER BY ii.seqno)
-                               FROM pragma_index_info(i.name) ii),
+                'columns',    json((SELECT json_group_array(ii.name ORDER BY ii.seqno)
+                                    FROM pragma_index_info(i.name) ii)),
                 'definition', 'UNIQUE ('
                               || (SELECT group_concat('"' || ii.name || '"', ', ' ORDER BY ii.seqno)
                                   FROM pragma_index_info(i.name) ii)
@@ -185,7 +188,7 @@ const DETAILED_SQL: &str = r#"
             ti.table_name,
             json_object(
                 'name',       il.name,
-                'columns',    (SELECT json_group_array(ii.name ORDER BY ii.seqno) FROM pragma_index_info(il.name) ii),
+                'columns',    json((SELECT json_group_array(ii.name ORDER BY ii.seqno) FROM pragma_index_info(il.name) ii)),
                 'unique',     json(CASE WHEN il."unique" = 1 THEN 'true' ELSE 'false' END),
                 'primary',    json(CASE WHEN il.origin = 'pk' THEN 'true' ELSE 'false' END),
                 'method',     'btree',
@@ -218,26 +221,26 @@ const DETAILED_SQL: &str = r#"
             'kind',        ti.kind,
             'owner',       NULL,
             'comment',     NULL,
-            'columns',     COALESCE(
+            'columns',     json(COALESCE(
                                (SELECT json_group_array(json(ci.column_json) ORDER BY ci.cid)
                                 FROM columns_info ci
                                 WHERE ci.table_name = ti.table_name),
-                               json('[]')),
-            'constraints', COALESCE(
+                               '[]')),
+            'constraints', json(COALESCE(
                                (SELECT json_group_array(json(ac.constraint_json) ORDER BY ac.constraint_json ->> 'name')
                                 FROM all_constraints ac
                                 WHERE ac.table_name = ti.table_name),
-                               json('[]')),
-            'indexes',     COALESCE(
+                               '[]')),
+            'indexes',     json(COALESCE(
                                (SELECT json_group_array(json(ii.index_json) ORDER BY ii.index_json ->> 'name')
                                 FROM indexes_info ii
                                 WHERE ii.table_name = ti.table_name),
-                               json('[]')),
-            'triggers',    COALESCE(
+                               '[]')),
+            'triggers',    json(COALESCE(
                                (SELECT json_group_array(json(tg.trigger_json) ORDER BY tg.trigger_json ->> 'name')
                                 FROM triggers_info tg
                                 WHERE tg.table_name = ti.table_name),
-                               json('[]'))
+                               '[]'))
         ) AS entry
     FROM table_info ti
     ORDER BY ti.table_name"#;
