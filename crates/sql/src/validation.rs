@@ -4,9 +4,10 @@ use crate::SqlError;
 use std::ops::ControlFlow;
 
 use dbmcp_sql_lineage::{Dialect, Show};
-use sqlparser::ast::{Expr, Function, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
+use sqlparser::ast::{Expr, Function, Ident, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::{self, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Token, Tokenizer};
 
 /// Classifies a validated read-only statement for pagination dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub enum StatementKind {
 ///    session locks, backend signalling, server administration)
 /// 6. No INTO OUTFILE/DUMPFILE clauses
 /// 7. On `MySQL` / `MariaDB`, no executable comments (`/*! … */`, `/*M! … */`)
+///    and no characters the tokenizer cannot read
 ///
 /// Returns the classified [`StatementKind`] on success so callers that
 /// paginate can dispatch `Select` to a paged fetch and route `NonSelect`
@@ -64,8 +66,6 @@ pub fn validate_read(sql: &str, dialect: Dialect) -> Result<StatementKind, SqlEr
 }
 
 /// Checks that `stmt`, parsed from `sql`, is read-only and classifies it.
-///
-/// A `SHOW` is classified from `sql`'s tokens by [`Show::classify`].
 fn classify(stmt: &Statement, sql: &str, dialect: Dialect) -> Result<StatementKind, SqlError> {
     match stmt {
         Statement::Query(_) => {
@@ -93,7 +93,9 @@ fn classify(stmt: &Statement, sql: &str, dialect: Dialect) -> Result<StatementKi
         | Statement::ShowTables { .. }
         | Statement::ShowViews { .. }
         | Statement::ShowCollation { .. } => {
-            if Show::classify(sql, dialect).replays_values() {
+            if matches!(stmt, Statement::ShowVariable { variable } if is_diagnostics(variable))
+                || Show::classify(sql, dialect).replays_values()
+            {
                 Err(SqlError::DiagnosticsBlocked)
             } else {
                 Ok(StatementKind::NonSelect)
@@ -102,6 +104,18 @@ fn classify(stmt: &Statement, sql: &str, dialect: Dialect) -> Result<StatementKi
         Statement::ExplainTable { .. } => Ok(StatementKind::NonSelect),
         Statement::Use(_) => Err(SqlError::UseBlocked),
         _ => Err(SqlError::ReadOnlyViolation),
+    }
+}
+
+/// Reports whether parsed `SHOW` words are `[COUNT] WARNINGS` or `[COUNT] ERRORS`.
+///
+/// Backs up [`Show::classify`], which reads tokens instead of parsed words.
+fn is_diagnostics(variable: &[Ident]) -> bool {
+    let list = |part: &Ident| part.value.eq_ignore_ascii_case("warnings") || part.value.eq_ignore_ascii_case("errors");
+    match variable {
+        [count, part, ..] if count.value.eq_ignore_ascii_case("count") => list(part),
+        [part, ..] => list(part),
+        [] => false,
     }
 }
 
@@ -143,12 +157,21 @@ pub fn validate_single_statement(sql: &str, dialect: &impl dialect::Dialect) -> 
 
 /// Parses `sql` and returns its only statement, `None` if it has none.
 ///
-/// Where the parser expands `/*!` hints (`MySQL`/`MariaDB`), rejects executable
-/// comments first: parser and server disagree on their contents. Matches raw
-/// text, string literals included, so it fails closed.
+/// On `MySQL`/`MariaDB` (dialects with `/*!` hints), first rejects SQL the
+/// server may read differently: executable comments (matched on raw text,
+/// string literals included) and characters the tokenizer cannot read, such
+/// as the control character that starts a `--` comment on the server only.
 fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Statement>, SqlError> {
-    if dialect.supports_multiline_comment_hints() && ["/*!", "/*M!", "/*m!"].iter().any(|p| sql.contains(p)) {
-        return Err(SqlError::ExecutableCommentBlocked);
+    if dialect.supports_multiline_comment_hints() {
+        if ["/*!", "/*M!", "/*m!"].iter().any(|p| sql.contains(p)) {
+            return Err(SqlError::ExecutableCommentBlocked);
+        }
+        let tokens = Tokenizer::new(dialect, sql)
+            .tokenize()
+            .map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
+        if tokens.iter().any(|token| matches!(token, Token::Char(_))) {
+            return Err(SqlError::UnreadableCharacter);
+        }
     }
 
     let mut statements =
@@ -418,8 +441,11 @@ mod tests {
         assert!(validate_read("SHOW WARNINGS_X", Dialect::Mysql).is_ok());
         assert!(validate_read("SHOW TABLE STATUS FROM warnings", Dialect::Mysql).is_ok());
         assert!(validate_read("SHOW search_path", Dialect::Postgres).is_ok());
-        // A quoted word is no keyword; the server rejects it as a syntax error.
-        assert!(validate_read("SHOW `WARNINGS`", Dialect::Mysql).is_ok());
+        // A quoted word is no keyword, but the parsed word still names WARNINGS.
+        assert!(matches!(
+            validate_read("SHOW `WARNINGS`", Dialect::Mysql),
+            Err(SqlError::DiagnosticsBlocked)
+        ));
         assert!(matches!(
             validate_read("SHOW WARNINGS", Dialect::Mariadb),
             Err(SqlError::DiagnosticsBlocked)
@@ -428,6 +454,34 @@ mod tests {
             validate_read("EXPLAIN SHOW WARNINGS", Dialect::Mysql),
             Err(SqlError::DiagnosticsBlocked)
         ));
+    }
+
+    #[test]
+    fn control_characters_are_blocked_on_mysql() {
+        // The server starts a `--` comment at a control character; the parser does not.
+        for sql in [
+            "SHOW --\x01\nWARNINGS",
+            "SHOW --\x7f\nERRORS",
+            "SHOW --\x00\nWARNINGS",
+            "SHOW --\x1f\nCOUNT(*) WARNINGS",
+            "SHOW\x01WARNINGS",
+            "SHOW COUNT(*) --\x01\nWARNINGS",
+            "SHOW --\x01\nTABLES",
+            "SELECT 1 --\x01\n",
+        ] {
+            for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+                assert!(
+                    matches!(validate_read(sql, dialect), Err(SqlError::UnreadableCharacter)),
+                    "{sql:?}"
+                );
+            }
+        }
+        assert!(matches!(
+            validate_single_statement("SELECT 1 --\x01\n", &MYSQL),
+            Err(SqlError::UnreadableCharacter)
+        ));
+        assert!(validate_read("SHOW -- x\nTABLES", Dialect::Mysql).is_ok());
+        assert!(validate_read("SELECT '\x01'", Dialect::Mysql).is_ok());
     }
 
     #[test]

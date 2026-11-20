@@ -1,12 +1,8 @@
 //! `SHOW` forms, classified from the statement's tokens.
 //!
-//! [`Show::classify`] reads the unquoted keywords after `SHOW` and matches
-//! their prefix against one table of `MySQL` and `MariaDB` forms. Modifiers
-//! match only at the positions the servers' grammars put them; every other
-//! shape, and every form outside the table, is [`Show::Unsupported`].
-//! Quoted words and literals never act as keywords. Trailing tokens never
-//! change the class; [`computed_filter`] reports the filters lineage
-//! cannot model.
+//! The unquoted keywords after `SHOW` match one table of `MySQL` and
+//! `MariaDB` forms, modifiers only at their grammar positions; anything
+//! else is [`Show::Unsupported`].
 
 use serde::{Deserialize, Serialize};
 use sqlparser::tokenizer::Token;
@@ -19,69 +15,68 @@ use crate::dialect::Dialect;
 /// schema objects, definitions, settings, or counters, never row values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Show {
-    /// `SHOW DATABASES` or `SCHEMAS`: database names.
+    /// `SHOW DATABASES` or `SCHEMAS`.
     Databases,
-    /// `SHOW [EXTENDED] [FULL] TABLES`: table names and types.
+    /// `SHOW [EXTENDED] [FULL] TABLES`.
     Tables,
-    /// `SHOW OPEN TABLES`: open table names and lock counters.
+    /// `SHOW OPEN TABLES`.
     OpenTables,
-    /// `SHOW TABLE STATUS`: table sizes, estimates, and comments.
+    /// `SHOW TABLE STATUS`.
     TableStatus,
-    /// `SHOW [EXTENDED] [FULL] {COLUMNS | FIELDS}`: column definitions.
+    /// `SHOW [EXTENDED] [FULL] {COLUMNS | FIELDS}`.
     Columns,
-    /// `SHOW [EXTENDED] {INDEX | INDEXES | KEYS}`: index definitions.
+    /// `SHOW [EXTENDED] {INDEX | INDEXES | KEYS}`.
     Index,
-    /// `SHOW CREATE TABLE`: the table's definition.
+    /// `SHOW CREATE TABLE`.
     CreateTable,
-    /// `SHOW CREATE VIEW`: the view's definition.
+    /// `SHOW CREATE VIEW`.
     CreateView,
-    /// `SHOW CREATE TRIGGER`: the trigger's definition.
+    /// `SHOW CREATE TRIGGER`.
     CreateTrigger,
-    /// `SHOW CREATE FUNCTION`: the function's definition.
+    /// `SHOW CREATE FUNCTION`.
     CreateFunction,
-    /// `SHOW CREATE PROCEDURE`: the procedure's definition.
+    /// `SHOW CREATE PROCEDURE`.
     CreateProcedure,
-    /// `SHOW CREATE EVENT`: the event's definition.
+    /// `SHOW CREATE EVENT`.
     CreateEvent,
-    /// `SHOW TRIGGERS`: trigger definitions.
+    /// `SHOW TRIGGERS`.
     Triggers,
-    /// `SHOW EVENTS`: event definitions.
+    /// `SHOW EVENTS`.
     Events,
-    /// `SHOW FUNCTION STATUS`: stored function metadata.
+    /// `SHOW FUNCTION STATUS`.
     FunctionStatus,
-    /// `SHOW PROCEDURE STATUS`: stored procedure metadata.
+    /// `SHOW PROCEDURE STATUS`.
     ProcedureStatus,
-    /// `SHOW FUNCTION CODE`: compiled body, which repeats `SHOW CREATE FUNCTION`.
+    /// `SHOW FUNCTION CODE`.
     FunctionCode,
-    /// `SHOW PROCEDURE CODE`: compiled body, which repeats `SHOW CREATE PROCEDURE`.
+    /// `SHOW PROCEDURE CODE`.
     ProcedureCode,
-    /// `SHOW [GLOBAL | SESSION] VARIABLES`: server settings.
+    /// `SHOW [GLOBAL | SESSION] VARIABLES`.
     Variables,
-    /// `SHOW [GLOBAL | SESSION] STATUS`: server counters.
+    /// `SHOW [GLOBAL | SESSION] STATUS`.
     Status,
-    /// `SHOW CHARSET` or `CHARACTER SET`: character sets.
+    /// `SHOW CHARSET` or `CHARACTER SET`.
     Charset,
-    /// `SHOW COLLATION`: collations.
+    /// `SHOW COLLATION`.
     Collation,
-    /// `SHOW [STORAGE] ENGINES`: storage engines.
+    /// `SHOW [STORAGE] ENGINES`.
     Engines,
-    /// `SHOW PLUGINS`: installed plugins.
+    /// `SHOW PLUGINS`.
     Plugins,
-    /// `SHOW PRIVILEGES`: privilege names.
+    /// `SHOW PRIVILEGES`.
     Privileges,
-    /// `SHOW [COUNT(*)] WARNINGS`: replays the previous statement's warnings, which quote values.
+    /// `SHOW [COUNT(*)] WARNINGS`.
     Warnings,
-    /// `SHOW [COUNT(*)] ERRORS`: replays the previous statement's errors, which quote values.
+    /// `SHOW [COUNT(*)] ERRORS`.
     Errors,
-    /// Any other form or modifier shape.
+    /// Any other form.
     Unsupported,
 }
 
 impl Show {
-    /// Classifies the first `SHOW` in `sql` by its leading keywords.
+    /// Classifies the first unquoted `SHOW` in `sql`, tokenized as `dialect` reads it.
     ///
-    /// `sql` is tokenized as `dialect` reads it. Tokenizer errors, a
-    /// missing unquoted `SHOW`, and unknown forms are [`Show::Unsupported`].
+    /// Tokenizer errors and a missing `SHOW` are [`Show::Unsupported`].
     #[must_use]
     pub fn classify(sql: &str, dialect: Dialect) -> Self {
         dialect
@@ -89,10 +84,9 @@ impl Show {
             .map_or(Self::Unsupported, |tokens| Self::of(&tokens))
     }
 
-    /// Returns whether the form replays earlier statements' values.
+    /// Returns whether the form replays the previous statement's values.
     ///
-    /// `WARNINGS` and `ERRORS` quote the values the previous statement
-    /// touched; every other form, `Unsupported` included, does not.
+    /// `WARNINGS` and `ERRORS` quote the values that statement touched.
     #[must_use]
     pub const fn replays_values(self) -> bool {
         match self {
@@ -165,11 +159,9 @@ impl Show {
     }
 }
 
-/// Reports whether the `SHOW` in `tokens` filters by more than a string literal.
+/// Reports whether the `SHOW` in `tokens` filters by `WHERE` or a non-literal `LIKE`.
 ///
-/// A `WHERE` filter evaluates an expression, subqueries included, so the
-/// rows returned can test any column's value; `LIKE` must be followed by a
-/// string literal.
+/// A `WHERE` expression, subqueries included, can test any column's value.
 pub(crate) fn computed_filter(tokens: &[Token]) -> bool {
     let mut rest = after_show(tokens).filter(|token| !matches!(token, Token::Whitespace(_)));
     while let Some(token) = rest.next() {
@@ -191,11 +183,9 @@ pub(crate) fn computed_filter(tokens: &[Token]) -> bool {
     false
 }
 
-/// Returns the keywords after the first unquoted `SHOW`, ASCII-uppercased.
+/// Returns the unquoted keywords after `SHOW`, uppercased, up to the first other token.
 ///
-/// Whitespace and comments are skipped; `(`, `*`, and `)` are kept. The
-/// sequence ends at the first other token: a quoted word, a literal, or
-/// other punctuation. No unquoted `SHOW` yields an empty sequence.
+/// `(`, `*`, and `)` are kept so `COUNT(*)` matches.
 fn keywords(tokens: &[Token]) -> Vec<String> {
     let mut words = Vec::new();
     for token in after_show(tokens) {

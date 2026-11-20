@@ -95,9 +95,8 @@ pub(crate) fn relation(dialect: Dialect, relation: &RelationUse) -> bool {
 
 /// Reports whether a `SHOW` form is denied on `dialect`.
 ///
-/// Every `PostgreSQL` `SHOW` reads a setting. `MySQL` and `MariaDB` allow
-/// the forms that list schema objects or settings; `WARNINGS` and `ERRORS`
-/// replay values, and every other form is denied.
+/// Every `PostgreSQL` `SHOW` reads a setting; `MySQL` and `MariaDB` allow
+/// the listed [`Show`] forms that replay no values.
 pub(crate) fn show(dialect: Dialect, show: Show) -> bool {
     match dialect {
         Dialect::Postgres => true,

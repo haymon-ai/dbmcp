@@ -117,6 +117,8 @@ impl MysqlHandler {
     /// one statement.
     /// Returns [`SqlError::ExecutableCommentBlocked`] if the query holds a
     /// `/*! … */` or `/*M! … */` comment.
+    /// Returns [`SqlError::UnreadableCharacter`] if the query holds a
+    /// character the parser cannot read.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
     /// the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error, including

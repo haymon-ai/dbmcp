@@ -126,7 +126,8 @@ impl MysqlHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] if the query is not
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
     /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`,
-    /// [`SqlError::ExecutableCommentBlocked`] for `/*! … */` / `/*M! … */`, or
+    /// [`SqlError::ExecutableCommentBlocked`] for `/*! … */` / `/*M! … */`,
+    /// [`SqlError::UnreadableCharacter`] for a character the parser cannot read, or
     /// [`SqlError::Query`] if the backend reports an error. With column
     /// rules, also the policy's rejection or a withheld database error.
     pub async fn read_query(

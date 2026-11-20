@@ -1368,7 +1368,6 @@ fn relations(lineage: &Lineage) -> Vec<(String, RelationKind)> {
     lineage.relations.iter().map(|r| (r.id.name.clone(), r.kind)).collect()
 }
 
-/// Shorthand for a `SHOW` statement kind.
 /// Shorthand for an `EXPLAIN` statement kind.
 fn explain(inner: StatementKind) -> StatementKind {
     StatementKind::Explain(Box::new(inner))
@@ -1844,7 +1843,7 @@ fn show_forms_classify_by_leading_keywords() {
         assert_eq!(Show::classify(sql, *dialect), *form, "{sql}");
         let explained = format!("EXPLAIN {sql}");
         assert_eq!(Show::classify(&explained, *dialect), *form, "{explained}");
-        // The parse still gates: forms sqlparser rejects never reach the classifier.
+        // Forms sqlparser rejects never reach the classifier.
         if let Ok(lineage) = on(sql, *dialect) {
             assert_eq!(lineage.statement, StatementKind::Show(*form), "{sql}");
         }

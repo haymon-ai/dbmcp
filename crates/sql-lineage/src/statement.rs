@@ -3,8 +3,7 @@
 //! A query resolves to its output columns. Relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`)
 //! records its target and nothing else. `SHOW` records its [`Show`] form
-//! (a `WHERE` or non-literal `LIKE` filter is unsupported) and `DESCRIBE`
-//! nothing; `EXPLAIN` carries its inner statement's lineage.
+//! and `DESCRIBE` nothing; `EXPLAIN` carries its inner statement's lineage.
 //!
 //! DDL that evaluates expressions or reads another relation's rows is
 //! rejected: index expressions, partial-index `WHERE`, column `DEFAULT`,

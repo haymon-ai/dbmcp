@@ -1202,6 +1202,16 @@ async fn test_read_query_show_warnings_rejected() {
             error.message
         );
     }
+
+    let error = handler
+        .read_query("SHOW --\x01\nWARNINGS".into(), Some("app".into()), None, None)
+        .await
+        .expect_err("a control-character comment must not hide diagnostics");
+    assert!(
+        error.message.contains("characters the parser cannot read"),
+        "expected unreadable-character rejection, got: {}",
+        error.message
+    );
 }
 
 #[tokio::test]
