@@ -50,8 +50,8 @@ A keyword-gated recogniser only matches when one of its context keywords sits in
 
 **contact**
 - `PHONE_NUMBER` — international phone numbers
-- `POSTCODE` — 5-digit postal codes of any country (keyword-gated: `zip`, `postcode`, `postal`, `address`, `adresse`, `city`, `shipping`, …)
-- `POSTCODE_DE` — German postal codes (PLZ, gated by German keywords such as `plz` or `postleitzahl`; a postcode in a column named `zip_code` or `address` is `POSTCODE`)
+- `POSTCODE` — 5-digit postal codes of any country, every code but `00000` (keyword-gated: `zip`, `postcode`, `postal`, `address`, `adresse`, `city`, `shipping`, …)
+- `POSTCODE_DE` — German postal codes (PLZ, gated by German keywords such as `plz`, `postleitzahl`, or `straße`). A postcode found only through a generic keyword, such as a column named `zip_code` or `address`, is `POSTCODE`; with a German keyword nearby too, it is `POSTCODE_DE`. Under `hash` the two labels give the same code different tokens, so `plz` and `zip_code` columns cannot be matched by token.
 - `POSTCODE_UK` — UK postcodes (keyword-gated)
 
 **network**

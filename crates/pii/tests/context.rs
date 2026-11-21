@@ -90,6 +90,9 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("plz", "10115", "POSTCODE_DE"),
     ("postleitzahl", "80331", "POSTCODE_DE"),
     ("notes", "PLZ 10115", "POSTCODE_DE"),
+    // Keywords of both kinds: the column says `address`, the text says `Straße`.
+    ("address", "Straße 5, 10115 Berlin", "POSTCODE_DE"),
+    ("zip", "00501", "POSTCODE"),
     ("notes", "social insurance 046454286", "SIN_CA"),
     // camelCase and PascalCase column names split into keywords.
     ("socialSecurityNumber", "078051121", "US_SSN"),

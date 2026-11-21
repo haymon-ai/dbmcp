@@ -1,7 +1,9 @@
-//! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, weak 0.05 base score — requires context).
+//! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, keyword context required).
 //!
-//! Only German keywords gate it, as in Presidio's `DePlzRecognizer`; a 5-digit
-//! code next to a generic word such as `zip` is the country-neutral `POSTCODE`.
+//! Gated by Presidio's `DePlzRecognizer` keywords except `adresse`, which is
+//! French too and so gates the country-neutral `POSTCODE`, as do generic words
+//! such as `zip`. Registered before `POSTCODE`, so it wins a tie when keywords
+//! of both kinds support one value.
 
 use crate::recognizers::prelude::*;
 
@@ -37,7 +39,8 @@ pub fn postcode_deu() -> Recognizer {
         r"\b(?!01000\b|99999\b)(0[1-9]\d{3}|[1-9]\d{4})\b",
         Score::from_static(0.05),
     )
-    .expect("static DE postcode pattern compiles");
+    .expect("static DE postcode pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::PostcodeDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("PostcodeDeuRecognizer")
@@ -52,6 +55,16 @@ mod tests {
     #[test]
     fn carries_context_list() {
         assert_eq!(postcode_deu().context(), CONTEXT);
+    }
+
+    #[test]
+    fn requires_context() {
+        assert!(
+            postcode_deu()
+                .patterns()
+                .iter()
+                .all(crate::pattern::Pattern::requires_context)
+        );
     }
 
     fn results(text: &str) -> Vec<(&str, f32)> {
