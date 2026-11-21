@@ -186,7 +186,7 @@
           "default": 30
         },
         "max_query_timeout": {
-          "description": "Largest per-call readQuery timeout in seconds; 0 means no cap. Defaults to query_timeout.",
+          "description": "Largest per-call readQuery or explainQuery timeout in seconds; 0 means no cap. Defaults to query_timeout.",
           "type": [
             "integer",
             "string",

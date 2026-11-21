@@ -533,6 +533,42 @@ async fn test_read_query_timeout_above_cap_is_rejected() {
 }
 
 #[tokio::test]
+async fn test_explain_query_timeout_raises_the_limit() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 1,
+        max_query_timeout: 10,
+        ..base_db_config(true)
+    });
+    let sql = "SELECT pg_sleep(2)";
+    let err = handler
+        .explain_query(None, sql.into(), true, None)
+        .await
+        .expect_err("default 1 s timeout stops the analyze");
+    assert!(
+        err.to_string().contains("timed out"),
+        "Expected timeout message, got: {err}"
+    );
+    handler
+        .explain_query(None, sql.into(), true, Some(5))
+        .await
+        .expect("5 s call timeout lets the analyze finish");
+}
+
+#[tokio::test]
+async fn test_explain_query_timeout_above_cap_is_rejected() {
+    let handler = handler_with(DatabaseConfig {
+        query_timeout: 3,
+        max_query_timeout: 10,
+        ..base_db_config(true)
+    });
+    let err = handler
+        .explain_query(None, "SELECT 1".into(), false, Some(11))
+        .await
+        .expect_err("above the cap");
+    assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
+}
+
+#[tokio::test]
 async fn test_query_timeout_zero_leaves_server_defaults() {
     let handler = handler_with(DatabaseConfig {
         query_timeout: 0,
@@ -695,7 +731,7 @@ async fn test_explain_query_select() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), false)
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), false, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -707,7 +743,7 @@ async fn test_explain_query_analyze() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true)
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -722,6 +758,7 @@ async fn test_explain_query_analyze_write_blocked() {
                 Some("app".into()),
                 "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
                 true,
+                None,
             )
             .await;
         assert!(
@@ -740,6 +777,7 @@ async fn test_explain_query_plain_write_allowed() {
             Some("app".into()),
             "INSERT INTO users (name, email) VALUES ('x', 'x@x.com')".into(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -759,6 +797,7 @@ async fn test_explain_query_multi_statement_blocked_read_only() {
             Some("app".into()),
             "SELECT 1; CREATE TABLE readonly_probe_explain(i int)".into(),
             false,
+            None,
         )
         .await;
     let err_msg = format!(
@@ -787,7 +826,7 @@ async fn test_explain_query_invalid_query() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("app".into()), "NOT VALID SQL AT ALL".into(), false)
+        .explain_query(Some("app".into()), "NOT VALID SQL AT ALL".into(), false, None)
         .await;
     assert!(response.is_err(), "Expected error for invalid SQL");
 }
@@ -1054,7 +1093,7 @@ async fn test_explain_query_cross_database() {
     let handler = handler(false);
 
     let response = handler
-        .explain_query(Some("analytics".into()), "SELECT * FROM events".into(), false)
+        .explain_query(Some("analytics".into()), "SELECT * FROM events".into(), false, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -1119,7 +1158,7 @@ async fn test_explain_query_analyze_select_allowed_in_read_only() {
     let handler = handler(true);
 
     let response = handler
-        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true)
+        .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
         .unwrap();
     let plan = &response.rows;
@@ -3919,7 +3958,12 @@ async fn write_query_redacts_returning_clause() {
 async fn explain_analyze_redacts_plan_text() {
     let handler = handler_with_redaction(true);
     let rows = handler
-        .explain_query(None, "SELECT 'ping me at jane.doe@example.com' AS msg".into(), true)
+        .explain_query(
+            None,
+            "SELECT 'ping me at jane.doe@example.com' AS msg".into(),
+            true,
+            None,
+        )
         .await
         .unwrap();
     let serialized = serde_json::to_string(&rows.rows).unwrap();
@@ -4325,12 +4369,14 @@ async fn test_read_only_rejects_side_effecting_functions() {
     ] {
         let response = handler.read_query(query.into(), Some("app".into()), None, None).await;
         assert!(response.is_err(), "readQuery must reject {query:?}");
-        let response = handler.explain_query(Some("app".into()), query.into(), true).await;
+        let response = handler
+            .explain_query(Some("app".into()), query.into(), true, None)
+            .await;
         assert!(response.is_err(), "explainQuery(analyze) must reject {query:?}");
     }
     // The planner constant-folds IMMUTABLE calls, so plain EXPLAIN runs them too.
     let response = handler
-        .explain_query(Some("app".into()), "SELECT ro_probe_immutable()".into(), false)
+        .explain_query(Some("app".into()), "SELECT ro_probe_immutable()".into(), false, None)
         .await;
     assert!(response.is_err(), "explainQuery must reject a folded writing function");
 
@@ -4831,7 +4877,7 @@ async fn column_rules_deny_relations_missing_from_the_server() {
 async fn column_rules_explain_ruled_relations_returns_pruned_plan() {
     let handler = handler_with_rules(100);
     let response = handler
-        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), false)
+        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), false, None)
         .await
         .expect("ruled explain");
     let plan = &response.rows[0]["QUERY PLAN"];
@@ -4845,7 +4891,7 @@ async fn column_rules_explain_ruled_relations_returns_pruned_plan() {
 async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
     let handler = handler_with_rules(100);
     let error = handler
-        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true)
+        .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true, None)
         .await
         .expect_err("ruled analyze");
     assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);
@@ -4882,7 +4928,7 @@ async fn column_rules_read_query_json_explain_of_ruled_relations_returns_pruned_
 async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
     let handler = handler_with_rules(100);
     let error = handler
-        .explain_query(None, "SELECT id FROM users WHERE email = 'x'".into(), false)
+        .explain_query(None, "SELECT id FROM users WHERE email = 'x'".into(), false, None)
         .await
         .expect_err("ruled condition");
     assert!(error.message.contains("column policy"), "{}", error.message);
@@ -4893,7 +4939,7 @@ async fn column_rules_refuse_explaining_ruled_columns_in_conditions() {
 async fn column_rules_leave_unruled_explain_plans_whole() {
     let handler = handler_with_rules(100);
     let response = handler
-        .explain_query(None, "SELECT note FROM audit WHERE note = 'x'".into(), false)
+        .explain_query(None, "SELECT note FROM audit WHERE note = 'x'".into(), false, None)
         .await
         .expect("unruled explain");
     let plan = &response.rows[0]["QUERY PLAN"];
@@ -5294,7 +5340,7 @@ async fn column_rules_on_members_refuse_conditions_through_their_parent() {
 async fn column_rules_on_members_prune_explain_of_their_parent() {
     let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
     let response = handler
-        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), false)
+        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), false, None)
         .await
         .expect("pruned explain");
     let plan = &response.rows[0]["QUERY PLAN"];
@@ -5302,7 +5348,7 @@ async fn column_rules_on_members_prune_explain_of_their_parent() {
         assert!(!has_key(plan, key), "{key} in {plan}");
     }
     let error = handler
-        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), true)
+        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), true, None)
         .await
         .expect_err("analyze");
     assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);

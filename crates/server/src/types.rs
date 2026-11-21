@@ -210,7 +210,7 @@ pub struct ReadQueryRequest {
 /// would fail the session `SET` and leave the previous call's limit in place.
 pub const MAX_TIMEOUT_SECS: u64 = i32::MAX as u64 / 1000;
 
-/// Resolves a `readQuery` call's `timeout` argument to the seconds it runs under.
+/// Resolves a query tool call's `timeout` argument to the seconds it runs under.
 ///
 /// `None` keeps `default`; `max` caps the request (`0` = only
 /// [`MAX_TIMEOUT_SECS`]). A request is rejected while `default` is `0`: the
@@ -307,6 +307,10 @@ pub struct ExplainQueryRequest {
     /// Database to explain against. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
+    /// Seconds this call may run, from 1 up to the server maximum. Defaults to the configured query timeout.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub timeout: Option<u64>,
 }
 
 #[cfg(test)]
