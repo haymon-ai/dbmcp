@@ -3,7 +3,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for UK bank account.
-const CONTEXT: &[&str] = &["account", "acct", "bank", "iban"];
+const CONTEXT: &[&str] = &["bank account", "account number", "account no", "acct", "bank", "iban"];
 
 /// Build the `BANK_ACCOUNT_UK` recognizer.
 ///

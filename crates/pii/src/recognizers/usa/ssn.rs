@@ -1,12 +1,12 @@
 //! `US_SSN` recognizer.
 //!
-//! Plain regex matches `XXX-XX-XXXX` shape; reserved area/group/serial values
-//! are rejected by [`UsSsnValidator`].
+//! Forms other than `XXX-XX-XXXX` need a context keyword; the `SsnUsa`
+//! validator rejects reserved values and placeholders.
 
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US SSN.
-const CONTEXT: &[&str] = &["social", "security", "ssn", "ssns", "ssid"];
+const CONTEXT: &[&str] = &["ssn", "ssns", "social security"];
 
 /// Build the `US_SSN` recognizer.
 ///
@@ -15,9 +15,16 @@ const CONTEXT: &[&str] = &["social", "security", "ssn", "ssns", "ssid"];
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
 pub fn ssn_usa() -> Recognizer {
-    let pattern = Pattern::new("US SSN", r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b", Score::from_static(0.6))
+    let separated = Pattern::new("US SSN", r"\b\d{3}([- ])\d{2}\1\d{4}\b", Score::from_static(0.6))
         .expect("static SSN pattern compiles");
-    Recognizer::new(Entity::UsSsn, vec![pattern])
+    let unseparated = Pattern::new(
+        "US SSN (unseparated)",
+        r"\b(?:\d{9}|\d{3}[- ]\d{6}|\d{5}[- ]\d{4})\b",
+        Score::from_static(0.6),
+    )
+    .expect("static unseparated SSN pattern compiles")
+    .requiring_context();
+    Recognizer::new(Entity::UsSsn, vec![separated, unseparated])
         .expect("non-empty pattern list")
         .with_name("SsnUsaRecognizer")
         .with_validator(Validator::SsnUsa)
@@ -57,6 +64,11 @@ mod tests {
             ("078-05-0000", &[]),
             ("078 00 1123", &[]),
             ("693-09.4444", &[]),
+            ("078-05 1123", &[]),
+            ("123-45-6789", &[]),
+            ("987654320", &[]),
+            ("078-05-1120", &[]),
+            ("111-11-1111", &[]),
             ("", &[]),
         ];
         for (input, expected) in cases {

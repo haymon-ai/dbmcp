@@ -1,9 +1,14 @@
 //! `ITIN` recognizer (US Individual Taxpayer Identification Number).
+//!
+//! Forms other than `XXX-XX-XXXX` need a context keyword.
 
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US ITIN.
-const CONTEXT: &[&str] = &["individual", "taxpayer", "itin", "tax", "payer", "taxid", "tin"];
+const CONTEXT: &[&str] = &["itin", "taxpayer", "individual taxpayer", "taxid", "tin"];
+
+/// The IRS ITIN group digits (positions 4–5).
+const GROUP: &str = r"(7\d|8[0-8]|9[0-2]|9[4-9])";
 
 /// Build the `ITIN` recognizer.
 ///
@@ -12,13 +17,20 @@ const CONTEXT: &[&str] = &["individual", "taxpayer", "itin", "tax", "payer", "ta
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
 pub fn itin_usa() -> Recognizer {
-    let pattern = Pattern::new(
+    let separated = Pattern::new(
         "US ITIN",
-        r"\b9\d{2}-?(7\d|8[0-8]|9[0-2]|9[4-9])-?\d{4}\b",
+        format!(r"\b9\d{{2}}-{GROUP}-\d{{4}}\b"),
         Score::from_static(0.5),
     )
     .expect("static ITIN pattern compiles");
-    Recognizer::new(Entity::Itin, vec![pattern])
+    let unseparated = Pattern::new(
+        "US ITIN (unseparated)",
+        format!(r"\b9\d{{2}}(?:{GROUP}-?|-{GROUP})\d{{4}}\b"),
+        Score::from_static(0.5),
+    )
+    .expect("static unseparated ITIN pattern compiles")
+    .requiring_context();
+    Recognizer::new(Entity::Itin, vec![separated, unseparated])
         .expect("non-empty pattern list")
         .with_name("ItinUsaRecognizer")
         .with_category(Category::Government)

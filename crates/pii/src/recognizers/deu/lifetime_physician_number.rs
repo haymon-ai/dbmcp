@@ -16,8 +16,6 @@ const CONTEXT: &[&str] = &[
     "kbv",
     "kassenärztliche vereinigung",
     "kv-nummer",
-    "rezept",
-    "verschreibung",
     "behandelnder arzt",
     "hausarzt",
     "facharzt",
@@ -31,7 +29,8 @@ const CONTEXT: &[&str] = &[
 #[must_use]
 pub fn lifetime_physician_number_deu() -> Recognizer {
     let pattern = Pattern::new("DE Lifetime Physician Number", r"\b\d{9}\b", Score::from_static(0.3))
-        .expect("static DE lifetime physician number pattern compiles");
+        .expect("static DE lifetime physician number pattern compiles")
+        .requiring_context();
     Recognizer::new(Entity::LifetimePhysicianNumberDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("LifetimePhysicianNumberDeuRecognizer")

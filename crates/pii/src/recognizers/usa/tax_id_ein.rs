@@ -2,6 +2,18 @@
 
 use crate::recognizers::prelude::*;
 
+/// Context keywords for US EIN.
+const CONTEXT: &[&str] = &[
+    "ein",
+    "fein",
+    "employer identification",
+    "employer id",
+    "federal tax id",
+    "tax id",
+    "taxid",
+    "tin",
+];
+
 /// Build the `TAX_ID_EIN` recognizer.
 ///
 /// # Panics
@@ -9,18 +21,25 @@ use crate::recognizers::prelude::*;
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
 pub fn tax_id_ein_usa() -> Recognizer {
-    let pattern =
-        Pattern::new("US EIN", r"\b\d{2}-\d{7}\b", Score::from_static(0.5)).expect("static EIN pattern compiles");
+    let pattern = Pattern::new("US EIN", r"\b\d{2}-\d{7}\b", Score::from_static(0.5))
+        .expect("static EIN pattern compiles")
+        .requiring_context();
     Recognizer::new(Entity::TaxIdEin, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("TaxIdEinUsaRecognizer")
         .with_validator(Validator::EinPrefixUsa)
         .with_category(Category::Government)
+        .with_context(CONTEXT)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::tax_id_ein_usa;
+    use super::{CONTEXT, tax_id_ein_usa};
+
+    #[test]
+    fn carries_context_list() {
+        assert_eq!(tax_id_ein_usa().context(), CONTEXT);
+    }
 
     fn results(text: &str) -> Vec<(&str, f32)> {
         tax_id_ein_usa()

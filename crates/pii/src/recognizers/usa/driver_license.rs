@@ -8,16 +8,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US driver licence.
-const CONTEXT: &[&str] = &[
-    "driver",
-    "license",
-    "permit",
-    "lic",
-    "identification",
-    "dls",
-    "cdls",
-    "driving",
-];
+const CONTEXT: &[&str] = &["driver", "license", "permit", "lic", "dls", "cdls", "driving"];
 
 const ALPHANUMERIC_PATTERN: &str = concat!(
     r"\b(",

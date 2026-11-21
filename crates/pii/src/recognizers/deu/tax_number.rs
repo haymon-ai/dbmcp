@@ -1,4 +1,6 @@
 //! `TAX_NUMBER_DE` recognizer (Steuernummer, ELSTER + state-specific slash formats).
+//!
+//! The unchecked 13-digit ELSTER form needs a context keyword.
 
 use crate::recognizers::prelude::*;
 
@@ -31,7 +33,8 @@ pub fn tax_number_deu() -> Recognizer {
             r"\b(0[1-9]|1[0-6])\d{11}\b",
             Score::from_static(0.5),
         )
-        .expect("static DE Steuernummer ELSTER pattern compiles"),
+        .expect("static DE Steuernummer ELSTER pattern compiles")
+        .requiring_context(),
         Pattern::new(
             "DE Steuernummer (Bayern/BW 3/3/5)",
             r"(?<!\w)\d{3}/\d{3}/\d{5}(?!\w)",

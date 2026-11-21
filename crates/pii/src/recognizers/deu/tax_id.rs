@@ -29,7 +29,8 @@ pub fn tax_id_deu() -> Recognizer {
         r"\b[1-9]\d{10}\b",
         Score::from_static(0.5),
     )
-    .expect("static DE Steuer-ID pattern compiles");
+    .expect("static DE Steuer-ID pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::TaxIdDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("TaxIdDeuRecognizer")

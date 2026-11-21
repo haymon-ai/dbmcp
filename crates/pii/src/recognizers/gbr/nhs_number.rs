@@ -22,7 +22,8 @@ pub fn nhs_number_gbr() -> Recognizer {
         r"\b\d{3}[- ]?\d{3}[- ]?\d{4}\b",
         Score::from_static(0.4),
     )
-    .expect("static NHS pattern compiles");
+    .expect("static NHS pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::NhsNumber, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("NhsNumberGbrRecognizer")
