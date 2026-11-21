@@ -52,9 +52,18 @@ http = "1"
 indexmap = { version = "2", features = ["serde"] }
 mimalloc = "0.1"
 moka = { version = "0.12", features = ["future"] }
-ort = { version = "=2.0.0-rc.10", default-features = false, features = [
+# ort is exact-pinned and dependabot ignores it. ort's prebuilt ONNX Runtime
+# for aarch64-apple-darwin ships only with CoreML (no plain build), and
+# x86_64-apple-darwin has none. download-binaries needs a TLS feature
+# (tls-rustls). rc.14+ needs the root build.rs (-fapple-link-rtlib) for the
+# fat-LTO macOS link. After any ort or Rust toolchain bump, check on macOS:
+#   cargo build --release --locked --target aarch64-apple-darwin
+#   nm -u target/aarch64-apple-darwin/release/dbmcp | grep -c isPlatformVersionAtLeast   # must print 0
+#   target/aarch64-apple-darwin/release/dbmcp --version
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
     "download-binaries",
     "std",
+    "tls-rustls",
 ] }
 ring = "0.17"
 rmcp = { version = "3.11", features = [
