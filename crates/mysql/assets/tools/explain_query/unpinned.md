@@ -20,8 +20,8 @@ Use when:
 </examples>
 
 <safety>
-Set `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).
-IMPORTANT: EXPLAIN ANALYZE actually executes the query, so only read-only statements are allowed with analyze.
+Set `analyze` to true for actual execution statistics (EXPLAIN ANALYZE on MySQL, ANALYZE FORMAT=JSON on MariaDB).
+IMPORTANT: analyze actually executes the query, so only read-only statements are allowed with analyze.
 When analyze is false, returns EXPLAIN FORMAT=JSON output without executing. Write statements are rejected: the plan is fetched in a read-only transaction.
 Only a single SQL statement is accepted.
 </safety>

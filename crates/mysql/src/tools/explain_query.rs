@@ -113,7 +113,7 @@ impl MysqlHandler {
     /// `analyze` is true. The plan is always fetched so the database
     /// rejects writes, in every mode. With column rules, the plan of a
     /// statement touching a ruled relation is pruned to value-free keys,
-    /// and `analyze` on one is rejected.
+    /// and `analyze` on one is rejected (on `MariaDB`, any `analyze`).
     ///
     /// # Errors
     ///
@@ -126,6 +126,8 @@ impl MysqlHandler {
     /// character the parser cannot read.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
     /// the query is a write statement.
+    /// Returns an internal error if `analyze` is true on `MariaDB`
+    /// while column rules exist.
     /// Returns [`SqlError::Query`] if the backend reports an error, including
     /// a plain `EXPLAIN` of a write statement.
     ///
@@ -153,13 +155,22 @@ impl MysqlHandler {
             validate_single_statement(&query, &sqlparser::dialect::MySqlDialect {})?;
         }
 
+        // The planner cannot parse MariaDB's `ANALYZE` statement, so it cannot tell ruled relations apart.
+        if analyze && self.config.backend == DatabaseBackend::Mariadb && self.policy.is_some() {
+            return Err(ErrorData::internal_error(
+                "column policy: ANALYZE is denied on MariaDB while column rules exist; explain without ANALYZE",
+                None,
+            ));
+        }
+
         let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-        let explain_sql = if analyze {
-            format!("EXPLAIN ANALYZE {query}")
-        } else {
-            format!("EXPLAIN FORMAT=JSON {query}")
+        // MariaDB replaced `EXPLAIN ANALYZE` with the `ANALYZE` statement.
+        let explain_sql = match (analyze, self.config.backend) {
+            (true, DatabaseBackend::Mariadb) => format!("ANALYZE FORMAT=JSON {query}"),
+            (true, _) => format!("EXPLAIN ANALYZE {query}"),
+            (false, _) => format!("EXPLAIN FORMAT=JSON {query}"),
         };
 
         // ANALYZE executes the statement, and planning alone can run user functions.

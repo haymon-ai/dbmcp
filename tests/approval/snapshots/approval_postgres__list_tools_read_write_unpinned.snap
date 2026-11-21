@@ -133,7 +133,7 @@ expression: tools
           "type": "string"
         },
         "analyze": {
-          "description": "If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE). Only allowed for read-only statements. Defaults to false.",
+          "description": "If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE; ANALYZE on `MariaDB`). Only allowed for read-only statements. Defaults to false.",
           "type": "boolean",
           "default": false
         },
