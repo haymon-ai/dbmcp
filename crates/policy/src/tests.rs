@@ -1307,3 +1307,60 @@ fn unruled_writes_skip_the_landing_check() {
     let lineage = write("ptab", "email", vec![col("users", "name")], StatementKind::Insert);
     assert!(pg_with(&lineage, &config, &tree()).is_ok());
 }
+
+#[test]
+fn updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let lineage = write("ptab", "id", vec![], StatementKind::Update);
+    assert_eq!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::RowMovement {
+            relation: "public.ptab".into(),
+        })
+    );
+}
+
+#[test]
+fn every_merge_into_a_non_uniformly_ruled_partitioned_table_rejects() {
+    let config = config(vec![
+        ssn("shop.public.ptab_1.email"),
+        rule("shop.public.ptab_2.email", PiiOperator::Redact, "US_SSN"),
+    ]);
+    let lineage = write("ptab", "note", vec![], StatementKind::Merge);
+    assert!(matches!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::RowMovement { .. })
+    ));
+}
+
+#[test]
+fn row_movement_allows_leaves_legacy_trees_and_other_writes() {
+    let config = config(vec![
+        ssn("shop.public.ptab_1.email"),
+        ssn("shop.public.inh_child.email"),
+    ]);
+    for (target, statement) in [
+        ("ptab_1", StatementKind::Update),
+        ("ptab_2", StatementKind::Merge),
+        ("inh_parent", StatementKind::Update),
+        ("ptab", StatementKind::Delete),
+        // `INSERT … ON CONFLICT DO UPDATE` is an `Insert`.
+        ("ptab", StatementKind::Insert),
+    ] {
+        let lineage = write(target, "id", vec![], statement.clone());
+        assert!(pg_with(&lineage, &config, &tree()).is_ok(), "{target} {statement:?}");
+    }
+}
+
+#[test]
+fn row_movement_allows_uniformly_ruled_and_unruled_trees() {
+    for rules in [
+        vec![ssn("shop.public.ptab.email")],
+        vec![ssn("shop.public.ptab_1.email"), ssn("shop.public.ptab_2.email")],
+        vec![ssn("shop.public.users.ssn")],
+    ] {
+        let config = config(rules);
+        let lineage = write("ptab", "id", vec![], StatementKind::Update);
+        assert!(pg_with(&lineage, &config, &tree()).is_ok());
+    }
+}

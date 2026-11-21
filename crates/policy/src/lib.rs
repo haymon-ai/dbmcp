@@ -30,6 +30,9 @@
 //! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
+//! 11. An `UPDATE` or `MERGE` through a partitioned table rejects while its
+//!     leaf partitions read a ruled column under different pairs: a row
+//!     moved between them would be read back under other rules.
 //!
 //! Each column matches the rule whose folded key equals its folded
 //! `catalog.schema.table.column`. Every read-side lookup also covers the

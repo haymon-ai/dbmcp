@@ -5386,3 +5386,24 @@ async fn column_rules_on_a_child_refuse_copying_through_the_parent() {
         .expect_err("note is unruled");
     assert!(error.message.contains("would weaken the rules"), "{}", error.message);
 }
+
+#[tokio::test]
+async fn column_rules_refuse_row_movement_between_differently_ruled_partitions() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    let error = handler
+        .write_query("UPDATE ptab SET id = 160 WHERE id = 1".into(), None)
+        .await
+        .expect_err("the row would move into unruled ptab_2");
+    assert!(
+        error
+            .message
+            .contains("could move rows between differently ruled partitions"),
+        "{}",
+        error.message
+    );
+    let response = handler
+        .write_query("UPDATE ptab_1 SET id = 60 WHERE id < 0".into(), None)
+        .await
+        .expect("a named partition keeps its rows");
+    assert_eq!(response.rows_affected, 0);
+}

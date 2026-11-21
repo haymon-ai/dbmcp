@@ -7,7 +7,7 @@ use dbmcp_config::{ColumnRule, PiiConfig};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Dialect, ExplainForm, Family, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
+    Dialect, ExplainForm, Family, Lineage, Member, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
 
 use crate::deny;
@@ -26,7 +26,8 @@ use crate::rejection::Rejection;
 /// plain JSON or query-plan form, `EXPLAIN ANALYZE` on one, `CREATE INDEX` on
 /// one, a ruled column used outside the output, conflicting rules on one
 /// output column, a shadowed bare create target, or a write copying ruled
-/// values into a column not ruled the same way or not nameable by a rule.
+/// values into a column not ruled the same way or not nameable by a rule,
+/// or an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.
 ///
 /// # Panics
 ///
@@ -155,7 +156,46 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
             }
         }
     }
+    row_movement(lineage, config, names)?;
     Ok(Plan { columns })
+}
+
+/// Rejects an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.
+///
+/// A row moved between partitions would be read back under the rules of
+/// another leaf, so every leaf must read each ruled column under the same
+/// pairs. Moves are decided per row at run time, so this fires even when no
+/// row would move. Lineage keeps no per-action detail, so every `MERGE` counts.
+fn row_movement(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<(), Rejection> {
+    if !matches!(lineage.statement, StatementKind::Update | StatementKind::Merge) {
+        return Ok(());
+    }
+    let Some(target) = &lineage.target else {
+        return Ok(());
+    };
+    let Some(family) = names.families.get(target).filter(|family| family.partitioned) else {
+        return Ok(());
+    };
+    let leaves: Vec<_> = family.descendants.iter().filter(|member| !member.partitioned).collect();
+    let pairs = |member: &Member, column: &str| {
+        direct(config, &member.id, member.ancestors.iter(), column)
+            .map(|rule| (rule.operator, rule.entity))
+            .collect::<Vec<_>>()
+    };
+    // A column no leaf reads under a rule yields empty, equal pair lists.
+    let uniform = config.rules.iter().all(|rule| {
+        let column = &rule.key[3];
+        let mut sets = leaves.iter().map(|leaf| pairs(leaf, column));
+        sets.next().is_none_or(|first| {
+            sets.all(|set| set.iter().all(|pair| first.contains(pair)) && first.iter().all(|pair| set.contains(pair)))
+        })
+    });
+    if uniform {
+        return Ok(());
+    }
+    Err(Rejection::RowMovement {
+        relation: relation_name(target),
+    })
 }
 
 /// Rejects a bare create target resolved outside the creation schema.
@@ -235,12 +275,17 @@ fn direct<'a>(
 
 /// Reports whether any rule names a column of `relation`.
 pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
-    let key = [
-        ColumnRule::fold(&relation.catalog),
-        ColumnRule::fold(&relation.schema),
-        ColumnRule::fold(&relation.name),
-    ];
-    config.rules.iter().any(|rule| rule.key[..3] == key)
+    config.rules.iter().any(|rule| rule_on(rule, relation))
+}
+
+/// Reports whether `rule` names a column of `relation`.
+fn rule_on(rule: &ColumnRule, relation: &RelationId) -> bool {
+    rule.key[..3]
+        == [
+            ColumnRule::fold(&relation.catalog),
+            ColumnRule::fold(&relation.schema),
+            ColumnRule::fold(&relation.name),
+        ]
 }
 
 /// Reports whether any rule names a column of `relation` or of its family.
