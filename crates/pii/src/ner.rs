@@ -300,27 +300,42 @@ fn flush(spans: &mut Vec<Span>, open: Option<OpenSpan>, threshold: Score) {
     }
 }
 
-/// Reports whether the span `text[start..end]` looks like a code, not a name.
+/// Reports whether an `entity` span at `text[start..end]` looks like a code.
 ///
 /// Two shapes count, both tagged with high confidence by CoNLL/OntoNotes
-/// models, so a threshold cannot drop them:
+/// models, so a threshold cannot drop them. Spans holding whitespace never do.
 ///
-/// - A short code: at most 3 characters, no lowercase letter, no whitespace.
-///   Country and currency codes (`AT`, `EUR`) and SQL keywords (`AS`, `IN`).
-///   Bare acronyms such as `IBM` go too.
-/// - Part of a namespaced identifier: the whitespace-free run around the span
-///   contains `\` or `::` (`App\Model\Order`, `Foo::Bar`).
-fn code_like(text: &str, start: usize, end: usize) -> bool {
+/// - A short code, unless the span is a `PERSON`: at most 3 characters, every
+///   letter a capital. Country and currency codes (`AT`, `EUR`) and SQL
+///   keywords (`AS`, `IN`). Bare acronyms such as `IBM` go too; capitalised
+///   surnames (`LEE`) and caseless scripts (`李明`) do not.
+/// - Part of a namespaced identifier: the whitespace-free run around the span,
+///   trimmed of surrounding punctuation, is two or more identifier segments
+///   joined by `\` or `::` (`App\Model\Order`, `Foo::Bar`). Paths such as
+///   `C:\Users\Anna` and escaped quotes such as `\"Anna\"` do not match.
+fn code_like(text: &str, start: usize, end: usize, entity: Entity) -> bool {
     let (Some(before), Some(span), Some(after)) = (text.get(..start), text.get(start..end), text.get(end..)) else {
         return false;
     };
-    if span.chars().count() <= 3 && !span.chars().any(|c| c.is_lowercase() || c.is_whitespace()) {
+    if span.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if entity != Entity::Person
+        && span.chars().count() <= 3
+        && span.chars().all(|c| !c.is_alphabetic() || c.is_uppercase())
+    {
         return true;
     }
-    let before = before.rsplit(char::is_whitespace).next().unwrap_or_default();
-    let after = after.split(char::is_whitespace).next().unwrap_or_default();
-    let run = format!("{before}{span}{after}");
-    run.contains('\\') || run.contains("::")
+    let from = start - before.rsplit(char::is_whitespace).next().unwrap_or_default().len();
+    let to = end + after.split(char::is_whitespace).next().unwrap_or_default().len();
+    let Some(run) = text.get(from..to) else {
+        return false;
+    };
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let run = run.trim_matches(|c: char| !ident(c));
+    let mut segments = run.split("::").flat_map(|s| s.split('\\'));
+    let count = segments.clone().count();
+    count > 1 && segments.all(|s| !s.is_empty() && s.chars().all(ident))
 }
 
 /// Builds a [`RecognizerResult`] from an aggregated [`Span`].
@@ -504,11 +519,12 @@ impl NerEngine {
             self.run_chunk(chunk, &mut results)?;
         }
 
-        // Merge overflow-window dupes per text, then drop code-like spans.
+        // Drop code-like spans, then merge overflow-window dupes per text. Dropping
+        // first keeps a code-like span from claiming bytes another span covers.
         for (spans, text) in results.iter_mut().zip(texts) {
             if !spans.is_empty() {
+                spans.retain(|r| !code_like(text, r.start, r.end, r.entity_type));
                 *spans = crate::overlap::resolve(text, std::mem::take(spans));
-                spans.retain(|r| !code_like(text, r.start, r.end));
             }
         }
         Ok(results)
@@ -880,10 +896,18 @@ mod tests {
         assert_eq!((spans[0].start, spans[0].end), (0, 13));
     }
 
-    /// `code_like` on the first occurrence of `span` inside `text`.
+    /// `code_like` on the first occurrence of an `ORGANIZATION` `span` in `text`.
     fn code_like_at(text: &str, span: &str) -> bool {
         let start = text.find(span).expect("span occurs in text");
-        code_like(text, start, start + span.len())
+        code_like(text, start, start + span.len(), Entity::Organization)
+    }
+
+    #[test]
+    fn code_like_keeps_short_capitalised_person_spans() {
+        for name in ["LEE", "KIM", "WU", "LI"] {
+            assert!(!code_like(name, 0, name.len(), Entity::Person), "{name:?}");
+            assert!(code_like(name, 0, name.len(), Entity::Location), "{name:?}");
+        }
     }
 
     #[test]
@@ -906,6 +930,14 @@ mod tests {
             ("O'Brien", "O'Brien", false),
             ("Europe/Vienna", "Vienna", false),
             ("Name\u{a0}Anna", "Anna", false),
+            ("\\App\\Model\\Order,", "Model", true),
+            ("李明", "李明", false),
+            ("김민수", "김민수", false),
+            ("علي", "علي", false),
+            ("C:\\Users\\Anna\\Documents", "Anna", false),
+            ("C:\\Users\\Anna Schmidt\\Documents", "Anna Schmidt", false),
+            ("CORP\\anna.schmidt", "anna.schmidt", false),
+            ("Call \\\"Anna\\\" today", "Anna", false),
         ];
         for (text, span, expected) in cases {
             assert_eq!(code_like_at(text, span), *expected, "{span:?} in {text:?}");
@@ -914,7 +946,7 @@ mod tests {
 
     #[test]
     fn code_like_rejects_offsets_off_char_boundary() {
-        assert!(!code_like("Müller", 0, 2));
+        assert!(!code_like("Müller", 0, 2, Entity::Person));
     }
 
     #[test]

@@ -184,7 +184,7 @@ fn clean_text_yields_no_spans() {
 }
 
 #[test]
-fn code_like_values_yield_no_spans() {
+fn code_like_values_yield_no_organization_or_location_spans() {
     let Some(engine) = engine() else {
         eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
         return;
@@ -199,7 +199,12 @@ fn code_like_values_yield_no_spans() {
     ];
     for text in texts {
         let out = engine.analyze(text).expect("inference succeeds");
-        assert!(out.is_empty(), "no entities expected in {text:?}, got {out:?}");
+        // PERSON spans are never skipped as short codes (surnames like `LEE`),
+        // so an OntoNotes model's PERSON `DE` stays; it over-redacts, never leaks.
+        assert!(
+            out.iter().all(|r| r.entity_type == Entity::Person),
+            "no organization or location expected in {text:?}, got {out:?}",
+        );
     }
 }
 
