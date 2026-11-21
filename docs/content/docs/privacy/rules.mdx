@@ -126,6 +126,25 @@ column policy: column "public.users.ssn" (ruled) used in WHERE in view "public.u
 
 There is no way to allow a clause per rule yet. Filter, join, and group on unruled columns (an `id`, a foreign key) instead.
 
+## Inheritance and partitions
+
+On PostgreSQL, a plain `FROM parent` also reads the rows of every inheritance child and every partition. A rule therefore reaches across the whole inheritance tree, both legacy `INHERITS` and declarative partitioning, matching columns by name:
+
+- **Upward.** A rule on a child or partition column also covers the same-named column of every ancestor. `SELECT email FROM ptab` is rewritten by the rule on `ptab_1.email`, for **every** row, including those of other partitions and of the parent itself.
+- **Downward.** A rule on a parent column covers the same-named column of every descendant: with `ptab.email` ruled, `SELECT email FROM ptab_1` is rewritten too.
+- **Siblings never.** A rule on `ptab_1.email` does not cover `SELECT email FROM ptab_2`.
+- **Multiple inheritance.** Rows read through a parent also follow the rules of their table's other parents. If `child` inherits both `parent` and `other`, a rule on `other.email` covers `SELECT email FROM parent`, which reads `child`'s rows.
+- **Writes.** Copying a ruled column into a tree checks every member a row can land in: the named table and each of its descendants must read the written column back under exactly the source's rule (their own or an ancestor's). `INSERT INTO ptab SELECT email FROM staging`, with `staging.email` ruled, is refused while `ptab_2.email` is unruled. Rule the top-most parent (`ptab.email`) the same way to cover every member.
+- **Row movement.** An `UPDATE` or `MERGE` through a partitioned table is refused while its partitions read any ruled column under different rules: changing a partition key moves the row into another partition, where it would be read back under that partition's rules. With only `ptab_1.email` ruled, `UPDATE ptab SET id = 160` is refused. It is refused even when no row would move, and every `MERGE` counts, whatever its actions. Name the partition instead (`UPDATE ptab_1 …`), or rule the partitioned table itself.
+
+Every other check counts the tree the same way: a ruled column of any member cannot appear in a `WHERE` or `JOIN` through the parent, an `EXPLAIN` of the parent is pruned, its errors are withheld, `CREATE INDEX` on it is refused, and its whole-row references are rewritten or refused. Views over a parent get the same coverage. Columns that exist only on one child match nothing on the parent.
+
+Two different rules that meet across a tree conflict: with `ptab.email` hashed and `ptab_1.email` masked, every read of `email` through `ptab` or `ptab_1` is refused as `combines conflicting column rules`. To rule a whole tree one way, rule its top-most parent only.
+
+The tree is read again for every statement, so partitions attached after startup are covered, and checked again after the statement runs: if a table with a ruled column joined the tree of a table the statement read in between (`ATTACH PARTITION`, `INHERIT`), the statement is refused, nothing is returned, and a write is rolled back. Tables that left a tree meanwhile are ignored. `ONLY parent` and `parent *` are refused while rules exist.
+
+This goes further than PostgreSQL itself: grants and row-level security check only the table a query names, not the children whose rows it reads, and PostgreSQL Anonymizer does not inherit masking rules either.
+
 ## What gets rejected
 
 While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, not only statements that touch a ruled table. Nothing runs. Every refusal starts with `column policy:` and names only clauses and identifiers, never a rule body or a value.
@@ -141,6 +160,8 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
 - **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explainQuery` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
+- **Row movement on PostgreSQL**: `UPDATE` and `MERGE` through a partitioned table whose partitions are ruled differently, even when no row would move; name the partition (see [Inheritance and partitions](#inheritance-and-partitions)).
+- **A changed inheritance tree on PostgreSQL**: a table with a ruled column that joined the tree of a table the statement read while it ran. This one is caught after the statement runs: nothing is returned and a write is rolled back, with `column policy: an inheritance tree changed while the statement ran`. Retry the statement.
 - **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
 
 Output of `SHOW`, `DESCRIBE`, and `EXPLAIN` that is not refused gets global detection, as without rules.

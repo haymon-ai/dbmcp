@@ -30,9 +30,16 @@
 //! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
+//! 11. An `UPDATE` or `MERGE` through a partitioned table rejects while its
+//!     leaf partitions read a ruled column under different pairs: a row
+//!     moved between them would be read back under other rules.
 //!
 //! Each column matches the rule whose folded key equals its folded
-//! `catalog.schema.table.column`. The planner is pure and sync: it never
+//! `catalog.schema.table.column`. Every read-side lookup also covers the
+//! relation's `PostgreSQL` inheritance [`Family`]: a column is ruled by the
+//! rules on the same-named column of its ancestors, its descendants, and
+//! their other ancestors, never its siblings, so rows read through a parent
+//! follow the rules of the member they live in. The planner is pure and sync: it never
 //! touches a database. Rejection messages name only catalog identifiers,
 //! never a rule's name, entity, or operator, nor a value.
 //!
@@ -50,7 +57,8 @@ mod relation;
 mod tests;
 
 pub use dbmcp_sql_lineage::{
-    CatalogColumn, Entry, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind, WrittenName,
+    CatalogColumn, Entry, Family, Member, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind,
+    WrittenName,
 };
 
 pub use self::analysis::{Analysis, Analyzed, Step};

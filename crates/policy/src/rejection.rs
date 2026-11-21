@@ -110,6 +110,17 @@ pub enum Rejection {
         position: usize,
     },
 
+    /// An `UPDATE` or `MERGE` through a partitioned table whose partitions are ruled differently.
+    ///
+    /// A row moved between partitions would be read back under other rules.
+    #[error(
+        "column policy: UPDATE or MERGE through partitioned table {relation:?} could move rows between differently ruled partitions; target the partition"
+    )]
+    RowMovement {
+        /// The partitioned target, as `schema.name`.
+        relation: String,
+    },
+
     /// A bare create target that names another relation than the one created.
     ///
     /// The rules were checked against the relation the name resolved to.
@@ -135,6 +146,7 @@ impl Rejection {
             Self::Reference { .. } => "reference",
             Self::Conflict { .. } => "combine",
             Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
+            Self::RowMovement { .. } => "row-movement",
             Self::ShadowedTarget { .. } => "target",
         }
     }

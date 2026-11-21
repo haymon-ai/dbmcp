@@ -15,7 +15,8 @@
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
-//! 5. refuses the result when a view body it planned from has changed,
+//! 5. refuses the result when a view body it planned from has changed, or
+//!    a ruled relation joined the inheritance tree of a table it read,
 //! 6. commits a write or rolls a read back.
 //!
 //! `CREATE INDEX` runs outside the transaction once planned, since its
@@ -25,13 +26,13 @@
 //! ruled relation, database errors outside the value-free `SQLSTATE`
 //! classes, `COMMIT` included, are replaced by a generic message.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    RelationRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection, Relation, RelationId,
+    RelationKind, RelationRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -55,12 +56,21 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// Resolves each `to_regclass` input of `$1`, with its explicit schema in `$2`.
 ///
 /// Per name, in order: schema, name, `relkind`, OID, view body, column names
-/// and numbers (system columns, numbered below zero, come last), and whether
-/// the explicit schema exists.
+/// and numbers (system columns, numbered below zero, come last), whether
+/// the explicit schema exists, and its inheritance closure.
+///
+/// The closure is every descendant (`pg_inherits` children, transitively)
+/// and every ancestor of the relation or a descendant: each node's OID,
+/// schema, name, and `relkind`, then each `pg_inherits` edge whose child is
+/// a node, as child and parent OIDs. `UNION` ends the walk on diamonds. It
+/// takes no lock and names no `inhdetachpending`, so a partition pending
+/// detach still counts.
 const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
-     to_regnamespace(n.schema) IS NOT NULL \
+     to_regnamespace(n.schema) IS NOT NULL, \
+     coalesce(tree.oids, '{}'), coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}'), \
+     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}') \
      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
      LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
      LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
@@ -68,6 +78,19 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
            array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers \
            FROM pg_attribute AS a \
            WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
+           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
+           SELECT nodes.oids, nodes.schemas, nodes.names, nodes.relkinds, edges.children, edges.parents \
+           FROM (SELECT array_agg(r.oid::int8 ORDER BY r.oid) AS oids, \
+                   array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
+                   array_agg(r.relname::text ORDER BY r.oid) AS names, \
+                   array_agg(r.relkind::text ORDER BY r.oid) AS relkinds \
+                 FROM up JOIN pg_class AS r ON r.oid = up.oid \
+                 JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS nodes, \
+                (SELECT array_agg(i.inhrelid::int8 ORDER BY i.inhrelid, i.inhparent) AS children, \
+                   array_agg(i.inhparent::int8 ORDER BY i.inhrelid, i.inhparent) AS parents \
+                 FROM pg_inherits AS i WHERE i.inhrelid IN (SELECT up.oid FROM up)) AS edges) AS tree ON true \
      ORDER BY n.ord";
 
 /// `SQLSTATE` classes whose messages name schema objects or states, never values.
@@ -87,6 +110,22 @@ const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
 /// `invalid_name` quotes configuration parameter and replication slot names
 /// taken from values.
 const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
+
+/// Re-reads the inheritance closure of each relation OID in `$1`, in order.
+///
+/// The same walk as [`RESOLVE_SQL`]: per OID, the schema and name of every
+/// descendant and every ancestor of the relation or a descendant, the
+/// relation itself included. A relation gone since is an empty closure.
+const FAMILY_SQL: &str = "SELECT coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}') \
+     FROM unnest($1::int8[]) WITH ORDINALITY AS o(oid, ord) \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT o.oid::oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
+           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
+           SELECT array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
+             array_agg(r.relname::text ORDER BY r.oid) AS names \
+           FROM up JOIN pg_class AS r ON r.oid = up.oid \
+           JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS tree ON true \
+     ORDER BY o.ord";
 
 /// Reads the current body of each view OID in `$1`, in order.
 const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
@@ -130,6 +169,9 @@ enum Stop {
     /// A view body changed between planning and execution; nothing was committed.
     #[error("column policy: a view changed while the statement ran")]
     ViewChanged,
+    /// A ruled relation joined an inheritance tree the statement read; nothing was committed.
+    #[error("column policy: an inheritance tree changed while the statement ran")]
+    FamilyChanged,
     /// The statement failed with an error that may echo a ruled value.
     #[error("query failed (SQLSTATE {0}): error detail withheld under column policy")]
     Withheld(String),
@@ -165,6 +207,8 @@ struct Owner {
     columns: HashMap<i16, String>,
     /// The `pg_get_viewdef` body planned from, for a view or materialized view.
     view: Option<String>,
+    /// Whether its inheritance tree is re-read: tables and foreign tables.
+    tree: bool,
 }
 
 /// The relations a statement's result columns may come from, by OID.
@@ -188,6 +232,12 @@ type Resolved = (
     Vec<String>,
     Vec<i16>,
     bool,
+    Vec<i64>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<i64>,
+    Vec<i64>,
 );
 
 impl PostgresHandler {
@@ -280,6 +330,10 @@ async fn run<'c>(
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
+    if !families_unchanged(&mut tx, &owners, &planned).await? {
+        tx.rollback().await?;
+        return Err(Stop::FamilyChanged);
+    }
     // Deferred constraints fail at `COMMIT`, with messages as revealing.
     let finished = match access {
         Access::Read => tx.rollback().await,
@@ -337,6 +391,33 @@ async fn views_unchanged(
     }
     let current: Vec<Option<String>> = sqlx::query_scalar(VIEWS_SQL).bind(oids).fetch_all(conn).await?;
     Ok(current.iter().map(Option::as_deref).eq(bodies.into_iter().map(Some)))
+}
+
+/// Reports whether no ruled relation joined a planned table's inheritance tree.
+///
+/// Every table and foreign table is re-read, childless ones included, since
+/// `ATTACH PARTITION` and `INHERIT` take no lock the statement's scan
+/// blocks. A relation that left a tree since planning is ignored.
+async fn families_unchanged(
+    conn: &mut sqlx::PgConnection,
+    owners: &Owners,
+    planned: &Planned<'_>,
+) -> Result<bool, sqlx::Error> {
+    let (oids, trees): (Vec<i64>, Vec<&RelationId>) = owners
+        .iter()
+        .filter(|(_, owner)| owner.tree)
+        .map(|(oid, owner)| (i64::from(*oid), &owner.id))
+        .unzip();
+    if oids.is_empty() {
+        return Ok(true);
+    }
+    let current: Vec<(Vec<String>, Vec<String>)> = sqlx::query_as(FAMILY_SQL).bind(oids).fetch_all(conn).await?;
+    Ok(trees.into_iter().zip(current).all(|(owner, (schemas, names))| {
+        schemas
+            .iter()
+            .zip(&names)
+            .all(|(schema, name)| !planned.joined_ruled(owner, &RelationId::new(&owner.catalog, schema, name)))
+    }))
 }
 
 /// Runs `sql`, feeding each row's values to `sink`.
@@ -458,12 +539,13 @@ async fn fetch(
     let mut entries = Vec::new();
     for ((name, reference), row) in names.into_iter().zip(rows) {
         let entry = entry(probe, &name, &reference, &row);
-        let (_, _, _, oid, body, names, numbers, _) = row;
+        let (_, _, _, oid, body, names, numbers, ..) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.entry(oid).or_insert_with(|| Owner {
                 id: relation.id.clone(),
                 columns: numbers.into_iter().zip(names).collect(),
                 view: body,
+                tree: matches!(relation.kind, RelationKind::Table | RelationKind::Foreign),
             });
         }
         entries.push((name, entry));
@@ -473,7 +555,7 @@ async fn fetch(
 
 /// Builds the catalog entry of one resolved row.
 fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
-    let (schema, relname, relkind, _, body, columns, numbers, schema_exists) = row;
+    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, ..) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
         return vacant(probe, name, reference, *schema_exists);
     };
@@ -498,7 +580,7 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
         })
         .collect();
     let id = RelationId::new(&probe.database, schema, relname);
-    let relation = Relation::new(id, kind, columns);
+    let relation = Relation::new(id, kind, columns).with_family(family(probe, row));
     if !matches!(kind, RelationKind::View | RelationKind::MatView) {
         return Entry::Resolved(relation);
     }
@@ -506,6 +588,61 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
         Some(query) if !query.is_empty() => Entry::Resolved(relation.with_view_sql(query)),
         _ => Entry::Absent,
     }
+}
+
+/// Builds the inheritance tree of one resolved row from its closure nodes and edges.
+fn family(probe: &Probe, row: &Resolved) -> Family {
+    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents) = row;
+    let Some(owner) = *oid else {
+        return Family::default();
+    };
+    let nodes: HashMap<i64, (RelationId, bool)> = oids
+        .iter()
+        .zip(schemas.iter().zip(names).zip(relkinds))
+        .map(|(&oid, ((schema, name), relkind))| {
+            (oid, (RelationId::new(&probe.database, schema, name), relkind == "p"))
+        })
+        .collect();
+    let mut up: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut down: HashMap<i64, Vec<i64>> = HashMap::new();
+    for (&child, &parent) in children.iter().zip(parents) {
+        up.entry(child).or_default().push(parent);
+        down.entry(parent).or_default().push(child);
+    }
+    let ids = |oids: BTreeSet<i64>| -> BTreeSet<RelationId> {
+        oids.iter().filter_map(|oid| Some(nodes.get(oid)?.0.clone())).collect()
+    };
+    let mut descendants: Vec<Member> = closure(owner, &down)
+        .into_iter()
+        .filter_map(|oid| {
+            let (id, partitioned) = nodes.get(&oid)?;
+            Some(Member {
+                id: id.clone(),
+                partitioned: *partitioned,
+                ancestors: ids(closure(oid, &up)),
+            })
+        })
+        .collect();
+    descendants.sort_by(|a, b| a.id.cmp(&b.id));
+    Family {
+        partitioned: relkind.as_deref() == Some("p"),
+        ancestors: ids(closure(owner, &up)),
+        descendants,
+    }
+}
+
+/// Returns every node reachable from `start` along `edges`, `start` itself only on a loop.
+fn closure(start: i64, edges: &HashMap<i64, Vec<i64>>) -> BTreeSet<i64> {
+    let mut reached = BTreeSet::new();
+    let mut pending = vec![start];
+    while let Some(node) = pending.pop() {
+        for &next in edges.get(&node).into_iter().flatten() {
+            if reached.insert(next) {
+                pending.push(next);
+            }
+        }
+    }
+    reached
 }
 
 /// Returns the entry for a name nothing resolves to.
@@ -656,7 +793,103 @@ mod tests {
             vec!["id".into(), "ctid".into()],
             vec![1, -1],
             true,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
         )
+    }
+
+    /// A row for `public.<name>` (OID 1) whose closure holds `nodes` and `edges`.
+    ///
+    /// Each node is `(oid, name, relkind)` in `public`; each edge `(child, parent)`.
+    fn tree_row(name: &str, relkind: &str, nodes: &[(i64, &str, &str)], edges: &[(i64, i64)]) -> Resolved {
+        let mut row = row(relkind, "public", None);
+        row.1 = Some(name.into());
+        row.3 = Some(1);
+        row.8 = nodes.iter().map(|node| node.0).collect();
+        row.9 = nodes.iter().map(|_| "public".to_owned()).collect();
+        row.10 = nodes.iter().map(|node| node.1.to_owned()).collect();
+        row.11 = nodes.iter().map(|node| node.2.to_owned()).collect();
+        row.12 = edges.iter().map(|edge| edge.0).collect();
+        row.13 = edges.iter().map(|edge| edge.1).collect();
+        row
+    }
+
+    /// `app.public.<name>`.
+    fn id(name: &str) -> RelationId {
+        RelationId::new(DB, "public", name)
+    }
+
+    /// The identities of `names`.
+    fn ids(names: &[&str]) -> BTreeSet<RelationId> {
+        names.iter().map(|name| id(name)).collect()
+    }
+
+    /// `app.public.<name>` as a [`Member`] below `ancestors`.
+    fn member(name: &str, partitioned: bool, ancestors: &[&str]) -> Member {
+        Member {
+            id: id(name),
+            partitioned,
+            ancestors: ids(ancestors),
+        }
+    }
+
+    #[test]
+    fn partitioned_tables_carry_their_partitions() {
+        let nodes = [
+            (1, "ptab", "p"),
+            (2, "ptab_1", "r"),
+            (3, "ptab_2", "p"),
+            (4, "ptab_2a", "r"),
+        ];
+        let edges = [(2, 1), (3, 1), (4, 3)];
+        let relation = resolved(&tree_row("ptab", "p", &nodes, &edges)).expect("table");
+        assert_eq!(
+            relation.family,
+            Family {
+                partitioned: true,
+                ancestors: BTreeSet::new(),
+                descendants: vec![
+                    member("ptab_1", false, &["ptab"]),
+                    member("ptab_2", true, &["ptab"]),
+                    member("ptab_2a", false, &["ptab", "ptab_2"]),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn descendants_carry_every_parent_they_inherit() {
+        let nodes = [
+            (1, "inh_child", "r"),
+            (2, "inh_parent", "r"),
+            (3, "inh_other", "r"),
+            (4, "inh_grandchild", "r"),
+            (5, "inh_root", "r"),
+        ];
+        let edges = [(1, 2), (1, 3), (4, 1), (2, 5)];
+        let relation = resolved(&tree_row("inh_child", "r", &nodes, &edges)).expect("table");
+        assert_eq!(
+            relation.family,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["inh_parent", "inh_other", "inh_root"]),
+                descendants: vec![member(
+                    "inh_grandchild",
+                    false,
+                    &["inh_child", "inh_parent", "inh_other", "inh_root"]
+                )],
+            }
+        );
+    }
+
+    #[test]
+    fn relations_outside_a_tree_have_an_empty_family() {
+        let relation = resolved(&tree_row("solo", "r", &[(1, "solo", "r")], &[])).expect("table");
+        assert_eq!(relation.family, Family::default());
     }
 
     fn resolved(row: &Resolved) -> Option<Relation> {
@@ -711,7 +944,22 @@ mod tests {
     fn unresolved_rows_fall_back_to_vacant() {
         let name = WrittenName::query(vec![NamePart::bare("n")]);
 
-        let row: Resolved = (None, None, None, None, None, Vec::new(), Vec::new(), false);
+        let row: Resolved = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            false,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
         assert_eq!(
             entry(&probe(Some("public")), &name, &reference(None, "n"), &row),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
@@ -733,6 +981,153 @@ mod tests {
         <sqlx::PgConnection as sqlx::Connection>::connect_with(&options)
             .await
             .expect("connect to the seeded database")
+    }
+
+    /// Fetches the family of `public.<name>` from the seeded database.
+    async fn seeded_family(conn: &mut sqlx::PgConnection, name: &str) -> Family {
+        let probe = probe(Some("public"));
+        let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
+        let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
+        match entries.into_iter().next() {
+            Some((_, Entry::Resolved(relation))) => relation.family,
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn resolve_reads_inheritance_and_partition_trees() {
+        let mut conn = seeded().await;
+        assert_eq!(
+            seeded_family(&mut conn, "ptab").await,
+            Family {
+                partitioned: true,
+                ancestors: BTreeSet::new(),
+                descendants: vec![member("ptab_1", false, &["ptab"]), member("ptab_2", false, &["ptab"])],
+            }
+        );
+        assert_eq!(
+            seeded_family(&mut conn, "ptab_2").await,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["ptab"]),
+                descendants: Vec::new(),
+            }
+        );
+        let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
+        assert_eq!(
+            seeded_family(&mut conn, "inh_parent").await,
+            Family {
+                partitioned: false,
+                ancestors: BTreeSet::new(),
+                descendants: vec![
+                    member("inh_child", false, &["inh_parent", "inh_other"]),
+                    grandchild.clone()
+                ],
+            }
+        );
+        assert_eq!(
+            seeded_family(&mut conn, "inh_child").await,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["inh_parent", "inh_other"]),
+                descendants: vec![grandchild],
+            }
+        );
+        assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
+    }
+
+    /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.
+    ///
+    /// Returns whether every tree the plan read is unchanged as far as rules go.
+    async fn unchanged_across(
+        conn: &mut sqlx::PgConnection,
+        other: &mut sqlx::PgConnection,
+        config: &PiiConfig,
+        sql: &str,
+        change: &'static str,
+    ) -> bool {
+        let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static("START TRANSACTION READ ONLY"))
+            .await
+            .expect("begin");
+        let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
+        let mut planned = analyzed.plan(config).expect("plan");
+        sqlx::raw_sql(SqlStr::from_static(change))
+            .execute(&mut *other)
+            .await
+            .expect("change");
+        execute(&mut tx, sql, &mut planned, &owners, &mut |_| {})
+            .await
+            .expect("execute");
+        let unchanged = families_unchanged(&mut tx, &owners, &planned).await.expect("re-read");
+        tx.rollback().await.expect("rollback");
+        unchanged
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn ruled_relations_joining_a_tree_after_planning_are_caught() {
+        let mut conn = seeded().await;
+        let mut other = seeded().await;
+        let reset = "DROP TABLE IF EXISTS drift_p, drift_p1, drift_p2, drift_p3, drift_solo, drift_kid CASCADE";
+        sqlx::raw_sql(SqlStr::from_static(reset))
+            .execute(&mut other)
+            .await
+            .expect("reset");
+        sqlx::raw_sql(SqlStr::from_static(
+            "CREATE TABLE drift_p (id int, email text) PARTITION BY RANGE (id); \
+             CREATE TABLE drift_p1 PARTITION OF drift_p FOR VALUES FROM (0) TO (10); \
+             CREATE TABLE drift_p2 (id int, email text); \
+             CREATE TABLE drift_p3 (id int, email text); \
+             CREATE TABLE drift_solo (id int, email text); \
+             CREATE TABLE drift_kid (id int, email text); \
+             INSERT INTO drift_p VALUES (1, 'one@example.com'); \
+             INSERT INTO drift_p2 VALUES (11, 'two@example.com'); \
+             INSERT INTO drift_p3 VALUES (21, 'three@example.com'); \
+             INSERT INTO drift_kid VALUES (31, 'kid@example.com')",
+        ))
+        .execute(&mut other)
+        .await
+        .expect("setup");
+        let rule = |table: &str| dbmcp_config::ColumnRule {
+            name: table.into(),
+            item: 0,
+            key: ["app", "public", table, "email"].map(String::from),
+            entity: "EMAIL_ADDRESS",
+            operator: dbmcp_config::PiiOperator::Hash,
+        };
+        let config = PiiConfig {
+            rules: vec![rule("drift_p2"), rule("drift_kid")],
+            ..PiiConfig::default()
+        };
+        let read = "SELECT id, email FROM drift_p";
+
+        let unruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p3 FOR VALUES FROM (20) TO (30)";
+        assert!(
+            unchanged_across(&mut conn, &mut other, &config, read, unruled).await,
+            "unruled attach"
+        );
+        let ruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p2 FOR VALUES FROM (10) TO (20)";
+        assert!(
+            !unchanged_across(&mut conn, &mut other, &config, read, ruled).await,
+            "ruled attach"
+        );
+        let detach = "ALTER TABLE drift_p DETACH PARTITION drift_p2";
+        assert!(
+            unchanged_across(&mut conn, &mut other, &config, read, detach).await,
+            "detach"
+        );
+        let inherit = "ALTER TABLE drift_kid INHERIT drift_solo";
+        let solo = "SELECT id, email FROM drift_solo";
+        assert!(
+            !unchanged_across(&mut conn, &mut other, &config, solo, inherit).await,
+            "ruled inherit"
+        );
+
+        sqlx::raw_sql(SqlStr::from_static(reset))
+            .execute(&mut other)
+            .await
+            .expect("cleanup");
     }
 
     #[tokio::test]

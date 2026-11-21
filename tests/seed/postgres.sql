@@ -498,6 +498,54 @@ CREATE VIEW users_with_ssn AS
 CREATE VIEW user_emails AS
     SELECT id, email FROM users;
 
+-- Inheritance fixture: legacy `inh_parent` ← `inh_child` (which also
+-- inherits `inh_other`) ← `inh_grandchild`; partitioned `ptab` ← `ptab_1`,
+-- `ptab_2`. `ptab_2` drops a column before it is attached, so its attnums
+-- differ from `ptab`'s.
+CREATE TABLE inh_parent (
+    id INT,
+    email TEXT,
+    note TEXT
+);
+CREATE TABLE inh_other (
+    email TEXT
+);
+CREATE TABLE inh_child (
+    extra TEXT
+) INHERITS (inh_parent, inh_other);
+CREATE TABLE inh_grandchild () INHERITS (inh_child);
+
+INSERT INTO inh_parent (id, email, note) VALUES (1, 'inh-parent@example.com', 'parent');
+INSERT INTO inh_child (id, email, note, extra) VALUES (2, 'inh-child@example.com', 'child', 'x');
+INSERT INTO inh_grandchild (id, email, note, extra) VALUES (3, 'inh-grandchild@example.com', 'grandchild', 'y');
+INSERT INTO inh_other (email) VALUES ('inh-other@example.com');
+
+CREATE TABLE ptab (
+    id INT,
+    email TEXT,
+    note TEXT
+) PARTITION BY RANGE (id);
+CREATE TABLE ptab_1 PARTITION OF ptab FOR VALUES FROM (0) TO (100);
+CREATE TABLE ptab_2 (
+    gone INT,
+    note TEXT,
+    email TEXT,
+    id INT
+);
+ALTER TABLE ptab_2 DROP COLUMN gone;
+ALTER TABLE ptab ATTACH PARTITION ptab_2 FOR VALUES FROM (100) TO (200);
+
+INSERT INTO ptab (id, email, note) VALUES
+    (1, 'ptab-one@example.com', 'one'),
+    (2, 'ptab-two@example.com', 'two'),
+    (101, 'ptab-hundred@example.com', 'hundred');
+
+CREATE VIEW inh_parent_view AS
+    SELECT id, email FROM inh_parent;
+
+CREATE VIEW ptab_view AS
+    SELECT id, email FROM ptab;
+
 -- Search-path hijack: `shadow.users` precedes `public.users` for
 -- `policy_shadow`, so a bare `users` must bind to the shadow table.
 CREATE SCHEMA shadow;
