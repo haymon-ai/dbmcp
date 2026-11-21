@@ -75,6 +75,11 @@ Behaviour notes:
 
 - **Fail-closed.** If `pii.ner_enabled` is true but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
 - **Category-aware.** The NER pass respects `pii.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
+- **Codes are skipped.** Models trained on news text tag codes as names with high confidence, so two shapes are never redacted by the NER pass:
+  - Short codes (except person names): up to three characters whose letters are all capitals, with no space, such as country and currency codes (`AT`, `EUR`) or the SQL keyword `AS` in a view definition. Acronyms of that shape, such as `IBM`, are skipped too. A name the model tags as `PERSON` is never skipped this way, so capitalised surnames such as `LEE` are still redacted, and so are names in scripts without capitals, such as `李明`.
+  - Parts of namespaced identifiers: a word joined to other words by `\` or `::` into an identifier, such as `App\Model\Order`. Paths such as `C:\Users\Anna` are still checked.
+
+  Regex detection is unaffected. To protect a column of short codes or acronyms anyway, rule it with [`pii.rules`](/privacy/rules).
 
 ## Multilingual and int8 models
 

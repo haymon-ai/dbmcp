@@ -184,6 +184,44 @@ fn clean_text_yields_no_spans() {
 }
 
 #[test]
+fn code_like_values_yield_no_organization_or_location_spans() {
+    let Some(engine) = engine() else {
+        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        return;
+    };
+    let texts = [
+        "AT",
+        "DE",
+        "EUR",
+        "App\\Model\\Order",
+        "Siemens\\Billing\\Invoice",
+        "select `c`.`id` AS `id`,`c`.`country` AS `country` from `shop`.`customers` `c`",
+    ];
+    for text in texts {
+        let out = engine.analyze(text).expect("inference succeeds");
+        // PERSON spans are never skipped as short codes (surnames like `LEE`),
+        // so an OntoNotes model's PERSON `DE` stays; it over-redacts, never leaks.
+        assert!(
+            out.iter().all(|r| r.entity_type == Entity::Person),
+            "no organization or location expected in {text:?}, got {out:?}",
+        );
+    }
+}
+
+#[test]
+fn names_next_to_codes_still_detected() {
+    let Some(engine) = engine() else {
+        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        return;
+    };
+    let out = engine.analyze("Anna Schmidt (DE)").expect("inference succeeds");
+    assert!(
+        out.iter().any(|r| r.entity_type == Entity::Person),
+        "expected a PERSON span, got {out:?}",
+    );
+}
+
+#[test]
 fn analyze_batch_matches_single() {
     let Some(engine) = engine() else {
         eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
