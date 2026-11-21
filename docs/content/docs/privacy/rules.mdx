@@ -134,6 +134,7 @@ On PostgreSQL, a plain `FROM parent` also reads the rows of every inheritance ch
 - **Downward.** A rule on a parent column covers the same-named column of every descendant: with `ptab.email` ruled, `SELECT email FROM ptab_1` is rewritten too.
 - **Siblings never.** A rule on `ptab_1.email` does not cover `SELECT email FROM ptab_2`.
 - **Multiple inheritance.** Rows read through a parent also follow the rules of their table's other parents. If `child` inherits both `parent` and `other`, a rule on `other.email` covers `SELECT email FROM parent`, which reads `child`'s rows.
+- **Writes.** Copying a ruled column into a tree checks every member a row can land in: the named table and each of its descendants must read the written column back under exactly the source's rule (their own or an ancestor's). `INSERT INTO ptab SELECT email FROM staging`, with `staging.email` ruled, is refused while `ptab_2.email` is unruled. Rule the top-most parent (`ptab.email`) the same way to cover every member.
 
 Every other check counts the tree the same way: a ruled column of any member cannot appear in a `WHERE` or `JOIN` through the parent, an `EXPLAIN` of the parent is pruned, its errors are withheld, `CREATE INDEX` on it is refused, and its whole-row references are rewritten or refused. Views over a parent get the same coverage. Columns that exist only on one child match nothing on the parent.
 

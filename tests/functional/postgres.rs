@@ -5357,3 +5357,32 @@ async fn column_rules_on_members_cover_views_over_their_parent() {
         assert_email_tokens(&rows, count);
     }
 }
+
+#[tokio::test]
+async fn column_rules_refuse_writes_routed_into_an_unruled_member() {
+    let insert = "INSERT INTO ptab (id, email, note) SELECT id + 100, email, note FROM ptab_1 WHERE id < 0";
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    let error = handler
+        .write_query(insert.into(), None)
+        .await
+        .expect_err("ptab and ptab_2 are unruled");
+    assert!(error.message.contains("would weaken the rules"), "{}", error.message);
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab")]);
+    for insert in [insert, &insert.replacen("INTO ptab ", "INTO ptab_1 ", 1)] {
+        let response = handler
+            .write_query(insert.into(), None)
+            .await
+            .expect("every member reads back under ptab's rule");
+        assert_eq!(response.rows_affected, 0, "{insert}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_on_a_child_refuse_copying_through_the_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("inh_child")]);
+    let error = handler
+        .write_query("UPDATE inh_parent SET note = email WHERE id < 0".into(), None)
+        .await
+        .expect_err("note is unruled");
+    assert!(error.message.contains("would weaken the rules"), "{}", error.message);
+}

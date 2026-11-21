@@ -143,8 +143,14 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                     position,
                 });
             }
-            let own = combine(&BTreeSet::from([column.clone()]), config, &Families::new()).ok_or_else(laundering)?;
-            if own != source {
+            // Every member a row can land in must read back under the source's rule.
+            let empty = Family::default();
+            let family = names.families.get(target).unwrap_or(&empty);
+            let mut landing = std::iter::once((target, &family.ancestors))
+                .chain(family.descendants.iter().map(|member| (&member.id, &member.ancestors)));
+            if !landing
+                .all(|(member, ancestors)| merge(direct(config, member, ancestors.iter(), &write.name)) == Some(source))
+            {
                 return Err(laundering());
             }
         }
@@ -213,6 +219,20 @@ pub(crate) fn covering<'a>(
     reach(families, relation).filter_map(move |relation| rule(config, relation, column))
 }
 
+/// Returns the rules on `column` of `member` and of its `ancestors`.
+///
+/// These are the rules a direct read of `member.column` follows.
+fn direct<'a>(
+    config: &'a PiiConfig,
+    member: &'a RelationId,
+    ancestors: impl Iterator<Item = &'a RelationId>,
+    column: &'a str,
+) -> impl Iterator<Item = &'a ColumnRule> {
+    std::iter::once(member)
+        .chain(ancestors)
+        .filter_map(move |relation| rule(config, relation, column))
+}
+
 /// Reports whether any rule names a column of `relation`.
 pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
     let key = [
@@ -242,10 +262,18 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Famil
 /// Ruled sources decide the position; unruled ones add nothing. No ruled
 /// source means global detection.
 fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig, families: &Families) -> Option<Position> {
-    let mut pairs = sources
-        .iter()
-        .flat_map(|source| covering(config, families, &source.relation, &source.column))
-        .map(|rule| (rule.operator, rule.entity));
+    merge(
+        sources
+            .iter()
+            .flat_map(|source| covering(config, families, &source.relation, &source.column)),
+    )
+}
+
+/// Combines `rules` into one position; `None` when two pairs differ.
+///
+/// No rule means global detection.
+fn merge<'a>(rules: impl Iterator<Item = &'a ColumnRule>) -> Option<Position> {
+    let mut pairs = rules.map(|rule| (rule.operator, rule.entity));
     let Some(first) = pairs.next() else {
         return Some(Position::Global);
     };

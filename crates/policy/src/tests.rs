@@ -1260,3 +1260,50 @@ fn writes_from_a_parent_of_a_ruled_member_launder() {
         Err(Rejection::Laundering { .. })
     ));
 }
+
+#[test]
+fn writes_into_a_member_follow_its_ancestors_rules() {
+    let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.ptab.email")]);
+    let lineage = write("ptab_1", "email", vec![col("users", "ssn")], StatementKind::Insert);
+    assert!(pg_with(&lineage, &config, &tree()).is_ok());
+}
+
+#[test]
+fn writes_launder_into_a_descendant_ruled_otherwise() {
+    let config = config(vec![
+        ssn("shop.public.users.ssn"),
+        ssn("shop.public.ptab.email"),
+        rule("shop.public.ptab_2.email", PiiOperator::Redact, "US_SSN"),
+    ]);
+    let lineage = write("ptab", "email", vec![col("users", "ssn")], StatementKind::Insert);
+    assert_eq!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::Laundering {
+            column: "public.ptab.email".into(),
+        })
+    );
+}
+
+#[test]
+fn writes_check_each_landing_member_not_the_family_union() {
+    let config = config(vec![
+        ssn("shop.public.users.ssn"),
+        ssn("shop.public.ptab_1.email"),
+        ssn("shop.public.ptab_2.email"),
+    ]);
+    let lineage = write("ptab", "email", vec![col("users", "ssn")], StatementKind::Insert);
+    assert!(matches!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::Laundering { .. })
+    ));
+}
+
+#[test]
+fn unruled_writes_skip_the_landing_check() {
+    let config = config(vec![
+        ssn("shop.public.ptab.email"),
+        rule("shop.public.ptab_2.email", PiiOperator::Redact, "US_SSN"),
+    ]);
+    let lineage = write("ptab", "email", vec![col("users", "name")], StatementKind::Insert);
+    assert!(pg_with(&lineage, &config, &tree()).is_ok());
+}
