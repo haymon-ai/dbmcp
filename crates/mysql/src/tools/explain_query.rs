@@ -125,6 +125,12 @@ impl MysqlHandler {
     /// the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error, including
     /// a plain `EXPLAIN` of a write statement.
+    ///
+    /// [`SqlError::ExecutableCommentBlocked`]: dbmcp_sql::SqlError::ExecutableCommentBlocked
+    /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
+    /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
     pub async fn explain_query(
         &self,
         database: Option<String>,

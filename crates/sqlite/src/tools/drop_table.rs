@@ -62,6 +62,9 @@ impl SqliteHandler {
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// or [`SqlError::Query`] if the backend reports an error.
+    ///
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, ErrorData> {
         let drop_sql = format!("DROP TABLE {}", quote_ident(&table));
         self.connection.execute(drop_sql.as_str(), None).await?;

@@ -84,6 +84,11 @@ impl SqliteHandler {
     /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`, or
     /// [`SqlError::Query`] if the backend reports an error. With column
     /// rules, also the policy's rejection or a withheld database error.
+    ///
+    /// [`SqlError::DiagnosticsBlocked`]: dbmcp_sql::SqlError::DiagnosticsBlocked
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
+    /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
     pub async fn read_query(
         &self,
         ReadQueryRequest { query, cursor, timeout }: ReadQueryRequest,

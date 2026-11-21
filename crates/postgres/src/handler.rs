@@ -74,7 +74,7 @@ const TOOLS: &[ToolSpec<PostgresHandler>] = &[
 
 /// `PostgreSQL` database handler.
 ///
-/// Composes one [`PostgresConnection`] (which owns every pool
+/// Composes one `PostgresConnection` (which owns every pool
 /// and the pool initialization logic) with the per-backend MCP tool
 /// router.
 #[derive(Clone)]
@@ -101,7 +101,7 @@ impl std::fmt::Debug for PostgresHandler {
 impl PostgresHandler {
     /// Creates a new `PostgreSQL` handler.
     ///
-    /// Constructs the [`PostgresConnection`] (which builds the
+    /// Constructs the `PostgresConnection` (which builds the
     /// lazy default pool and the per-database pool cache) and the MCP
     /// tool router. No network I/O happens here.
     /// # Errors

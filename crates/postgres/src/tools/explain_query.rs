@@ -119,6 +119,10 @@ impl PostgresHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
     /// the query is a write statement.
     /// Returns [`SqlError::Query`] if the backend reports an error.
+    ///
+    /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn explain_query(
         &self,
         database: Option<String>,

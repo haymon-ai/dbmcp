@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Errors that surface when constructing a [`crate::Pattern`] or [`crate::Score`].
+/// Errors that surface when constructing a `Pattern` or [`crate::Score`].
 #[derive(Debug, Error)]
 pub enum PatternError {
     /// `fancy-regex`-engine compile error.
