@@ -300,6 +300,29 @@ fn flush(spans: &mut Vec<Span>, open: Option<OpenSpan>, threshold: Score) {
     }
 }
 
+/// Reports whether the span `text[start..end]` looks like a code, not a name.
+///
+/// Two shapes count, both tagged with high confidence by CoNLL/OntoNotes
+/// models, so a threshold cannot drop them:
+///
+/// - A short code: at most 3 characters, no lowercase letter, no whitespace.
+///   Country and currency codes (`AT`, `EUR`) and SQL keywords (`AS`, `IN`).
+///   Bare acronyms such as `IBM` go too.
+/// - Part of a namespaced identifier: the whitespace-free run around the span
+///   contains `\` or `::` (`App\Model\Order`, `Foo::Bar`).
+fn code_like(text: &str, start: usize, end: usize) -> bool {
+    let (Some(before), Some(span), Some(after)) = (text.get(..start), text.get(start..end), text.get(end..)) else {
+        return false;
+    };
+    if span.chars().count() <= 3 && !span.chars().any(|c| c.is_lowercase() || c.is_whitespace()) {
+        return true;
+    }
+    let before = before.rsplit(char::is_whitespace).next().unwrap_or_default();
+    let after = after.split(char::is_whitespace).next().unwrap_or_default();
+    let run = format!("{before}{span}{after}");
+    run.contains('\\') || run.contains("::")
+}
+
 /// Builds a [`RecognizerResult`] from an aggregated [`Span`].
 fn span_to_result(span: Span) -> RecognizerResult {
     RecognizerResult {
@@ -481,10 +504,11 @@ impl NerEngine {
             self.run_chunk(chunk, &mut results)?;
         }
 
-        // Merge overflow-window dupes per text.
+        // Merge overflow-window dupes per text, then drop code-like spans.
         for (spans, text) in results.iter_mut().zip(texts) {
             if !spans.is_empty() {
                 *spans = crate::overlap::resolve(text, std::mem::take(spans));
+                spans.retain(|r| !code_like(text, r.start, r.end));
             }
         }
         Ok(results)
@@ -854,6 +878,43 @@ mod tests {
         let spans = decode_spans(&words, Score::from_static(0.5));
         assert_eq!(spans.len(), 1, "I- continuation merges the two words");
         assert_eq!((spans[0].start, spans[0].end), (0, 13));
+    }
+
+    /// `code_like` on the first occurrence of `span` inside `text`.
+    fn code_like_at(text: &str, span: &str) -> bool {
+        let start = text.find(span).expect("span occurs in text");
+        code_like(text, start, start + span.len())
+    }
+
+    #[test]
+    fn code_like_drops_short_codes_and_namespaced_identifiers() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("AT", "AT", true),
+            ("EUR", "EUR", true),
+            ("AT, DE, CH", "DE", true),
+            ("select `t`.`id` AS `id`", "AS", true),
+            ("App\\Model\\Order", "App", true),
+            ("Siemens\\Billing\\Invoice", "Billing", true),
+            ("Foo::Bar::Baz", "Baz", true),
+            ("see Foo::Bar now", "Bar", true),
+            ("Li", "Li", false),
+            ("NASA", "NASA", false),
+            ("JOHN SMITH", "JOHN SMITH", false),
+            ("Meeting (Anna Schmidt) today", "Anna", false),
+            ("St. Louis", "St. Louis", false),
+            ("Jean-Luc Picard", "Jean-Luc", false),
+            ("O'Brien", "O'Brien", false),
+            ("Europe/Vienna", "Vienna", false),
+            ("Name\u{a0}Anna", "Anna", false),
+        ];
+        for (text, span, expected) in cases {
+            assert_eq!(code_like_at(text, span), *expected, "{span:?} in {text:?}");
+        }
+    }
+
+    #[test]
+    fn code_like_rejects_offsets_off_char_boundary() {
+        assert!(!code_like("Müller", 0, 2));
     }
 
     #[test]
