@@ -7,7 +7,7 @@ use dbmcp_sql_lineage::{Dialect, RelationId};
 use serde_json::Value;
 
 use crate::explain;
-use crate::plan::{Families, covering, covers_ruled};
+use crate::plan::{Families, covering, covers_ruled, is_ruled};
 
 /// A planned statement, bound to the `pii.rules` it was planned under.
 ///
@@ -62,6 +62,21 @@ impl<'c> Planned<'c> {
     #[must_use]
     pub const fn prunes(&self) -> bool {
         matches!(self.mode, Mode::Pruned(_))
+    }
+
+    /// Whether `relation`, re-read in `owner`'s tree, is a ruled newcomer.
+    ///
+    /// It counts when a rule names a column of `relation` itself and it was
+    /// not `owner` or in the tree `owner` was planned with. Backends check
+    /// the relations that joined a tree after planning.
+    #[must_use]
+    pub fn joined_ruled(&self, owner: &RelationId, relation: &RelationId) -> bool {
+        relation != owner
+            && is_ruled(relation, self.config)
+            && !self
+                .families
+                .get(owner)
+                .is_some_and(|family| family.relations().contains(relation))
     }
 
     /// Returns `code` when this plan withholds value-echoing errors.
@@ -283,6 +298,28 @@ mod tests {
             planned.check_first(&names(2), []),
             Err(Unfit::Shape(ShapeError::ColumnCount { expected: 1, actual: 2 }))
         );
+    }
+
+    #[test]
+    fn only_ruled_relations_new_to_a_tree_joined_it() {
+        let config = ruled();
+        let child = RelationId::new("shop", "public", "t_1");
+        let parent = RelationId::new("shop", "public", "t");
+        let families = Families::from([(
+            child.clone(),
+            dbmcp_sql_lineage::Family {
+                partitioned: false,
+                ancestors: [parent.clone()].into(),
+                descendants: Vec::new(),
+            },
+        )]);
+        let planned = Planned::new(Mode::Global, &config, families, true);
+        let other = RelationId::new("shop", "public", "u");
+        assert!(planned.joined_ruled(&other, &parent));
+        assert!(!planned.joined_ruled(&child, &parent));
+        assert!(!planned.joined_ruled(&parent, &parent));
+        assert!(!planned.joined_ruled(&parent, &child));
+        assert!(!planned.joined_ruled(&child, &other));
     }
 
     #[test]

@@ -15,7 +15,8 @@
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
-//! 5. refuses the result when a view body it planned from has changed,
+//! 5. refuses the result when a view body it planned from has changed, or
+//!    a ruled relation joined the inheritance tree of a table it read,
 //! 6. commits a write or rolls a read back.
 //!
 //! `CREATE INDEX` runs outside the transaction once planned, since its
@@ -110,6 +111,22 @@ const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
 /// taken from values.
 const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
 
+/// Re-reads the inheritance closure of each relation OID in `$1`, in order.
+///
+/// The same walk as [`RESOLVE_SQL`]: per OID, the schema and name of every
+/// descendant and every ancestor of the relation or a descendant, the
+/// relation itself included. A relation gone since is an empty closure.
+const FAMILY_SQL: &str = "SELECT coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}') \
+     FROM unnest($1::int8[]) WITH ORDINALITY AS o(oid, ord) \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT o.oid::oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
+           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
+           SELECT array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
+             array_agg(r.relname::text ORDER BY r.oid) AS names \
+           FROM up JOIN pg_class AS r ON r.oid = up.oid \
+           JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS tree ON true \
+     ORDER BY o.ord";
+
 /// Reads the current body of each view OID in `$1`, in order.
 const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
      FROM unnest($1::int8[]) WITH ORDINALITY AS v(oid, ord) ORDER BY v.ord";
@@ -152,6 +169,9 @@ enum Stop {
     /// A view body changed between planning and execution; nothing was committed.
     #[error("column policy: a view changed while the statement ran")]
     ViewChanged,
+    /// A ruled relation joined an inheritance tree the statement read; nothing was committed.
+    #[error("column policy: an inheritance tree changed while the statement ran")]
+    FamilyChanged,
     /// The statement failed with an error that may echo a ruled value.
     #[error("query failed (SQLSTATE {0}): error detail withheld under column policy")]
     Withheld(String),
@@ -187,6 +207,8 @@ struct Owner {
     columns: HashMap<i16, String>,
     /// The `pg_get_viewdef` body planned from, for a view or materialized view.
     view: Option<String>,
+    /// Whether its inheritance tree is re-read: tables and foreign tables.
+    tree: bool,
 }
 
 /// The relations a statement's result columns may come from, by OID.
@@ -308,6 +330,10 @@ async fn run<'c>(
         tx.rollback().await?;
         return Err(Stop::ViewChanged);
     }
+    if !families_unchanged(&mut tx, &owners, &planned).await? {
+        tx.rollback().await?;
+        return Err(Stop::FamilyChanged);
+    }
     // Deferred constraints fail at `COMMIT`, with messages as revealing.
     let finished = match access {
         Access::Read => tx.rollback().await,
@@ -365,6 +391,33 @@ async fn views_unchanged(
     }
     let current: Vec<Option<String>> = sqlx::query_scalar(VIEWS_SQL).bind(oids).fetch_all(conn).await?;
     Ok(current.iter().map(Option::as_deref).eq(bodies.into_iter().map(Some)))
+}
+
+/// Reports whether no ruled relation joined a planned table's inheritance tree.
+///
+/// Every table and foreign table is re-read, childless ones included, since
+/// `ATTACH PARTITION` and `INHERIT` take no lock the statement's scan
+/// blocks. A relation that left a tree since planning is ignored.
+async fn families_unchanged(
+    conn: &mut sqlx::PgConnection,
+    owners: &Owners,
+    planned: &Planned<'_>,
+) -> Result<bool, sqlx::Error> {
+    let (oids, trees): (Vec<i64>, Vec<&RelationId>) = owners
+        .iter()
+        .filter(|(_, owner)| owner.tree)
+        .map(|(oid, owner)| (i64::from(*oid), &owner.id))
+        .unzip();
+    if oids.is_empty() {
+        return Ok(true);
+    }
+    let current: Vec<(Vec<String>, Vec<String>)> = sqlx::query_as(FAMILY_SQL).bind(oids).fetch_all(conn).await?;
+    Ok(trees.into_iter().zip(current).all(|(owner, (schemas, names))| {
+        schemas
+            .iter()
+            .zip(&names)
+            .all(|(schema, name)| !planned.joined_ruled(owner, &RelationId::new(&owner.catalog, schema, name)))
+    }))
 }
 
 /// Runs `sql`, feeding each row's values to `sink`.
@@ -492,6 +545,7 @@ async fn fetch(
                 id: relation.id.clone(),
                 columns: numbers.into_iter().zip(names).collect(),
                 view: body,
+                tree: matches!(relation.kind, RelationKind::Table | RelationKind::Foreign),
             });
         }
         entries.push((name, entry));
@@ -981,6 +1035,99 @@ mod tests {
             }
         );
         assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
+    }
+
+    /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.
+    ///
+    /// Returns whether every tree the plan read is unchanged as far as rules go.
+    async fn unchanged_across(
+        conn: &mut sqlx::PgConnection,
+        other: &mut sqlx::PgConnection,
+        config: &PiiConfig,
+        sql: &str,
+        change: &'static str,
+    ) -> bool {
+        let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static("START TRANSACTION READ ONLY"))
+            .await
+            .expect("begin");
+        let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
+        let mut planned = analyzed.plan(config).expect("plan");
+        sqlx::raw_sql(SqlStr::from_static(change))
+            .execute(&mut *other)
+            .await
+            .expect("change");
+        execute(&mut tx, sql, &mut planned, &owners, &mut |_| {})
+            .await
+            .expect("execute");
+        let unchanged = families_unchanged(&mut tx, &owners, &planned).await.expect("re-read");
+        tx.rollback().await.expect("rollback");
+        unchanged
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn ruled_relations_joining_a_tree_after_planning_are_caught() {
+        let mut conn = seeded().await;
+        let mut other = seeded().await;
+        let reset = "DROP TABLE IF EXISTS drift_p, drift_p1, drift_p2, drift_p3, drift_solo, drift_kid CASCADE";
+        sqlx::raw_sql(SqlStr::from_static(reset))
+            .execute(&mut other)
+            .await
+            .expect("reset");
+        sqlx::raw_sql(SqlStr::from_static(
+            "CREATE TABLE drift_p (id int, email text) PARTITION BY RANGE (id); \
+             CREATE TABLE drift_p1 PARTITION OF drift_p FOR VALUES FROM (0) TO (10); \
+             CREATE TABLE drift_p2 (id int, email text); \
+             CREATE TABLE drift_p3 (id int, email text); \
+             CREATE TABLE drift_solo (id int, email text); \
+             CREATE TABLE drift_kid (id int, email text); \
+             INSERT INTO drift_p VALUES (1, 'one@example.com'); \
+             INSERT INTO drift_p2 VALUES (11, 'two@example.com'); \
+             INSERT INTO drift_p3 VALUES (21, 'three@example.com'); \
+             INSERT INTO drift_kid VALUES (31, 'kid@example.com')",
+        ))
+        .execute(&mut other)
+        .await
+        .expect("setup");
+        let rule = |table: &str| dbmcp_config::ColumnRule {
+            name: table.into(),
+            item: 0,
+            key: ["app", "public", table, "email"].map(String::from),
+            entity: "EMAIL_ADDRESS",
+            operator: dbmcp_config::PiiOperator::Hash,
+        };
+        let config = PiiConfig {
+            rules: vec![rule("drift_p2"), rule("drift_kid")],
+            ..PiiConfig::default()
+        };
+        let read = "SELECT id, email FROM drift_p";
+
+        let unruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p3 FOR VALUES FROM (20) TO (30)";
+        assert!(
+            unchanged_across(&mut conn, &mut other, &config, read, unruled).await,
+            "unruled attach"
+        );
+        let ruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p2 FOR VALUES FROM (10) TO (20)";
+        assert!(
+            !unchanged_across(&mut conn, &mut other, &config, read, ruled).await,
+            "ruled attach"
+        );
+        let detach = "ALTER TABLE drift_p DETACH PARTITION drift_p2";
+        assert!(
+            unchanged_across(&mut conn, &mut other, &config, read, detach).await,
+            "detach"
+        );
+        let inherit = "ALTER TABLE drift_kid INHERIT drift_solo";
+        let solo = "SELECT id, email FROM drift_solo";
+        assert!(
+            !unchanged_across(&mut conn, &mut other, &config, solo, inherit).await,
+            "ruled inherit"
+        );
+
+        sqlx::raw_sql(SqlStr::from_static(reset))
+            .execute(&mut other)
+            .await
+            .expect("cleanup");
     }
 
     #[tokio::test]
