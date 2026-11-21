@@ -1,4 +1,7 @@
 //! `NHS_NUMBER` recognizer (UK NHS patient identifier with mod-11 checksum).
+//!
+//! Matches need a context keyword in the text or the column name: a valid
+//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
@@ -22,7 +25,8 @@ pub fn nhs_number_gbr() -> Recognizer {
         r"\b\d{3}[- ]?\d{3}[- ]?\d{4}\b",
         Score::from_static(0.4),
     )
-    .expect("static NHS pattern compiles");
+    .expect("static NHS pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::NhsNumber, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("NhsNumberGbrRecognizer")

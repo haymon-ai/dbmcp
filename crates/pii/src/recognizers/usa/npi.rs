@@ -4,6 +4,7 @@
 //! after the leading entity-type digit). Validated by the CMS NPI Luhn
 //! algorithm — `"80840"` prefix prepended before the standard Luhn pass —
 //! with an additional filter rejecting all-identical-body numbers.
+//! The unseparated form needs a context keyword in the text or the column name.
 
 use crate::recognizers::prelude::*;
 
@@ -25,8 +26,9 @@ const CONTEXT: &[&str] = &[
 /// Panics only if the bundled regex sources or score literals are rejected at construction.
 #[must_use]
 pub fn npi_usa() -> Recognizer {
-    let bare =
-        Pattern::new("US NPI", r"\b[12]\d{9}\b", Score::from_static(0.1)).expect("static NPI bare pattern compiles");
+    let bare = Pattern::new("US NPI", r"\b[12]\d{9}\b", Score::from_static(0.1))
+        .expect("static NPI bare pattern compiles")
+        .requiring_context();
     let dashed = Pattern::new(
         "US NPI (separated)",
         r"\b[12]\d{3}[ -]\d{3}[ -]\d{3}\b",

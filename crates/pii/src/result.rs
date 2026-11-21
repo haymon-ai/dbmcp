@@ -50,6 +50,9 @@ pub struct AnalysisExplanation {
     /// already at [`crate::MAX_SCORE`], or recognizer carries no context list).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supportive_keyword: Option<Cow<'static, str>>,
+    /// Whether the pattern needs a context keyword; without one the context pass drops the match.
+    #[serde(default)]
+    pub requires_context: bool,
 }
 
 /// Audit entry emitted by the anonymizer for one applied operator.
@@ -85,6 +88,7 @@ mod tests {
             validation: ValidationOutcome::Unknown,
             final_score: Score::from_static(0.3),
             supportive_keyword: None,
+            requires_context: false,
         }
     }
 

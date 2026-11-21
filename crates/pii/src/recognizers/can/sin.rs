@@ -1,4 +1,7 @@
 //! `SIN_CA` recognizer (Luhn-validated, keyword-context required).
+//!
+//! Matches need a context keyword in the text or the column name: a valid
+//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
@@ -27,7 +30,8 @@ pub fn sin_can() -> Recognizer {
         r"\b\d{3}[- ]?\d{3}[- ]?\d{3}\b",
         Score::from_static(0.4),
     )
-    .expect("static SIN_CA pattern compiles");
+    .expect("static SIN_CA pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::SinCa, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("SinCanRecognizer")

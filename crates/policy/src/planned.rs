@@ -361,14 +361,14 @@ mod tests {
     async fn pruned_plans_are_still_detected_globally() {
         let config = ruled();
         let planned = new_planned(Mode::Pruned(Dialect::Postgres), &config, true);
-        let plan = json!([{"Plan": {"Alias": "ssn 123-45-6789", "Filter": "(a = 1)"}}]);
+        let plan = json!([{"Plan": {"Alias": "ssn 078-05-1121", "Filter": "(a = 1)"}}]);
         let rows = planned
             .redact(&redactor(&config), vec!["QUERY PLAN".into()], vec![vec![plan]])
             .await
             .expect("redacts");
         let alias = &rows[0]["QUERY PLAN"][0]["Plan"];
         assert_eq!(alias.as_object().map(serde_json::Map::len), Some(1), "{rows:?}");
-        assert_ne!(alias["Alias"], json!("ssn 123-45-6789"));
+        assert_ne!(alias["Alias"], json!("ssn 078-05-1121"));
     }
 
     #[tokio::test]
@@ -401,10 +401,10 @@ mod tests {
             .redact(
                 &redactor(&config),
                 vec!["Extra".into()],
-                vec![vec![json!("ssn 123-45-6789")]],
+                vec![vec![json!("ssn 078-05-1121")]],
             )
             .await
             .expect("redacts");
-        assert_ne!(rows, [json!({ "Extra": "ssn 123-45-6789" })]);
+        assert_ne!(rows, [json!({ "Extra": "ssn 078-05-1121" })]);
     }
 }

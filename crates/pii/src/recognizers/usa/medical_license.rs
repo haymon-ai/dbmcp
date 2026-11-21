@@ -1,9 +1,9 @@
 //! `MEDICAL_LICENSE_US` recognizer (DEA Certificate Number).
 //!
 //! Two-letter prefix followed by seven digits; the trailing digit is a
-//! Luhn-variant check digit derived from the preceding six. Match scored
-//! `0.4` and gated by keyword context to suppress false positives on
-//! arbitrary alphanumeric tokens.
+//! Luhn-variant check digit derived from the preceding six. Matches need a
+//! context keyword in the text or the column name, so order numbers of the
+//! same shape stay.
 
 use crate::recognizers::prelude::*;
 
@@ -23,7 +23,9 @@ const PATTERN: &str = concat!(
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
 pub fn medical_license_usa() -> Recognizer {
-    let pattern = Pattern::new("US DEA", PATTERN, Score::from_static(0.4)).expect("static DEA pattern compiles");
+    let pattern = Pattern::new("US DEA", PATTERN, Score::from_static(0.4))
+        .expect("static DEA pattern compiles")
+        .requiring_context();
     Recognizer::new(Entity::MedicalLicenseUs, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("MedicalLicenseUsaRecognizer")

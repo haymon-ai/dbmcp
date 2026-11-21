@@ -1,4 +1,7 @@
 //! `ROUTING_NUMBER_US` recognizer (ABA checksum + keyword-context).
+//!
+//! Matches need a context keyword in the text or the column name: a valid
+//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
@@ -13,7 +16,8 @@ const CONTEXT: &[&str] = &["aba", "routing", "abarouting", "association", "bankr
 #[must_use]
 pub fn routing_number_usa() -> Recognizer {
     let pattern = Pattern::new("US ABA routing", r"\b\d{9}\b", Score::from_static(0.4))
-        .expect("static ABA routing pattern compiles");
+        .expect("static ABA routing pattern compiles")
+        .requiring_context();
     Recognizer::new(Entity::RoutingNumberUs, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("RoutingNumberUsaRecognizer")

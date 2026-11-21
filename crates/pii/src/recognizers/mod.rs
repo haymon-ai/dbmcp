@@ -135,6 +135,12 @@ impl Recognizer {
         self.category
     }
 
+    /// Patterns in match order.
+    #[cfg(test)]
+    pub(crate) fn patterns(&self) -> &[Pattern] {
+        &self.regexes
+    }
+
     /// Configured context keyword list, or an empty slice when not configured.
     #[must_use]
     pub fn context(&self) -> &'static [&'static str] {
@@ -190,6 +196,7 @@ impl Recognizer {
                 validation,
                 final_score,
                 supportive_keyword: None,
+                requires_context: regex.requires_context(),
             },
             detector: Detector::Pattern,
         })

@@ -1,4 +1,7 @@
 //! `HEALTH_INSURANCE_DE` recognizer (KVNR, letter + 9 digits, GKV-Spitzenverband checksum).
+//!
+//! Matches need a context keyword in the text or the column name: a valid
+//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
@@ -36,7 +39,8 @@ pub fn health_insurance_deu() -> Recognizer {
         r"(?i)\b[A-Z]\d{9}\b",
         Score::from_static(0.3),
     )
-    .expect("static DE KVNR pattern compiles");
+    .expect("static DE KVNR pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::HealthInsuranceDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("HealthInsuranceDeuRecognizer")

@@ -1,4 +1,7 @@
 //! `LIFETIME_PHYSICIAN_NUMBER_DE` recognizer (Lebenslange Arztnummer / LANR, KBV weighted checksum).
+//!
+//! Matches need a context keyword in the text or the column name: a valid
+//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
@@ -31,7 +34,8 @@ const CONTEXT: &[&str] = &[
 #[must_use]
 pub fn lifetime_physician_number_deu() -> Recognizer {
     let pattern = Pattern::new("DE Lifetime Physician Number", r"\b\d{9}\b", Score::from_static(0.3))
-        .expect("static DE lifetime physician number pattern compiles");
+        .expect("static DE lifetime physician number pattern compiles")
+        .requiring_context();
     Recognizer::new(Entity::LifetimePhysicianNumberDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("LifetimePhysicianNumberDeuRecognizer")

@@ -6,7 +6,8 @@
 //! integration layer (e.g. the redactor's JSON key path split into
 //! lowercase words). Word boundaries come from `words`'s
 //! `char::is_alphanumeric` scan (Unicode `\w+`-style); no lemmatisation
-//! step.
+//! step. A keyword of several words matches those words in a row. The pass
+//! also drops matches of patterns that require context and found none.
 
 use std::borrow::Cow;
 
@@ -43,54 +44,57 @@ impl Default for ContextSettings {
     }
 }
 
-/// Apply the context boost pass to `results` in place, returning the
-/// (possibly mutated) vector.
+/// Apply the context boost pass to `results`, returning the kept results.
 ///
 /// All `results` MUST originate from `recognizer` — the caller pairs each
 /// per-recognizer batch with its producer. `external_context` is a slice
 /// of already-lowercased word tokens supplied by the integration layer
-/// (e.g. the redactor's JSON key path).
+/// (e.g. the redactor's JSON key path). A result whose pattern
+/// [requires context](crate::Pattern::requiring_context) is dropped when no
+/// keyword supports it, whatever its score.
 #[must_use]
 pub(crate) fn apply_context_boost(
     text: &str,
-    mut results: Vec<RecognizerResult>,
+    results: Vec<RecognizerResult>,
     recognizer: &Recognizer,
     external_context: &[String],
     settings: &ContextSettings,
 ) -> Vec<RecognizerResult> {
     let keywords = recognizer.context();
-    if keywords.is_empty() && external_context.is_empty() {
-        return results;
-    }
-    for result in &mut results {
-        boost_one(text, result, keywords, external_context, settings);
+    if keywords.is_empty() {
+        return results
+            .into_iter()
+            .filter(|result| !result.explanation.requires_context)
+            .collect();
     }
     results
+        .into_iter()
+        .filter_map(|mut result| {
+            if result.score == MAX_SCORE && !result.explanation.requires_context {
+                return Some(result);
+            }
+            let window = collect_window(
+                text,
+                result.start,
+                result.end,
+                settings.prefix_words,
+                settings.suffix_words,
+            );
+            match find_supportive_keyword(&window, external_context, keywords) {
+                Some(hit) => boost(&mut result, hit, settings),
+                None if result.explanation.requires_context => return None,
+                None => {}
+            }
+            Some(result)
+        })
+        .collect()
 }
 
-fn boost_one(
-    text: &str,
-    result: &mut RecognizerResult,
-    keywords: &[&'static str],
-    external_context: &[String],
-    settings: &ContextSettings,
-) {
+/// Lifts `result` for the keyword `hit`; a result already at the maximum stays unmarked.
+fn boost(result: &mut RecognizerResult, hit: &'static str, settings: &ContextSettings) {
     if result.score == MAX_SCORE {
         return;
     }
-
-    let window = collect_window(
-        text,
-        result.start,
-        result.end,
-        settings.prefix_words,
-        settings.suffix_words,
-    );
-
-    let Some(hit) = find_supportive_keyword(&window, external_context, keywords) else {
-        return;
-    };
-
     let boosted = boost_score(
         result.score,
         settings.similarity_factor,
@@ -152,11 +156,13 @@ fn find_supportive_keyword(
 ) -> Option<&'static str> {
     // Window words and external_context are already lowercased; recognizer
     // keywords are pre-lowercased (debug_asserted by `with_context`). A
-    // window word must equal a keyword (whole-word, case-insensitive).
-    keywords
-        .iter()
-        .copied()
-        .find(|&kw| window.iter().chain(external_context.iter()).any(|w| w == kw))
+    // keyword splits into words like the text, so "social insurance" and
+    // "steuer-id" match when their words appear in a row.
+    keywords.iter().copied().find(|&kw| {
+        let parts = words(kw);
+        let in_row = |list: &[String]| list.windows(parts.len()).any(|run| run == parts.as_slice());
+        !parts.is_empty() && (in_row(window) || in_row(external_context))
+    })
 }
 
 fn boost_score(current: Score, factor: Score, floor: Score) -> Score {
@@ -205,6 +211,7 @@ mod tests {
                 validation: ValidationOutcome::Unknown,
                 final_score: s,
                 supportive_keyword: None,
+                requires_context: false,
             },
             detector: Detector::Pattern,
         }
@@ -335,5 +342,86 @@ mod tests {
         let out = apply_context_boost(text, vec![result(0.3, "R", 17, 20)], &rec, &[], &default_settings());
         assert_eq!(out[0].score, Score::from_static(0.3));
         assert!(out[0].explanation.supportive_keyword.is_none());
+    }
+
+    /// A result whose pattern requires context.
+    fn gated(score: f32, start: usize, end: usize) -> RecognizerResult {
+        let mut r = result(score, "R", start, end);
+        r.explanation.requires_context = true;
+        r
+    }
+
+    #[test]
+    fn required_context_drops_unsupported_match_even_at_max() {
+        let rec = dummy_recognizer("R", &["sin"]);
+        let out = apply_context_boost("ref 415", vec![gated(1.0, 4, 7)], &rec, &[], &default_settings());
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn required_context_drops_match_of_recognizer_without_keywords() {
+        let rec = dummy_recognizer("R", &[]);
+        let out = apply_context_boost("sin 415", vec![gated(1.0, 4, 7)], &rec, &[], &default_settings());
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn required_context_keeps_match_with_window_keyword() {
+        let rec = dummy_recognizer("R", &["sin"]);
+        let out = apply_context_boost("SIN: 415", vec![gated(1.0, 5, 8)], &rec, &[], &default_settings());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].score, MAX_SCORE);
+    }
+
+    #[test]
+    fn required_context_keeps_match_with_column_keyword() {
+        let rec = dummy_recognizer("R", &["sin"]);
+        let external = vec!["sin".to_string()];
+        let out = apply_context_boost("415", vec![gated(1.0, 0, 3)], &rec, &external, &default_settings());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn multi_word_keyword_matches_words_in_a_row() {
+        let rec = dummy_recognizer("R", &["social insurance"]);
+        let text = "social insurance 415";
+        let out = apply_context_boost(text, vec![result(0.1, "R", 17, 20)], &rec, &[], &default_settings());
+        assert_eq!(
+            out[0].explanation.supportive_keyword.as_deref(),
+            Some("social insurance")
+        );
+    }
+
+    #[test]
+    fn multi_word_keyword_ignores_words_apart() {
+        let rec = dummy_recognizer("R", &["social insurance"]);
+        let text = "social security insurance 415";
+        let out = apply_context_boost(text, vec![result(0.1, "R", 26, 29)], &rec, &[], &default_settings());
+        assert!(out[0].explanation.supportive_keyword.is_none());
+    }
+
+    #[test]
+    fn multi_word_keyword_matches_column_words() {
+        let rec = dummy_recognizer("R", &["social insurance"]);
+        let external = vec!["social".to_string(), "insurance".to_string(), "number".to_string()];
+        let out = apply_context_boost(
+            "415",
+            vec![result(0.1, "R", 0, 3)],
+            &rec,
+            &external,
+            &default_settings(),
+        );
+        assert_eq!(
+            out[0].explanation.supportive_keyword.as_deref(),
+            Some("social insurance")
+        );
+    }
+
+    #[test]
+    fn hyphenated_keyword_matches_like_the_text() {
+        let rec = dummy_recognizer("R", &["steuer-id"]);
+        let text = "Steuer-ID: 415";
+        let out = apply_context_boost(text, vec![result(0.1, "R", 11, 14)], &rec, &[], &default_settings());
+        assert_eq!(out[0].explanation.supportive_keyword.as_deref(), Some("steuer-id"));
     }
 }

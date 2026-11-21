@@ -314,6 +314,7 @@ fn span_to_result(span: Span) -> RecognizerResult {
             validation: ValidationOutcome::Unknown,
             final_score: span.score,
             supportive_keyword: None,
+            requires_context: false,
         },
         detector: Detector::Ner,
     }

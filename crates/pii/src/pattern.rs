@@ -15,6 +15,7 @@ use crate::score::Score;
 pub struct Pattern {
     name: Cow<'static, str>,
     score: Score,
+    requires_context: bool,
     pub(crate) compiled: fancy_regex::Regex,
 }
 
@@ -24,6 +25,7 @@ impl fmt::Debug for Pattern {
             .field("name", &self.name)
             .field("regex", &self.compiled.as_str())
             .field("score", &self.score)
+            .field("requires_context", &self.requires_context)
             .finish_non_exhaustive()
     }
 }
@@ -44,8 +46,27 @@ impl Pattern {
         Ok(Self {
             name: name.into(),
             score,
+            requires_context: false,
             compiled,
         })
+    }
+
+    /// Drops this pattern's matches unless a context keyword supports them.
+    ///
+    /// The context pass checks the keyword window and the external context
+    /// (column-name words); a match without a hit is dropped even when its
+    /// validator passed. For shapes that business identifiers share, such as
+    /// a bare 9-digit run with a valid check digit.
+    #[must_use]
+    pub fn requiring_context(mut self) -> Self {
+        self.requires_context = true;
+        self
+    }
+
+    /// Whether matches need a supporting context keyword to survive.
+    #[must_use]
+    pub fn requires_context(&self) -> bool {
+        self.requires_context
     }
 
     /// Pattern's human-readable name; surfaced in [`crate::AnalysisExplanation`].
