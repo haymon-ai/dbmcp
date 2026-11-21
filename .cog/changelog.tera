@@ -12,7 +12,7 @@
 
 {% set breaking = commits | filter(attribute="breaking_change", value=true) -%}
 {% if breaking | length > 0 %}
-#### ⚠ BREAKING CHANGES
+#### 💥 Breaking Changes
 {% for commit in breaking -%}
 {% set_global notes = [] -%}
 {% for footer in commit.footers -%}
