@@ -1,4 +1,7 @@
-//! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, weak 0.05 base score — requires context).
+//! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, keyword context required).
+//!
+//! German keywords only; generic ones (`zip`, `address`, `adresse`) gate
+//! `POSTCODE`. Ties between the two are settled in `recognizers::all()`.
 
 use crate::recognizers::prelude::*;
 
@@ -7,7 +10,6 @@ const CONTEXT: &[&str] = &[
     "plz",
     "postleitzahl",
     "postanschrift",
-    "adresse",
     "wohnort",
     "ort",
     "wohnanschrift",
@@ -21,15 +23,6 @@ const CONTEXT: &[&str] = &[
     "gemeinde",
     "stadt",
     "dorf",
-    "zip",
-    "postcode",
-    "postal",
-    "address",
-    "city",
-    "delivery",
-    "mailing",
-    "shipping",
-    "correspondence",
 ];
 
 /// Build the `POSTCODE_DE` recognizer.
@@ -44,7 +37,8 @@ pub fn postcode_deu() -> Recognizer {
         r"\b(?!01000\b|99999\b)(0[1-9]\d{3}|[1-9]\d{4})\b",
         Score::from_static(0.05),
     )
-    .expect("static DE postcode pattern compiles");
+    .expect("static DE postcode pattern compiles")
+    .requiring_context();
     Recognizer::new(Entity::PostcodeDe, vec![pattern])
         .expect("non-empty pattern list")
         .with_name("PostcodeDeuRecognizer")

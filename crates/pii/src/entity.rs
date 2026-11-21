@@ -103,6 +103,8 @@ pub enum Entity {
     TaxIdDe,
     /// `TAX_NUMBER_DE` — German Steuernummer.
     TaxNumberDe,
+    /// `POSTCODE` — postal code of any country (5-digit form).
+    Postcode,
     /// `DATE_OF_BIRTH` — birth date, surfaced only in a birth-keyword context.
     DateOfBirth,
     /// `PASSWORD_HASH` — modular-crypt / PHC hash (bcrypt, sha-crypt, argon2).
@@ -166,6 +168,7 @@ impl Entity {
         Entity::SocialSecurityDe,
         Entity::TaxIdDe,
         Entity::TaxNumberDe,
+        Entity::Postcode,
         Entity::DateOfBirth,
         Entity::PasswordHash,
         Entity::Person,
@@ -223,6 +226,7 @@ impl Entity {
             Entity::SocialSecurityDe => "SOCIAL_SECURITY_DE",
             Entity::TaxIdDe => "TAX_ID_DE",
             Entity::TaxNumberDe => "TAX_NUMBER_DE",
+            Entity::Postcode => "POSTCODE",
             Entity::DateOfBirth => "DATE_OF_BIRTH",
             Entity::PasswordHash => "PASSWORD_HASH",
             Entity::Person => "PERSON",
@@ -281,6 +285,7 @@ impl Entity {
             Entity::SocialSecurityDe => "<SOCIAL_SECURITY_DE>",
             Entity::TaxIdDe => "<TAX_ID_DE>",
             Entity::TaxNumberDe => "<TAX_NUMBER_DE>",
+            Entity::Postcode => "<POSTCODE>",
             Entity::DateOfBirth => "<DATE_OF_BIRTH>",
             Entity::PasswordHash => "<PASSWORD_HASH>",
             Entity::Person => "<PERSON>",
@@ -346,6 +351,7 @@ impl FromStr for Entity {
             "SOCIAL_SECURITY_DE" => Ok(Entity::SocialSecurityDe),
             "TAX_ID_DE" => Ok(Entity::TaxIdDe),
             "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
+            "POSTCODE" => Ok(Entity::Postcode),
             "DATE_OF_BIRTH" => Ok(Entity::DateOfBirth),
             "PASSWORD_HASH" => Ok(Entity::PasswordHash),
             "PERSON" => Ok(Entity::Person),
@@ -401,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn all_has_51_variants() {
-        assert_eq!(Entity::ALL.len(), 51);
+    fn all_has_52_variants() {
+        assert_eq!(Entity::ALL.len(), 52);
     }
 
     #[test]

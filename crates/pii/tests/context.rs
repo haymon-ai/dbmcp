@@ -36,6 +36,9 @@ const KEPT: &[(&str, &str)] = &[
     ("medical_device_id", "AB1234563"),
     ("account_ref", "12345678903"),
     ("notes", "employer identification 07-1234567"),
+    // 5-digit values without a postcode keyword.
+    ("reference", "75008"),
+    ("order_id", "10115"),
 ];
 
 /// Real identifiers with a keyword in the text or the column name, and their entity.
@@ -79,7 +82,15 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("notes", "Ausweis Nr. T22000129", "ID_CARD_DE"),
     ("vat_id", "DE123456789", "VAT_NUMBER"),
     ("notes", "USt-IdNr. DE123456789", "VAT_NUMBER"),
-    ("address", "Hauptstraße 5, 10115 Berlin", "POSTCODE_DE"),
+    // 5-digit postcodes: German keywords label POSTCODE_DE, generic ones POSTCODE.
+    ("address", "Hauptstraße 5, 10115 Berlin", "POSTCODE"),
+    ("zip_code", "75008", "POSTCODE"),
+    ("adresse", "12 rue X, 75008 Paris", "POSTCODE"),
+    ("plz", "10115", "POSTCODE_DE"),
+    ("notes", "PLZ 10115", "POSTCODE_DE"),
+    // Keywords of both kinds: the column says `address`, the text says `Straße`.
+    ("address", "Straße 5, 10115 Berlin", "POSTCODE_DE"),
+    ("zip", "00501", "POSTCODE"),
     ("notes", "social insurance 046454286", "SIN_CA"),
     // camelCase and PascalCase column names split into keywords.
     ("socialSecurityNumber", "078051121", "US_SSN"),

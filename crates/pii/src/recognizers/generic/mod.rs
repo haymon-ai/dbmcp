@@ -12,6 +12,7 @@ mod jwt_token;
 mod mac_address;
 mod password_hash;
 mod phone;
+mod postcode;
 mod private_key;
 mod url;
 
@@ -27,5 +28,6 @@ pub use jwt_token::jwt_token;
 pub use mac_address::mac_address;
 pub use password_hash::password_hash;
 pub use phone::phone_number;
+pub use postcode::postcode;
 pub use private_key::private_key;
 pub use url::url;

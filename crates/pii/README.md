@@ -9,7 +9,7 @@ Fast PII detection and anonymisation for Rust. A zero-dependency regex/checksum 
 
 ## What you get
 
-- 46 built-in entity types across 7 categories (`Personal`, `Financial`, `Government`, `Contact`, `Network`, `DigitalIdentity`, `Crypto`)
+- 47 built-in entity types across 7 categories (`Personal`, `Financial`, `Government`, `Contact`, `Network`, `DigitalIdentity`, `Crypto`)
 - Checksum-validated matches where it matters (Luhn, mod-97 IBAN, NHS mod-11, bech32, base58-check, German Steuer-ID, US SSN rules)
 - Four anonymisation operators — `replace`, `mask`, `redact`, `hash` (keyed HMAC-SHA-256 token, e.g. `<EMAIL_ADDRESS_4e1f0dd69c51e84c>`)
 - Category-scoped analyser builder for tailored recogniser subsets
