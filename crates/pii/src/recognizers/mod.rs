@@ -307,6 +307,20 @@ mod tests {
     }
 
     #[test]
+    fn every_context_required_pattern_has_keywords() {
+        // Without keywords the context pass would drop every such match.
+        for r in all() {
+            if r.patterns().iter().any(Pattern::requires_context) {
+                assert!(
+                    !r.context().is_empty(),
+                    "{} requires context but has no keywords",
+                    r.name()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_non_opt_out_recognizer_in_all_has_context() {
         // Opt-out recognizers: entities with no upstream context-keyword
         // reference list in our published source catalogue. The context-aware
@@ -314,8 +328,6 @@ mod tests {
         // their base score / validator outcome.
         const OPT_OUT: &[&str] = &[
             "CvvRecognizer",
-            "TaxIdEinUsaRecognizer",
-            "VatNumberEurRecognizer",
             "ApiKeyRecognizer",
             "ApiKeyAwsSecretRecognizer",
             "JwtTokenRecognizer",

@@ -1,4 +1,7 @@
 //! `NINO_UK` recognizer (UK National Insurance Number; blocklist enforced in regex).
+//!
+//! Without its suffix letter the shape matches two letters and six digits, so
+//! that form needs a context keyword in the text or the column name.
 
 use crate::recognizers::prelude::*;
 
@@ -12,13 +15,20 @@ const CONTEXT: &[&str] = &["national insurance", "ni number", "nino"];
 /// Panics only if the bundled regex source or score literal is rejected at construction.
 #[must_use]
 pub fn nino_gbr() -> Recognizer {
-    let pattern = Pattern::new(
+    let suffixed = Pattern::new(
         "UK NINO",
-        r"(?i)\b(?!BG|GB|KN|NK|NT|TN|ZZ)[ABCEGHJ-PRSTWXYZ][ABCEGHJ-NPR-TWXYZ][ -]?\d{2}[ -]?\d{2}[ -]?\d{2}[ -]?[A-D]?\b",
+        r"(?i)\b(?!BG|GB|KN|NK|NT|TN|ZZ)[ABCEGHJ-PRSTWXYZ][ABCEGHJ-NPR-TWXYZ][ -]?\d{2}[ -]?\d{2}[ -]?\d{2}[ -]?[A-D]\b",
         Score::from_static(0.4),
     )
     .expect("static NINO pattern compiles");
-    Recognizer::new(Entity::NinoUk, vec![pattern])
+    let unsuffixed = Pattern::new(
+        "UK NINO (no suffix)",
+        r"(?i)\b(?!BG|GB|KN|NK|NT|TN|ZZ)[ABCEGHJ-PRSTWXYZ][ABCEGHJ-NPR-TWXYZ][ -]?\d{2}[ -]?\d{2}[ -]?\d{2}\b(?![ -]?[A-D]\b)",
+        Score::from_static(0.4),
+    )
+    .expect("static unsuffixed NINO pattern compiles")
+    .requiring_context();
+    Recognizer::new(Entity::NinoUk, vec![suffixed, unsuffixed])
         .expect("non-empty pattern list")
         .with_name("NinoGbrRecognizer")
         .with_category(Category::Government)

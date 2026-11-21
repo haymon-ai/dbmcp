@@ -1,4 +1,7 @@
 //! `ID_CARD_DE` recognizer (Personalausweisnummer, nPA + legacy T-format).
+//!
+//! The legacy T-format has no check digit, so it needs a context keyword in
+//! the text or the column name; the nPA pattern leaves that shape to it.
 
 use crate::recognizers::prelude::*;
 
@@ -30,7 +33,7 @@ pub fn id_card_deu() -> Recognizer {
     let patterns = vec![
         Pattern::new(
             "DE Personalausweisnummer (nPA, ICAO charset)",
-            r"(?i)\b[CFGHJKLMNPRTVWXYZ][CFGHJKLMNPRTVWXYZ0-9]{7}[0-9]\b",
+            r"(?i)\b(?!T\d{8}\b)[CFGHJKLMNPRTVWXYZ][CFGHJKLMNPRTVWXYZ0-9]{7}[0-9]\b",
             Score::from_static(0.4),
         )
         .expect("static DE nPA pattern compiles"),
@@ -39,7 +42,8 @@ pub fn id_card_deu() -> Recognizer {
             r"(?i)\bT\d{8}\b",
             Score::from_static(0.5),
         )
-        .expect("static DE legacy ID pattern compiles"),
+        .expect("static DE legacy ID pattern compiles")
+        .requiring_context(),
     ];
     Recognizer::new(Entity::IdCardDe, patterns)
         .expect("non-empty pattern list")

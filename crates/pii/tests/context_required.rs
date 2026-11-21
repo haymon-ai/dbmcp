@@ -1,8 +1,10 @@
 //! Context-required recognizers through the redactor: business numbers stay, real ones go.
 //!
-//! Bare and partly separated SSN, ITIN and NPI forms, and every SIN, DEA,
-//! ABA, NHS, LANR, Steuer-ID and KVNR match need a context keyword in the
-//! text or the column name, even when their check digit is valid.
+//! Bare and partly separated SSN, ITIN and NPI forms, NINO without its
+//! suffix, the 13-digit Steuernummer, the legacy T-format ID card, and every
+//! SIN, DEA, ABA, NHS, LANR, Steuer-ID, KVNR, EIN and VAT match need a
+//! context keyword in the text or the column name, even when their check
+//! digit is valid.
 
 use dbmcp_config::{PiiConfig, PiiOperator};
 use dbmcp_pii::redact::Redactor;
@@ -23,6 +25,11 @@ const KEPT: &[(&str, &str)] = &[
     ("order_id", "1234567893"),
     ("voucher", "A123456780"),
     ("batch", "911701234"),
+    ("barcode", "0109878087741"),
+    ("part_no", "04-1234567"),
+    ("order_ref", "AB123456"),
+    ("ticket", "T22000129"),
+    ("sku", "DE123456789"),
 ];
 
 /// Real identifiers with a keyword in the text or the column name, and their entity.
@@ -57,6 +64,15 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("itin", "911701234", "ITIN"),
     ("value", "912-72-1234", "ITIN"),
     ("notes", "post code SW1A 1AA", "POSTCODE_UK"),
+    ("notes", "Steuernummer: 0981508150999", "TAX_NUMBER_DE"),
+    ("value", "123/456/78901", "TAX_NUMBER_DE"),
+    ("ein", "04-1234567", "TAX_ID_EIN"),
+    ("notes", "EIN 04-1234567", "TAX_ID_EIN"),
+    ("notes", "national insurance number AB123456", "NINO_UK"),
+    ("value", "AB123456C", "NINO_UK"),
+    ("notes", "Ausweis Nr. T22000129", "ID_CARD_DE"),
+    ("vat_id", "DE123456789", "VAT_NUMBER"),
+    ("notes", "USt-IdNr. DE123456789", "VAT_NUMBER"),
     ("address", "Hauptstraße 5, 10115 Berlin", "POSTCODE_DE"),
 ];
 
