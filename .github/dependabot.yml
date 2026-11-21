@@ -9,8 +9,8 @@ updates:
         patterns:
           - "*"
     ignore:
-      # ort is exact-pinned: rc.11+ breaks the aarch64-apple-darwin release
-      # (fat LTO) link and ships no x86_64-apple-darwin prebuilt.
+      # ort is exact-pinned: every bump needs the macOS fat-LTO link check in
+      # the comment above `ort` in Cargo.toml.
       - dependency-name: ort
 
   - package-ecosystem: github-actions
