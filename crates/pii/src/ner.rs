@@ -302,40 +302,47 @@ fn flush(spans: &mut Vec<Span>, open: Option<OpenSpan>, threshold: Score) {
 
 /// Reports whether an `entity` span at `text[start..end]` looks like a code.
 ///
-/// Two shapes count, both tagged with high confidence by CoNLL/OntoNotes
-/// models, so a threshold cannot drop them. Spans holding whitespace never do.
+/// Only `ORGANIZATION`, `LOCATION`, and `FACILITY` spans are checked; a
+/// `PERSON` or NRP span is always kept. Three shapes count:
 ///
-/// - A short code, unless the span is a `PERSON`: at most 3 characters, every
-///   letter a capital. Country and currency codes (`AT`, `EUR`) and SQL
-///   keywords (`AS`, `IN`). Bare acronyms such as `IBM` go too; capitalised
-///   surnames (`LEE`) and caseless scripts (`李明`) do not.
-/// - Part of a namespaced identifier: the whitespace-free run around the span,
-///   trimmed of surrounding punctuation, is two or more identifier segments
-///   joined by `\` or `::` (`App\Model\Order`, `Foo::Bar`). Paths such as
-///   `C:\Users\Anna` and escaped quotes such as `\"Anna\"` do not match.
+/// - A single letter or digit (`K` in `K-1042`).
+/// - Every word is a listed code from [`crate::codes`] (`AT`, `EUR`, `AS`).
+/// - Part of a namespaced identifier: two or more segments joined by `\` or
+///   `::`, each starting with a capital or `_` (`App\Model\Order`,
+///   `Foo::Bar`). Paths (`C:\Users`) and escapes (`Thanks\nSiemens`) do not.
 fn code_like(text: &str, start: usize, end: usize, entity: Entity) -> bool {
-    let (Some(before), Some(span), Some(after)) = (text.get(..start), text.get(start..end), text.get(end..)) else {
-        return false;
-    };
-    if span.chars().any(char::is_whitespace) {
+    use crate::words::is_word_char;
+    if !matches!(entity, Entity::Organization | Entity::Location | Entity::Facility) {
         return false;
     }
-    if entity != Entity::Person
-        && span.chars().count() <= 3
-        && span.chars().all(|c| !c.is_alphabetic() || c.is_uppercase())
+    let Some(span) = text.get(start..end) else {
+        return false;
+    };
+    if span.chars().filter(|c| c.is_alphanumeric()).count() <= 1 {
+        return true;
+    }
+    if span
+        .split_whitespace()
+        .all(|w| crate::codes::is_code(w.trim_matches(|c: char| !c.is_alphanumeric())))
     {
         return true;
     }
-    let from = start - before.rsplit(char::is_whitespace).next().unwrap_or_default().len();
-    let to = end + after.split(char::is_whitespace).next().unwrap_or_default().len();
-    let Some(run) = text.get(from..to) else {
+    let part = |c: char| is_word_char(c) || matches!(c, '\\' | ':');
+    if !span.chars().all(part) {
         return false;
-    };
-    let ident = |c: char| c.is_alphanumeric() || c == '_';
-    let run = run.trim_matches(|c: char| !ident(c));
-    let mut segments = run.split("::").flat_map(|s| s.split('\\'));
-    let count = segments.clone().count();
-    count > 1 && segments.all(|s| !s.is_empty() && s.chars().all(ident))
+    }
+    let from = text[..start].trim_end_matches(part).len();
+    let to = text.len() - text[end..].trim_start_matches(part).len();
+    let mut segments = text[from..to]
+        .split("::")
+        .flat_map(|s| s.split('\\'))
+        .filter(|s| !s.is_empty());
+    let mut count = 0;
+    let named = segments.all(|s| {
+        count += 1;
+        s.starts_with(|c: char| c.is_uppercase() || c == '_') && s.chars().all(is_word_char)
+    });
+    named && count > 1
 }
 
 /// Builds a [`RecognizerResult`] from an aggregated [`Span`].
@@ -903,41 +910,62 @@ mod tests {
     }
 
     #[test]
-    fn code_like_keeps_short_capitalised_person_spans() {
-        for name in ["LEE", "KIM", "WU", "LI"] {
-            assert!(!code_like(name, 0, name.len(), Entity::Person), "{name:?}");
-            assert!(code_like(name, 0, name.len(), Entity::Location), "{name:?}");
+    fn code_like_never_drops_person_or_nrp_spans() {
+        for (text, span) in [
+            ("AT", "AT"),
+            ("MEUSBURGER\\Huber", "Huber"),
+            ("Thomas::Mueller", "Mueller"),
+        ] {
+            let start = text.find(span).expect("span occurs in text");
+            for entity in [Entity::Person, Entity::Nrp] {
+                assert!(
+                    !code_like(text, start, start + span.len(), entity),
+                    "{entity:?} {span:?}"
+                );
+            }
+        }
+        for entity in [Entity::Location, Entity::Facility] {
+            assert!(code_like("DE", 0, 2, entity), "{entity:?}");
         }
     }
 
     #[test]
-    fn code_like_drops_short_codes_and_namespaced_identifiers() {
+    fn code_like_drops_listed_codes_and_namespaced_identifiers() {
         let cases: &[(&str, &str, bool)] = &[
+            // Listed codes.
             ("AT", "AT", true),
-            ("EUR", "EUR", true),
             ("AT, DE, CH", "DE", true),
             ("select `t`.`id` AS `id`", "AS", true),
+            ("CREATE VIEW v AS SELECT 1", "CREATE VIEW", true),
+            ("K-ORD-000011", "K", true),
+            ("P. Schmidt GmbH", "P.", true),
+            // Acronyms and names that are not codes.
+            ("IBM", "IBM", false),
+            ("Contract signed with BP", "BP", false),
+            ("Flight from NYC to LA", "NYC", false),
+            ("Mr. LEE called", "LEE", false),
+            ("SAP SE", "SAP SE", false),
+            ("at", "at", false),
+            ("Li", "Li", false),
+            ("李明", "李明", false),
+            // Namespaced identifiers.
             ("App\\Model\\Order", "App", true),
             ("Siemens\\Billing\\Invoice", "Billing", true),
+            ("\\App\\Model\\Order,", "Model", true),
+            ("{\"type\":\"App\\\\Models\\\\User\"}", "Models", true),
             ("Foo::Bar::Baz", "Baz", true),
             ("see Foo::Bar now", "Bar", true),
-            ("Li", "Li", false),
-            ("NASA", "NASA", false),
-            ("JOHN SMITH", "JOHN SMITH", false),
-            ("Meeting (Anna Schmidt) today", "Anna", false),
+            ("Vienna::Office", "Vienna", true),
+            // Paths, accounts, escapes, punctuation.
+            ("C:\\Users\\Siemens\\Documents", "Siemens", false),
+            ("C:\\Users\\Siemens AG\\Docs", "Siemens AG", false),
+            ("CORP\\siemens.billing", "siemens.billing", false),
+            ("Thanks\\nSiemens", "Siemens", false),
+            ("Call \\\"Siemens\\\" today", "Siemens", false),
+            ("Meeting (Siemens AG) today", "Siemens", false),
             ("St. Louis", "St. Louis", false),
-            ("Jean-Luc Picard", "Jean-Luc", false),
-            ("O'Brien", "O'Brien", false),
             ("Europe/Vienna", "Vienna", false),
-            ("Name\u{a0}Anna", "Anna", false),
-            ("\\App\\Model\\Order,", "Model", true),
-            ("李明", "李明", false),
-            ("김민수", "김민수", false),
-            ("علي", "علي", false),
-            ("C:\\Users\\Anna\\Documents", "Anna", false),
-            ("C:\\Users\\Anna Schmidt\\Documents", "Anna Schmidt", false),
-            ("CORP\\anna.schmidt", "anna.schmidt", false),
-            ("Call \\\"Anna\\\" today", "Anna", false),
+            ("Name\u{a0}Siemens", "Siemens", false),
         ];
         for (text, span, expected) in cases {
             assert_eq!(code_like_at(text, span), *expected, "{span:?} in {text:?}");
@@ -946,7 +974,7 @@ mod tests {
 
     #[test]
     fn code_like_rejects_offsets_off_char_boundary() {
-        assert!(!code_like("Müller", 0, 2, Entity::Person));
+        assert!(!code_like("Müller", 0, 2, Entity::Organization));
     }
 
     #[test]

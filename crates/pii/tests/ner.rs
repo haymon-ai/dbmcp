@@ -222,6 +222,21 @@ fn names_next_to_codes_still_detected() {
 }
 
 #[test]
+fn acronyms_that_are_not_codes_still_detected() {
+    let Some(engine) = engine() else {
+        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        return;
+    };
+    for (text, span) in [("Contract signed with BP", "BP"), ("Flight from NYC to Boston", "NYC")] {
+        let out = engine.analyze(text).expect("inference succeeds");
+        assert!(
+            out.iter().any(|r| &text[r.start..r.end] == span),
+            "expected a span over {span:?} in {text:?}, got {out:?}",
+        );
+    }
+}
+
+#[test]
 fn analyze_batch_matches_single() {
     let Some(engine) = engine() else {
         eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
