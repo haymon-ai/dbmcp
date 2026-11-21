@@ -995,12 +995,13 @@ mod tests {
     }
 
     #[test]
-    fn zip_code_column_redacts_de_postcode_via_zip_keyword() {
+    fn zip_code_column_redacts_postcode_via_zip_keyword() {
         let r = Redactor::with_defaults();
         let mut rows = vec![json!({"zip_code": "41100"})];
         let stats = r.apply(&mut rows).expect("apply ok");
-        assert_eq!(rows[0]["zip_code"], "<POSTCODE_DE>");
-        assert_eq!(stats.by_entity.get(&Entity::PostcodeDe).copied(), Some(1));
+        assert_eq!(rows[0]["zip_code"], "<POSTCODE>");
+        assert_eq!(stats.by_entity.get(&Entity::Postcode).copied(), Some(1));
+        assert!(!stats.by_entity.contains_key(&Entity::PostcodeDe));
     }
 
     #[test]
@@ -1010,6 +1011,7 @@ mod tests {
         let stats = r.apply(&mut rows).expect("apply ok");
         assert_eq!(rows[0]["reference"], "41100");
         assert!(!stats.by_entity.contains_key(&Entity::PostcodeDe));
+        assert!(!stats.by_entity.contains_key(&Entity::Postcode));
     }
 
     #[test]

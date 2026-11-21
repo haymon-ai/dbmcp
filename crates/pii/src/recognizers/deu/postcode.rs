@@ -1,4 +1,7 @@
 //! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, weak 0.05 base score — requires context).
+//!
+//! Only German keywords gate it, as in Presidio's `DePlzRecognizer`; a 5-digit
+//! code next to a generic word such as `zip` is the country-neutral `POSTCODE`.
 
 use crate::recognizers::prelude::*;
 
@@ -7,7 +10,6 @@ const CONTEXT: &[&str] = &[
     "plz",
     "postleitzahl",
     "postanschrift",
-    "adresse",
     "wohnort",
     "ort",
     "wohnanschrift",
@@ -21,15 +23,6 @@ const CONTEXT: &[&str] = &[
     "gemeinde",
     "stadt",
     "dorf",
-    "zip",
-    "postcode",
-    "postal",
-    "address",
-    "city",
-    "delivery",
-    "mailing",
-    "shipping",
-    "correspondence",
 ];
 
 /// Build the `POSTCODE_DE` recognizer.

@@ -111,7 +111,7 @@ impl ColumnRule {
     /// Entity names a rule may use, in `dbmcp_pii::Entity::ALL` order.
     ///
     /// Mirrors `dbmcp_pii::Entity::as_str`; a test in `dbmcp-pii` ties the two.
-    pub const ENTITIES: [&'static str; 51] = [
+    pub const ENTITIES: [&'static str; 52] = [
         "EMAIL_ADDRESS",
         "CREDIT_CARD",
         "IBAN_CODE",
@@ -156,6 +156,7 @@ impl ColumnRule {
         "SOCIAL_SECURITY_DE",
         "TAX_ID_DE",
         "TAX_NUMBER_DE",
+        "POSTCODE",
         "DATE_OF_BIRTH",
         "PASSWORD_HASH",
         "PERSON",

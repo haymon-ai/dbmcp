@@ -51,6 +51,7 @@ const DEFAULT_NAMES: &[&str] = &[
     "SOCIAL_SECURITY_DE",
     "TAX_ID_DE",
     "TAX_NUMBER_DE",
+    "POSTCODE",
 ];
 
 fn entity_names(a: &Analyzer) -> Vec<String> {
@@ -197,6 +198,7 @@ fn tag_table_is_frozen() {
         ("PASSPORT_US".to_string(), Category::Government),
         ("PASSWORD_HASH".to_string(), Category::DigitalIdentity),
         ("PHONE_NUMBER".to_string(), Category::Contact),
+        ("POSTCODE".to_string(), Category::Contact),
         ("POSTCODE_DE".to_string(), Category::Contact),
         ("POSTCODE_UK".to_string(), Category::Contact),
         ("PRIVATE_KEY".to_string(), Category::DigitalIdentity),
