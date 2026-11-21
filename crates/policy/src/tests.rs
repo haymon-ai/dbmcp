@@ -4,14 +4,14 @@ use std::collections::BTreeSet;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, ExplainForm, FunctionUse, Lineage, LineageError, Origin, OutputColumn, Reference, RelationId,
-    RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
+    Catalog, Dialect, ExplainForm, Family, FunctionUse, Lineage, LineageError, Member, Origin, OutputColumn, Reference,
+    RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
 };
 
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, Position};
 
-use crate::plan::{Names, plan, touches_ruled};
+use crate::plan::{Families, Names, plan, touches_ruled};
 use crate::rejection::reject_lineage;
 use crate::{LineageClass, Rejection};
 
@@ -578,9 +578,10 @@ fn plain_explain_of_ruled_create_index_rejects() {
 #[test]
 fn touches_ruled_needs_a_ruled_relation() {
     let lineage = select(vec![vec![col("users", "name")]]);
-    assert!(!touches_ruled(&lineage, &config(vec![])));
-    assert!(!touches_ruled(&lineage, &config(vec![ssn("shop.public.audit.x")])));
-    assert!(touches_ruled(&lineage, &config(vec![ssn("shop.public.users.ssn")])));
+    let touches = |rules| touches_ruled(&lineage, &config(rules), &Families::new());
+    assert!(!touches(vec![]));
+    assert!(!touches(vec![ssn("shop.public.audit.x")]));
+    assert!(touches(vec![ssn("shop.public.users.ssn")]));
 }
 
 // CREATE INDEX.
@@ -766,6 +767,7 @@ fn names(creation: Option<&str>, bare: &[&str]) -> Names {
     Names {
         creation: creation.map(Into::into),
         bare: bare.iter().map(|name| table(name)).collect(),
+        ..Names::default()
     }
 }
 
@@ -1058,4 +1060,203 @@ fn names_are_known_only_for_single_same_name_sources() {
         plan.columns.into_iter().map(|column| column.name).collect::<Vec<_>>(),
         [Some("email".to_string()), Some("ssn".to_string()), None, None, None]
     );
+}
+
+// Inheritance and partition families.
+
+/// A descendant `name` with `ancestors`.
+fn member(name: &str, partitioned: bool, ancestors: &[&str]) -> Member {
+    Member {
+        id: table(name),
+        partitioned,
+        ancestors: ancestors.iter().map(|name| table(name)).collect(),
+    }
+}
+
+/// Names carrying the families of two trees, each seen from every member.
+///
+/// Partitioned `ptab` ← `ptab_1`, `ptab_2`; legacy `inh_parent` ←
+/// `inh_child` (which also inherits `inh_other`) ← `inh_grandchild`.
+fn tree() -> Names {
+    let family = |partitioned, ancestors: &[&str], descendants: Vec<Member>| Family {
+        partitioned,
+        ancestors: ancestors.iter().map(|name| table(name)).collect(),
+        descendants,
+    };
+    let child = || member("inh_child", false, &["inh_parent", "inh_other"]);
+    let grandchild = || member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
+    let families = [
+        (
+            "ptab",
+            family(
+                true,
+                &[],
+                vec![member("ptab_1", false, &["ptab"]), member("ptab_2", false, &["ptab"])],
+            ),
+        ),
+        ("ptab_1", family(false, &["ptab"], vec![])),
+        ("ptab_2", family(false, &["ptab"], vec![])),
+        ("inh_parent", family(false, &[], vec![child(), grandchild()])),
+        ("inh_other", family(false, &[], vec![child(), grandchild()])),
+        (
+            "inh_child",
+            family(false, &["inh_parent", "inh_other"], vec![grandchild()]),
+        ),
+        (
+            "inh_grandchild",
+            family(false, &["inh_child", "inh_parent", "inh_other"], vec![]),
+        ),
+    ];
+    Names {
+        families: families
+            .into_iter()
+            .map(|(name, family)| (table(name), family))
+            .collect(),
+        ..Names::default()
+    }
+}
+
+/// The single position of a one-column plan under [`tree`].
+fn only_in_tree(lineage: &Lineage, config: &PiiConfig) -> Position {
+    let positions = positions(pg_with(lineage, config, &tree()).expect("plan"));
+    assert_eq!(positions.len(), 1);
+    positions.into_iter().next().expect("one position")
+}
+
+#[test]
+fn child_rule_covers_reads_through_the_parent() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("ptab", "email")]]), &config),
+        MASKED_SSN
+    );
+}
+
+#[test]
+fn parent_rule_covers_direct_reads_of_every_descendant() {
+    let config = config(vec![ssn("shop.public.inh_parent.email")]);
+    for member in ["inh_child", "inh_grandchild"] {
+        assert_eq!(
+            only_in_tree(&select(vec![vec![col(member, "email")]]), &config),
+            MASKED_SSN,
+            "{member}"
+        );
+    }
+}
+
+#[test]
+fn siblings_never_cover_each_other() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("ptab_2", "email")]]), &config),
+        Position::Global
+    );
+}
+
+#[test]
+fn reads_through_a_parent_follow_a_members_other_parents() {
+    let config = config(vec![ssn("shop.public.inh_other.email")]);
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("inh_parent", "email")]]), &config),
+        MASKED_SSN
+    );
+}
+
+#[test]
+fn family_rules_match_by_column_name() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("ptab", "note")]]), &config),
+        Position::Global
+    );
+}
+
+#[test]
+fn different_pairs_across_a_family_conflict() {
+    let config = config(vec![
+        rule("shop.public.ptab.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.ptab_1.email", PiiOperator::Mask, "EMAIL_ADDRESS"),
+    ]);
+    for relation in ["ptab", "ptab_1"] {
+        let lineage = select(vec![vec![col(relation, "email")]]);
+        assert_eq!(
+            pg_with(&lineage, &config, &tree()),
+            Err(Rejection::Conflict { position: 0 }),
+            "{relation}"
+        );
+    }
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("ptab_2", "email")]]), &config),
+        Position::Action(PiiOperator::Hash, Entity::EmailAddress)
+    );
+}
+
+#[test]
+fn same_pairs_across_a_family_merge() {
+    let config = config(vec![ssn("shop.public.ptab.email"), ssn("shop.public.ptab_1.email")]);
+    assert_eq!(
+        only_in_tree(&select(vec![vec![col("ptab", "email")]]), &config),
+        MASKED_SSN
+    );
+}
+
+#[test]
+fn child_rule_covers_references_through_the_parent() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let lineage = referencing(col("ptab", "email"), Role::Filter, Origin::Query);
+    assert!(matches!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::Reference { .. })
+    ));
+}
+
+#[test]
+fn explain_of_a_parent_of_a_ruled_member_rejects() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let mut lineage = select(vec![vec![col("ptab", "id")]]);
+    lineage.statement = StatementKind::Explain(ExplainForm::Other, Box::new(StatementKind::Query));
+    assert_eq!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::Explain {
+            relation: "public.ptab".into(),
+        })
+    );
+}
+
+#[test]
+fn create_index_on_a_parent_of_a_ruled_member_rejects() {
+    let config = config(vec![ssn("shop.public.inh_grandchild.email")]);
+    assert_eq!(
+        pg_with(&ddl(StatementKind::CreateIndex, "inh_parent"), &config, &tree()),
+        Err(Rejection::RuledIndex {
+            relation: "public.inh_parent".into(),
+        })
+    );
+    assert!(pg_with(&ddl(StatementKind::CreateIndex, "ptab"), &config, &tree()).is_ok());
+}
+
+#[test]
+fn reads_of_a_family_with_a_ruled_member_touch_ruled() {
+    let lineage = select(vec![vec![col("ptab", "id")]]);
+    let families = tree().families;
+    assert!(touches_ruled(
+        &lineage,
+        &config(vec![ssn("shop.public.ptab_2.x")]),
+        &families
+    ));
+    assert!(!touches_ruled(
+        &lineage,
+        &config(vec![ssn("shop.public.inh_child.x")]),
+        &families
+    ));
+}
+
+#[test]
+fn writes_from_a_parent_of_a_ruled_member_launder() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let lineage = write("copy", "x", vec![col("ptab", "email")], StatementKind::Insert);
+    assert!(matches!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::Laundering { .. })
+    ));
 }

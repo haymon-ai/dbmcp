@@ -126,6 +126,23 @@ column policy: column "public.users.ssn" (ruled) used in WHERE in view "public.u
 
 There is no way to allow a clause per rule yet. Filter, join, and group on unruled columns (an `id`, a foreign key) instead.
 
+## Inheritance and partitions
+
+On PostgreSQL, a plain `FROM parent` also reads the rows of every inheritance child and every partition. A rule therefore reaches across the whole inheritance tree, both legacy `INHERITS` and declarative partitioning, matching columns by name:
+
+- **Upward.** A rule on a child or partition column also covers the same-named column of every ancestor. `SELECT email FROM ptab` is rewritten by the rule on `ptab_1.email`, for **every** row, including those of other partitions and of the parent itself.
+- **Downward.** A rule on a parent column covers the same-named column of every descendant: with `ptab.email` ruled, `SELECT email FROM ptab_1` is rewritten too.
+- **Siblings never.** A rule on `ptab_1.email` does not cover `SELECT email FROM ptab_2`.
+- **Multiple inheritance.** Rows read through a parent also follow the rules of their table's other parents. If `child` inherits both `parent` and `other`, a rule on `other.email` covers `SELECT email FROM parent`, which reads `child`'s rows.
+
+Every other check counts the tree the same way: a ruled column of any member cannot appear in a `WHERE` or `JOIN` through the parent, an `EXPLAIN` of the parent is pruned, its errors are withheld, `CREATE INDEX` on it is refused, and its whole-row references are rewritten or refused. Views over a parent get the same coverage. Columns that exist only on one child match nothing on the parent.
+
+Two different rules that meet across a tree conflict: with `ptab.email` hashed and `ptab_1.email` masked, every read of `email` through `ptab` or `ptab_1` is refused as `combines conflicting column rules`. To rule a whole tree one way, rule its top-most parent only.
+
+The tree is read again for every statement, so partitions attached after startup are covered. `ONLY parent` and `parent *` are refused while rules exist.
+
+This goes further than PostgreSQL itself: grants and row-level security check only the table a query names, not the children whose rows it reads, and PostgreSQL Anonymizer does not inherit masking rules either.
+
 ## What gets rejected
 
 While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, not only statements that touch a ruled table. Nothing runs. Every refusal starts with `column policy:` and names only clauses and identifiers, never a rule body or a value.

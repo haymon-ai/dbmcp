@@ -1,13 +1,13 @@
 //! The planner: gates a statement's lineage and plans each output column.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use dbmcp_config::{ColumnRule, PiiConfig};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Dialect, ExplainForm, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
+    Dialect, ExplainForm, Family, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
 
 use crate::deny;
@@ -43,15 +43,18 @@ pub(crate) struct Names {
     pub(crate) creation: Option<String>,
     /// Relations that one-part query names resolved to.
     pub(crate) bare: BTreeSet<RelationId>,
+    /// Each resolved relation's inheritance tree; a missing one is empty.
+    pub(crate) families: Families,
 }
 
 /// Reports whether `lineage` touches a relation with a ruled column.
 ///
-/// Every relation counts, those named inside view bodies included. Backends
-/// use it to decide whether database errors must be sanitized.
+/// Every relation counts, those named inside view bodies included, each
+/// ruled when its family is. Backends use it to decide whether database
+/// errors must be sanitized.
 #[must_use]
-pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig) -> bool {
-    ruled_relation(lineage, config).is_some()
+pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig, families: &Families) -> bool {
+    ruled_relation(lineage, config, families).is_some()
 }
 
 /// Runs every gate in order.
@@ -67,7 +70,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
         statement = inner;
     }
     if let StatementKind::Explain(form, _) = &lineage.statement
-        && let Some(relation) = ruled_relation(lineage, config)
+        && let Some(relation) = ruled_relation(lineage, config, &names.families)
     {
         let relation = relation_name(relation);
         match form {
@@ -78,14 +81,18 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     }
     if *statement == StatementKind::CreateIndex
         && let Some(target) = &lineage.target
-        && is_ruled(target, config)
+        && covers_ruled(config, &names.families, target)
     {
         return Err(Rejection::RuledIndex {
             relation: relation_name(target),
         });
     }
     for reference in &lineage.references {
-        if rule(config, &reference.source.relation, &reference.source.column).is_none() {
+        let source = &reference.source;
+        if covering(config, &names.families, &source.relation, &source.column)
+            .next()
+            .is_none()
+        {
             continue;
         }
         return Err(Rejection::Reference {
@@ -107,7 +114,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
         .columns
         .iter()
         .map(|column| {
-            let position = combine(&column.sources, config).ok_or(Rejection::Conflict {
+            let position = combine(&column.sources, config, &names.families).ok_or(Rejection::Conflict {
                 position: column.position,
             })?;
             Ok(PlannedColumn {
@@ -126,7 +133,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 column: column_name(&column),
             };
             // Literals and unruled columns carry no ruled values.
-            let source = combine(&write.sources, config).ok_or_else(laundering)?;
+            let source = combine(&write.sources, config, &names.families).ok_or_else(laundering)?;
             if source == Position::Global {
                 continue;
             }
@@ -136,7 +143,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                     position,
                 });
             }
-            let own = combine(&BTreeSet::from([column.clone()]), config).ok_or_else(laundering)?;
+            let own = combine(&BTreeSet::from([column.clone()]), config, &Families::new()).ok_or_else(laundering)?;
             if own != source {
                 return Err(laundering());
             }
@@ -185,6 +192,27 @@ pub(crate) fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &st
     config.rules.iter().find(|rule| rule.key == key)
 }
 
+/// Each resolved relation's inheritance tree, by identity.
+pub(crate) type Families = BTreeMap<RelationId, Family>;
+
+/// Returns `relation` and every relation of its family.
+fn reach<'f>(families: &'f Families, relation: &'f RelationId) -> impl Iterator<Item = &'f RelationId> {
+    std::iter::once(relation).chain(families.get(relation).into_iter().flat_map(Family::relations))
+}
+
+/// Returns the rules on `column` of `relation` and of every relation of its family.
+///
+/// Rows read through a relation then follow every rule a direct read of
+/// the member they live in would.
+pub(crate) fn covering<'a>(
+    config: &'a PiiConfig,
+    families: &'a Families,
+    relation: &'a RelationId,
+    column: &'a str,
+) -> impl Iterator<Item = &'a ColumnRule> {
+    reach(families, relation).filter_map(move |relation| rule(config, relation, column))
+}
+
 /// Reports whether any rule names a column of `relation`.
 pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
     let key = [
@@ -195,23 +223,28 @@ pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
     config.rules.iter().any(|rule| rule.key[..3] == key)
 }
 
-/// Returns the first touched relation with a ruled column.
-fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig) -> Option<&'a RelationId> {
+/// Reports whether any rule names a column of `relation` or of its family.
+pub(crate) fn covers_ruled(config: &PiiConfig, families: &Families, relation: &RelationId) -> bool {
+    reach(families, relation).any(|relation| is_ruled(relation, config))
+}
+
+/// Returns the first touched relation whose family has a ruled column.
+fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Families) -> Option<&'a RelationId> {
     lineage
         .relations
         .iter()
         .map(|relation| &relation.id)
-        .find(|id| is_ruled(id, config))
+        .find(|id| covers_ruled(config, families, id))
 }
 
 /// Combines the rules of `sources`; `None` when two ruled sources differ.
 ///
 /// Ruled sources decide the position; unruled ones add nothing. No ruled
 /// source means global detection.
-fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig) -> Option<Position> {
+fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig, families: &Families) -> Option<Position> {
     let mut pairs = sources
         .iter()
-        .filter_map(|source| rule(config, &source.relation, &source.column))
+        .flat_map(|source| covering(config, families, &source.relation, &source.column))
         .map(|rule| (rule.operator, rule.entity));
     let Some(first) = pairs.next() else {
         return Some(Position::Global);

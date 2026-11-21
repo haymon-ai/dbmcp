@@ -6,7 +6,7 @@
 //! [`Entry::Resolved`] relation, [`Entry::Vacant`] when nothing exists under
 //! the name, or [`Entry::Absent`] when something exists that it cannot describe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -124,10 +124,14 @@ pub struct Relation {
     pub columns: Vec<CatalogColumn>,
     /// The view's query, without `CREATE VIEW`, for views.
     pub view_sql: Option<String>,
+    /// The relation's inheritance tree; empty unless the backend reads one.
+    ///
+    /// Analysis ignores it; it carries catalog knowledge to the caller's planner.
+    pub family: Family,
 }
 
 impl Relation {
-    /// Creates a relation without a view body.
+    /// Creates a relation without a view body or inheritance tree.
     #[must_use]
     pub fn new(id: RelationId, kind: RelationKind, columns: Vec<CatalogColumn>) -> Self {
         Self {
@@ -135,6 +139,7 @@ impl Relation {
             kind,
             columns,
             view_sql: None,
+            family: Family::default(),
         }
     }
 
@@ -144,6 +149,50 @@ impl Relation {
         self.view_sql = Some(sql.into());
         self
     }
+
+    /// Sets the inheritance tree.
+    #[must_use]
+    pub fn with_family(mut self, family: Family) -> Self {
+        self.family = family;
+        self
+    }
+}
+
+/// A relation's inheritance tree, as relation identities only.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Family {
+    /// Whether the relation itself is a partitioned table.
+    pub partitioned: bool,
+    /// Every ancestor, transitively.
+    pub ancestors: BTreeSet<RelationId>,
+    /// Every descendant, transitively, each with its own ancestors.
+    pub descendants: Vec<Member>,
+}
+
+impl Family {
+    /// Returns every relation whose rules can reach the family's owner.
+    ///
+    /// Its ancestors, its descendants, and every descendant's ancestors.
+    #[must_use]
+    pub fn relations(&self) -> BTreeSet<&RelationId> {
+        let mut relations: BTreeSet<&RelationId> = self.ancestors.iter().collect();
+        for member in &self.descendants {
+            relations.insert(&member.id);
+            relations.extend(&member.ancestors);
+        }
+        relations
+    }
+}
+
+/// A descendant in a [`Family`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    /// The descendant's identity.
+    pub id: RelationId,
+    /// Whether it is a partitioned table, which holds no rows itself.
+    pub partitioned: bool,
+    /// Every ancestor of this member, transitively, from every parent it has.
+    pub ancestors: BTreeSet<RelationId>,
 }
 
 /// What the backend found for a written name.

@@ -5229,3 +5229,131 @@ async fn list_tables_detailed_values_have_sorted_keys() {
         serde_json::to_string(&sorted).expect("serializes")
     );
 }
+
+// Column rules across inheritance and partitions (#373)
+
+/// An e-mail hash rule on `public.<table>.email`.
+fn email_rule(table: &str) -> ColumnRule {
+    column_rule("public", table, "email", "EMAIL_ADDRESS", PiiOperator::Hash)
+}
+
+/// Asserts `rows` hold `count` rows, each with an e-mail token under `email`.
+fn assert_email_tokens(rows: &[Value], count: usize) {
+    assert_eq!(rows.len(), count, "{rows:?}");
+    for row in rows {
+        assert!(is_email_token(&row["email"]), "{row}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_on_members_cover_reads_through_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1"), email_rule("inh_child")]);
+    for (query, count) in [
+        ("SELECT email FROM ptab_1", 2),
+        ("SELECT * FROM ptab", 3),
+        ("SELECT email FROM inh_child", 2),
+        ("SELECT email FROM inh_parent", 3),
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert_email_tokens(&rows, count);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_on_a_parent_cover_direct_reads_of_its_members() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab"), email_rule("inh_parent")]);
+    for (query, count) in [
+        ("SELECT email FROM ptab_1", 2),
+        ("SELECT email FROM ptab_2", 1),
+        ("SELECT email FROM inh_grandchild", 1),
+        // `inh_other` scans `inh_child`'s rows, which `inh_parent`'s rule covers.
+        ("SELECT email FROM inh_other", 3),
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert_email_tokens(&rows, count);
+    }
+}
+
+#[tokio::test]
+async fn column_rules_on_a_members_other_parent_cover_reads_through_its_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("inh_other")]);
+    let rows = ruled_read(&handler, "SELECT email FROM inh_parent")
+        .await
+        .expect("read");
+    assert_email_tokens(&rows, 3);
+}
+
+#[tokio::test]
+async fn column_rules_on_members_refuse_conditions_through_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    let refusal = ruled_refusal(&handler, "SELECT id FROM ptab WHERE email LIKE 'p%'").await;
+    assert!(refusal.contains("(ruled) used in WHERE"), "{refusal}");
+}
+
+#[tokio::test]
+async fn column_rules_on_members_prune_explain_of_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    let response = handler
+        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), false)
+        .await
+        .expect("pruned explain");
+    let plan = &response.rows[0]["QUERY PLAN"];
+    for key in ["Filter", "Index Cond", "Output"] {
+        assert!(!has_key(plan, key), "{key} in {plan}");
+    }
+    let error = handler
+        .explain_query(None, "SELECT id FROM ptab WHERE id = 1".into(), true)
+        .await
+        .expect_err("analyze");
+    assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_on_members_check_whole_rows_of_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    for query in ["SELECT p FROM ptab p", "SELECT row_to_json(p) AS j FROM ptab p"] {
+        match ruled_read(&handler, query).await {
+            Ok(rows) => assert!(
+                !Value::from(rows.clone()).to_string().contains("@example.com"),
+                "{rows:?}"
+            ),
+            Err(error) => assert!(!error.message.contains("@example.com"), "{}", error.message),
+        }
+    }
+}
+
+#[tokio::test]
+async fn column_rules_on_members_refuse_laundering_through_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_1")]);
+    let error = handler
+        .write_query("INSERT INTO audit (note) SELECT email FROM ptab".into(), None)
+        .await
+        .expect_err("laundering");
+    assert!(error.message.contains("column policy"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_conflicting_rules_across_a_tree() {
+    let mask = column_rule("public", "ptab_1", "email", "EMAIL_ADDRESS", PiiOperator::Mask);
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab"), mask]);
+    for query in ["SELECT email FROM ptab", "SELECT email FROM ptab_1"] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(refusal.contains("conflicting"), "{query}: {refusal}");
+    }
+    let rows = ruled_read(&handler, "SELECT email FROM ptab_2")
+        .await
+        .expect("a sibling sees the parent's rule only");
+    assert_email_tokens(&rows, 1);
+}
+
+#[tokio::test]
+async fn column_rules_on_members_cover_views_over_their_parent() {
+    let handler = ruled_handler(None, 100, vec![email_rule("ptab_2"), email_rule("inh_grandchild")]);
+    for (query, count) in [
+        ("SELECT email FROM ptab_view", 3),
+        ("SELECT email FROM inh_parent_view", 3),
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert_email_tokens(&rows, count);
+    }
+}

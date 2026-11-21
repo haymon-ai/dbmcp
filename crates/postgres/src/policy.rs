@@ -25,13 +25,13 @@
 //! ruled relation, database errors outside the value-free `SQLSTATE`
 //! classes, `COMMIT` included, are replaced by a generic message.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    RelationRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection, Relation, RelationId,
+    RelationKind, RelationRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -55,12 +55,21 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// Resolves each `to_regclass` input of `$1`, with its explicit schema in `$2`.
 ///
 /// Per name, in order: schema, name, `relkind`, OID, view body, column names
-/// and numbers (system columns, numbered below zero, come last), and whether
-/// the explicit schema exists.
+/// and numbers (system columns, numbered below zero, come last), whether
+/// the explicit schema exists, and its inheritance closure.
+///
+/// The closure is every descendant (`pg_inherits` children, transitively)
+/// and every ancestor of the relation or a descendant: each node's OID,
+/// schema, name, and `relkind`, then each `pg_inherits` edge whose child is
+/// a node, as child and parent OIDs. `UNION` ends the walk on diamonds. It
+/// takes no lock and names no `inhdetachpending`, so a partition pending
+/// detach still counts.
 const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
-     to_regnamespace(n.schema) IS NOT NULL \
+     to_regnamespace(n.schema) IS NOT NULL, \
+     coalesce(tree.oids, '{}'), coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}'), \
+     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}') \
      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
      LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
      LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
@@ -68,6 +77,19 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
            array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers \
            FROM pg_attribute AS a \
            WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
+           up(oid) AS (SELECT down.oid FROM down UNION SELECT i.inhparent FROM pg_inherits AS i JOIN up ON i.inhrelid = up.oid) \
+           SELECT nodes.oids, nodes.schemas, nodes.names, nodes.relkinds, edges.children, edges.parents \
+           FROM (SELECT array_agg(r.oid::int8 ORDER BY r.oid) AS oids, \
+                   array_agg(rs.nspname::text ORDER BY r.oid) AS schemas, \
+                   array_agg(r.relname::text ORDER BY r.oid) AS names, \
+                   array_agg(r.relkind::text ORDER BY r.oid) AS relkinds \
+                 FROM up JOIN pg_class AS r ON r.oid = up.oid \
+                 JOIN pg_namespace AS rs ON rs.oid = r.relnamespace) AS nodes, \
+                (SELECT array_agg(i.inhrelid::int8 ORDER BY i.inhrelid, i.inhparent) AS children, \
+                   array_agg(i.inhparent::int8 ORDER BY i.inhrelid, i.inhparent) AS parents \
+                 FROM pg_inherits AS i WHERE i.inhrelid IN (SELECT up.oid FROM up)) AS edges) AS tree ON true \
      ORDER BY n.ord";
 
 /// `SQLSTATE` classes whose messages name schema objects or states, never values.
@@ -188,6 +210,12 @@ type Resolved = (
     Vec<String>,
     Vec<i16>,
     bool,
+    Vec<i64>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<i64>,
+    Vec<i64>,
 );
 
 impl PostgresHandler {
@@ -458,7 +486,7 @@ async fn fetch(
     let mut entries = Vec::new();
     for ((name, reference), row) in names.into_iter().zip(rows) {
         let entry = entry(probe, &name, &reference, &row);
-        let (_, _, _, oid, body, names, numbers, _) = row;
+        let (_, _, _, oid, body, names, numbers, ..) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.entry(oid).or_insert_with(|| Owner {
                 id: relation.id.clone(),
@@ -473,7 +501,7 @@ async fn fetch(
 
 /// Builds the catalog entry of one resolved row.
 fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
-    let (schema, relname, relkind, _, body, columns, numbers, schema_exists) = row;
+    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, ..) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
         return vacant(probe, name, reference, *schema_exists);
     };
@@ -498,7 +526,7 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
         })
         .collect();
     let id = RelationId::new(&probe.database, schema, relname);
-    let relation = Relation::new(id, kind, columns);
+    let relation = Relation::new(id, kind, columns).with_family(family(probe, row));
     if !matches!(kind, RelationKind::View | RelationKind::MatView) {
         return Entry::Resolved(relation);
     }
@@ -506,6 +534,61 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
         Some(query) if !query.is_empty() => Entry::Resolved(relation.with_view_sql(query)),
         _ => Entry::Absent,
     }
+}
+
+/// Builds the inheritance tree of one resolved row from its closure nodes and edges.
+fn family(probe: &Probe, row: &Resolved) -> Family {
+    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents) = row;
+    let Some(owner) = *oid else {
+        return Family::default();
+    };
+    let nodes: HashMap<i64, (RelationId, bool)> = oids
+        .iter()
+        .zip(schemas.iter().zip(names).zip(relkinds))
+        .map(|(&oid, ((schema, name), relkind))| {
+            (oid, (RelationId::new(&probe.database, schema, name), relkind == "p"))
+        })
+        .collect();
+    let mut up: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut down: HashMap<i64, Vec<i64>> = HashMap::new();
+    for (&child, &parent) in children.iter().zip(parents) {
+        up.entry(child).or_default().push(parent);
+        down.entry(parent).or_default().push(child);
+    }
+    let ids = |oids: BTreeSet<i64>| -> BTreeSet<RelationId> {
+        oids.iter().filter_map(|oid| Some(nodes.get(oid)?.0.clone())).collect()
+    };
+    let mut descendants: Vec<Member> = closure(owner, &down)
+        .into_iter()
+        .filter_map(|oid| {
+            let (id, partitioned) = nodes.get(&oid)?;
+            Some(Member {
+                id: id.clone(),
+                partitioned: *partitioned,
+                ancestors: ids(closure(oid, &up)),
+            })
+        })
+        .collect();
+    descendants.sort_by(|a, b| a.id.cmp(&b.id));
+    Family {
+        partitioned: relkind.as_deref() == Some("p"),
+        ancestors: ids(closure(owner, &up)),
+        descendants,
+    }
+}
+
+/// Returns every node reachable from `start` along `edges`, `start` itself only on a loop.
+fn closure(start: i64, edges: &HashMap<i64, Vec<i64>>) -> BTreeSet<i64> {
+    let mut reached = BTreeSet::new();
+    let mut pending = vec![start];
+    while let Some(node) = pending.pop() {
+        for &next in edges.get(&node).into_iter().flatten() {
+            if reached.insert(next) {
+                pending.push(next);
+            }
+        }
+    }
+    reached
 }
 
 /// Returns the entry for a name nothing resolves to.
@@ -656,7 +739,103 @@ mod tests {
             vec!["id".into(), "ctid".into()],
             vec![1, -1],
             true,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
         )
+    }
+
+    /// A row for `public.<name>` (OID 1) whose closure holds `nodes` and `edges`.
+    ///
+    /// Each node is `(oid, name, relkind)` in `public`; each edge `(child, parent)`.
+    fn tree_row(name: &str, relkind: &str, nodes: &[(i64, &str, &str)], edges: &[(i64, i64)]) -> Resolved {
+        let mut row = row(relkind, "public", None);
+        row.1 = Some(name.into());
+        row.3 = Some(1);
+        row.8 = nodes.iter().map(|node| node.0).collect();
+        row.9 = nodes.iter().map(|_| "public".to_owned()).collect();
+        row.10 = nodes.iter().map(|node| node.1.to_owned()).collect();
+        row.11 = nodes.iter().map(|node| node.2.to_owned()).collect();
+        row.12 = edges.iter().map(|edge| edge.0).collect();
+        row.13 = edges.iter().map(|edge| edge.1).collect();
+        row
+    }
+
+    /// `app.public.<name>`.
+    fn id(name: &str) -> RelationId {
+        RelationId::new(DB, "public", name)
+    }
+
+    /// The identities of `names`.
+    fn ids(names: &[&str]) -> BTreeSet<RelationId> {
+        names.iter().map(|name| id(name)).collect()
+    }
+
+    /// `app.public.<name>` as a [`Member`] below `ancestors`.
+    fn member(name: &str, partitioned: bool, ancestors: &[&str]) -> Member {
+        Member {
+            id: id(name),
+            partitioned,
+            ancestors: ids(ancestors),
+        }
+    }
+
+    #[test]
+    fn partitioned_tables_carry_their_partitions() {
+        let nodes = [
+            (1, "ptab", "p"),
+            (2, "ptab_1", "r"),
+            (3, "ptab_2", "p"),
+            (4, "ptab_2a", "r"),
+        ];
+        let edges = [(2, 1), (3, 1), (4, 3)];
+        let relation = resolved(&tree_row("ptab", "p", &nodes, &edges)).expect("table");
+        assert_eq!(
+            relation.family,
+            Family {
+                partitioned: true,
+                ancestors: BTreeSet::new(),
+                descendants: vec![
+                    member("ptab_1", false, &["ptab"]),
+                    member("ptab_2", true, &["ptab"]),
+                    member("ptab_2a", false, &["ptab", "ptab_2"]),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn descendants_carry_every_parent_they_inherit() {
+        let nodes = [
+            (1, "inh_child", "r"),
+            (2, "inh_parent", "r"),
+            (3, "inh_other", "r"),
+            (4, "inh_grandchild", "r"),
+            (5, "inh_root", "r"),
+        ];
+        let edges = [(1, 2), (1, 3), (4, 1), (2, 5)];
+        let relation = resolved(&tree_row("inh_child", "r", &nodes, &edges)).expect("table");
+        assert_eq!(
+            relation.family,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["inh_parent", "inh_other", "inh_root"]),
+                descendants: vec![member(
+                    "inh_grandchild",
+                    false,
+                    &["inh_child", "inh_parent", "inh_other", "inh_root"]
+                )],
+            }
+        );
+    }
+
+    #[test]
+    fn relations_outside_a_tree_have_an_empty_family() {
+        let relation = resolved(&tree_row("solo", "r", &[(1, "solo", "r")], &[])).expect("table");
+        assert_eq!(relation.family, Family::default());
     }
 
     fn resolved(row: &Resolved) -> Option<Relation> {
@@ -711,7 +890,22 @@ mod tests {
     fn unresolved_rows_fall_back_to_vacant() {
         let name = WrittenName::query(vec![NamePart::bare("n")]);
 
-        let row: Resolved = (None, None, None, None, None, Vec::new(), Vec::new(), false);
+        let row: Resolved = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            false,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
         assert_eq!(
             entry(&probe(Some("public")), &name, &reference(None, "n"), &row),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
@@ -733,6 +927,60 @@ mod tests {
         <sqlx::PgConnection as sqlx::Connection>::connect_with(&options)
             .await
             .expect("connect to the seeded database")
+    }
+
+    /// Fetches the family of `public.<name>` from the seeded database.
+    async fn seeded_family(conn: &mut sqlx::PgConnection, name: &str) -> Family {
+        let probe = probe(Some("public"));
+        let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
+        let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
+        match entries.into_iter().next() {
+            Some((_, Entry::Resolved(relation))) => relation.family,
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn resolve_reads_inheritance_and_partition_trees() {
+        let mut conn = seeded().await;
+        assert_eq!(
+            seeded_family(&mut conn, "ptab").await,
+            Family {
+                partitioned: true,
+                ancestors: BTreeSet::new(),
+                descendants: vec![member("ptab_1", false, &["ptab"]), member("ptab_2", false, &["ptab"])],
+            }
+        );
+        assert_eq!(
+            seeded_family(&mut conn, "ptab_2").await,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["ptab"]),
+                descendants: Vec::new(),
+            }
+        );
+        let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
+        assert_eq!(
+            seeded_family(&mut conn, "inh_parent").await,
+            Family {
+                partitioned: false,
+                ancestors: BTreeSet::new(),
+                descendants: vec![
+                    member("inh_child", false, &["inh_parent", "inh_other"]),
+                    grandchild.clone()
+                ],
+            }
+        );
+        assert_eq!(
+            seeded_family(&mut conn, "inh_child").await,
+            Family {
+                partitioned: false,
+                ancestors: ids(&["inh_parent", "inh_other"]),
+                descendants: vec![grandchild],
+            }
+        );
+        assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
     }
 
     #[tokio::test]

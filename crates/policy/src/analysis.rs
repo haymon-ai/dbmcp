@@ -1,5 +1,7 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
+use std::mem;
+
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_sql_lineage::{
     Catalog, Dialect, Entry, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind,
@@ -111,9 +113,15 @@ impl<'a> Analysis<'a> {
     /// class otherwise.
     /// Each rejection is logged.
     pub fn step(&mut self, entries: Vec<(WrittenName, Entry)>) -> Result<Step, Rejection> {
-        for (name, entry) in entries {
-            if let (Origin::Query, [_], Entry::Resolved(relation)) = (&name.context, name.parts.as_slice(), &entry) {
-                self.names.bare.insert(relation.id.clone());
+        for (name, mut entry) in entries {
+            if let Entry::Resolved(relation) = &mut entry {
+                if let (Origin::Query, [_]) = (&name.context, name.parts.as_slice()) {
+                    self.names.bare.insert(relation.id.clone());
+                }
+                // Analysis ignores the family, so the planner takes it.
+                self.names
+                    .families
+                    .insert(relation.id.clone(), mem::take(&mut relation.family));
             }
             self.catalog.insert(name, entry);
         }
@@ -180,7 +188,7 @@ impl Analyzed {
     pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Planned<'c>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
         let statement = &self.lineage.statement;
-        let touches = touches_ruled(&self.lineage, config);
+        let touches = touches_ruled(&self.lineage, config, &self.names.families);
         // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction, where names may rebind.
         let withholds = touches || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
         let mode = match statement {
@@ -190,14 +198,16 @@ impl Analyzed {
             StatementKind::Explain(..) | StatementKind::Show(_) | StatementKind::Describe => Mode::Global,
             _ => Mode::Positional(plan),
         };
-        Ok(Planned::new(mode, config, withholds))
+        Ok(Planned::new(mode, config, self.names.families.clone(), withholds))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use dbmcp_config::{ColumnRule, PiiOperator};
-    use dbmcp_sql_lineage::{CatalogColumn, Relation, RelationKind};
+    use std::collections::BTreeSet;
+
+    use dbmcp_sql_lineage::{CatalogColumn, Family, Member, Relation, RelationKind};
 
     use super::*;
     use crate::{LineageClass, Unfit};
@@ -524,6 +534,53 @@ mod tests {
                 relation: "mysql.user".into()
             }
         );
+    }
+
+    /// Answers `t` with a parent of `t_1` and every other name with [`table`].
+    fn parent(name: &WrittenName) -> Entry {
+        let Entry::Resolved(relation) = table(name) else {
+            unreachable!("table resolves");
+        };
+        if relation.id.name != "t" {
+            return Entry::Resolved(relation);
+        }
+        let child = RelationId::new("shop", "public", "t_1");
+        let family = Family {
+            partitioned: true,
+            ancestors: BTreeSet::new(),
+            descendants: vec![Member {
+                id: child,
+                partitioned: false,
+                ancestors: BTreeSet::from([relation.id.clone()]),
+            }],
+        };
+        Entry::Resolved(relation.with_family(family))
+    }
+
+    /// A config ruling `shop.public.t_1.a` with `mask` as `US_SSN`.
+    fn child_ruled() -> PiiConfig {
+        let mut config = ruled();
+        config.rules[0].key[2] = "t_1".into();
+        config
+    }
+
+    #[test]
+    fn resolved_families_reach_the_plan() {
+        let config = child_ruled();
+        let analyzed = analyzed_with(DatabaseBackend::Postgres, "SELECT a, b FROM t", Some("public"), parent);
+        let mut planned = analyzed.plan(&config).expect("plan");
+        let names = ["a", "b"].map(String::from);
+        let parent = RelationId::new("shop", "public", "t");
+        assert_eq!(
+            planned.check_first(&names, [(1, parent.clone(), Some("a".into()))]),
+            Err(Unfit::Unplanned(1))
+        );
+        assert_eq!(
+            planned.check_first(&names, [(1, parent.clone(), None)]),
+            Err(Unfit::Unplanned(1))
+        );
+        assert_eq!(planned.check_first(&names, [(0, parent, Some("a".into()))]), Ok(()));
+        assert_eq!(planned.withheld(Some("23505")), Some("23505"));
     }
 
     #[test]
