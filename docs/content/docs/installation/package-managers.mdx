@@ -13,6 +13,9 @@ cargo install dbmcp
 
 This builds from source and installs the binary to `~/.cargo/bin/`.
 
+- **macOS:** building needs the Xcode Command Line Tools (`xcode-select --install`).
+- **Intel Mac:** `cargo install dbmcp` fails because ONNX Runtime ships no prebuilt library for x86_64 macOS. Either point `ORT_LIB_PATH` at your own static build of ONNX Runtime 1.31 (see ort's [linking guide](https://ort.pyke.io/setup/linking)), or install the last release built on the older runtime with `cargo install dbmcp --version 0.19.0`.
+
 Verify the installation:
 
 ```bash
