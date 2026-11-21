@@ -116,8 +116,7 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns an invalid-params error if `timeout` is `0`, exceeds
-    /// `max_query_timeout`, or is set while `query_timeout` is `0`.
+    /// Returns an invalid-params error if [`resolve_timeout`] rejects `timeout`.
     /// Returns [`SqlError::MultiStatement`] if the query holds more than
     /// one statement.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and

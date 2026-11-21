@@ -31,7 +31,7 @@ With `read_only: false`, writes and DDL are also subject to the timeout. A long 
 
 `readQuery` and `explainQuery` (PostgreSQL and MySQL/MariaDB) take an optional `timeout` argument in seconds. It replaces `query_timeout` for that call, on every layer above. It must be at least `1` and at most `max_query_timeout`; any other value is rejected with an error naming the limit. Paging a `SELECT` with `cursor` applies `timeout` per call, so pass it again with each cursor.
 
-`max_query_timeout` defaults to `query_timeout`, so an agent can only shorten the limit until you raise the cap. With `analyze`, `explainQuery` runs the statement, so a raised `timeout` lets it measure a query that `query_timeout` would stop:
+`max_query_timeout` defaults to `query_timeout`, so an agent can only shorten the limit until you raise the cap:
 
 ```yaml
 database:

@@ -539,17 +539,12 @@ async fn test_explain_query_timeout_raises_the_limit() {
         max_query_timeout: 10,
         ..base_db_config(true)
     });
-    let sql = "SELECT pg_sleep(2)";
-    let err = handler
-        .explain_query(None, sql.into(), true, None)
-        .await
-        .expect_err("default 1 s timeout stops the analyze");
-    assert!(
-        err.to_string().contains("timed out"),
-        "Expected timeout message, got: {err}"
-    );
+    let marker = "explain_timeout_marker";
+    let sql = format!("SELECT '{marker}' AS m, pg_sleep(1.2)");
+    let result = handler.explain_query(None, sql.clone(), true, None).await;
+    assert_timed_out(&handler, result, marker).await;
     handler
-        .explain_query(None, sql.into(), true, Some(5))
+        .explain_query(None, sql, true, Some(5))
         .await
         .expect("5 s call timeout lets the analyze finish");
 }

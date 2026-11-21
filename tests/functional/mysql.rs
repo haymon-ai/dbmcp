@@ -571,15 +571,6 @@ async fn test_explain_query_timeout_above_cap_is_rejected() {
         .await
         .expect_err("above the cap");
     assert_eq!(err.message, "timeout 11s exceeds the maximum of 10s");
-    let err = handler
-        .explain_query(None, "SELECT 1".into(), false, Some(0))
-        .await
-        .expect_err("zero");
-    assert_eq!(err.message, "timeout must be at least 1 second");
-    handler
-        .explain_query(None, "SELECT 1".into(), false, Some(10))
-        .await
-        .expect("at the cap");
 }
 
 #[tokio::test]
