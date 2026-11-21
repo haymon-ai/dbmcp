@@ -19,7 +19,7 @@ use ort::value::Tensor;
 use tokenizers::{Tokenizer, TruncationParams};
 
 use crate::entity::Entity;
-use crate::result::{AnalysisExplanation, RecognizerResult};
+use crate::result::{AnalysisExplanation, Detector, RecognizerResult};
 use crate::score::Score;
 use crate::validation::ValidationOutcome;
 
@@ -291,6 +291,7 @@ fn span_to_result(span: Span) -> RecognizerResult {
             final_score: span.score,
             supportive_keyword: None,
         },
+        detector: Detector::Ner,
     }
 }
 
@@ -456,9 +457,9 @@ impl NerEngine {
         }
 
         // Merge overflow-window dupes per text.
-        for spans in &mut results {
+        for (spans, text) in results.iter_mut().zip(texts) {
             if !spans.is_empty() {
-                *spans = crate::overlap::resolve(std::mem::take(spans));
+                *spans = crate::overlap::resolve(text, std::mem::take(spans));
             }
         }
         Ok(results)

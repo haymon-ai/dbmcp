@@ -50,6 +50,6 @@ pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::ner::{NerEngine, NerError};
 pub use crate::operators::{ChunkCount, Operator};
 pub use crate::redact::{MaybeRedact, RedactionError, RedactionStats, Redactor, RedactorInitError};
-pub use crate::result::{AnalysisExplanation, RecognizerResult};
+pub use crate::result::{AnalysisExplanation, Detector, RecognizerResult};
 pub use crate::score::{MAX_SCORE, Score};
 pub use crate::validation::ValidationOutcome;

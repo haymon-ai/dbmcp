@@ -171,7 +171,7 @@ mod tests {
     use super::*;
     use crate::Entity;
     use crate::pattern::Pattern;
-    use crate::result::AnalysisExplanation;
+    use crate::result::{AnalysisExplanation, Detector};
     use crate::validation::ValidationOutcome;
 
     fn default_settings() -> ContextSettings {
@@ -206,6 +206,7 @@ mod tests {
                 final_score: s,
                 supportive_keyword: None,
             },
+            detector: Detector::Pattern,
         }
     }
 

@@ -57,13 +57,17 @@ impl Analyzer {
     /// Analyze `text`, returning merged + overlap-resolved results.
     #[must_use]
     pub fn analyze(&self, text: &str, opts: &AnalyzeOptions) -> Vec<RecognizerResult> {
-        self.analyze_with_context(text, &[], opts)
+        overlap::resolve(text, self.analyze_with_context(text, &[], opts))
     }
 
-    /// Same as [`Self::analyze`] but threads an external context word list
-    /// into the boost step. Crate-private — populated by the redactor's
-    /// JSON-key path split into lowercase words. Words must already be
-    /// lowercased.
+    /// Like [`Self::analyze`] with external context words, but returns raw spans.
+    ///
+    /// Threads `external_context` into the boost step. Crate-private —
+    /// populated by the redactor's JSON-key path split into lowercase words.
+    /// Words must already be lowercased. Spans may overlap: the caller
+    /// resolves them once, over the full span set (regex and NER), via
+    /// [`crate::anonymize`]; resolving the regex spans first would let an NER
+    /// span take over a trimmed pattern span.
     #[must_use]
     pub(crate) fn analyze_with_context(
         &self,
@@ -73,10 +77,9 @@ impl Analyzer {
     ) -> Vec<RecognizerResult> {
         // Apply boost BEFORE the min_score filter so weak candidates can be
         // rescued by a supportive keyword. Then drop anything still below
-        // the floor and resolve overlap. Boost runs per recognizer so each
+        // the floor. Boost runs per recognizer so each
         // batch is paired with its producer — no name-based lookup.
-        let raw: Vec<RecognizerResult> = self
-            .recognizers
+        self.recognizers
             .iter()
             .flat_map(|rec| {
                 let hits = rec.analyze(text);
@@ -86,8 +89,7 @@ impl Analyzer {
                 }
             })
             .filter(|r| r.score >= opts.min_score)
-            .collect();
-        overlap::resolve(raw)
+            .collect()
     }
 
     /// Construct a fresh [`Builder`] for category routing.
@@ -220,6 +222,33 @@ mod tests {
         let mut a = Analyzer::empty();
         a.register(rec);
         a
+    }
+
+    #[test]
+    fn analyze_with_context_returns_raw_spans_and_analyze_resolves() {
+        let mut a = Analyzer::empty();
+        let card = Pattern::new("a", r"a+b+", Score::from_static(0.9)).expect("static");
+        let iban = Pattern::new("b", r"b+c+d+", Score::from_static(0.5)).expect("static");
+        a.register(Recognizer::new(Entity::CreditCard, vec![card]).expect("non-empty"));
+        a.register(Recognizer::new(Entity::IbanCode, vec![iban]).expect("non-empty"));
+        let opts = AnalyzeOptions {
+            min_score: Score::default(),
+            context: None,
+        };
+        let spans = |r: Vec<crate::RecognizerResult>| -> Vec<(Entity, usize, usize)> {
+            let mut v: Vec<_> = r.iter().map(|x| (x.entity_type, x.start, x.end)).collect();
+            v.sort_by_key(|x| (x.1, x.2));
+            v
+        };
+        let text = "aaaabbccdddd";
+        assert_eq!(
+            spans(a.analyze_with_context(text, &[], &opts)),
+            [(Entity::CreditCard, 0, 6), (Entity::IbanCode, 4, 12)]
+        );
+        assert_eq!(
+            spans(a.analyze(text, &opts)),
+            [(Entity::CreditCard, 0, 6), (Entity::IbanCode, 6, 12)]
+        );
     }
 
     #[test]

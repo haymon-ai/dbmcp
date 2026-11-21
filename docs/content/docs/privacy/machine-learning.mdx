@@ -5,6 +5,8 @@ description: Detect names of people, places, and organizations with an optional 
 
 The regex/checksum recognisers cannot catch free-form **person names**, **place names**, **organizations**, **nationality/religious/political groups**, or **facilities** — those have no fixed pattern. An optional machine-learning Named Entity Recognition (NER) pass adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection on top of the regex layer. Which entities a given model can produce depends on its label set: a CoNLL model (e.g. `dslim/bert-base-NER`) yields person/location/organization, while an OntoNotes-class model additionally yields NRP and facility.
 
+NER matches never cut regex matches: a name the model finds inside an email address or URL is covered by the regex match (see [Overlapping detections](/privacy/redaction#overlapping-detections)).
+
 It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `pii.enabled` and `pii.ner_enabled` are true and a model directory is supplied.
 
 Inference uses **ONNX Runtime** — there is **no external runtime library** to install: you need only the `dbmcp` binary and a model directory. The directory must contain:

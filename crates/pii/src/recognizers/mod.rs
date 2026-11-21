@@ -8,7 +8,7 @@ use std::slice;
 
 use crate::error::RecognizerError;
 use crate::pattern::Pattern;
-use crate::result::{AnalysisExplanation, RecognizerResult};
+use crate::result::{AnalysisExplanation, Detector, RecognizerResult};
 use crate::score::{MAX_SCORE, MIN_SCORE};
 use crate::validators::Validator;
 use crate::{Category, Entity, ValidationOutcome};
@@ -191,6 +191,7 @@ impl Recognizer {
                 final_score,
                 supportive_keyword: None,
             },
+            detector: Detector::Pattern,
         })
     }
 }

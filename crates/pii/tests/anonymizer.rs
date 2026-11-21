@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use dbmcp_pii::{
-    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Entity, Operator, RecognizerResult, Score,
+    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Detector, Entity, Operator, RecognizerResult, Score,
     ValidationOutcome, anonymize, operators::OperatorKind,
 };
 
@@ -29,6 +29,7 @@ fn make_result_scored(et: Entity, start: usize, end: usize, score: Score) -> Rec
             final_score: score,
             supportive_keyword: None,
         },
+        detector: Detector::Pattern,
     }
 }
 
@@ -67,8 +68,8 @@ fn us2_2_mask_chars_to_mask_12_from_end_true() {
 }
 
 #[test]
-fn us2_3_overlap_collapses_to_single_op() {
-    // Two synthetic results that overlap; default Replace must apply once over the union.
+fn us2_3_partial_overlap_trims_weaker_span() {
+    // Two overlapping types: the higher score stays whole, the other keeps the rest.
     let s = Score::new(0.5).unwrap();
     let high = Score::new(0.9).unwrap();
     let text = "abcdefghij";
@@ -77,13 +78,13 @@ fn us2_3_overlap_collapses_to_single_op() {
         make_result_scored(Entity::CreditCard, 3, 7, high),
     ];
     let out = anonymize(text, results, &Operator::Replace);
-    assert_eq!(out.operations.len(), 1);
-    assert_eq!(out.operations[0].entity_type, Entity::CreditCard);
-    assert!(
-        out.text.contains("<CREDIT_CARD>"),
-        "expected CREDIT_CARD placeholder: {:?}",
-        out.text
-    );
+    assert_eq!(out.text, "ab<EMAIL_ADDRESS><CREDIT_CARD>hij");
+    let ops: Vec<_> = out
+        .operations
+        .iter()
+        .map(|o| (o.entity_type, o.original_start, o.original_end))
+        .collect();
+    assert_eq!(ops, [(Entity::EmailAddress, 2, 3), (Entity::CreditCard, 3, 7)]);
 }
 
 #[test]

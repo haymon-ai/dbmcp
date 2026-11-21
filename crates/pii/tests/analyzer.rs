@@ -118,8 +118,8 @@ fn ct_005_min_score_filters_before_overlap() {
 
 #[test]
 fn ct_006_overlap_higher_score_wins_cross_type() {
-    // Email pattern at 0.5 vs URL pattern at 0.5 — same score; CC validated CC at 1.0
-    // wins against any partial-overlap. Construct a string where CC + phone overlap.
+    // A validated card (1.0) spans the whole input, so any phone match inside it is
+    // contained (dropped) or, on equal extents, loses on score: none overlaps the card.
     let analyzer = Analyzer::with_defaults();
     let opts = AnalyzeOptions::default();
     let results = analyzer.analyze("4111-1111-1111-1111", &opts);
