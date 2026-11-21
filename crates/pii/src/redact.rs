@@ -276,8 +276,8 @@ impl Redactor {
                             // before rewriting. `s` stays as the write-back handle.
                             let text = std::mem::take(s);
                             slots.push(LeafSlot { slot: s, text, regex });
-                        } else if !regex.is_empty() {
-                            apply_spans(s, regex, &operator, stats);
+                        } else {
+                            redact_spans(s, regex, Vec::new(), self.opts.min_score, &operator, stats);
                         }
                     }
                     Value::Object(map) => {
@@ -307,13 +307,10 @@ impl Redactor {
                     Ok(per_leaf) => {
                         for (leaf, ner) in slots.into_iter().zip(per_leaf) {
                             // Restore the moved-out text into the emptied leaf, so a
-                            // no-PII leaf keeps its original value and apply_spans
+                            // no-PII leaf keeps its original value and redact_spans
                             // rewrites in place.
                             *leaf.slot = leaf.text;
-                            let results = merge_spans(leaf.regex, ner, self.opts.min_score);
-                            if !results.is_empty() {
-                                apply_spans(leaf.slot, results, &operator, stats);
-                            }
+                            redact_spans(leaf.slot, leaf.regex, ner, self.opts.min_score, &operator, stats);
                         }
                     }
                     Err(e) => infer_err = Some(e.to_string()),
@@ -368,8 +365,15 @@ impl Redactor {
         let mut out = text.to_owned();
         let operator = self.operator(self.global);
         catch_unwind(AssertUnwindSafe(|| {
-            let results = self.analyzer.analyze(&out, &self.opts);
-            apply_spans(&mut out, results, &operator, &mut stats);
+            let results = self.analyzer.analyze_with_context(&out, &[], &self.opts);
+            redact_spans(
+                &mut out,
+                results,
+                Vec::new(),
+                self.opts.min_score,
+                &operator,
+                &mut stats,
+            );
         }))
         .map_err(|_| RedactionError::Internal("analyzer panicked".into()))?;
         log_redactions(&stats, None);
@@ -487,12 +491,27 @@ fn allowed_ner_entities(cfg: &dbmcp_config::PiiConfig) -> Vec<Entity> {
         .collect()
 }
 
-/// Anonymizes one leaf string in place, folding its operations into `stats`.
+/// Rewrites `s` in place over its regex and NER spans, counting into `stats`.
 ///
-/// No-op when the resolved spans produce no operations. Shared by the inline
-/// regex-only path and the batched NER merge pass.
-fn apply_spans(s: &mut String, results: Vec<RecognizerResult>, operator: &Operator, stats: &mut RedactionStats) {
-    let anon = anonymize(s, results, operator);
+/// NER spans below `min_score` are dropped (regex spans arrive filtered but
+/// unresolved); the rest are overlap-resolved once, together, by [`anonymize`]
+/// (see [`crate::overlap`]), so a regex span is never cut or relabeled by an
+/// NER span. No-op when no span remains.
+/// Shared by the regex-only leaf, the batched NER leaf, and free text.
+fn redact_spans(
+    s: &mut String,
+    mut regex: Vec<RecognizerResult>,
+    mut ner: Vec<RecognizerResult>,
+    min_score: crate::Score,
+    operator: &Operator,
+    stats: &mut RedactionStats,
+) {
+    ner.retain(|r| r.score >= min_score);
+    regex.append(&mut ner);
+    if regex.is_empty() {
+        return;
+    }
+    let anon = anonymize(s, regex, operator);
     if anon.operations.is_empty() {
         return;
     }
@@ -518,26 +537,13 @@ fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitErr
     Ok(Operator::hash(&key))
 }
 
-/// Merges regex and NER spans for one leaf into a resolved result set.
-///
-/// NER spans below `min_score` are dropped first; the combined set is then
-/// overlap-resolved so higher-confidence spans win on collisions.
-fn merge_spans(
-    mut regex: Vec<RecognizerResult>,
-    mut ner: Vec<RecognizerResult>,
-    min_score: crate::Score,
-) -> Vec<RecognizerResult> {
-    ner.retain(|r| r.score >= min_score);
-    regex.append(&mut ner);
-    crate::overlap::resolve(regex)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::ContextSettings;
     use crate::pattern::Pattern;
     use crate::recognizers::Recognizer;
+    use crate::result::Detector;
     use crate::score::Score;
 
     use crate::validators::Validator;
@@ -1030,7 +1036,9 @@ mod tests {
         assert!(Redactor::from_config(None).expect("ok").is_none());
     }
 
-    fn rr(entity: Entity, start: usize, end: usize, score: f32) -> RecognizerResult {
+    const TEXT: &str = "abcdefghijklmnopqrstuvwxyz";
+
+    fn rr(entity: Entity, start: usize, end: usize, score: f32, detector: Detector) -> RecognizerResult {
         use crate::result::AnalysisExplanation;
         use crate::validation::ValidationOutcome;
         use std::borrow::Cow;
@@ -1048,32 +1056,150 @@ mod tests {
                 final_score: s,
                 supportive_keyword: None,
             },
+            detector,
+        }
+    }
+
+    /// Runs [`redact_spans`] over a copy of `text`, returning the text and stats.
+    fn run_redact_spans(
+        text: &str,
+        regex: Vec<RecognizerResult>,
+        ner: Vec<RecognizerResult>,
+        min_score: f32,
+        operator: &Operator,
+    ) -> (String, RedactionStats) {
+        let mut s = text.to_owned();
+        let mut stats = RedactionStats::default();
+        redact_spans(&mut s, regex, ner, Score::from_static(min_score), operator, &mut stats);
+        (s, stats)
+    }
+
+    #[test]
+    fn redact_spans_drops_ner_below_min_score() {
+        let ner = vec![rr(Entity::Person, 0, 4, 0.3, Detector::Ner)];
+        let (out, stats) = run_redact_spans(TEXT, Vec::new(), ner, 0.5, &Operator::Replace);
+        assert_eq!(out, TEXT, "sub-threshold NER span must be dropped");
+        assert_eq!(stats.total, 0);
+    }
+
+    #[test]
+    fn redact_spans_keeps_disjoint_regex_and_ner() {
+        let regex = vec![rr(Entity::EmailAddress, 10, 25, 1.0, Detector::Pattern)];
+        let ner = vec![rr(Entity::Person, 0, 5, 0.9, Detector::Ner)];
+        let (out, stats) = run_redact_spans(TEXT, regex, ner, 0.4, &Operator::Replace);
+        assert_eq!(out, "<PERSON>fghij<EMAIL_ADDRESS>z");
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.by_entity.get(&Entity::Person), Some(&1));
+        assert_eq!(stats.by_entity.get(&Entity::EmailAddress), Some(&1));
+    }
+
+    #[test]
+    fn redact_spans_container_wins_over_contained_ner() {
+        // A regex e-mail span contains an NER person guess over its local part.
+        let regex = vec![rr(Entity::EmailAddress, 0, 16, 1.0, Detector::Pattern)];
+        let ner = vec![rr(Entity::Person, 0, 10, 0.6, Detector::Ner)];
+        let (out, stats) = run_redact_spans(TEXT, regex, ner, 0.4, &Operator::Replace);
+        assert_eq!(out, "<EMAIL_ADDRESS>qrstuvwxyz");
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.by_entity.get(&Entity::Person), None);
+    }
+
+    /// Runs the default regex analyzer, adds one synthetic NER span over `ner`, and redacts.
+    fn redact_with_ner(text: &str, ner: &str, entity: Entity, operator: &Operator) -> String {
+        let start = text.find(ner).expect("ner text present");
+        let regex = Analyzer::with_defaults().analyze(text, &AnalyzeOptions::default());
+        let ner = vec![rr(entity, start, start + ner.len(), 0.99, Detector::Ner)];
+        run_redact_spans(text, regex, ner, 0.4, operator).0
+    }
+
+    #[test]
+    fn ner_never_relabels_a_trimmed_pattern_span() {
+        // The IBAN span strictly contains the NER span, so the IBAN keeps the
+        // bytes the card leaves; resolving the regex spans first would trim the
+        // IBAN to 6..12, inside the NER span, and hand those bytes to PERSON.
+        // Card 0..6 (0.9) and IBAN 4..12 (0.5) overlap on `aaaabbccdddd`.
+        let mut analyzer = Analyzer::empty();
+        let card = Pattern::new("a", r"a+b+", Score::from_static(0.9)).expect("static");
+        let iban = Pattern::new("b", r"b+c+d+", Score::from_static(0.5)).expect("static");
+        analyzer.register(Recognizer::new(Entity::CreditCard, vec![card]).expect("non-empty"));
+        analyzer.register(Recognizer::new(Entity::IbanCode, vec![iban]).expect("non-empty"));
+        let text = "aaaabbccdddd";
+        let opts = AnalyzeOptions {
+            min_score: Score::default(),
+            context: None,
+        };
+        let regex = analyzer.analyze_with_context(text, &[], &opts);
+        let ner = vec![rr(Entity::Person, 5, 12, 0.99, Detector::Ner)];
+        let (out, stats) = run_redact_spans(text, regex, ner, 0.0, &Operator::Replace);
+        assert_eq!(out, "<CREDIT_CARD><IBAN_CODE>");
+        assert_eq!(stats.by_entity.get(&Entity::Person), None);
+    }
+
+    #[test]
+    fn ner_person_inside_email_redacts_whole_address() {
+        let out = redact_with_ner(
+            "Contact: anna.schmidt@company.example",
+            "anna.schmidt",
+            Entity::Person,
+            &Operator::Replace,
+        );
+        assert_eq!(out, "Contact: <EMAIL_ADDRESS>");
+    }
+
+    #[test]
+    fn ner_person_inside_quoted_or_bracketed_email_keeps_delimiters() {
+        let quoted = redact_with_ner("\"anna@company.example\"", "anna", Entity::Person, &Operator::Replace);
+        assert_eq!(quoted, "\"<EMAIL_ADDRESS>\"");
+        let bracketed = redact_with_ner("<anna@company.example>", "anna", Entity::Person, &Operator::Replace);
+        assert_eq!(bracketed, "<<EMAIL_ADDRESS>>");
+    }
+
+    #[test]
+    fn ner_span_inside_iban_redacts_whole_iban() {
+        // The IBAN pattern matches the compact form only (spaced groups are not an IBAN).
+        for entity in [Entity::Person, Entity::Location] {
+            let out = redact_with_ner("IBAN DE89370400440532013000", "3704", entity, &Operator::Replace);
+            assert_eq!(out, "IBAN <IBAN_CODE>", "{entity:?}");
         }
     }
 
     #[test]
-    fn merge_spans_drops_ner_below_min_score() {
-        let ner = vec![rr(Entity::Person, 0, 4, 0.3)];
-        let out = merge_spans(Vec::new(), ner, Score::from_static(0.5));
-        assert!(out.is_empty(), "sub-threshold NER span must be dropped");
+    fn ner_person_inside_url_path_redacts_whole_url() {
+        let out = redact_with_ner(
+            "https://example.com/users/anna",
+            "anna",
+            Entity::Person,
+            &Operator::Replace,
+        );
+        assert_eq!(out, "<URL>");
     }
 
     #[test]
-    fn merge_spans_keeps_disjoint_regex_and_ner() {
-        let regex = vec![rr(Entity::EmailAddress, 10, 25, 1.0)];
-        let ner = vec![rr(Entity::Person, 0, 5, 0.9)];
-        let out = merge_spans(regex, ner, Score::from_static(0.4));
-        assert_eq!(out.len(), 2);
+    fn ner_person_running_into_email_is_trimmed() {
+        let out = redact_with_ner(
+            "Anna Schmidt anna@company.example",
+            "Anna Schmidt anna",
+            Entity::Person,
+            &Operator::Replace,
+        );
+        assert_eq!(out, "<PERSON> <EMAIL_ADDRESS>");
     }
 
     #[test]
-    fn merge_spans_overlap_higher_score_wins() {
-        // A checksum-strong regex hit (1.0) overlaps a weaker NER person guess.
-        let regex = vec![rr(Entity::EmailAddress, 0, 16, 1.0)];
-        let ner = vec![rr(Entity::Person, 0, 10, 0.6)];
-        let out = merge_spans(regex, ner, Score::from_static(0.4));
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].entity_type, Entity::EmailAddress);
+    fn trimmed_overlap_keeps_email_hash_token_stable() {
+        let operator = Operator::hash(b"0123456789abcdef0123456789abcdef");
+        let address = "anna@company.example";
+        let regex = Analyzer::with_defaults().analyze(address, &AnalyzeOptions::default());
+        let alone = crate::anonymize(address, regex, &operator).text;
+        let out = redact_with_ner(
+            "Anna Schmidt anna@company.example",
+            "Anna Schmidt anna",
+            Entity::Person,
+            &operator,
+        );
+        let (person, email) = out.split_once(' ').expect("two tokens");
+        assert!(person.starts_with("<PERSON_"), "{out}");
+        assert_eq!(email, alone);
     }
 
     #[test]

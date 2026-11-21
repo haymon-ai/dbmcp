@@ -41,7 +41,7 @@ fn bench_by_rule(c: &mut Criterion) {
             b.iter_with_large_drop(|| {
                 let mut results = rule.analyze(black_box(text));
                 results.retain(|r| r.score >= opts.min_score);
-                overlap::resolve(results)
+                overlap::resolve(text, results)
             });
         });
     }

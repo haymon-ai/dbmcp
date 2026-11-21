@@ -18,6 +18,17 @@ pub struct RecognizerResult {
     pub score: Score,
     /// Audit trail describing why this span was flagged.
     pub explanation: AnalysisExplanation,
+    /// Detector that produced this span.
+    pub detector: Detector,
+}
+
+/// Which detector produced a span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Detector {
+    /// Regex/checksum pattern recognizer.
+    Pattern,
+    /// Machine-learning NER model.
+    Ner,
 }
 
 /// Audit metadata for a single [`RecognizerResult`].

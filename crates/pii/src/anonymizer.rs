@@ -15,13 +15,13 @@ pub struct AnonymizedText {
 
 /// Apply `operator` to every surviving span in a single forward pass.
 ///
-/// Steps: (1) collapse overlaps via [`overlap::resolve`] — which returns survivors in
+/// Steps: (1) resolve overlaps via [`overlap::resolve`] — which returns disjoint spans in
 /// start-ascending order; (2) walk left-to-right, appending the gap between cursor and
 /// span verbatim, then the operator output. Time complexity is
 /// `O(text_len + Σ rewrites)`.
 #[must_use]
 pub fn anonymize(text: &str, results: Vec<RecognizerResult>, operator: &Operator) -> AnonymizedText {
-    let surviving = overlap::resolve(results);
+    let surviving = overlap::resolve(text, results);
     if surviving.is_empty() {
         return AnonymizedText {
             text: text.to_owned(),
