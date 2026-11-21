@@ -3,11 +3,7 @@
 use super::prelude::*;
 
 /// Widely published example SSNs.
-const PLACEHOLDERS: [[u32; 9]; 3] = [
-    [1, 2, 3, 4, 5, 6, 7, 8, 9],
-    [9, 8, 7, 6, 5, 4, 3, 2, 0],
-    [0, 7, 8, 0, 5, 1, 1, 2, 0],
-];
+const PLACEHOLDERS: [[u32; 9]; 2] = [[1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 7, 8, 0, 5, 1, 1, 2, 0]];
 
 /// US Social Security Number validator.
 ///

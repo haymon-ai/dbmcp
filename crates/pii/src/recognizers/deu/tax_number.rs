@@ -1,7 +1,6 @@
 //! `TAX_NUMBER_DE` recognizer (Steuernummer, ELSTER + state-specific slash formats).
 //!
-//! The unchecked 13-digit ELSTER form needs a context keyword in the text or
-//! the column name, since EAN-13 barcodes share it.
+//! The unchecked 13-digit ELSTER form needs a context keyword.
 
 use crate::recognizers::prelude::*;
 

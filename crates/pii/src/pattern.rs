@@ -52,11 +52,6 @@ impl Pattern {
     }
 
     /// Drops this pattern's matches unless a context keyword supports them.
-    ///
-    /// The context pass checks the keyword window and the external context
-    /// (column-name words); a match without a hit is dropped even when its
-    /// validator passed. For shapes that business identifiers share, such as
-    /// a bare 9-digit run with a valid check digit.
     #[must_use]
     pub fn requiring_context(mut self) -> Self {
         self.requires_context = true;

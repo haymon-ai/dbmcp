@@ -1,12 +1,14 @@
 //! `ITIN` recognizer (US Individual Taxpayer Identification Number).
 //!
-//! `XXX-XX-XXXX` matches alone; unseparated and partly separated forms need a
-//! context keyword in the text or the column name.
+//! Forms other than `XXX-XX-XXXX` need a context keyword.
 
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US ITIN.
 const CONTEXT: &[&str] = &["itin", "taxpayer", "individual taxpayer", "taxid", "tin"];
+
+/// The IRS ITIN group digits (positions 4–5).
+const GROUP: &str = r"(7\d|8[0-8]|9[0-2]|9[4-9])";
 
 /// Build the `ITIN` recognizer.
 ///
@@ -17,13 +19,13 @@ const CONTEXT: &[&str] = &["itin", "taxpayer", "individual taxpayer", "taxid", "
 pub fn itin_usa() -> Recognizer {
     let separated = Pattern::new(
         "US ITIN",
-        r"\b9\d{2}-(7\d|8[0-8]|9[0-2]|9[4-9])-\d{4}\b",
+        format!(r"\b9\d{{2}}-{GROUP}-\d{{4}}\b"),
         Score::from_static(0.5),
     )
     .expect("static ITIN pattern compiles");
     let unseparated = Pattern::new(
         "US ITIN (unseparated)",
-        r"\b9\d{2}(?:(7\d|8[0-8]|9[0-2]|9[4-9])-?|-(7\d|8[0-8]|9[0-2]|9[4-9]))\d{4}\b",
+        format!(r"\b9\d{{2}}(?:{GROUP}-?|-{GROUP})\d{{4}}\b"),
         Score::from_static(0.5),
     )
     .expect("static unseparated ITIN pattern compiles")

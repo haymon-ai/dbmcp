@@ -2,8 +2,7 @@
 //!
 //! Two-letter prefix followed by seven digits; the trailing digit is a
 //! Luhn-variant check digit derived from the preceding six. Matches need a
-//! context keyword in the text or the column name, so order numbers of the
-//! same shape stay.
+//! context keyword.
 
 use crate::recognizers::prelude::*;
 

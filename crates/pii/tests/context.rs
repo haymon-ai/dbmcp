@@ -1,10 +1,4 @@
 //! Context-required recognizers through the redactor: business numbers stay, real ones go.
-//!
-//! Bare and partly separated SSN, ITIN and NPI forms, NINO without its
-//! suffix, the 13-digit Steuernummer, the legacy T-format ID card, and every
-//! SIN, DEA, ABA, NHS, LANR, Steuer-ID, KVNR, EIN and VAT match need a
-//! context keyword in the text or the column name, even when their check
-//! digit is valid. Column names split at `_`, `-`, `.` and camelCase.
 
 use dbmcp_config::{PiiConfig, PiiOperator};
 use dbmcp_pii::redact::Redactor;

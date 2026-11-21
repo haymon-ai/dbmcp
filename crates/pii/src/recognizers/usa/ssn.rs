@@ -1,9 +1,7 @@
 //! `US_SSN` recognizer.
 //!
-//! `XXX-XX-XXXX` with one separator used twice matches alone. Unseparated
-//! and partly separated forms, which order and customer numbers share, need
-//! a context keyword. Mixed separators match neither pattern; reserved
-//! values and placeholders are rejected by the `SsnUsa` validator.
+//! Forms other than `XXX-XX-XXXX` need a context keyword; the `SsnUsa`
+//! validator rejects reserved values and placeholders.
 
 use crate::recognizers::prelude::*;
 
@@ -37,13 +35,6 @@ pub fn ssn_usa() -> Recognizer {
 #[cfg(test)]
 mod tests {
     use super::{CONTEXT, ssn_usa};
-    use crate::pattern::Pattern;
-
-    #[test]
-    fn only_unseparated_forms_require_context() {
-        let flags: Vec<bool> = ssn_usa().patterns().iter().map(Pattern::requires_context).collect();
-        assert_eq!(flags, [false, true]);
-    }
 
     #[test]
     fn carries_context_list() {

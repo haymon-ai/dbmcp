@@ -50,8 +50,8 @@ pub struct AnalysisExplanation {
     /// already at [`crate::MAX_SCORE`], or recognizer carries no context list).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supportive_keyword: Option<Cow<'static, str>>,
-    /// Whether the pattern needs a context keyword; without one the context pass drops the match.
-    #[serde(default)]
+    /// Whether the pattern drops matches no context keyword supports.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub requires_context: bool,
 }
 

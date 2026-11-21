@@ -1,7 +1,4 @@
 //! `VAT_NUMBER` recognizer (EU / UK / Northern Ireland VAT identifier).
-//!
-//! Matches need a context keyword in the text or the column name: the shape
-//! alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 

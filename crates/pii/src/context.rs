@@ -6,15 +6,14 @@
 //! integration layer (e.g. the redactor's JSON key path split into
 //! lowercase words). Word boundaries come from `words`'s
 //! `char::is_alphanumeric` scan (Unicode `\w+`-style); no lemmatisation
-//! step. A keyword of several words matches those words in a row. The pass
-//! also drops matches of patterns that require context and found none.
+//! step.
 
 use std::borrow::Cow;
 
 use crate::recognizers::Recognizer;
 use crate::result::RecognizerResult;
 use crate::score::{MAX_SCORE, Score};
-use crate::words::{first_word, words};
+use crate::words::{first_word, is_word_char, words};
 
 /// Per-call tuning for the boost pass.
 ///
@@ -81,20 +80,17 @@ pub(crate) fn apply_context_boost(
                 settings.suffix_words,
             );
             match find_supportive_keyword(&window, external_context, keywords) {
-                Some(hit) => boost(&mut result, hit, settings),
+                Some(hit) if result.score < MAX_SCORE => boost(&mut result, hit, settings),
                 None if result.explanation.requires_context => return None,
-                None => {}
+                _ => {}
             }
             Some(result)
         })
         .collect()
 }
 
-/// Lifts `result` for the keyword `hit`; a result already at the maximum stays unmarked.
+/// Lifts `result` for the keyword `hit`.
 fn boost(result: &mut RecognizerResult, hit: &'static str, settings: &ContextSettings) {
-    if result.score == MAX_SCORE {
-        return;
-    }
     let boosted = boost_score(
         result.score,
         settings.similarity_factor,
@@ -155,14 +151,18 @@ fn find_supportive_keyword(
     keywords: &[&'static str],
 ) -> Option<&'static str> {
     // Window words and external_context are already lowercased; recognizer
-    // keywords are pre-lowercased (debug_asserted by `with_context`). A
-    // keyword splits into words like the text, so "social insurance" and
-    // "steuer-id" match when their words appear in a row.
-    keywords.iter().copied().find(|&kw| {
-        let parts = words(kw);
-        let in_row = |list: &[String]| list.windows(parts.len()).any(|run| run == parts.as_slice());
-        !parts.is_empty() && (in_row(window) || in_row(external_context))
-    })
+    // keywords are pre-lowercased (debug_asserted by `with_context`).
+    keywords
+        .iter()
+        .copied()
+        .find(|&kw| in_row(window, kw) || in_row(external_context, kw))
+}
+
+/// Whether the words of `keyword`, split like the text, appear in a row in `list`.
+fn in_row(list: &[String], keyword: &str) -> bool {
+    let parts = || keyword.split(|c: char| !is_word_char(c)).filter(|p| !p.is_empty());
+    let n = parts().count();
+    n > 0 && list.windows(n).any(|run| run.iter().map(String::as_str).eq(parts()))
 }
 
 fn boost_score(current: Score, factor: Score, floor: Score) -> Score {

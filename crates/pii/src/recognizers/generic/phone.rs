@@ -3,8 +3,7 @@
 //! Matches an E.164 number: a `+` or IDD `00` prefix, a non-zero country code,
 //! then 8–15 significant digits with optional punctuation. The required
 //! international prefix keeps bare digit runs (timestamps, IDs, references) out.
-//! A `00` number written as one digit run needs a context keyword, since
-//! EAN-13 barcodes and other codes starting `00` share that shape.
+//! A `00` number written as one digit run needs a context keyword.
 
 use crate::recognizers::prelude::*;
 

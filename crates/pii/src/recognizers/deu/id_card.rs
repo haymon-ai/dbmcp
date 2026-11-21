@@ -1,7 +1,6 @@
 //! `ID_CARD_DE` recognizer (Personalausweisnummer, nPA + legacy T-format).
 //!
-//! The legacy T-format has no check digit, so it needs a context keyword in
-//! the text or the column name; the nPA pattern leaves that shape to it.
+//! The legacy T-format has no check digit and needs a context keyword.
 
 use crate::recognizers::prelude::*;
 

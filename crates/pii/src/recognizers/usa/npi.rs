@@ -4,7 +4,7 @@
 //! after the leading entity-type digit). Validated by the CMS NPI Luhn
 //! algorithm — `"80840"` prefix prepended before the standard Luhn pass —
 //! with an additional filter rejecting all-identical-body numbers.
-//! The unseparated form needs a context keyword in the text or the column name.
+//! The unseparated form needs a context keyword.
 
 use crate::recognizers::prelude::*;
 

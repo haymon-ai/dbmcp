@@ -13,7 +13,7 @@
 //!   `\w+` semantics for the inputs the boost actually sees, so
 //!   multibyte word characters in keys like `naïve` stay intact.
 
-fn is_word_char(c: char) -> bool {
+pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

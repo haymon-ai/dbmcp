@@ -1,7 +1,4 @@
 //! `NHS_NUMBER` recognizer (UK NHS patient identifier with mod-11 checksum).
-//!
-//! Matches need a context keyword in the text or the column name: a valid
-//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 

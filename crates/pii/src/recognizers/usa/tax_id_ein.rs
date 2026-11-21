@@ -1,7 +1,4 @@
 //! `TAX_ID_EIN` recognizer (US Employer Identification Number).
-//!
-//! Matches need a context keyword in the text or the column name: the shape
-//! alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 

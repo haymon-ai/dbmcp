@@ -1,7 +1,4 @@
 //! `TAX_ID_DE` recognizer (Steueridentifikationsnummer, ISO 7064 Mod 11, 10).
-//!
-//! Matches need a context keyword in the text or the column name: a valid
-//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 

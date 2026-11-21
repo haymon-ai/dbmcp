@@ -1,7 +1,4 @@
 //! `LIFETIME_PHYSICIAN_NUMBER_DE` recognizer (Lebenslange Arztnummer / LANR, KBV weighted checksum).
-//!
-//! Matches need a context keyword in the text or the column name: a valid
-//! check digit alone is common among business numbers.
 
 use crate::recognizers::prelude::*;
 
