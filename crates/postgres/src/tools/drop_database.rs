@@ -64,7 +64,6 @@ impl PostgresHandler {
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
-    /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the target is the active database
     /// or the backend reports an error.
     pub async fn drop_database(

@@ -70,7 +70,6 @@ where
 ///
 /// Query methods may return:
 ///
-/// - [`SqlError::InvalidIdentifier`] — `database` failed identifier validation.
 /// - [`SqlError::Connection`] — the underlying driver failed.
 /// - [`SqlError::QueryTimeout`] — the query exceeded the configured timeout.
 #[allow(async_fn_in_trait)]
@@ -88,7 +87,8 @@ where
     ///
     /// # Errors
     ///
-    /// - [`SqlError::InvalidIdentifier`] — `target` failed validation.
+    /// - [`SqlError::Connection`] — the backend could not provide a pool
+    ///   (the bundled backends build pools lazily and never fail here).
     async fn pool(&self, target: Option<&str>) -> Result<sqlx::Pool<Self::DB>, SqlError>;
 
     /// Returns the configured query timeout in seconds (`0` = disabled).
