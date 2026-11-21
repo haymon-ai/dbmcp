@@ -75,6 +75,12 @@ Behaviour notes:
 
 - **Fail-closed.** If `pii.ner_enabled` is true but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
 - **Category-aware.** The NER pass respects `pii.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
+- **Codes are skipped.** Models trained on news text tag codes as organizations or locations with high confidence. An `ORGANIZATION`, `LOCATION`, or `FACILITY` match is therefore not redacted when it is:
+  - A single letter or digit, such as the `K` in an ID like `K-1042`.
+  - A listed code: every word is, in capitals, an ISO 3166 country code (`AT`, `AUT`), an ISO 4217 currency code (`EUR`), an ISO 639-1 language code (`EN`), or a SQL keyword (`AS`, `CREATE VIEW` in a view definition). Other acronyms, such as `IBM` or `NYC`, are still redacted.
+  - Part of a namespaced identifier: two or more capitalised words joined by `\` or `::`, such as `App\Model\Order` or `Foo::Bar`. Paths such as `C:\Users\…` are still checked.
+
+  A `PERSON` or `NATIONALITY_RELIGION_POLITICS` match is always redacted. A name that the model mislabels as an organization and that is also a code is skipped, for example the surname `NG` written in capitals (the code for Nigeria). Regex detection is unaffected. To protect such a column anyway, rule it with [`pii.rules`](/privacy/rules).
 
 ## Multilingual and int8 models
 

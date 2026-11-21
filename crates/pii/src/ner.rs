@@ -300,6 +300,51 @@ fn flush(spans: &mut Vec<Span>, open: Option<OpenSpan>, threshold: Score) {
     }
 }
 
+/// Reports whether an `entity` span at `text[start..end]` looks like a code.
+///
+/// Only `ORGANIZATION`, `LOCATION`, and `FACILITY` spans are checked; a
+/// `PERSON` or NRP span is always kept. Three shapes count:
+///
+/// - A single letter or digit (`K` in `K-1042`).
+/// - Every word is a listed code from [`crate::codes`] (`AT`, `EUR`, `AS`).
+/// - Part of a namespaced identifier: two or more segments joined by `\` or
+///   `::`, each starting with a capital or `_` (`App\Model\Order`,
+///   `Foo::Bar`). Paths (`C:\Users`) and escapes (`Thanks\nSiemens`) do not.
+fn code_like(text: &str, start: usize, end: usize, entity: Entity) -> bool {
+    use crate::words::is_word_char;
+    if !matches!(entity, Entity::Organization | Entity::Location | Entity::Facility) {
+        return false;
+    }
+    let Some(span) = text.get(start..end) else {
+        return false;
+    };
+    if span.chars().filter(|c| c.is_alphanumeric()).count() <= 1 {
+        return true;
+    }
+    if span
+        .split_whitespace()
+        .all(|w| crate::codes::is_code(w.trim_matches(|c: char| !c.is_alphanumeric())))
+    {
+        return true;
+    }
+    let part = |c: char| is_word_char(c) || matches!(c, '\\' | ':');
+    if !span.chars().all(part) {
+        return false;
+    }
+    let from = text[..start].trim_end_matches(part).len();
+    let to = text.len() - text[end..].trim_start_matches(part).len();
+    let mut segments = text[from..to]
+        .split("::")
+        .flat_map(|s| s.split('\\'))
+        .filter(|s| !s.is_empty());
+    let mut count = 0;
+    let named = segments.all(|s| {
+        count += 1;
+        s.starts_with(|c: char| c.is_uppercase() || c == '_') && s.chars().all(is_word_char)
+    });
+    named && count > 1
+}
+
 /// Builds a [`RecognizerResult`] from an aggregated [`Span`].
 fn span_to_result(span: Span) -> RecognizerResult {
     RecognizerResult {
@@ -481,9 +526,11 @@ impl NerEngine {
             self.run_chunk(chunk, &mut results)?;
         }
 
-        // Merge overflow-window dupes per text.
+        // Drop code-like spans, then merge overflow-window dupes per text. Dropping
+        // first keeps a code-like span from claiming bytes another span covers.
         for (spans, text) in results.iter_mut().zip(texts) {
             if !spans.is_empty() {
+                spans.retain(|r| !code_like(text, r.start, r.end, r.entity_type));
                 *spans = crate::overlap::resolve(text, std::mem::take(spans));
             }
         }
@@ -854,6 +901,80 @@ mod tests {
         let spans = decode_spans(&words, Score::from_static(0.5));
         assert_eq!(spans.len(), 1, "I- continuation merges the two words");
         assert_eq!((spans[0].start, spans[0].end), (0, 13));
+    }
+
+    /// `code_like` on the first occurrence of an `ORGANIZATION` `span` in `text`.
+    fn code_like_at(text: &str, span: &str) -> bool {
+        let start = text.find(span).expect("span occurs in text");
+        code_like(text, start, start + span.len(), Entity::Organization)
+    }
+
+    #[test]
+    fn code_like_never_drops_person_or_nrp_spans() {
+        for (text, span) in [
+            ("AT", "AT"),
+            ("MEUSBURGER\\Huber", "Huber"),
+            ("Thomas::Mueller", "Mueller"),
+        ] {
+            let start = text.find(span).expect("span occurs in text");
+            for entity in [Entity::Person, Entity::Nrp] {
+                assert!(
+                    !code_like(text, start, start + span.len(), entity),
+                    "{entity:?} {span:?}"
+                );
+            }
+        }
+        for entity in [Entity::Location, Entity::Facility] {
+            assert!(code_like("DE", 0, 2, entity), "{entity:?}");
+        }
+    }
+
+    #[test]
+    fn code_like_drops_listed_codes_and_namespaced_identifiers() {
+        let cases: &[(&str, &str, bool)] = &[
+            // Listed codes.
+            ("AT", "AT", true),
+            ("AT, DE, CH", "DE", true),
+            ("select `t`.`id` AS `id`", "AS", true),
+            ("CREATE VIEW v AS SELECT 1", "CREATE VIEW", true),
+            ("K-ORD-000011", "K", true),
+            ("P. Schmidt GmbH", "P.", true),
+            // Acronyms and names that are not codes.
+            ("IBM", "IBM", false),
+            ("Contract signed with BP", "BP", false),
+            ("Flight from NYC to LA", "NYC", false),
+            ("Mr. LEE called", "LEE", false),
+            ("SAP SE", "SAP SE", false),
+            ("at", "at", false),
+            ("Li", "Li", false),
+            ("李明", "李明", false),
+            // Namespaced identifiers.
+            ("App\\Model\\Order", "App", true),
+            ("Siemens\\Billing\\Invoice", "Billing", true),
+            ("\\App\\Model\\Order,", "Model", true),
+            ("{\"type\":\"App\\\\Models\\\\User\"}", "Models", true),
+            ("Foo::Bar::Baz", "Baz", true),
+            ("see Foo::Bar now", "Bar", true),
+            ("Vienna::Office", "Vienna", true),
+            // Paths, accounts, escapes, punctuation.
+            ("C:\\Users\\Siemens\\Documents", "Siemens", false),
+            ("C:\\Users\\Siemens AG\\Docs", "Siemens AG", false),
+            ("CORP\\siemens.billing", "siemens.billing", false),
+            ("Thanks\\nSiemens", "Siemens", false),
+            ("Call \\\"Siemens\\\" today", "Siemens", false),
+            ("Meeting (Siemens AG) today", "Siemens", false),
+            ("St. Louis", "St. Louis", false),
+            ("Europe/Vienna", "Vienna", false),
+            ("Name\u{a0}Siemens", "Siemens", false),
+        ];
+        for (text, span, expected) in cases {
+            assert_eq!(code_like_at(text, span), *expected, "{span:?} in {text:?}");
+        }
+    }
+
+    #[test]
+    fn code_like_rejects_offsets_off_char_boundary() {
+        assert!(!code_like("Müller", 0, 2, Entity::Organization));
     }
 
     #[test]
