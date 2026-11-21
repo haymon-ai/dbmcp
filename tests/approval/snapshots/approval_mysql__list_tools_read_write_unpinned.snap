@@ -128,7 +128,7 @@ expression: tools
           "type": "string"
         },
         "analyze": {
-          "description": "If true, use EXPLAIN ANALYZE for actual execution statistics. In read-only mode, only allowed for read-only statements. Defaults to false.",
+          "description": "If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE). Only allowed for read-only statements. Defaults to false.",
           "type": "boolean",
           "default": false
         },
