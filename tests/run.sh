@@ -14,11 +14,18 @@ set -euo pipefail
 #   ./tests/run.sh --help              # Show usage
 #
 # Environment:
-#   TIMEOUT=30   Container readiness timeout in seconds (default: 30)
+#   TIMEOUT=30      Container readiness timeout in seconds (default: 30)
+#   TESTS_PROJECT   Compose project name (default: dbmcp-tests-<checkout hash>)
 # =============================================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
+
+# One Compose project per checkout, so runs from different worktrees get their
+# own containers, network, and cleanup. TESTS_PROJECT overrides it; an inherited
+# COMPOSE_PROJECT_NAME is ignored, since cleanup runs `down -v` on the project.
+COMPOSE_PROJECT_NAME="${TESTS_PROJECT:-dbmcp-tests-$(printf '%s' "$SCRIPT_DIR" | sha256sum | cut -c1-8)}"
+export COMPOSE_PROJECT_NAME
 TIMEOUT="${TIMEOUT:-30}"
 TEST_TYPE="${TEST_TYPE:-all}"
 
@@ -49,7 +56,10 @@ cleanup() {
     echo "Cleaning up containers..."
     docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+# Signals exit, so the EXIT trap cleans up once and the run stops.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,7 +85,8 @@ Examples:
   ./tests/run.sh --type approval          # Approval/snapshot tests only
 
 Environment:
-  TIMEOUT=30   Container readiness timeout in seconds (default: 30)
+  TIMEOUT=30      Container readiness timeout in seconds (default: 30)
+  TESTS_PROJECT   Compose project name (default: dbmcp-tests-<checkout hash>)
 EOF
 }
 

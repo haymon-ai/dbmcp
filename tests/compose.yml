@@ -4,7 +4,7 @@ services:
         volumes:
             - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "13306:3306"
+            - "127.0.0.1::3306"
         environment:
             MARIADB_ROOT_HOST: '%'
             MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
@@ -14,7 +14,7 @@ services:
         volumes:
             - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "13307:3306"
+            - "127.0.0.1::3306"
         environment:
             MYSQL_ROOT_HOST: '%'
             MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -24,7 +24,7 @@ services:
         volumes:
             - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
-            - "15432:5432"
+            - "127.0.0.1::5432"
         environment:
             POSTGRES_USER: postgres
             POSTGRES_HOST_AUTH_METHOD: trust
@@ -34,7 +34,7 @@ services:
     sshd:
         image: lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls239
         ports:
-            - "12222:2222"
+            - "127.0.0.1::2222"
         environment:
             PASSWORD_ACCESS: "true"
             USER_NAME: dbmcp
