@@ -31,3 +31,7 @@ A JSON array of execution plan rows showing access methods, join types, row esti
 
 Long string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.
 </what_it_returns>
+
+<timeout>
+Each call stops at the configured query timeout; with `analyze`, that includes running the statement. To measure a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.
+</timeout>

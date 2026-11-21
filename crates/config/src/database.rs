@@ -116,7 +116,7 @@ pub struct DatabaseConfig {
     /// server and client timeouts; server defaults apply.
     pub query_timeout: u64,
 
-    /// Largest per-call `readQuery` timeout in seconds (`0` = no cap).
+    /// Largest per-call `readQuery` or `explainQuery` timeout in seconds (`0` = no cap).
     ///
     /// Defaults to [`Self::query_timeout`], so callers can only shorten it.
     pub max_query_timeout: u64,

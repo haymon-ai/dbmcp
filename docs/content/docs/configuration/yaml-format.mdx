@@ -38,7 +38,7 @@ database:
   max_pool_size: 5
   connection_timeout: 10 # seconds
   query_timeout: 30      # seconds; 0 disables
-  max_query_timeout: 30  # largest readQuery `timeout`; defaults to query_timeout
+  max_query_timeout: 30  # largest readQuery/explainQuery `timeout`; defaults to query_timeout
   page_size: 100         # 1–500
   max_cell_chars: 4096   # per string value; 0 disables
   max_response_chars: 32000 # per response; 0 disables

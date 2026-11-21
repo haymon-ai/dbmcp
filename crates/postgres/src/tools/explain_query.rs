@@ -2,7 +2,7 @@
 
 use dbmcp_pii::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
-use dbmcp_server::types::{ExplainQueryRequest, QueryResponse};
+use dbmcp_server::types::{ExplainQueryRequest, QueryResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 use dbmcp_truncate::{Window, fit};
@@ -58,7 +58,9 @@ impl ToolBase for PinnedExplainQueryTool {
 
 impl AsyncTool<PostgresHandler> for PinnedExplainQueryTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.explain_query(None, params.query, params.analyze).await
+        handler
+            .explain_query(None, params.query, params.analyze, params.timeout)
+            .await
     }
 }
 
@@ -98,7 +100,7 @@ impl ToolBase for UnpinnedExplainQueryTool {
 impl AsyncTool<PostgresHandler> for UnpinnedExplainQueryTool {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
-            .explain_query(params.database, params.query, params.analyze)
+            .explain_query(params.database, params.query, params.analyze, params.timeout)
             .await
     }
 }
@@ -114,6 +116,7 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
+    /// Returns an invalid-params error if [`resolve_timeout`] rejects `timeout`.
     /// Returns [`SqlError::MultiStatement`] if the query holds more than
     /// one statement.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
@@ -128,6 +131,7 @@ impl PostgresHandler {
         database: Option<String>,
         query: String,
         analyze: bool,
+        timeout: Option<u64>,
     ) -> Result<QueryResponse, ErrorData> {
         if analyze {
             let _ = validate_read(&query, Dialect::Postgres)?;
@@ -135,6 +139,7 @@ impl PostgresHandler {
             validate_single_statement(&query, &sqlparser::dialect::PostgreSqlDialect {})?;
         }
 
+        let timeout = resolve_timeout(timeout, self.config.query_timeout, self.config.max_query_timeout)?;
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
         let explain_sql = if analyze {
@@ -147,19 +152,12 @@ impl PostgresHandler {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(0, None, caps);
         let rows = if let Some(policy) = &self.policy {
-            self.enforce(
-                policy,
-                &explain_sql,
-                Access::Read,
-                self.config.query_timeout,
-                database,
-                &mut window,
-            )
-            .await?
-            .rows
+            self.enforce(policy, &explain_sql, Access::Read, timeout, database, &mut window)
+                .await?
+                .rows
         } else {
             self.connection
-                .read_json(explain_sql.as_str(), database, self.config.query_timeout, |row| {
+                .read_json(explain_sql.as_str(), database, timeout, |row| {
                     window.push(row);
                 })
                 .await?;

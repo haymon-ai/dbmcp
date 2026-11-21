@@ -6,7 +6,7 @@ description: Limit how long each tool call may run, per server and per call
 | YAML key | Env var | Type | Default | Description |
 |----------|---------|------|---------|-------------|
 | `database.query_timeout` | `DBMCP_DB_QUERY_TIMEOUT` | seconds | `30` | Query timeout (`0` disables it) |
-| `database.max_query_timeout` | `DBMCP_DB_MAX_QUERY_TIMEOUT` | seconds | `query_timeout` | Largest `timeout` a `readQuery` call may request (`0` = no cap; see [Per-Call Timeout](#per-call-timeout)) |
+| `database.max_query_timeout` | `DBMCP_DB_MAX_QUERY_TIMEOUT` | seconds | `query_timeout` | Largest `timeout` a `readQuery` or `explainQuery` call may request (`0` = no cap; see [Per-Call Timeout](#per-call-timeout)) |
 
 Each tool call is limited to `query_timeout` seconds, enforced in two layers on MySQL, MariaDB, and PostgreSQL:
 
@@ -29,17 +29,17 @@ With `read_only: false`, writes and DDL are also subject to the timeout. A long 
 
 ## Per-Call Timeout
 
-`readQuery` takes an optional `timeout` argument in seconds. It replaces `query_timeout` for that call, on every layer above. It must be at least `1` and at most `max_query_timeout`; any other value is rejected with an error naming the limit. Paging a `SELECT` with `cursor` applies `timeout` per call, so pass it again with each cursor.
+`readQuery` and `explainQuery` (PostgreSQL and MySQL/MariaDB) take an optional `timeout` argument in seconds. It replaces `query_timeout` for that call, on every layer above. It must be at least `1` and at most `max_query_timeout`; any other value is rejected with an error naming the limit. Paging a `SELECT` with `cursor` applies `timeout` per call, so pass it again with each cursor.
 
 `max_query_timeout` defaults to `query_timeout`, so an agent can only shorten the limit until you raise the cap:
 
 ```yaml
 database:
   query_timeout: 30       # every call
-  max_query_timeout: 300  # readQuery may ask for up to 5 minutes
+  max_query_timeout: 300  # readQuery and explainQuery may ask for up to 5 minutes
 ```
 
-Setting `max_query_timeout: 0` removes the cap, up to the hard limit of 2,147,483 seconds (PostgreSQL's `statement_timeout` maximum). Startup fails if you set a positive `max_query_timeout` below `query_timeout`, or any positive `max_query_timeout` while `query_timeout` is `0`. While `query_timeout` is `0`, `readQuery` rejects the `timeout` argument. Other tools always use `query_timeout`.
+Setting `max_query_timeout: 0` removes the cap, up to the hard limit of 2,147,483 seconds (PostgreSQL's `statement_timeout` maximum). Startup fails if you set a positive `max_query_timeout` below `query_timeout`, or any positive `max_query_timeout` while `query_timeout` is `0`. While `query_timeout` is `0`, both tools reject the `timeout` argument. Other tools always use `query_timeout`.
 
 ## Connection Poolers and Proxies
 
