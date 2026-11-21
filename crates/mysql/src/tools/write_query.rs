@@ -113,6 +113,12 @@ impl MysqlHandler {
     /// if the query fails. With column rules, also
     /// [`SqlError::MultiStatement`], [`SqlError::ExecutableCommentBlocked`],
     /// the policy's rejection, or a withheld database error.
+    ///
+    /// [`SqlError`]: dbmcp_sql::SqlError
+    /// [`SqlError::ExecutableCommentBlocked`]: dbmcp_sql::SqlError::ExecutableCommentBlocked
+    /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
+    /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;
 

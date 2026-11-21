@@ -61,6 +61,9 @@ impl MysqlHandler {
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
     /// [`SqlError`] if the query fails.
+    ///
+    /// [`SqlError`]: dbmcp_sql::SqlError
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn create_database(
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,

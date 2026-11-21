@@ -4,7 +4,7 @@
 //! recognizer's context keywords sits in the prefix / suffix word window
 //! around the match, or in an external context list supplied by the
 //! integration layer (e.g. the redactor's JSON key path split into
-//! lowercase words). Word boundaries come from [`crate::words`]'s
+//! lowercase words). Word boundaries come from `words`'s
 //! `char::is_alphanumeric` scan (Unicode `\w+`-style); no lemmatisation
 //! step.
 

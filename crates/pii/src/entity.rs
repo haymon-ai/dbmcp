@@ -3,8 +3,8 @@
 //! Variants map 1:1 to the `SCREAMING_SNAKE` wire format used in JSON output,
 //! tracing logs, and placeholder tokens (e.g. `Entity::EmailAddress` ↔
 //! `"EMAIL_ADDRESS"` ↔ `"<EMAIL_ADDRESS>"`). Mirrors the [`crate::Category`]
-//! pattern: `#[non_exhaustive]`, [`Self::ALL`] slice, [`std::fmt::Display`]
-//! and [`std::str::FromStr`] round-trip via [`Self::as_str`].
+//! pattern: `#[non_exhaustive]`, [`Entity::ALL`] slice, [`std::fmt::Display`]
+//! and [`std::str::FromStr`] round-trip via [`Entity::as_str`].
 
 use std::borrow::Cow;
 use std::str::FromStr;

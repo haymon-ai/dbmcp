@@ -131,6 +131,13 @@ impl MysqlHandler {
     /// [`SqlError::UnreadableCharacter`] for a character the parser cannot read, or
     /// [`SqlError::Query`] if the backend reports an error. With column
     /// rules, also the policy's rejection or a withheld database error.
+    ///
+    /// [`SqlError::DiagnosticsBlocked`]: dbmcp_sql::SqlError::DiagnosticsBlocked
+    /// [`SqlError::ExecutableCommentBlocked`]: dbmcp_sql::SqlError::ExecutableCommentBlocked
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
+    /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
+    /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
     pub async fn read_query(
         &self,
         query: String,

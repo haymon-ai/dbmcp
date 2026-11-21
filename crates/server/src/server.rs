@@ -32,7 +32,7 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 /// Cloneable, type-erased MCP server.
 ///
 /// Wraps any backend adapter behind an [`Arc`] using the private
-/// [`DynHandler`] trait for type erasure. All database backends produce the same concrete
+/// `DynHandler` trait for type erasure. All database backends produce the same concrete
 /// type, eliminating the need for enum dispatch. The same `Arc` is held
 /// a second time as a [`Pools`] view so transports can probe and drain
 /// pools via [`Server::ping`] and [`Server::shutdown`].
@@ -120,7 +120,7 @@ impl fmt::Debug for Server {
 impl Server {
     /// Creates a new server from any backend adapter.
     ///
-    /// One [`Arc`] is shared as two trait-object views — [`DynHandler`]
+    /// One [`Arc`] is shared as two trait-object views — `DynHandler`
     /// for request handling and [`Pools`] for pool probing and draining — so the
     /// adapter itself is never cloned.
     pub fn new<S>(handler: S) -> Self

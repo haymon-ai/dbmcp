@@ -66,6 +66,9 @@ impl SqliteHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
     /// [`SqlError`] if the query fails. With column rules, also the
     /// policy's rejection or a withheld database error.
+    ///
+    /// [`SqlError`]: dbmcp_sql::SqlError
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn write_query(&self, QueryRequest { query }: QueryRequest) -> Result<WriteQueryResponse, ErrorData> {
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);
         let mut window = Window::new(0, None, caps);

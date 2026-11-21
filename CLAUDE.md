@@ -17,6 +17,7 @@ cargo test <name>             # single test
 cargo test -- --nocapture     # with stdout
 
 cargo clippy --workspace --tests -- -D warnings   # lint (warnings = errors)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # docs (broken links = errors)
 cargo fmt --check             # check formatting
 cargo fmt                     # apply formatting
 
@@ -96,6 +97,7 @@ ALWAYS run before considering any task complete:
 ```bash
 cargo fmt                           # format
 cargo clippy --workspace --tests -- -D warnings         # lint
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps  # rustdoc links
 cargo test --workspace --lib --bins # unit tests
 ./tests/run.sh                # integration tests (Docker required)
 ```

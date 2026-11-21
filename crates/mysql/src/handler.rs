@@ -70,7 +70,7 @@ const TOOLS: &[ToolSpec<MysqlHandler>] = &[
 
 /// MySQL/MariaDB database handler.
 ///
-/// Composes one [`MysqlConnection`] (which owns the pool and
+/// Composes one `MysqlConnection` (which owns the pool and
 /// the pool initialization logic) with the per-backend MCP tool router.
 #[derive(Clone)]
 pub struct MysqlHandler {
@@ -96,7 +96,7 @@ impl std::fmt::Debug for MysqlHandler {
 impl MysqlHandler {
     /// Creates a new `MySQL` handler.
     ///
-    /// Constructs the [`MysqlConnection`] (which builds the
+    /// Constructs the `MysqlConnection` (which builds the
     /// lazy pool) and the MCP tool router. No network I/O happens here.
     /// # Errors
     ///

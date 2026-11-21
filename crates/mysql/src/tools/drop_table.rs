@@ -106,6 +106,9 @@ impl MysqlHandler {
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// or [`SqlError::Query`] if the backend reports an error.
+    ///
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn drop_table(&self, database: Option<String>, table: String) -> Result<MessageResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
 

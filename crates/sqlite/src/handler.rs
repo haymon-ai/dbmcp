@@ -44,7 +44,7 @@ const TOOLS: &[ToolSpec<SqliteHandler>] = &[
 
 /// `SQLite` file-based database handler.
 ///
-/// Composes one [`SqliteConnection`] (which owns the pool and
+/// Composes one `SqliteConnection` (which owns the pool and
 /// the pool initialization logic) with the per-backend MCP tool router.
 #[derive(Clone)]
 pub struct SqliteHandler {
@@ -70,7 +70,7 @@ impl std::fmt::Debug for SqliteHandler {
 impl SqliteHandler {
     /// Creates a new `SQLite` handler.
     ///
-    /// Constructs the [`SqliteConnection`] (which builds the
+    /// Constructs the `SqliteConnection` (which builds the
     /// lazy pool) and the MCP tool router. No file I/O happens here.
     /// # Errors
     ///

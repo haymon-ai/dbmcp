@@ -71,6 +71,9 @@ impl SqliteHandler {
     /// Returns [`SqlError::MultiStatement`] if the query holds more than
     /// one statement.
     /// Returns [`SqlError::Query`] if the backend reports an error.
+    ///
+    /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
     pub async fn explain_query(
         &self,
         ExplainQueryRequest { query }: ExplainQueryRequest,

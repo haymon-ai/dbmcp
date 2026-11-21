@@ -107,6 +107,9 @@ impl PostgresHandler {
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode, or
     /// [`SqlError`] if the query fails. With column rules, also the
     /// policy's rejection or a withheld database error.
+    ///
+    /// [`SqlError`]: dbmcp_sql::SqlError
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         let database = database.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let caps = caps(self.config.max_cell_chars, self.config.max_response_chars);

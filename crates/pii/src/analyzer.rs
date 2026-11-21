@@ -12,7 +12,7 @@ use crate::score::Score;
 
 /// Per-call overrides handed to [`Analyzer::analyze`].
 ///
-/// `min_score` defaults to [`crate::MIN_SCORE`] (via [`Score::default`]); set higher to
+/// `min_score` defaults to `MIN_SCORE` (via [`Score::default`]); set higher to
 /// drop low-confidence matches before overlap resolution. `context` is
 /// `None` by default — the context-aware boost step does NOT run.
 #[derive(Debug, Clone, Default)]

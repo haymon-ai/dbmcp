@@ -1,7 +1,7 @@
 //! Database-agnostic row-to-JSON conversion and query result traits for sqlx.
 //!
 //! Provides [`RowExt`] for converting a single database row into a
-//! [`Value::Object`] or into ordered `(name, value)` entries, and
+//! [`Value::Object`](serde_json::Value::Object) or into ordered `(name, value)` entries, and
 //! [`QueryResult`] for extracting affected row counts. Implementations are
 //! provided for [`SqliteRow`](sqlx::sqlite::SqliteRow),
 //! [`PgRow`](sqlx::postgres::PgRow), and [`MySqlRow`](sqlx::mysql::MySqlRow).

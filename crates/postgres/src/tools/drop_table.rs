@@ -108,6 +108,9 @@ impl PostgresHandler {
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
     /// or [`SqlError::Query`] if the backend reports an error.
+    ///
+    /// [`SqlError::Query`]: dbmcp_sql::SqlError::Query
+    /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
     pub async fn drop_table(
         &self,
         database: Option<String>,
