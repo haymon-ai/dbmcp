@@ -830,24 +830,20 @@ async fn test_create_database_invalid_identifier() {
 async fn test_explain_query_analyze() {
     let handler = handler(false);
 
-    // MariaDB does not support EXPLAIN ANALYZE, so this may fail on MariaDB.
-    // We accept either a successful plan or a query error.
-    match handler
+    let response = handler
         .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
-    {
-        Ok(response) => {
-            let plan = &response.rows;
-            assert!(!plan.is_empty(), "Expected non-empty execution plan with analyze");
-        }
-        Err(e) => {
-            let err_msg = e.to_string();
-            assert!(
-                err_msg.contains("syntax") || err_msg.contains("ANALYZE"),
-                "Unexpected error (expected MariaDB syntax error): {err_msg}"
-            );
-        }
-    }
+        .expect("analyze should return a plan");
+    let [row] = response.rows.as_slice() else {
+        panic!("expected one plan row, got {:?}", response.rows);
+    };
+    // MySQL returns a text tree under `EXPLAIN`, MariaDB a JSON document under `ANALYZE`.
+    let (column, statistic) = match backend() {
+        DatabaseBackend::Mariadb => ("ANALYZE", "r_rows"),
+        _ => ("EXPLAIN", "actual time"),
+    };
+    let plan = row[column].as_str().expect("plan column should be a string");
+    assert!(plan.contains(statistic), "expected runtime statistics, got: {plan}");
 }
 
 #[tokio::test]
@@ -1374,29 +1370,11 @@ async fn test_read_query_with_join() {
 
 #[tokio::test]
 async fn test_explain_query_analyze_select_allowed_in_read_only() {
-    let handler = handler(true);
-
-    // MariaDB doesn't support EXPLAIN ANALYZE, so tolerate both outcomes
-    match handler
+    let response = handler(true)
         .explain_query(Some("app".into()), "SELECT * FROM users".into(), true, None)
         .await
-    {
-        Ok(response) => {
-            let plan = &response.rows;
-            assert!(
-                !plan.is_empty(),
-                "EXPLAIN ANALYZE on SELECT should succeed in read-only mode"
-            );
-        }
-        Err(e) => {
-            // MariaDB syntax error is acceptable
-            let err_msg = e.to_string();
-            assert!(
-                err_msg.contains("syntax") || err_msg.contains("ANALYZE"),
-                "Unexpected error: {err_msg}"
-            );
-        }
-    }
+        .expect("analyze of a SELECT should succeed in read-only mode");
+    assert!(!response.rows.is_empty(), "expected a plan");
 }
 
 #[tokio::test]
@@ -4860,6 +4838,15 @@ async fn test_read_only_rejects_side_effecting_functions() {
             None,
         )
         .await;
+    // ANALYZE runs the statement; with read-only mode off, only the read-only transaction stops the write.
+    let _ = writer
+        .explain_query(
+            Some("app".into()),
+            "SELECT * FROM users WHERE id = ro_probe_writer()".into(),
+            true,
+            None,
+        )
+        .await;
 
     let rows = handler
         .read_query(
@@ -5381,7 +5368,33 @@ async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
         .explain_query(None, "SELECT email FROM users WHERE id = 1".into(), true, None)
         .await
         .expect_err("ruled analyze");
-    assert!(error.message.contains("explain without ANALYZE"), "{}", error.message);
+    // MariaDB refuses every analyze under rules before the planner runs.
+    let expected = match backend() {
+        DatabaseBackend::Mariadb => "ANALYZE is denied on MariaDB while column rules exist",
+        _ => "EXPLAIN ANALYZE on ruled relation",
+    };
+    assert!(error.message.contains(expected), "{}", error.message);
+}
+
+#[tokio::test]
+async fn column_rules_analyze_of_unruled_relations_per_flavour() {
+    let result = ruled_handler(None, 100)
+        .explain_query(None, "SELECT id FROM tags".into(), true, None)
+        .await;
+    match backend() {
+        // The planner cannot read MariaDB's ANALYZE statement, so every one is denied.
+        DatabaseBackend::Mariadb => {
+            let error = result.expect_err("MariaDB analyze under rules");
+            assert!(
+                error
+                    .message
+                    .contains("ANALYZE is denied on MariaDB while column rules exist"),
+                "{}",
+                error.message
+            );
+        }
+        _ => assert!(!result.expect("unruled analyze").rows.is_empty()),
+    }
 }
 
 #[tokio::test]

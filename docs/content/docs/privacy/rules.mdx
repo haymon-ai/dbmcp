@@ -185,6 +185,12 @@ column policy: EXPLAIN touches ruled relation "public.users"; use explainQuery
 
 The first answers any `ANALYZE`, `explainQuery`'s `analyze` included: actual row counts can reveal values. The second answers every other form, such as a text plan, `VERBOSE`, or any other PostgreSQL option. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
 
+On MariaDB, `explainQuery` runs `analyze` as the `ANALYZE` statement, which <Dbmcp /> cannot analyze, so `analyze` is refused there on every statement while rules exist, ruled table or not:
+
+```text
+column policy: ANALYZE is denied on MariaDB while column rules exist; explain without ANALYZE
+```
+
 Estimates are kept, and they still say something about ruled columns:
 
 - **Statistics of ruled columns.** Estimates come from column statistics: PostgreSQL `Plan Width` approximates the average width of a ruled value, `Plan Rows` over `DISTINCT` approximates its number of distinct values, and so do extended statistics and index cardinality on MySQL and MariaDB.

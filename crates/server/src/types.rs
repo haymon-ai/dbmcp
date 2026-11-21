@@ -301,7 +301,7 @@ pub struct ReadQueryResponse {
 pub struct ExplainQueryRequest {
     /// The SQL query to explain.
     pub query: String,
-    /// If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE). Only allowed for read-only statements. Defaults to false.
+    /// If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE; ANALYZE on `MariaDB`). Only allowed for read-only statements. Defaults to false.
     #[serde(default)]
     pub analyze: bool,
     /// Database to explain against. Defaults to the active database.
