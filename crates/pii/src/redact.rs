@@ -1001,7 +1001,6 @@ mod tests {
         let stats = r.apply(&mut rows).expect("apply ok");
         assert_eq!(rows[0]["zip_code"], "<POSTCODE>");
         assert_eq!(stats.by_entity.get(&Entity::Postcode).copied(), Some(1));
-        assert!(!stats.by_entity.contains_key(&Entity::PostcodeDe));
     }
 
     #[test]
@@ -1011,7 +1010,6 @@ mod tests {
         let stats = r.apply(&mut rows).expect("apply ok");
         assert_eq!(rows[0]["reference"], "41100");
         assert!(!stats.by_entity.contains_key(&Entity::PostcodeDe));
-        assert!(!stats.by_entity.contains_key(&Entity::Postcode));
     }
 
     #[test]

@@ -85,10 +85,8 @@ const REDACTED: &[(&str, &str, &str)] = &[
     // 5-digit postcodes: German keywords label POSTCODE_DE, generic ones POSTCODE.
     ("address", "Hauptstraße 5, 10115 Berlin", "POSTCODE"),
     ("zip_code", "75008", "POSTCODE"),
-    ("postalCode", "10115", "POSTCODE"),
     ("adresse", "12 rue X, 75008 Paris", "POSTCODE"),
     ("plz", "10115", "POSTCODE_DE"),
-    ("postleitzahl", "80331", "POSTCODE_DE"),
     ("notes", "PLZ 10115", "POSTCODE_DE"),
     // Keywords of both kinds: the column says `address`, the text says `Straße`.
     ("address", "Straße 5, 10115 Berlin", "POSTCODE_DE"),

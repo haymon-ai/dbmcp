@@ -258,6 +258,8 @@ pub fn all() -> Vec<Recognizer> {
         social_security_deu(),
         tax_id_deu(),
         tax_number_deu(),
+        // After `postcode_deu()`: both score 0.4 with a keyword, so when German and
+        // generic keywords support one value, this order makes it `POSTCODE_DE`.
         postcode(),
     ]
 }

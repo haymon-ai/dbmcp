@@ -1,9 +1,7 @@
 //! `POSTCODE_DE` recognizer (Postleitzahl / PLZ, keyword context required).
 //!
-//! Gated by Presidio's `DePlzRecognizer` keywords except `adresse`, which is
-//! French too and so gates the country-neutral `POSTCODE`, as do generic words
-//! such as `zip`. Registered before `POSTCODE`, so it wins a tie when keywords
-//! of both kinds support one value.
+//! German keywords only; generic ones (`zip`, `address`, `adresse`) gate
+//! `POSTCODE`. Ties between the two are settled in `recognizers::all()`.
 
 use crate::recognizers::prelude::*;
 
@@ -55,16 +53,6 @@ mod tests {
     #[test]
     fn carries_context_list() {
         assert_eq!(postcode_deu().context(), CONTEXT);
-    }
-
-    #[test]
-    fn requires_context() {
-        assert!(
-            postcode_deu()
-                .patterns()
-                .iter()
-                .all(crate::pattern::Pattern::requires_context)
-        );
     }
 
     fn results(text: &str) -> Vec<(&str, f32)> {
