@@ -42,7 +42,6 @@ const UNKNOWN_COLUMN_TYPE: &str = "unknown column type ";
 ///
 /// # Errors
 ///
-/// * [`SqlError::InvalidIdentifier`] — `database` failed validation.
 /// * [`SqlError::QueryTimeout`] — the backend or client-side timeout fired.
 /// * [`SqlError::Connection`] — the database could not be reached
 ///   (I/O, TLS, protocol, or connection pool failure).

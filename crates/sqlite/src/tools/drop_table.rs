@@ -61,7 +61,6 @@ impl SqliteHandler {
     /// # Errors
     ///
     /// Returns [`SqlError::ReadOnlyViolation`] in read-only mode,
-    /// [`SqlError::InvalidIdentifier`] for invalid names,
     /// or [`SqlError::Query`] if the backend reports an error.
     pub async fn drop_table(&self, DropTableRequest { table }: DropTableRequest) -> Result<MessageResponse, ErrorData> {
         let drop_sql = format!("DROP TABLE {}", quote_ident(&table));

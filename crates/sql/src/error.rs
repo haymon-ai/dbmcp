@@ -44,10 +44,6 @@ pub enum SqlError {
     #[error("Query blocked: only single statements are allowed")]
     MultiStatement,
 
-    /// Invalid database or table name identifier.
-    #[error("Invalid identifier '{0}': must not be empty, whitespace-only, or contain control characters")]
-    InvalidIdentifier(String),
-
     /// Query exceeded the configured timeout.
     #[error(
         "Query timed out after {elapsed_secs:.1}s: {sql}. Check the plan with explainQuery, filter on indexed \
