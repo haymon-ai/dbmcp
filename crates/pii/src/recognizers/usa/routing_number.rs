@@ -6,7 +6,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US ABA routing number.
-const CONTEXT: &[&str] = &["aba", "routing", "abarouting", "association", "bankrouting"];
+const CONTEXT: &[&str] = &["aba", "routing", "abarouting", "bankrouting"];
 
 /// Build the `ROUTING_NUMBER_US` recognizer.
 ///

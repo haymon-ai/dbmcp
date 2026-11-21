@@ -13,7 +13,6 @@ const CONTEXT: &[&str] = &[
     "ausweisnummer",
     "ausweisdokument",
     "dokumentennummer",
-    "seriennummer",
     "npa",
     "neuer personalausweis",
     "personalausweisgesetz",

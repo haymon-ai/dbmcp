@@ -8,7 +8,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US medical license.
-const CONTEXT: &[&str] = &["medical", "certificate", "dea"];
+const CONTEXT: &[&str] = &["dea", "dea number", "drug enforcement", "medical certificate"];
 
 const PATTERN: &str = concat!(
     r"\b[abcdefghjklmprstuxABCDEFGHJKLMPRSTUX][a-zA-Z]\d{7}\b",

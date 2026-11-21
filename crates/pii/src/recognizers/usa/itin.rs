@@ -6,7 +6,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US ITIN.
-const CONTEXT: &[&str] = &["individual", "taxpayer", "itin", "tax", "payer", "taxid", "tin"];
+const CONTEXT: &[&str] = &["itin", "taxpayer", "individual taxpayer", "taxid", "tin"];
 
 /// Build the `ITIN` recognizer.
 ///

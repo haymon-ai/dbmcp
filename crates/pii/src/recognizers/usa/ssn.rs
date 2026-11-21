@@ -8,7 +8,7 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US SSN.
-const CONTEXT: &[&str] = &["social", "security", "ssn", "ssns", "ssid"];
+const CONTEXT: &[&str] = &["ssn", "ssns", "social security"];
 
 /// Build the `US_SSN` recognizer.
 ///

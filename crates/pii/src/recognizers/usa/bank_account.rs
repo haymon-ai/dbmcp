@@ -9,7 +9,16 @@
 use crate::recognizers::prelude::*;
 
 /// Context keywords for US bank account.
-const CONTEXT: &[&str] = &["check", "account", "acct", "bank", "save", "debit"];
+const CONTEXT: &[&str] = &[
+    "bank account",
+    "account number",
+    "account no",
+    "acct",
+    "bank",
+    "checking",
+    "savings",
+    "debit",
+];
 
 /// Build the `BANK_ACCOUNT_US` recognizer.
 ///

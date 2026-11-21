@@ -4,7 +4,7 @@
 //! suffix, the 13-digit Steuernummer, the legacy T-format ID card, and every
 //! SIN, DEA, ABA, NHS, LANR, Steuer-ID, KVNR, EIN and VAT match need a
 //! context keyword in the text or the column name, even when their check
-//! digit is valid.
+//! digit is valid. Column names split at `_`, `-`, `.` and camelCase.
 
 use dbmcp_config::{PiiConfig, PiiOperator};
 use dbmcp_pii::redact::Redactor;
@@ -30,6 +30,18 @@ const KEPT: &[(&str, &str)] = &[
     ("order_ref", "AB123456"),
     ("ticket", "T22000129"),
     ("sku", "DE123456789"),
+    ("barcode", "0081508150001"),
+    // Columns whose names hold a generic word, not an identifier's keyword.
+    ("provider_id", "1234567893"),
+    ("seriennummer", "T22000129"),
+    ("rezept_id", "123456601"),
+    ("tax_rate_id", "911701234"),
+    ("security_code", "078051121"),
+    ("association_id", "021000021"),
+    ("canada_store_id", "046454286"),
+    ("medical_device_id", "AB1234563"),
+    ("account_ref", "12345678903"),
+    ("notes", "employer identification 07-1234567"),
 ];
 
 /// Real identifiers with a keyword in the text or the column name, and their entity.
@@ -56,7 +68,7 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("nhs_number", "9434765919", "NHS_NUMBER"),
     ("notes", "national health service 943 476 5919", "NHS_NUMBER"),
     ("npi", "1234567893", "NPI_US"),
-    ("notes", "provider id 1234567893", "NPI_US"),
+    ("notes", "provider identifier 1234567893", "NPI_US"),
     ("steuer_id", "12345678903", "TAX_ID_DE"),
     ("notes", "Steuer-ID 65929970489", "TAX_ID_DE"),
     ("kvnr", "A123456780", "HEALTH_INSURANCE_DE"),
@@ -74,6 +86,16 @@ const REDACTED: &[(&str, &str, &str)] = &[
     ("vat_id", "DE123456789", "VAT_NUMBER"),
     ("notes", "USt-IdNr. DE123456789", "VAT_NUMBER"),
     ("address", "Hauptstraße 5, 10115 Berlin", "POSTCODE_DE"),
+    ("notes", "social insurance 046454286", "SIN_CA"),
+    // camelCase and PascalCase column names split into keywords.
+    ("socialSecurityNumber", "078051121", "US_SSN"),
+    ("SSNNumber", "078051121", "US_SSN"),
+    ("routingNumber", "021000021", "ROUTING_NUMBER_US"),
+    ("VatId", "DE123456789", "VAT_NUMBER"),
+    // International phone numbers; only a bare `00` digit run needs a keyword.
+    ("phone", "0049301234567", "PHONE_NUMBER"),
+    ("notes", "+49 30 1234567", "PHONE_NUMBER"),
+    ("notes", "0049 30 1234567", "PHONE_NUMBER"),
 ];
 
 /// Redacts one `{column: value}` row with the `replace` operator.

@@ -19,8 +19,6 @@ const CONTEXT: &[&str] = &[
     "kbv",
     "kassenärztliche vereinigung",
     "kv-nummer",
-    "rezept",
-    "verschreibung",
     "behandelnder arzt",
     "hausarzt",
     "facharzt",

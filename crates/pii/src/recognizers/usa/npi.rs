@@ -11,10 +11,8 @@ use crate::recognizers::prelude::*;
 /// Context keywords for US NPI.
 const CONTEXT: &[&str] = &[
     "npi",
-    "national provider",
-    "provider",
     "npi number",
-    "provider id",
+    "national provider",
     "provider identifier",
     "taxonomy",
 ];

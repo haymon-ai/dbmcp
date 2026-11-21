@@ -5,7 +5,7 @@ description: Every kind of personal or sensitive data the built-in recognizers d
 
 Forty-six built-in regex recognisers ship by default, grouped into seven categories. Each recogniser is identified by an entity type that drives the `replace` operator's placeholder and is tagged with a category for opt-in subsetting via `DBMCP_PII_CATEGORIES` / `pii.categories`. Several recognisers ship with a checksum or context validator (Luhn, mod-11, ABA, EIN prefix, JWT header, PEM type-match, IRS ITIN range, NPI Luhn, DEA check digit, ICAO 9303 check digit, ISO 7064, KVNR / LANR / RVNR checksums, keyword context) that promotes the match to maximum confidence and rejects look-alikes.
 
-A keyword-gated recogniser only matches when one of its context keywords sits in the five words before the value or in the column name (for example `ssn`, `sin`, or `routing_number`). For these, a valid check digit alone is not enough, since order, customer, and product numbers often have one too.
+A keyword-gated recogniser only matches when one of its context keywords sits in the five words before the value or in the column name (for example `ssn`, `sin`, `routing_number`, or `routingNumber`; names split at `_`, `-`, `.` and camelCase). For these, a valid check digit alone is not enough, since order, customer, and product numbers often have one too.
 
 **personal**
 - `DATE_OF_BIRTH` — dates of birth (weak date pattern, keyword-gated)

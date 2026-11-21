@@ -11,7 +11,6 @@ const CONTEXT: &[&str] = &[
     "sin number",
     "social insurance",
     "social insurance number",
-    "canada",
     "nas",
     "numéro nas",
     "numéro d'assurance sociale",

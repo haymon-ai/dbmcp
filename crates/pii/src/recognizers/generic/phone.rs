@@ -3,11 +3,13 @@
 //! Matches an E.164 number: a `+` or IDD `00` prefix, a non-zero country code,
 //! then 8–15 significant digits with optional punctuation. The required
 //! international prefix keeps bare digit runs (timestamps, IDs, references) out.
+//! A `00` number written as one digit run needs a context keyword, since
+//! EAN-13 barcodes and other codes starting `00` share that shape.
 
 use crate::recognizers::prelude::*;
 
 /// Context keywords used by the boost step.
-const CONTEXT: &[&str] = &["phone", "number", "telephone", "cell", "cellphone", "mobile", "call"];
+const CONTEXT: &[&str] = &["phone", "telephone", "tel", "cell", "cellphone", "mobile", "call"];
 
 /// Build the `PHONE_NUMBER` recognizer.
 ///
@@ -18,11 +20,18 @@ const CONTEXT: &[&str] = &["phone", "number", "telephone", "cell", "cellphone", 
 pub fn phone_number() -> Recognizer {
     let pattern = Pattern::new(
         "intl-e164",
-        r"(?<![\w+])(?:00|\+)[\s.\-/()]*+[1-9](?:[\s.\-/()]*+\d){7,14}",
+        r"(?<![\w+])(?!00\d+(?![\s.\-/()]*\d))(?:00|\+)[\s.\-/()]*+[1-9](?:[\s.\-/()]*+\d){7,14}",
         Score::from_static(0.4),
     )
     .expect("intl-e164 pattern compiles");
-    Recognizer::new(Entity::PhoneNumber, vec![pattern])
+    let unseparated = Pattern::new(
+        "intl-e164 (00, unseparated)",
+        r"(?<![\w+])00[1-9]\d{7,14}(?![\s.\-/()]*\d)",
+        Score::from_static(0.4),
+    )
+    .expect("unseparated intl-e164 pattern compiles")
+    .requiring_context();
+    Recognizer::new(Entity::PhoneNumber, vec![pattern, unseparated])
         .expect("non-empty pattern list")
         .with_name("PhoneRecognizer")
         .with_category(Category::Contact)
