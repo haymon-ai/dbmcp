@@ -86,9 +86,42 @@ pub enum ConfigError {
         /// The offending items, e.g. `item 0, item 2`.
         items: String,
         /// What the segment must be: `def`, `main`, or `database.name`.
-        expected: &'static str,
+        expected: String,
         /// The configured backend.
         backend: DatabaseBackend,
+    },
+
+    /// A shortened rule key needs `database.name` to fill its database.
+    #[error("pii.rules: {rule}: columns: {items}: a key without its database requires database.name on {backend}")]
+    PiiRuleNeedsDatabase {
+        /// The rule's name.
+        rule: String,
+        /// The offending items, e.g. `item 0, item 2`.
+        items: String,
+        /// The configured backend.
+        backend: DatabaseBackend,
+    },
+
+    /// A rule lists the same column twice.
+    #[error("pii.rules: {rule}: columns: item {item} repeats item {first}")]
+    PiiRuleRepeat {
+        /// The rule's name.
+        rule: String,
+        /// The repeated item.
+        item: usize,
+        /// The item it repeats.
+        first: usize,
+    },
+
+    /// A rule lists a column an earlier rule lists too.
+    #[error("pii.rules: {rule}: columns: item {item} is also in rule {other}")]
+    PiiRuleShared {
+        /// The rule's name.
+        rule: String,
+        /// The shared item.
+        item: usize,
+        /// The earlier rule's name.
+        other: String,
     },
 
     /// SSH tunnelling was requested for the `SQLite` backend.
