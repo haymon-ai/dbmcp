@@ -2035,6 +2035,36 @@ async fn test_read_query_vector_is_number_array() {
 }
 
 #[tokio::test]
+async fn test_read_query_json_column_shape_per_flavour() {
+    // MariaDB JSON is LONGTEXT; sqlx ignores its `format=json` marker (#330).
+    // When that lands, the MariaDB arm becomes an object: update the docs too.
+    let expected = serde_json::json!({
+        "contact": {"name": "Alice Johnson", "email": "alice@example.com", "phone": "+14155552671"},
+        "address": {"city": "San Francisco", "country": "USA"},
+    });
+
+    let response = handler(true)
+        .read_query(
+            "SELECT metadata FROM users WHERE name = 'Alice Johnson'".into(),
+            Some("app".into()),
+            None,
+            None,
+        )
+        .await
+        .expect("JSON column SELECT should succeed");
+
+    let metadata = &response.rows[0]["metadata"];
+    match backend() {
+        DatabaseBackend::Mariadb => {
+            let text = metadata.as_str().expect("MariaDB JSON should arrive as a string");
+            let parsed: Value = serde_json::from_str(text).expect("MariaDB JSON string should parse");
+            assert_eq!(parsed, expected);
+        }
+        _ => assert_eq!(metadata, &expected),
+    }
+}
+
+#[tokio::test]
 async fn test_read_query_describe_types_are_text() {
     // DESCRIBE's `Type` column is `_bin`-collated text that sqlx names BLOB.
     let handler = handler(false);
