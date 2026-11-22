@@ -7,8 +7,9 @@
 //! deadline, it:
 //!
 //! 1. analyzes the statement's lineage, fetching the relations it reports
-//!    missing (`pragma_table_list`, `pragma_table_xinfo`, view bodies from
-//!    `sqlite_schema`) for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//!    missing (`pragma_table_list`, `pragma_table_xinfo`, view bodies and
+//!    triggers from `sqlite_schema`, referential actions from
+//!    `pragma_foreign_key_list`) for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 2. plans it with [`Analyzed::plan`](dbmcp_policy::Analyzed::plan); a rejection runs nothing,
 //! 3. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
@@ -18,12 +19,13 @@
 //! ruled relation, database errors whose extended code may echo a value are
 //! replaced by a generic message.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    RelationRef, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
+    RelationId, RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -55,10 +57,49 @@ const LOOKUP_SQL: &str = "SELECT t.schema, t.name, t.type \
 const SCHEMAS_SQL: &str = "SELECT name FROM pragma_database_list ORDER BY seq";
 
 /// Lists the columns of each `[schema, name]` pair of the JSON array in `?1`.
-const COLUMNS_SQL: &str = "SELECT j.key, x.name, x.hidden \
+///
+/// Also whether the server can fill each column: a declared default, or an
+/// `INTEGER` primary-key column, which may alias the rowid (over-approximated:
+/// composite keys count too).
+const COLUMNS_SQL: &str = "SELECT j.key, x.name, x.hidden, \
+     x.dflt_value IS NOT NULL OR (x.pk > 0 AND upper(x.type) = 'INTEGER') \
      FROM json_each(?1) AS j, \
      pragma_table_xinfo(json_extract(j.value, '$[1]'), json_extract(j.value, '$[0]')) AS x \
      ORDER BY j.key, x.cid";
+
+/// Lists the tables of `?1` that a trigger names, the `temp` schema's triggers included.
+///
+/// `{schema}` is the quoted schema. A temporary trigger may fire on a table
+/// of any schema; it is matched by table name alone (fail closed).
+const TRIGGERS_SQL: &str = "SELECT tbl_name FROM {schema}.sqlite_schema WHERE type = 'trigger' \
+     UNION SELECT tbl_name FROM temp.sqlite_schema WHERE type = 'trigger'";
+
+/// Walks the referential actions below table `?2` of schema `?1`.
+///
+/// Per edge: parent table and column, child table and column, the action
+/// (`CASCADE`, `SET NULL`, `SET DEFAULT`), and whether a parent `DELETE`
+/// fires it (else a parent `UPDATE` of the column). A foreign key never
+/// leaves its schema; one naming no parent column references the parent's
+/// primary key, mapped by position. Table and column names come back as
+/// stored, not as the foreign key spells them; a key naming a missing
+/// column, which no write gets past, gives no edge. Below each reached
+/// child table come all its edges, the closure [`Relation::cascades`] asks
+/// for. `UNION` ends the walk on cycles.
+const CASCADES_SQL: &str = "WITH RECURSIVE \
+     fk(parent, pcol, child, ccol, rule, deletes) AS (SELECT p.name, \
+           CASE WHEN f.\"to\" IS NULL \
+             THEN (SELECT k.name FROM pragma_table_info(p.name, ?1) AS k WHERE k.pk = f.seq + 1) \
+             ELSE (SELECT k.name FROM pragma_table_info(p.name, ?1) AS k WHERE k.name = f.\"to\" COLLATE NOCASE) END, \
+           t.name, (SELECT k.name FROM pragma_table_info(t.name, ?1) AS k WHERE k.name = f.\"from\" COLLATE NOCASE), upper(CASE d.deletes WHEN 1 THEN f.on_delete ELSE f.on_update END), d.deletes \
+         FROM pragma_table_list AS t \
+         JOIN pragma_foreign_key_list(t.name, t.schema) AS f \
+         JOIN pragma_table_list AS p ON p.schema = t.schema AND p.name = f.\"table\" COLLATE NOCASE \
+         JOIN (SELECT 0 AS deletes UNION ALL SELECT 1) AS d \
+         WHERE t.schema = ?1 AND t.type = 'table'), \
+     edge AS (SELECT * FROM fk WHERE pcol IS NOT NULL AND ccol IS NOT NULL AND rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
+     walk AS (SELECT * FROM edge WHERE parent = ?2 COLLATE NOCASE \
+       UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child COLLATE NOCASE) \
+     SELECT parent, pcol, child, ccol, rule, deletes FROM walk";
 
 /// Extended result codes whose messages name schema objects, never values.
 ///
@@ -372,32 +413,93 @@ async fn fetch(
         .map(|(_, relation, _)| Value::from(vec![relation.schema.as_str(), relation.name.as_str()]))
         .collect();
     let pairs = Value::from(pairs).to_string();
-    let rows: Vec<(i64, String, i64)> = sqlx::query_as(COLUMNS_SQL).bind(pairs).fetch_all(&mut *conn).await?;
+    let rows: Vec<(i64, String, i64, bool)> = sqlx::query_as(COLUMNS_SQL).bind(pairs).fetch_all(&mut *conn).await?;
+    let mut triggers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (index, (name, listed, kind)) in found.into_iter().enumerate() {
         let columns = rows
             .iter()
-            .filter(|(key, _, _)| usize::try_from(*key).is_ok_and(|key| key == index))
-            .map(|(_, column, hidden)| {
+            .filter(|(key, ..)| usize::try_from(*key).is_ok_and(|key| key == index))
+            .map(|(_, column, hidden, default)| {
                 // `hidden` = 1 marks virtual-table hidden columns; 2 and 3 are generated columns.
-                if *hidden == 1 {
-                    CatalogColumn::hidden(column)
-                } else {
-                    CatalogColumn::new(column)
+                CatalogColumn {
+                    name: column.clone(),
+                    star_visible: *hidden != 1,
+                    default: *default,
+                    generated: matches!(hidden, 2 | 3),
+                    // `SQLite` has no on-update columns.
+                    on_update: false,
                 }
             })
             .collect();
-        let id = RelationId::new(CATALOG, &listed.schema, &listed.name);
-        let mut relation = Relation::new(id, kind, columns);
-        if kind == RelationKind::View {
+        if !triggers.contains_key(&listed.schema) {
+            let names = triggered(conn, &listed.schema).await?;
+            triggers.insert(listed.schema.clone(), names);
+        }
+        let triggered = &triggers[&listed.schema];
+        let cascades = if kind == RelationKind::Table {
+            cascades(conn, listed, triggered).await?
+        } else {
+            Vec::new()
+        };
+        let view_sql = if kind == RelationKind::View {
             let Some(body) = view_body(conn, listed).await? else {
                 entries.push((name, Entry::Absent));
                 continue;
             };
-            relation = relation.with_view_sql(body);
-        }
+            Some(body)
+        } else {
+            None
+        };
+        let relation = Relation {
+            id: RelationId::new(CATALOG, &listed.schema, &listed.name),
+            kind,
+            columns,
+            view_sql,
+            // `SQLite` has no inheritance.
+            family: Family::default(),
+            triggers: triggered.contains(&listed.name.to_lowercase()),
+            cascades,
+        };
         entries.push((name, Entry::Resolved(relation)));
     }
     Ok(entries)
+}
+
+/// Lists lowercased names of tables in `schema` a trigger may fire on.
+async fn triggered(conn: &mut sqlx::SqliteConnection, schema: &str) -> Result<BTreeSet<String>, sqlx::Error> {
+    let sql = TRIGGERS_SQL.replace("{schema}", &quote_ident(schema));
+    let names: Vec<String> = sqlx::query_scalar(AssertSqlSafe(sql)).fetch_all(conn).await?;
+    Ok(names.into_iter().map(|name| name.to_lowercase()).collect())
+}
+
+/// Reads the referential actions below `table`, each child's triggers from `triggered`.
+async fn cascades(
+    conn: &mut sqlx::SqliteConnection,
+    table: &Listed,
+    triggered: &BTreeSet<String>,
+) -> Result<Vec<Cascade>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(CASCADES_SQL)
+        .bind(&table.schema)
+        .bind(&table.name)
+        .fetch_all(conn)
+        .await?;
+    let column =
+        |relation: &str, column: String| SourceRef::new(RelationId::new(CATALOG, &table.schema, relation), column);
+    Ok(rows
+        .into_iter()
+        .map(|(parent, pcol, child, ccol, rule, on_delete)| Cascade {
+            action: match rule.as_str() {
+                "CASCADE" if on_delete => CascadeAction::Delete,
+                "CASCADE" => CascadeAction::Copy,
+                "SET NULL" => CascadeAction::Null,
+                _ => CascadeAction::Default,
+            },
+            on_delete,
+            triggers: triggered.contains(&child.to_lowercase()),
+            parent: column(&parent, pcol),
+            child: column(&child, ccol),
+        })
+        .collect())
 }
 
 /// Reads the query of a view's `CREATE VIEW` statement; `None` when unreadable.
@@ -660,7 +762,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_describes_hidden_generated_and_view_columns() {
         let mut conn = memory(
-            "CREATE TABLE g (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1));
+            "CREATE TABLE g (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1), id INTEGER PRIMARY KEY, c DEFAULT 'x');
              CREATE VIRTUAL TABLE f USING fts5(body);
              CREATE VIEW v(x) AS SELECT a FROM g",
         )
@@ -680,7 +782,20 @@ mod tests {
             generated.columns.iter().all(|column| column.star_visible),
             "{generated:?}"
         );
-        assert_eq!(generated.columns.len(), 2);
+        let facts: Vec<_> = generated
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.default, column.generated, column.on_update))
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                ("a", false, false, false),
+                ("b", false, true, false),
+                ("id", true, false, false),
+                ("c", true, false, false)
+            ]
+        );
         let fts = resolved(&names[1]);
         assert_eq!(fts.kind, RelationKind::Virtual);
         assert!(
@@ -691,6 +806,68 @@ mod tests {
         );
         let view = resolved(&names[2]);
         assert_eq!(view.view_sql.as_deref(), Some("SELECT a FROM g"));
+    }
+
+    #[tokio::test]
+    async fn fetch_reads_triggers_and_the_cascades_below_a_table() {
+        let mut conn = memory(
+            "CREATE TABLE p (id INTEGER PRIMARY KEY, k TEXT UNIQUE);
+             CREATE TABLE c (id INTEGER PRIMARY KEY, k TEXT REFERENCES P (K) ON UPDATE CASCADE ON DELETE SET NULL,
+               pid INTEGER REFERENCES p ON DELETE CASCADE);
+             CREATE TABLE g (id INTEGER PRIMARY KEY, ck TEXT REFERENCES c (k) ON UPDATE SET DEFAULT ON DELETE RESTRICT,
+               cid INTEGER REFERENCES c (id) ON UPDATE CASCADE ON DELETE SET DEFAULT);
+             CREATE TABLE gg (id INTEGER, k TEXT REFERENCES g (ck) ON UPDATE CASCADE,
+               gid INTEGER REFERENCES g ON DELETE CASCADE);
+             CREATE TRIGGER g_insert AFTER INSERT ON G BEGIN SELECT 1; END;
+             CREATE TEMP TRIGGER p_delete AFTER DELETE ON main.p BEGIN SELECT 1; END",
+        )
+        .await;
+        let schemas = vec!["main".to_owned(), "temp".to_owned()];
+        let names = ["p", "c"].map(|table| WrittenName::query(vec![NamePart::bare(table)]));
+        let missing = names
+            .iter()
+            .map(|name| (name.clone(), reference(None, &name.parts[0].value)));
+        let entries = fetch(&mut conn, &schemas, missing.collect()).await.expect("fetch");
+        let resolved = |index: usize| match &entries[index] {
+            (_, Entry::Resolved(relation)) => relation.clone(),
+            other => panic!("{other:?}"),
+        };
+        let (parent, child) = (resolved(0), resolved(1));
+        assert!(parent.triggers, "temporary trigger");
+        assert!(!child.triggers);
+        let mut edges: Vec<_> = parent
+            .cascades
+            .iter()
+            .map(|edge| {
+                (
+                    format!("{}.{}", edge.parent.relation.name, edge.parent.column),
+                    format!("{}.{}", edge.child.relation.name, edge.child.column),
+                    edge.action,
+                    edge.on_delete,
+                    edge.triggers,
+                )
+            })
+            .collect();
+        edges.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        let edge = |parent: &str, child: &str, action, on_delete, triggers| {
+            (parent.to_owned(), child.to_owned(), action, on_delete, triggers)
+        };
+        assert_eq!(
+            edges,
+            [
+                // The walk takes every edge of each reached table; no write
+                // through `p` fires this one (`c.id` never changes).
+                edge("c.id", "g.cid", CascadeAction::Copy, false, true),
+                edge("c.id", "g.cid", CascadeAction::Default, true, true),
+                edge("c.k", "g.ck", CascadeAction::Default, false, true),
+                edge("g.ck", "gg.k", CascadeAction::Copy, false, false),
+                // Nor this one: no `g` row is ever removed.
+                edge("g.id", "gg.gid", CascadeAction::Delete, true, false),
+                edge("p.id", "c.pid", CascadeAction::Delete, true, false),
+                edge("p.k", "c.k", CascadeAction::Copy, false, false),
+                edge("p.k", "c.k", CascadeAction::Null, true, false),
+            ]
+        );
     }
 
     #[tokio::test]

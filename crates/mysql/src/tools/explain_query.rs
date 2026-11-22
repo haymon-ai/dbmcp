@@ -123,7 +123,7 @@ impl MysqlHandler {
     /// Returns [`SqlError::ExecutableCommentBlocked`] if the query holds a
     /// `/*! … */` or `/*M! … */` comment.
     /// Returns [`SqlError::UnreadableCharacter`] if the query holds a
-    /// character the parser cannot read.
+    /// character or comment the server reads otherwise.
     /// Returns [`SqlError::ReadOnlyViolation`] if `analyze` is true and
     /// the query is a write statement.
     /// Returns an internal error if `analyze` is true on `MariaDB`

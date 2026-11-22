@@ -4,7 +4,8 @@
 //! it uses to physical `relation.column` sources taken from a caller-supplied
 //! [`Catalog`]. The [`Lineage`] lists each output column's sources, every
 //! other column use with its [`Role`] (`JOIN`, filter, `GROUP BY`, `ORDER BY`,
-//! window), the relations touched, and the functions called.
+//! window), the relations touched, the functions called, and the cast target
+//! types.
 //! [`StatementKind`] says which tier the statement is in: queries, `EXPLAIN`
 //! of a modeled statement, `SHOW` and `DESCRIBE`, and relations-only DDL
 //! (`CREATE TABLE` without a query, `DROP`, `TRUNCATE`, `CREATE INDEX`),
@@ -60,14 +61,15 @@ mod show;
 mod statement;
 #[cfg(test)]
 mod tests;
+mod types;
 
 pub use crate::analyze::analyze;
-pub use crate::catalog::{Catalog, CatalogColumn, Entry, Family, Lexical, Member, NamePart, Relation, WrittenName};
+pub use crate::catalog::{Catalog, CatalogColumn, Entry, Lexical, NamePart, Relation, WrittenName};
 pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
 pub use crate::explain::ExplainForm;
 pub use crate::model::{
-    FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
-    StatementKind, TargetColumn,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, StatementKind, TargetColumn, TypeUse,
 };
 pub use crate::show::Show;

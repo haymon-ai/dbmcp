@@ -108,7 +108,8 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError::UseBlocked`] for `USE`,
+    /// Returns [`SqlError::UnreadableCharacter`] for SQL the server reads
+    /// otherwise, [`SqlError::UseBlocked`] for `USE`,
     /// [`SqlError::ReadOnlyViolation`] in read-only mode, or [`SqlError`]
     /// if the query fails. With column rules, also
     /// [`SqlError::MultiStatement`], [`SqlError::ExecutableCommentBlocked`],
@@ -118,6 +119,7 @@ impl MysqlHandler {
     /// [`SqlError::ExecutableCommentBlocked`]: dbmcp_sql::SqlError::ExecutableCommentBlocked
     /// [`SqlError::MultiStatement`]: dbmcp_sql::SqlError::MultiStatement
     /// [`SqlError::ReadOnlyViolation`]: dbmcp_sql::SqlError::ReadOnlyViolation
+    /// [`SqlError::UnreadableCharacter`]: dbmcp_sql::SqlError::UnreadableCharacter
     /// [`SqlError::UseBlocked`]: dbmcp_sql::SqlError::UseBlocked
     pub async fn write_query(&self, query: String, database: Option<String>) -> Result<WriteQueryResponse, ErrorData> {
         validate_write(&query, &sqlparser::dialect::MySqlDialect {})?;

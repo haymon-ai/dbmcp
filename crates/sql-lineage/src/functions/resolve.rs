@@ -17,7 +17,7 @@ const fn names(dialect: Dialect) -> &'static [&'static str] {
     }
 }
 
-/// Returns a function name part case-folded the way the server resolves it.
+/// Returns a function or type name part case-folded the way the server resolves it.
 fn fold(dialect: Dialect, ident: &Ident) -> String {
     match dialect {
         Dialect::Postgres => dialect.normalize(ident),
@@ -35,15 +35,25 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
 ///
 /// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
 pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<(String, bool), LineageError> {
+    lookup(dialect, name, names(dialect))
+}
+
+/// Looks up a written name in `table`, returning its recorded name and whether it is listed.
+///
+/// Listed when `table` holds the unqualified (or, on `PostgreSQL`,
+/// `pg_catalog.`-qualified) name, folded per dialect.
+///
+/// # Errors
+///
+/// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
+pub(crate) fn lookup(dialect: Dialect, name: &ObjectName, table: &[&str]) -> Result<(String, bool), LineageError> {
     let parts: Vec<String> = idents(name)?.iter().map(|p| fold(dialect, p)).collect();
-    let known = match parts.as_slice() {
-        [name] => names(dialect).contains(&name.as_str()),
-        [schema, name] if dialect == Dialect::Postgres && schema == "pg_catalog" => {
-            names(dialect).contains(&name.as_str())
-        }
+    let listed = match parts.as_slice() {
+        [name] => table.contains(&name.as_str()),
+        [schema, name] if dialect == Dialect::Postgres && schema == "pg_catalog" => table.contains(&name.as_str()),
         _ => false,
     };
-    Ok((parts.join("."), known))
+    Ok((parts.join("."), listed))
 }
 
 #[cfg(test)]

@@ -137,6 +137,71 @@ INSERT INTO orders (id, user_id, customer_email) VALUES
 CREATE VIEW IF NOT EXISTS users_with_ssn AS
     SELECT id, email FROM users WHERE ssn IS NOT NULL;
 
+-- Trigger-free write targets whose `email` is hashed like `users.email`.
+CREATE TABLE IF NOT EXISTS policy_hashed (
+    id INTEGER PRIMARY KEY,
+    email TEXT
+);
+
+INSERT INTO policy_hashed (id, email) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_hashed_copy (
+    id INTEGER PRIMARY KEY,
+    email TEXT
+);
+
+CREATE TABLE IF NOT EXISTS policy_hashed_default (
+    id INTEGER PRIMARY KEY,
+    email TEXT DEFAULT 'x@example.com'
+);
+
+CREATE TABLE IF NOT EXISTS policy_hashed_generated (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT GENERATED ALWAYS AS (name || '@example.com')
+);
+
+-- `ON UPDATE CASCADE` copies `policy_cascade_parent.k` (unruled) into the
+-- hashed `policy_cascade_child.k`; updating `policy_cascade_parent.j` fills
+-- the hashed `policy_cascade_default.k` with its default (`ON UPDATE SET
+-- DEFAULT`); deleting a parent row deletes rows of `policy_hashed_trigger`,
+-- which has a trigger.
+CREATE TABLE IF NOT EXISTS policy_cascade_parent (
+    k TEXT PRIMARY KEY,
+    j TEXT UNIQUE
+);
+
+INSERT INTO policy_cascade_parent (k, j) VALUES ('alice@example.com', 'a'), ('x@example.com', 'x@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_cascade_child (
+    id INTEGER PRIMARY KEY,
+    k TEXT REFERENCES policy_cascade_parent (k) ON UPDATE CASCADE
+);
+
+INSERT INTO policy_cascade_child (id, k) VALUES (1, 'alice@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_cascade_default (
+    id INTEGER PRIMARY KEY,
+    k TEXT DEFAULT 'x@example.com' REFERENCES policy_cascade_parent (j) ON UPDATE SET DEFAULT
+);
+
+INSERT INTO policy_cascade_default (id, k) VALUES (1, 'a');
+
+-- A hashed `email` on a table with a trigger, below `policy_cascade_parent`.
+CREATE TABLE IF NOT EXISTS policy_hashed_trigger (
+    id INTEGER PRIMARY KEY,
+    email TEXT,
+    k TEXT REFERENCES policy_cascade_parent (k) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS policy_hashed_trigger_fill
+    AFTER INSERT ON policy_hashed_trigger
+BEGIN
+    SELECT 1;
+END;
+
 -- Triggers
 
 CREATE TRIGGER IF NOT EXISTS users_before_insert

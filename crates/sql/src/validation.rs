@@ -7,7 +7,7 @@ use dbmcp_sql_lineage::{Dialect, Show};
 use sqlparser::ast::{Expr, Function, Ident, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::{self, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
-use sqlparser::tokenizer::{Token, Tokenizer};
+use sqlparser::tokenizer::{Token, Tokenizer, TokenizerError, Whitespace};
 
 /// Classifies a validated read-only statement for pagination dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,12 +125,17 @@ fn is_diagnostics(variable: &[Ident]) -> bool {
 /// queries. Every other statement is allowed. SQL that fails to parse passes
 /// through, so the database reports its own error for syntax the parser
 /// does not know (e.g. `MySQL` routine bodies, `DO`). Only `MySQL` and
-/// `MariaDB` have `USE`, so only their write tool calls this.
+/// `MariaDB` have `USE`, so only their write tool calls this. Comments the
+/// server reads otherwise are rejected first, so they cannot hide a `USE`.
 ///
 /// # Errors
 ///
-/// Returns [`SqlError::UseBlocked`] if any parsed statement is `USE`.
+/// Returns [`SqlError::UnreadableCharacter`] for SQL the server reads
+/// otherwise, or [`SqlError::UseBlocked`] if any parsed statement is `USE`.
 pub fn validate_write(sql: &str, dialect: &impl dialect::Dialect) -> Result<(), SqlError> {
+    if dialect.supports_multiline_comment_hints() && unreadable(sql, dialect).unwrap_or(false) {
+        return Err(SqlError::UnreadableCharacter);
+    }
     let Ok(statements) = Parser::parse_sql(dialect, sql) else {
         return Ok(());
     };
@@ -159,17 +164,14 @@ pub fn validate_single_statement(sql: &str, dialect: &impl dialect::Dialect) -> 
 ///
 /// On `MySQL`/`MariaDB` (dialects with `/*!` hints), first rejects SQL the
 /// server may read differently: executable comments (matched on raw text,
-/// string literals included) and characters the tokenizer cannot read, such
-/// as the control character that starts a `--` comment on the server only.
+/// string literals included) and tokens the server reads otherwise (see
+/// [`is_unreadable`]).
 fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Statement>, SqlError> {
     if dialect.supports_multiline_comment_hints() {
         if ["/*!", "/*M!", "/*m!"].iter().any(|p| sql.contains(p)) {
             return Err(SqlError::ExecutableCommentBlocked);
         }
-        let tokens = Tokenizer::new(dialect, sql)
-            .tokenize()
-            .map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
-        if tokens.iter().any(|token| matches!(token, Token::Char(_))) {
+        if unreadable(sql, dialect).map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))? {
             return Err(SqlError::UnreadableCharacter);
         }
     }
@@ -181,6 +183,29 @@ fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Sta
         return Err(SqlError::MultiStatement);
     }
     Ok(statements.pop())
+}
+
+/// Reports whether any token of `sql` is one the `MySQL` server reads otherwise.
+fn unreadable(sql: &str, dialect: &impl dialect::Dialect) -> Result<bool, TokenizerError> {
+    Ok(Tokenizer::new(dialect, sql).tokenize()?.iter().any(is_unreadable))
+}
+
+/// Reports whether `token` holds text the `MySQL` server reads otherwise.
+///
+/// The server starts a `--` comment only at an ASCII space or control
+/// character (the tokenizer also at a Unicode space such as `U+00A0`), and
+/// ends a `--` or `#` comment at a NUL byte. A character the tokenizer
+/// cannot read (`Token::Char`), such as a control character that starts a
+/// `--` comment on the server only, is rejected too.
+fn is_unreadable(token: &Token) -> bool {
+    match token {
+        Token::Char(_) => true,
+        Token::Whitespace(Whitespace::SingleLineComment { prefix, comment }) => {
+            let server_comment = |ch: char| ch.is_ascii_whitespace() || ch.is_ascii_control();
+            comment.contains('\0') || (prefix == "--" && !comment.starts_with(server_comment))
+        }
+        _ => false,
+    }
 }
 
 /// Rejects data-modifying CTEs and `SELECT ... INTO` anywhere inside a query.
@@ -456,6 +481,23 @@ mod tests {
         ));
     }
 
+    /// Asserts that both `MySQL` dialects and the single-statement check refuse `sql`.
+    fn assert_unreadable(sql: &str) {
+        for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+            assert!(
+                matches!(validate_read(sql, dialect), Err(SqlError::UnreadableCharacter)),
+                "{sql:?}"
+            );
+        }
+        assert!(
+            matches!(
+                validate_single_statement(sql, &MYSQL),
+                Err(SqlError::UnreadableCharacter)
+            ),
+            "{sql:?}"
+        );
+    }
+
     #[test]
     fn control_characters_are_blocked_on_mysql() {
         // The server starts a `--` comment at a control character; the parser does not.
@@ -469,19 +511,60 @@ mod tests {
             "SHOW --\x01\nTABLES",
             "SELECT 1 --\x01\n",
         ] {
-            for dialect in [Dialect::Mysql, Dialect::Mariadb] {
-                assert!(
-                    matches!(validate_read(sql, dialect), Err(SqlError::UnreadableCharacter)),
-                    "{sql:?}"
-                );
-            }
+            assert_unreadable(sql);
         }
-        assert!(matches!(
-            validate_single_statement("SELECT 1 --\x01\n", &MYSQL),
-            Err(SqlError::UnreadableCharacter)
-        ));
         assert!(validate_read("SHOW -- x\nTABLES", Dialect::Mysql).is_ok());
         assert!(validate_read("SELECT '\x01'", Dialect::Mysql).is_ok());
+    }
+
+    #[test]
+    fn unicode_space_comments_are_blocked_on_mysql() {
+        // The parser starts a `--` comment at a Unicode space; the server does not.
+        for space in ['\u{a0}', '\u{85}', '\u{2000}', '\u{2028}', '\u{3000}'] {
+            assert_unreadable(&format!("SELECT 1 --{space};SELECT 2"));
+            assert_unreadable(&format!("SHOW --{space}\nWARNINGS"));
+        }
+        for sql in [
+            "SELECT 1 -- \u{a0}x",
+            "SELECT 1 --\t\u{a0}x",
+            "SELECT 1 # \u{a0}x",
+            "SELECT '--\u{a0}'",
+            "SELECT 1 /* --\u{a0} */",
+        ] {
+            assert!(validate_read(sql, Dialect::Mysql).is_ok(), "{sql:?}");
+        }
+        assert!(validate_read("SELECT 1 --\u{a0}", Dialect::Postgres).is_ok());
+    }
+
+    #[test]
+    fn nul_in_line_comments_is_blocked_on_mysql() {
+        // The server ends a `--` or `#` comment at a NUL byte; the parser does not.
+        for sql in [
+            "SELECT 1 AS a -- \0, 2 AS b",
+            "SELECT 1 AS a # \0, 2 AS b",
+            "SELECT 1 AS a -- x\0\n, 2 AS b",
+        ] {
+            assert_unreadable(sql);
+        }
+        for sql in ["SELECT 1 AS a /* \0 */, 2 AS b", "SELECT '\0' AS a"] {
+            assert!(validate_read(sql, Dialect::Mysql).is_ok(), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn write_rejects_comments_the_server_reads_otherwise() {
+        for sql in [
+            "INSERT INTO t VALUES (1) --\u{a0}; USE mydb",
+            "INSERT INTO t VALUES (1) # \0; USE mydb",
+            "INSERT INTO t VALUES (1) --\x01; USE mydb",
+        ] {
+            assert!(
+                matches!(validate_write(sql, &DIALECT), Err(SqlError::UnreadableCharacter)),
+                "{sql:?}"
+            );
+        }
+        assert!(validate_write("INSERT INTO t VALUES (1) -- \u{a0}x", &DIALECT).is_ok());
+        assert!(validate_write("INSERT INTO t VALUES (1) --\u{a0}x", &SQLiteDialect {}).is_ok());
     }
 
     #[test]

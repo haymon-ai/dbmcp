@@ -128,7 +128,7 @@ impl MysqlHandler {
     /// read-only, [`SqlError::UseBlocked`] for `USE`,
     /// [`SqlError::DiagnosticsBlocked`] for `SHOW WARNINGS` / `SHOW ERRORS`,
     /// [`SqlError::ExecutableCommentBlocked`] for `/*! … */` / `/*M! … */`,
-    /// [`SqlError::UnreadableCharacter`] for a character the parser cannot read, or
+    /// [`SqlError::UnreadableCharacter`] for SQL the server reads otherwise, or
     /// [`SqlError::Query`] if the backend reports an error. With column
     /// rules, also the policy's rejection or a withheld database error.
     ///

@@ -1,15 +1,15 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
-use std::mem;
-
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
+use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, Entry, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind,
-    WrittenName, analyze,
+    Catalog, Dialect, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName,
+    analyze,
 };
 
+use crate::catalog::Entry;
 use crate::deny;
-use crate::plan::{Names, plan, touches_ruled};
+use crate::plan::{Facts, Names, plan, touches_ruled};
 use crate::planned::{Mode, Planned};
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 use crate::relation::RelationRef;
@@ -113,16 +113,28 @@ impl<'a> Analysis<'a> {
     /// class otherwise.
     /// Each rejection is logged.
     pub fn step(&mut self, entries: Vec<(WrittenName, Entry)>) -> Result<Step, Rejection> {
-        for (name, mut entry) in entries {
-            if let Entry::Resolved(relation) = &mut entry {
-                if let (Origin::Query, [_]) = (&name.context, name.parts.as_slice()) {
-                    self.names.bare.insert(relation.id.clone());
+        for (name, entry) in entries {
+            // Analysis reads the lineage part; the planner keeps the facts.
+            let entry = match entry {
+                Entry::Resolved(relation) => {
+                    if let (Origin::Query, [_]) = (&name.context, name.parts.as_slice()) {
+                        self.names.bare.insert(relation.id.clone());
+                    }
+                    let resolved = lineage::Entry::Resolved(relation.lineage());
+                    self.names.families.insert(relation.id.clone(), relation.family);
+                    self.names.facts.insert(
+                        relation.id,
+                        Facts {
+                            columns: relation.columns,
+                            triggers: relation.triggers,
+                            cascades: relation.cascades,
+                        },
+                    );
+                    resolved
                 }
-                // Analysis ignores the family, so the planner takes it.
-                self.names
-                    .families
-                    .insert(relation.id.clone(), mem::take(&mut relation.family));
-            }
+                Entry::Absent => lineage::Entry::Absent,
+                Entry::Vacant(id) => lineage::Entry::Vacant(id),
+            };
             self.catalog.insert(name, entry);
         }
         loop {
@@ -140,7 +152,7 @@ impl<'a> Analysis<'a> {
                         match RelationRef::new(self.dialect, self.database.as_deref(), &name) {
                             Some(reference) => missing.push((name, reference)),
                             // It names no relation, so there is nothing to fetch.
-                            None => self.catalog.insert(name, Entry::Absent),
+                            None => self.catalog.insert(name, lineage::Entry::Absent),
                         }
                     }
                     deny::names(self.dialect, &missing).map_err(Rejection::logged)?;
@@ -207,17 +219,41 @@ mod tests {
     use dbmcp_config::{ColumnRule, PrivacyOperator};
     use std::collections::BTreeSet;
 
-    use dbmcp_sql_lineage::{CatalogColumn, Family, Member, Relation, RelationKind};
+    use dbmcp_sql_lineage::{RelationKind, SourceRef};
 
     use super::*;
+    use crate::{Cascade, CascadeAction, CatalogColumn, Family, Member, Relation};
     use crate::{LineageClass, Unfit};
+
+    /// A visible column with every write fact `true`.
+    fn column(name: &str) -> CatalogColumn {
+        CatalogColumn {
+            name: name.into(),
+            star_visible: true,
+            default: true,
+            generated: true,
+            on_update: true,
+        }
+    }
+
+    /// A relation with triggers and every write fact `true`, no view body, family, or cascades.
+    fn relation(id: RelationId, kind: RelationKind, columns: &[&str]) -> Relation {
+        Relation {
+            id,
+            kind,
+            columns: columns.iter().map(|name| column(name)).collect(),
+            view_sql: None,
+            family: Family::default(),
+            triggers: true,
+            cascades: Vec::new(),
+        }
+    }
 
     /// Answers every missing name with `shop.public.<last part>`, columns `a` and `b`.
     fn table(name: &WrittenName) -> Entry {
         let last = &name.parts.last().expect("a written name has parts").value;
         let id = RelationId::new("shop", "public", last.as_str());
-        let columns = vec![CatalogColumn::new("a"), CatalogColumn::new("b")];
-        Entry::Resolved(Relation::new(id, RelationKind::Table, columns))
+        Entry::Resolved(relation(id, RelationKind::Table, &["a", "b"]))
     }
 
     /// Analyzes `sql`, creating in `creation` and resolving names with `entry`.
@@ -486,12 +522,10 @@ mod tests {
         let Ok(Step::Missing(names)) = analysis.step(Vec::new()) else {
             panic!("the view is missing first");
         };
-        let view = Relation::new(
-            RelationId::new("def", "mysql", "v"),
-            RelationKind::View,
-            vec![CatalogColumn::new("name")],
-        )
-        .with_view_sql("SELECT name FROM help_topic");
+        let view = Relation {
+            view_sql: Some("SELECT name FROM help_topic".into()),
+            ..relation(RelationId::new("def", "mysql", "v"), RelationKind::View, &["name"])
+        };
         let entries = names
             .into_iter()
             .map(|(name, _)| (name, Entry::Resolved(view.clone())))
@@ -518,12 +552,10 @@ mod tests {
         let Ok(Step::Missing(names)) = analysis.step(Vec::new()) else {
             panic!("the view is missing first");
         };
-        let view = Relation::new(
-            RelationId::new("def", "app", "v"),
-            RelationKind::View,
-            vec![CatalogColumn::new("host")],
-        )
-        .with_view_sql("SELECT host FROM mysql.user");
+        let view = Relation {
+            view_sql: Some("SELECT host FROM mysql.user".into()),
+            ..relation(RelationId::new("def", "app", "v"), RelationKind::View, &["host"])
+        };
         let entries = names
             .into_iter()
             .map(|(name, _)| (name, Entry::Resolved(view.clone())))
@@ -554,7 +586,7 @@ mod tests {
                 ancestors: BTreeSet::from([relation.id.clone()]),
             }],
         };
-        Entry::Resolved(relation.with_family(family))
+        Entry::Resolved(Relation { family, ..relation })
     }
 
     /// A config ruling `shop.public.t_1.a` with `mask` as `US_SSN`.
@@ -581,6 +613,84 @@ mod tests {
         );
         assert_eq!(planned.check_first(&names, [(0, parent, Some("a".into()))]), Ok(()));
         assert_eq!(planned.withheld(Some("23505")), Some("23505"));
+    }
+
+    /// A config hashing `shop.public.<table>.a` as `EMAIL_ADDRESS`.
+    fn hashed(table: &str) -> PrivacyConfig {
+        let mut config = ruled();
+        config.rules[0].key[2] = table.into();
+        config.rules[0].operator = PrivacyOperator::Hash;
+        config.rules[0].entity = "EMAIL_ADDRESS";
+        config
+    }
+
+    /// Answers every name like [`table`], with fact-free columns and `relation` applied.
+    fn described(name: &WrittenName, relation: fn(Relation) -> Relation) -> Entry {
+        let Entry::Resolved(mut resolved) = table(name) else {
+            unreachable!("table resolves");
+        };
+        for column in &mut resolved.columns {
+            (column.default, column.generated, column.on_update) = (false, false, false);
+        }
+        Entry::Resolved(relation(resolved))
+    }
+
+    #[test]
+    fn fail_closed_relations_refuse_writes_while_hash_rules_exist() {
+        let config = hashed("t");
+        let sql = "UPDATE t SET b = 1";
+        let plan = |relation: fn(Relation) -> Relation| {
+            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+                described(name, relation)
+            })
+            .plan(&config)
+            .map(|_| ())
+        };
+        assert_eq!(
+            plan(|relation| relation),
+            Err(Rejection::Trigger {
+                relation: "public.t".into()
+            })
+        );
+        assert_eq!(
+            plan(|relation| Relation {
+                triggers: false,
+                ..relation
+            }),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn resolved_cascades_reach_the_plan() {
+        let config = hashed("c");
+        let plan = |sql| {
+            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+                described(name, |relation| {
+                    let cascade = Cascade {
+                        parent: SourceRef::new(relation.id.clone(), "b"),
+                        child: SourceRef::new(RelationId::new("shop", "public", "c"), "a"),
+                        action: CascadeAction::Default,
+                        on_delete: false,
+                        triggers: false,
+                    };
+                    Relation {
+                        triggers: false,
+                        cascades: vec![cascade],
+                        ..relation
+                    }
+                })
+            })
+            .plan(&config)
+            .map(|_| ())
+        };
+        assert_eq!(
+            plan("UPDATE t SET b = 1"),
+            Err(Rejection::Computed {
+                column: "public.c.a".into()
+            })
+        );
+        assert_eq!(plan("UPDATE t SET a = 1"), Ok(()));
     }
 
     #[test]

@@ -10,7 +10,8 @@
 //!    escapes as the server does,
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing in `information_schema` (`TABLES`, `COLUMNS` with `INVISIBLE`
-//!    columns hidden from `*`, `VIEWS` bodies) for at most
+//!    columns hidden from `*`, `VIEWS` bodies, `TRIGGERS`, and referential
+//!    actions from `REFERENTIAL_CONSTRAINTS` and `KEY_COLUMN_USAGE`) for at most
 //!    [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. refuses a write that reads a view but cannot roll back, and on
@@ -35,8 +36,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    RelationRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
+    RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -90,14 +91,60 @@ const TABLES_FOLDED: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME
      WHERE LOWER(CAST(TABLE_SCHEMA AS CHAR)) = ? AND LOWER(CAST(TABLE_NAME AS CHAR)) = ?)";
 
 /// One relation's columns, bound with its exact schema and name.
+///
+/// Also each column's `COLUMN_DEFAULT` text (`NULL` when it has none; see
+/// [`has_default`]) and whether `GENERATION_EXPRESSION` is set.
 const COLUMNS_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(COLUMN_NAME AS CHAR), CAST(EXTRA AS CHAR), CAST(ORDINAL_POSITION AS SIGNED), \
-     CAST(NULL AS CHAR) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+     CAST(NULL AS CHAR), CAST(COLUMN_DEFAULT AS CHAR), \
+     CAST(COALESCE(GENERATION_EXPRESSION, '') <> '' AS SIGNED), CAST(0 AS SIGNED) \
+     FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
 
 /// One view's body, bound with its exact schema and name, shaped like [`COLUMNS_BRANCH`].
 const VIEW_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
-     CAST(VIEW_DEFINITION AS CHAR) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+     CAST(VIEW_DEFINITION AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(0 AS SIGNED) \
+     FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+
+/// One relation's triggers, a row each, bound and shaped like [`COLUMNS_BRANCH`].
+///
+/// Without the `TRIGGER` privilege on the table the view lists none.
+const TRIGGERS_BRANCH: &str = "(SELECT CAST(EVENT_OBJECT_SCHEMA AS CHAR), CAST(EVENT_OBJECT_TABLE AS CHAR), \
+     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
+     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(1 AS SIGNED) \
+     FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ?)";
+
+/// Walks the referential actions below the tables of [`ROOT`] branches.
+///
+/// Per edge: its root's schema and name as bound, the parent's schema,
+/// table, and column, the child's, the rule (`CASCADE`, `SET NULL`, `SET
+/// DEFAULT`; `InnoDB` rejects the last, read anyway), and whether a parent
+/// `DELETE` fires it. Below each reached child table come all its edges,
+/// the closure [`Relation::cascades`] asks for. `UNION` ends the walk on
+/// cycles. Names compare in the connection collation, which may over-match
+/// (fail closed).
+const CASCADES_HEAD: &str = "WITH RECURSIVE \
+     edge (ps, pt, pc, cs, ct, cc, rule, deletes) AS (SELECT CAST(k.REFERENCED_TABLE_SCHEMA AS CHAR), \
+           CAST(k.REFERENCED_TABLE_NAME AS CHAR), CAST(k.REFERENCED_COLUMN_NAME AS CHAR), \
+           CAST(k.TABLE_SCHEMA AS CHAR), CAST(k.TABLE_NAME AS CHAR), CAST(k.COLUMN_NAME AS CHAR), \
+           CAST(CASE d.deletes WHEN 1 THEN r.DELETE_RULE ELSE r.UPDATE_RULE END AS CHAR), d.deletes \
+         FROM information_schema.REFERENTIAL_CONSTRAINTS AS r \
+         JOIN information_schema.KEY_COLUMN_USAGE AS k ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA \
+           AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND k.TABLE_NAME = r.TABLE_NAME \
+         JOIN (SELECT 0 AS deletes UNION ALL SELECT 1) AS d \
+         WHERE k.REFERENCED_COLUMN_NAME IS NOT NULL), \
+     live AS (SELECT * FROM edge WHERE rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
+     roots (rs, rt) AS (";
+
+/// One root table of [`CASCADES_HEAD`], bound with its exact schema and name.
+const ROOT: &str = "SELECT CAST(? AS CHAR), CAST(? AS CHAR)";
+
+/// Closes [`CASCADES_HEAD`] after its [`ROOT`] branches.
+const CASCADES_TAIL: &str = "), \
+     walk (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) AS ( \
+       SELECT roots.rs, roots.rt, live.* FROM roots JOIN live ON live.ps = roots.rs AND live.pt = roots.rt \
+       UNION SELECT w.rs, w.rt, e.* FROM walk AS w JOIN live AS e ON e.ps = w.cs AND e.pt = w.ct) \
+     SELECT rs, rt, ps, pt, pc, cs, ct, cc, rule, CAST(deletes AS SIGNED) FROM walk";
 
 /// Orders the detail rows by relation, then column position.
 const DETAILS_ORDER: &str = " ORDER BY 1, 2, 5";
@@ -119,14 +166,16 @@ const TRANSACTIONAL_ENGINE: &str = "InnoDB";
 ///
 /// Unknown column (1054) or table (1146), syntax (1064, which quotes the
 /// caller's own SQL), access (1142, 1143), unknown function (1305), foreign
-/// keys (1451, 1452), `NULL` (1048), range (1264), length (1406), checks
-/// (3819, `MariaDB` 4025), JSON (3140, 3141), and duplicate column names
-/// (1060, which name the caller's own output columns).
+/// keys (1451, 1452), `NULL` (1048), checks (3819, `MariaDB` 4025), and
+/// duplicate column names (1060, which name the caller's own output columns).
 ///
-/// Not arithmetic overflow (1690): its expression may print an evaluated argument.
-const VALUE_FREE_ERRORS: &[u16] = &[
-    1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 1264, 1406, 3819, 4025, 3140, 3141, 1060,
-];
+/// Not arithmetic overflow (1690): its expression may print an evaluated
+/// argument. Not invalid JSON text (3140, 3141): its position can encode a
+/// value (`CAST(CONCAT(REPEAT(' ', ASCII(email)), 'x') AS JSON)`). Not out of
+/// range (1264) or too long (1406): their row number can encode a value
+/// (`UPDATE users SET ssn = IF(ssn LIKE '1%', REPEAT('x', 99), ssn)` fails at
+/// the first matching row).
+const VALUE_FREE_ERRORS: &[u16] = &[1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 3819, 4025, 1060];
 
 /// Whether the statement may write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +245,8 @@ struct Probe {
     sql_mode: String,
     /// The client charset (`character_set_client`).
     charset: String,
+    /// Whether the server is `MariaDB`, read from `VERSION()`.
+    mariadb: bool,
 }
 
 impl Probe {
@@ -220,6 +271,7 @@ impl Probe {
             lower_case,
             sql_mode,
             charset,
+            mariadb: server == DatabaseBackend::Mariadb,
         })
     }
 
@@ -308,8 +360,32 @@ struct Lookup {
 /// One row of [`TABLES_EXACT`] / [`TABLES_FOLDED`].
 type Table = (String, String, String, Option<String>);
 
-/// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] union.
-type Detail = (String, String, Option<String>, Option<String>, i64, Option<String>);
+/// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] / [`TRIGGERS_BRANCH`] union.
+type Detail = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
+
+/// One edge of the [`CASCADES_HEAD`] walk.
+type Edge = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+);
 
 /// A relation found in `information_schema`, before it becomes a catalog entry.
 #[derive(Debug, Default)]
@@ -320,8 +396,33 @@ struct Found {
     engine: Option<String>,
     /// `VIEW_DEFINITION`; empty when the user may not read it.
     body: Option<String>,
-    /// Column names with their `EXTRA` flags, in ordinal order.
-    columns: Vec<(String, String)>,
+    /// Columns in ordinal order.
+    columns: Vec<FoundColumn>,
+    /// Whether `TRIGGERS` lists a trigger on it.
+    triggers: bool,
+    /// The referential actions below it, for a table.
+    cascades: Vec<Cascade>,
+}
+
+/// A column found in `information_schema.COLUMNS`.
+#[derive(Debug)]
+struct FoundColumn {
+    /// `COLUMN_NAME`.
+    name: String,
+    /// `EXTRA` flags.
+    extra: String,
+    /// Whether `COLUMN_DEFAULT` holds a default ([`has_default`]).
+    default: bool,
+    /// Whether `GENERATION_EXPRESSION` is set.
+    generated: bool,
+}
+
+/// Reports whether a `COLUMN_DEFAULT` text is a default.
+///
+/// `MySQL` reports `DEFAULT NULL` as SQL `NULL`; `MariaDB` as the unquoted
+/// text `NULL`, quoting string defaults, so the text means no default there.
+fn has_default(text: Option<&str>, mariadb: bool) -> bool {
+    text.is_some_and(|text| !(mariadb && text == "NULL"))
 }
 
 /// A relation the catalog reads described.
@@ -342,8 +443,9 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError::MultiStatement`] or
-    /// [`SqlError::ExecutableCommentBlocked`] for SQL the parser would read
+    /// Returns [`SqlError::MultiStatement`],
+    /// [`SqlError::ExecutableCommentBlocked`], or
+    /// [`SqlError::UnreadableCharacter`] for SQL the parser would read
     /// unlike the server, [`SqlError::ReadOnlyViolation`] for a write in
     /// read-only mode, a refusal when the handler has no redactor, the
     /// reason the column rules stopped the statement, or the [`SqlError`]
@@ -652,8 +754,8 @@ async fn fetch(
         let mut branches = Vec::new();
         let mut keys = Vec::new();
         for (key, relation) in &found {
-            branches.push(COLUMNS_BRANCH);
-            keys.push(key);
+            branches.extend([COLUMNS_BRANCH, TRIGGERS_BRANCH]);
+            keys.extend([key, key]);
             if relation.kind == "VIEW" {
                 branches.push(VIEW_BRANCH);
                 keys.push(key);
@@ -664,17 +766,25 @@ async fn fetch(
         for (schema, name) in keys {
             details = details.bind(schema.as_str()).bind(name.as_str());
         }
-        for (schema, name, column, extra, _, body) in details.fetch_all(&mut *conn).await? {
+        for (schema, name, column, extra, _, body, default, generated, trigger) in details.fetch_all(&mut *conn).await?
+        {
             let Some(relation) = found.get_mut(&(schema, name)) else {
                 continue;
             };
+            relation.triggers |= trigger != 0;
             if let Some(column) = column {
-                relation.columns.push((column, extra.unwrap_or_default()));
+                relation.columns.push(FoundColumn {
+                    name: column,
+                    extra: extra.unwrap_or_default(),
+                    default: has_default(default.as_deref(), probe.mariadb),
+                    generated: generated != 0,
+                });
             }
             if body.is_some() {
                 relation.body = body;
             }
         }
+        cascades(conn, &mut found).await?;
     }
 
     let mut unresolved = Vec::new();
@@ -692,7 +802,7 @@ async fn fetch(
         {
             owners.push(Owner {
                 id: resolved.id.clone(),
-                columns: found.columns.iter().map(|(column, _)| column.clone()).collect(),
+                columns: found.columns.iter().map(|column| column.name.clone()).collect(),
                 view: resolved.view_sql.clone(),
                 engine: found.engine.clone(),
             });
@@ -701,6 +811,52 @@ async fn fetch(
     }
     entries.extend(vacant(conn, probe, unresolved).await?);
     Ok(entries)
+}
+
+/// Reads the referential actions below every table of `found`, in one walk.
+///
+/// `MySQL` and `MariaDB` fire no triggers on cascaded changes.
+async fn cascades(
+    conn: &mut sqlx::MySqlConnection,
+    found: &mut BTreeMap<(String, String), Found>,
+) -> Result<(), sqlx::Error> {
+    let roots: Vec<_> = found
+        .iter()
+        .filter(|(_, relation)| matches!(relation.kind.as_str(), "BASE TABLE" | "SYSTEM VERSIONED"))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let sql = format!(
+        "{CASCADES_HEAD}{}{CASCADES_TAIL}",
+        vec![ROOT; roots.len()].join(" UNION ALL ")
+    );
+    let mut query = sqlx::query_as::<_, Edge>(AssertSqlSafe(sql));
+    for (schema, name) in &roots {
+        query = query.bind(schema.as_str()).bind(name.as_str());
+    }
+    let column =
+        |schema: &str, name: &str, column: String| SourceRef::new(RelationId::new(CATALOG, schema, name), column);
+    for (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) in query.fetch_all(&mut *conn).await? {
+        let Some(relation) = found.get_mut(&(rs, rt)) else {
+            continue;
+        };
+        let on_delete = deletes != 0;
+        relation.cascades.push(Cascade {
+            parent: column(&ps, &pt, pc),
+            child: column(&cs, &ct, cc),
+            action: match rule.to_ascii_uppercase().as_str() {
+                "CASCADE" if on_delete => CascadeAction::Delete,
+                "CASCADE" => CascadeAction::Copy,
+                "SET NULL" => CascadeAction::Null,
+                _ => CascadeAction::Default,
+            },
+            on_delete,
+            triggers: false,
+        });
+    }
+    Ok(())
 }
 
 /// Builds the catalog entry of one relation found in `information_schema`.
@@ -715,26 +871,39 @@ fn entry(schema: &str, name: &str, found: &Found) -> Entry {
     let columns = found
         .columns
         .iter()
-        .map(|(column, extra)| {
-            let invisible = extra
-                .split_whitespace()
-                .any(|flag| flag.eq_ignore_ascii_case("INVISIBLE"));
-            if invisible {
-                CatalogColumn::hidden(column)
-            } else {
-                CatalogColumn::new(column)
+        .map(|column| {
+            let flag = |name: &str| {
+                column
+                    .extra
+                    .split_whitespace()
+                    .any(|flag| flag.eq_ignore_ascii_case(name))
+            };
+            CatalogColumn {
+                name: column.name.clone(),
+                star_visible: !flag("INVISIBLE"),
+                default: column.default || flag("auto_increment") || flag("DEFAULT_GENERATED"),
+                generated: column.generated,
+                // `MySQL` writes `on update CURRENT_TIMESTAMP`, `MariaDB` `on update current_timestamp()`.
+                on_update: column.extra.to_ascii_lowercase().contains("on update"),
             }
         })
         .collect();
-    let relation = Relation::new(RelationId::new(CATALOG, schema, name), kind, columns);
-    if kind != RelationKind::View {
-        return Entry::Resolved(relation);
-    }
     // An empty body means the user may not read it (another definer, no `SHOW VIEW`).
-    match found.body.as_deref().map(str::trim) {
-        Some(body) if !body.is_empty() => Entry::Resolved(relation.with_view_sql(body)),
-        _ => Entry::Absent,
-    }
+    let view_sql = match found.body.as_deref().map(str::trim) {
+        _ if kind != RelationKind::View => None,
+        Some(body) if !body.is_empty() => Some(body.to_owned()),
+        _ => return Entry::Absent,
+    };
+    Entry::Resolved(Relation {
+        id: RelationId::new(CATALOG, schema, name),
+        kind,
+        columns,
+        view_sql,
+        // `MySQL` and `MariaDB` have no inheritance.
+        family: Family::default(),
+        triggers: found.triggers,
+        cascades: found.cascades.clone(),
+    })
 }
 
 /// Builds the entries of names nothing resolves to.
@@ -817,6 +986,7 @@ mod tests {
             lower_case,
             sql_mode: String::new(),
             charset: "utf8mb4".into(),
+            mariadb: false,
         }
     }
 
@@ -885,9 +1055,38 @@ mod tests {
             engine: None,
             body: body.map(Into::into),
             columns: vec![
-                ("id".into(), "auto_increment".into()),
-                ("secret".into(), "INVISIBLE".into()),
+                column("id", "auto_increment", false, false),
+                column("secret", "INVISIBLE", false, false),
             ],
+            ..Found::default()
+        }
+    }
+
+    #[test]
+    fn entries_carry_the_triggers_and_cascades_found() {
+        let cascade = Cascade {
+            parent: SourceRef::new(RelationId::new(CATALOG, "app", "r"), "id"),
+            child: SourceRef::new(RelationId::new(CATALOG, "app", "c"), "rid"),
+            action: CascadeAction::Copy,
+            on_delete: false,
+            triggers: false,
+        };
+        let plain = resolved("app", &found("BASE TABLE", None)).expect("table");
+        assert!(!plain.triggers && plain.cascades.is_empty(), "{plain:?}");
+        let mut table = found("BASE TABLE", None);
+        table.triggers = true;
+        table.cascades = vec![cascade.clone()];
+        let relation = resolved("app", &table).expect("table");
+        assert!(relation.triggers);
+        assert_eq!(relation.cascades, [cascade]);
+    }
+
+    fn column(name: &str, extra: &str, default: bool, generated: bool) -> FoundColumn {
+        FoundColumn {
+            name: name.into(),
+            extra: extra.into(),
+            default,
+            generated,
         }
     }
 
@@ -921,8 +1120,63 @@ mod tests {
         let relation = resolved("app", &found("BASE TABLE", None)).expect("table");
         assert_eq!(
             relation.columns,
-            vec![CatalogColumn::new("id"), CatalogColumn::hidden("secret")]
+            vec![
+                CatalogColumn {
+                    name: "id".into(),
+                    star_visible: true,
+                    default: true,
+                    generated: false,
+                    on_update: false,
+                },
+                CatalogColumn {
+                    name: "secret".into(),
+                    star_visible: false,
+                    default: false,
+                    generated: false,
+                    on_update: false,
+                }
+            ]
         );
+    }
+
+    #[test]
+    fn column_facts_follow_defaults_generation_and_extra_flags() {
+        let mut table = found("BASE TABLE", None);
+        table.columns = vec![
+            column("plain", "", false, false),
+            column("dflt", "", true, false),
+            column("now", "DEFAULT_GENERATED", false, false),
+            column("gen", "STORED GENERATED", false, true),
+            column("mysql_ts", "DEFAULT_GENERATED on update CURRENT_TIMESTAMP", true, false),
+            column("maria_ts", "on update current_timestamp()", true, false),
+        ];
+        let relation = resolved("app", &table).expect("table");
+        let facts: Vec<_> = relation
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.default, column.generated, column.on_update))
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                ("plain", false, false, false),
+                ("dflt", true, false, false),
+                ("now", true, false, false),
+                ("gen", false, true, false),
+                ("mysql_ts", true, false, true),
+                ("maria_ts", true, false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn mariadb_spells_default_null_as_unquoted_text() {
+        assert!(!has_default(None, false));
+        assert!(!has_default(None, true));
+        assert!(has_default(Some("NULL"), false));
+        assert!(!has_default(Some("NULL"), true));
+        assert!(has_default(Some("'NULL'"), true));
+        assert!(has_default(Some("0"), true));
     }
 
     #[test]
@@ -980,6 +1234,21 @@ mod tests {
         let target = RelationId::new(CATALOG, "app", "source");
         let owners = [owner("source", None, Some("select 1"))];
         assert!(rolls_back(&StatementKind::CreateTableAs, Some(&target), &owners));
+    }
+
+    #[test]
+    fn value_echoing_errors_are_not_value_free() {
+        for number in [1062, 1264, 1366, 1406, 1690, 3140, 3141] {
+            assert!(!VALUE_FREE_ERRORS.contains(&number), "{number}");
+        }
+    }
+
+    #[test]
+    fn value_free_errors_are_unique() {
+        let mut numbers = VALUE_FREE_ERRORS.to_vec();
+        numbers.sort_unstable();
+        numbers.dedup();
+        assert_eq!(numbers.len(), VALUE_FREE_ERRORS.len(), "duplicate error");
     }
 
     /// Connects to the seeded `app` database that `./tests/run.sh` starts.

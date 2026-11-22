@@ -10,8 +10,9 @@
 //!    server does,
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing with `to_regclass` (so the session's `search_path` decides, as
-//!    it will when the statement runs), columns from `pg_attribute`, and view
-//!    bodies from `pg_get_viewdef`, for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
+//!    it will when the statement runs), columns from `pg_attribute`, view
+//!    bodies from `pg_get_viewdef`, triggers and rules from `pg_trigger` and
+//!    `pg_rewrite`, and referential actions from `pg_constraint`, for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. executes it, refusing a result that does not fit the plan before any
 //!    row is kept or a write commits,
@@ -31,15 +32,15 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection, Relation, RelationId,
-    RelationKind, RelationRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection,
+    Relation, RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlx::postgres::{PgColumn, PgQueryResult, PgRow};
-use sqlx::{Column as _, Row as _, SqlStr};
+use sqlx::{Column as _, FromRow as _, Row as _, SqlStr};
 
 use crate::PostgresHandler;
 use crate::connection::{PostgresConnection, quote_ident};
@@ -65,18 +66,48 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// a node, as child and parent OIDs. `UNION` ends the walk on diamonds. It
 /// takes no lock and names no `inhdetachpending`, so a partition pending
 /// detach still counts.
+///
+/// Last, per column, whether the server can fill it (a default, an
+/// identity, or a domain type with a default) and whether it is generated,
+/// each OR-ed over the relation and every descendant by column name: a
+/// row written through the relation may land in any of them.
+///
+/// Then whether the relation or a descendant has a user trigger (enabled
+/// or not) or a non-`SELECT` rule, and the referential actions below them:
+/// per edge, the parent's schema, table, and column, the child's, the
+/// action (`confupdtype` or `confdeltype`: `c`, `n`, `d`), whether a
+/// parent `DELETE` fires it, and whether the child has a user trigger or
+/// non-`SELECT` rule. Each foreign key's columns pair by position. The walk
+/// starts at every edge whose parent is the relation or a descendant; below
+/// each reached child table come all its edges, the closure
+/// [`Relation::cascades`] asks for. `UNION` ends it on cycles.
 const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
      to_regnamespace(n.schema) IS NOT NULL, \
      coalesce(tree.oids, '{}'), coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}'), \
-     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}') \
+     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}'), \
+     coalesce(cols.defaults, '{}'), coalesce(cols.generated, '{}'), \
+     coalesce(fk.triggers, true), coalesce(fk.parent_schemas, '{}'), coalesce(fk.parent_names, '{}'), \
+     coalesce(fk.parent_columns, '{}'), coalesce(fk.child_schemas, '{}'), coalesce(fk.child_names, '{}'), \
+     coalesce(fk.child_columns, '{}'), coalesce(fk.actions, '{}'), coalesce(fk.deletes, '{}'), \
+     coalesce(fk.child_triggers, '{}') \
      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
      LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
      LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
-     LEFT JOIN LATERAL (SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
-           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid) \
+           SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
+           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers, \
+           array_agg(f.fills ORDER BY a.attnum < 0, a.attnum) AS defaults, \
+           array_agg(f.generated ORDER BY a.attnum < 0, a.attnum) AS generated \
            FROM pg_attribute AS a \
+           CROSS JOIN LATERAL (SELECT coalesce(bool_or(d.atthasdef OR d.attidentity <> '' \
+                 OR (t.typtype = 'd' AND t.typdefaultbin IS NOT NULL)), false) AS fills, \
+               coalesce(bool_or(d.attgenerated <> ''), false) AS generated \
+             FROM down JOIN pg_attribute AS d ON d.attrelid = down.oid AND d.attname = a.attname \
+               AND NOT d.attisdropped \
+             LEFT JOIN pg_type AS t ON t.oid = d.atttypid) AS f \
            WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
      LEFT JOIN LATERAL (WITH RECURSIVE \
            down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
@@ -91,25 +122,61 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
                 (SELECT array_agg(i.inhrelid::int8 ORDER BY i.inhrelid, i.inhparent) AS children, \
                    array_agg(i.inhparent::int8 ORDER BY i.inhrelid, i.inhparent) AS parents \
                  FROM pg_inherits AS i WHERE i.inhrelid IN (SELECT up.oid FROM up)) AS edges) AS tree ON true \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
+           edge(parent, pcol, child, ccol, action, deletes) AS (SELECT k.confrelid, k.confkey[p.i], k.conrelid, \
+                 k.conkey[p.i], CASE WHEN d.deletes THEN k.confdeltype ELSE k.confupdtype END, d.deletes \
+               FROM pg_constraint AS k \
+               CROSS JOIN LATERAL generate_subscripts(k.conkey, 1) AS p(i) \
+               CROSS JOIN (VALUES (false), (true)) AS d(deletes) \
+               WHERE k.contype = 'f' AND CASE WHEN d.deletes THEN k.confdeltype ELSE k.confupdtype END IN ('c', 'n', 'd')), \
+           walk AS (SELECT e.* FROM edge AS e WHERE e.parent IN (SELECT down.oid FROM down) \
+             UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child) \
+           SELECT EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid IN (SELECT down.oid FROM down) AND NOT g.tgisinternal) \
+               OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class IN (SELECT down.oid FROM down) AND r.ev_type <> '1') \
+               AS triggers, \
+             array_agg(ps.nspname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_schemas, \
+             array_agg(pc.relname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_names, \
+             array_agg(pa.attname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS parent_columns, \
+             array_agg(cs.nspname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_schemas, \
+             array_agg(cc.relname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_names, \
+             array_agg(ca.attname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_columns, \
+             array_agg(w.action::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS actions, \
+             array_agg(w.deletes ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS deletes, \
+             array_agg(EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid = w.child AND NOT g.tgisinternal) \
+                 OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class = w.child AND r.ev_type <> '1') \
+               ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_triggers \
+           FROM walk AS w \
+           JOIN pg_class AS pc ON pc.oid = w.parent JOIN pg_namespace AS ps ON ps.oid = pc.relnamespace \
+           JOIN pg_attribute AS pa ON pa.attrelid = w.parent AND pa.attnum = w.pcol \
+           JOIN pg_class AS cc ON cc.oid = w.child JOIN pg_namespace AS cs ON cs.oid = cc.relnamespace \
+           JOIN pg_attribute AS ca ON ca.attrelid = w.child AND ca.attnum = w.ccol) AS fk ON true \
      ORDER BY n.ord";
 
-/// `SQLSTATE` classes whose messages name schema objects or states, never values.
+/// `SQLSTATE` codes whose messages name schema objects, states, or fixed limits, never values.
 ///
-/// Syntax and access (`42`), transaction state (`25`), rollbacks (`40`),
-/// resources (`53`), limits (`54`), operator intervention (`57`), and
-/// connections (`08`).
+/// Connections (`08`), transaction state (`25`), rollbacks (`40`), syntax and
+/// access (`42`), resources (`53`), the statement, column, and argument limits
+/// of `54`, and operator intervention (`57`), as listed in `errcodes.txt` of
+/// `PostgreSQL` 18. Any other code, a new one included, is withheld.
 ///
-/// Not unsupported features (`0A`): a `reg*` cast of a three-part value
+/// Not every code of those classes: `reg*` input casts (`ssn::regclass`)
+/// quote the cast text in syntax (`42601`), undefined-relation (`42P01`),
+/// -object (`42704`), -function (`42883`), and ambiguous-function (`42725`)
+/// errors, and `invalid_name` (`42602`) quotes configuration parameter and
+/// replication slot names taken from values. Nor `54000`, whose `tsvector`
+/// and `tsquery` input errors quote the whole input or its byte count; nor
+/// unsupported features (`0A`), where a `reg*` cast of a three-part value
 /// quotes it as a cross-database reference.
-const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
-
-/// Class `42` codes withheld anyway.
-///
-/// `reg*` input casts (`ssn::regclass`) quote the cast text in syntax,
-/// undefined-relation, -object, -function, and ambiguous-function errors;
-/// `invalid_name` quotes configuration parameter and replication slot names
-/// taken from values.
-const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
+const VALUE_FREE_CODES: &[&str] = &[
+    "08000", "08001", "08003", "08004", "08006", "08007", "08P01", "25000", "25001", "25002", "25003", "25004",
+    "25005", "25006", "25007", "25008", "25P01", "25P02", "25P03", "25P04", "40000", "40001", "40002", "40003",
+    "40P01", "42000", "42501", "42611", "42622", "42701", "42702", "42703", "42710", "42712", "42723", "42803",
+    "42804", "42809", "42830", "42846", "42939", "428C9", "42P02", "42P03", "42P04", "42P05", "42P06", "42P07",
+    "42P08", "42P09", "42P10", "42P11", "42P12", "42P13", "42P14", "42P15", "42P16", "42P17", "42P18", "42P19",
+    "42P20", "42P21", "42P22", "53000", "53100", "53200", "53300", "53400", "54001", "54011", "54023", "57000",
+    "57014", "57P01", "57P02", "57P03", "57P04", "57P05",
+];
 
 /// Re-reads the inheritance closure of each relation OID in `$1`, in order.
 ///
@@ -222,7 +289,21 @@ fn regclass(reference: &RelationRef) -> String {
     }
 }
 
-/// One row of [`RESOLVE_SQL`].
+/// The write facts of one [`RESOLVE_SQL`] row, after its first 16 columns.
+type Writes = (
+    bool,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<bool>,
+    Vec<bool>,
+);
+
+/// The first 16 columns of one [`RESOLVE_SQL`] row; [`Writes`] holds the rest.
 type Resolved = (
     Option<String>,
     Option<String>,
@@ -238,6 +319,8 @@ type Resolved = (
     Vec<String>,
     Vec<i64>,
     Vec<i64>,
+    Vec<bool>,
+    Vec<bool>,
 );
 
 impl PostgresHandler {
@@ -531,14 +614,16 @@ async fn fetch(
         .iter()
         .map(|(_, reference)| reference.schema.as_deref().map(quote_ident))
         .collect();
-    let rows: Vec<Resolved> = sqlx::query_as(RESOLVE_SQL)
+    let rows: Vec<PgRow> = sqlx::query(RESOLVE_SQL)
         .bind(regclasses)
         .bind(schemas)
         .fetch_all(&mut *conn)
         .await?;
     let mut entries = Vec::new();
     for ((name, reference), row) in names.into_iter().zip(rows) {
-        let entry = entry(probe, &name, &reference, &row);
+        let writes = writes(&row)?;
+        let row = Resolved::from_row(&row)?;
+        let entry = entry(probe, &name, &reference, &row, writes);
         let (_, _, _, oid, body, names, numbers, ..) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.entry(oid).or_insert_with(|| Owner {
@@ -553,9 +638,74 @@ async fn fetch(
     Ok(entries)
 }
 
+/// Reads the [`Writes`] columns of one [`RESOLVE_SQL`] row.
+fn writes(row: &PgRow) -> Result<Writes, sqlx::Error> {
+    Ok((
+        row.try_get(16)?,
+        row.try_get(17)?,
+        row.try_get(18)?,
+        row.try_get(19)?,
+        row.try_get(20)?,
+        row.try_get(21)?,
+        row.try_get(22)?,
+        row.try_get(23)?,
+        row.try_get(24)?,
+        row.try_get(25)?,
+    ))
+}
+
+/// Reads whether a relation has triggers, and its cascades, from `writes`.
+///
+/// An action the walk does not name sets the child's default (fail closed).
+fn triggers_and_cascades(probe: &Probe, writes: Writes) -> (bool, Vec<Cascade>) {
+    let (
+        triggers,
+        parent_schemas,
+        parent_names,
+        parent_columns,
+        child_schemas,
+        child_names,
+        child_columns,
+        actions,
+        deletes,
+        child_triggers,
+    ) = writes;
+    let column =
+        |schema: &str, name: &str, column: &str| SourceRef::new(RelationId::new(&probe.database, schema, name), column);
+    let mut cascades = Vec::new();
+    for (index, action) in actions.iter().enumerate() {
+        let (Some(ps), Some(pn), Some(pc), Some(cs), Some(cn), Some(cc), Some(&on_delete), Some(&child)) = (
+            parent_schemas.get(index),
+            parent_names.get(index),
+            parent_columns.get(index),
+            child_schemas.get(index),
+            child_names.get(index),
+            child_columns.get(index),
+            deletes.get(index),
+            child_triggers.get(index),
+        ) else {
+            // Arrays of unequal length: the relation counts as triggered.
+            return (true, cascades);
+        };
+        cascades.push(Cascade {
+            parent: column(ps, pn, pc),
+            child: column(cs, cn, cc),
+            action: match action.as_str() {
+                "c" if on_delete => CascadeAction::Delete,
+                "c" => CascadeAction::Copy,
+                "n" => CascadeAction::Null,
+                _ => CascadeAction::Default,
+            },
+            on_delete,
+            triggers: child,
+        });
+    }
+    (triggers, cascades)
+}
+
 /// Builds the catalog entry of one resolved row.
-fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
-    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, ..) = row;
+fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved, writes: Writes) -> Entry {
+    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, .., defaults, generated) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
         return vacant(probe, name, reference, *schema_exists);
     };
@@ -571,28 +721,40 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
     let columns = columns
         .iter()
         .zip(numbers)
-        .map(|(column, &number)| {
-            if number > 0 {
-                CatalogColumn::new(column.clone())
-            } else {
-                CatalogColumn::hidden(column.clone())
+        .enumerate()
+        .map(|(index, (column, &number))| {
+            // A fact the row lacks is `true` (fail closed).
+            let fact = |facts: &[bool]| facts.get(index).copied().unwrap_or(true);
+            CatalogColumn {
+                name: column.clone(),
+                star_visible: number > 0,
+                default: fact(defaults),
+                generated: fact(generated),
+                // `PostgreSQL` has no on-update columns.
+                on_update: false,
             }
         })
         .collect();
-    let id = RelationId::new(&probe.database, schema, relname);
-    let relation = Relation::new(id, kind, columns).with_family(family(probe, row));
-    if !matches!(kind, RelationKind::View | RelationKind::MatView) {
-        return Entry::Resolved(relation);
-    }
-    match body.as_deref().map(view_query) {
-        Some(query) if !query.is_empty() => Entry::Resolved(relation.with_view_sql(query)),
-        _ => Entry::Absent,
-    }
+    let view_sql = match body.as_deref().map(view_query) {
+        _ if !matches!(kind, RelationKind::View | RelationKind::MatView) => None,
+        Some(query) if !query.is_empty() => Some(query),
+        _ => return Entry::Absent,
+    };
+    let (triggers, cascades) = triggers_and_cascades(probe, writes);
+    Entry::Resolved(Relation {
+        id: RelationId::new(&probe.database, schema, relname),
+        kind,
+        columns,
+        view_sql,
+        family: family(probe, row),
+        triggers,
+        cascades,
+    })
 }
 
 /// Builds the inheritance tree of one resolved row from its closure nodes and edges.
 fn family(probe: &Probe, row: &Resolved) -> Family {
-    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents) = row;
+    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents, _, _) = row;
     let Some(owner) = *oid else {
         return Family::default();
     };
@@ -686,9 +848,12 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
         return None;
     }
     let code = error.as_database_error()?.code()?;
-    let value_free =
-        VALUE_FREE_CLASSES.iter().any(|class| code.starts_with(class)) && !VALUE_ECHOING_CODES.contains(&code.as_ref());
-    (!value_free).then(|| code.into_owned())
+    (!value_free(&code)).then(|| code.into_owned())
+}
+
+/// Whether messages of the `SQLSTATE` `code` never carry a value.
+fn value_free(code: &str) -> bool {
+    VALUE_FREE_CODES.contains(&code)
 }
 
 #[cfg(test)]
@@ -705,6 +870,36 @@ mod tests {
             schema: schema.map(Into::into),
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn value_echoing_codes_are_withheld() {
+        for code in [
+            "54000", "0A000", "22P02", "42601", "42602", "42P01", "42704", "42725", "42883", "XX000", "42ZZZ",
+        ] {
+            assert!(!value_free(code), "{code}");
+        }
+        for code in [
+            "42501", "42703", "25006", "40001", "53200", "54001", "54011", "54023", "57014", "08P01",
+        ] {
+            assert!(value_free(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn value_free_codes_are_unique_and_well_formed() {
+        let mut codes = VALUE_FREE_CODES.to_vec();
+        for code in &codes {
+            assert_eq!(code.len(), 5, "{code}");
+            assert!(
+                code.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_uppercase()),
+                "{code}"
+            );
+        }
+        let total = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), total, "duplicate code");
     }
 
     #[test]
@@ -799,6 +994,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            vec![true, false],
+            vec![false, false],
         )
     }
 
@@ -894,7 +1091,13 @@ mod tests {
 
     fn resolved(row: &Resolved) -> Option<Relation> {
         let name = WrittenName::query(vec![NamePart::bare("r")]);
-        match entry(&probe(Some("public")), &name, &reference(None, "r"), row) {
+        match entry(
+            &probe(Some("public")),
+            &name,
+            &reference(None, "r"),
+            row,
+            Writes::default(),
+        ) {
             Entry::Resolved(relation) => Some(relation),
             _ => None,
         }
@@ -926,7 +1129,36 @@ mod tests {
         let relation = resolved(&row("r", "public", None)).expect("table");
         assert_eq!(
             relation.columns,
-            vec![CatalogColumn::new("id"), CatalogColumn::hidden("ctid")]
+            vec![
+                CatalogColumn {
+                    name: "id".into(),
+                    star_visible: true,
+                    default: true,
+                    generated: false,
+                    on_update: false,
+                },
+                CatalogColumn {
+                    name: "ctid".into(),
+                    star_visible: false,
+                    default: false,
+                    generated: false,
+                    on_update: false,
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn columns_missing_from_the_fact_arrays_have_defaults_and_generate() {
+        let mut row = row("r", "public", None);
+        row.14 = Vec::new();
+        row.15 = Vec::new();
+        let relation = resolved(&row).expect("table");
+        assert!(
+            relation
+                .columns
+                .iter()
+                .all(|column| column.default && column.generated && !column.on_update)
         );
     }
 
@@ -959,9 +1191,17 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(
-            entry(&probe(Some("public")), &name, &reference(None, "n"), &row),
+            entry(
+                &probe(Some("public")),
+                &name,
+                &reference(None, "n"),
+                &row,
+                Writes::default()
+            ),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
         );
     }
@@ -984,12 +1224,12 @@ mod tests {
     }
 
     /// Fetches the family of `public.<name>` from the seeded database.
-    async fn seeded_family(conn: &mut sqlx::PgConnection, name: &str) -> Family {
+    async fn seeded_relation(conn: &mut sqlx::PgConnection, name: &str) -> Relation {
         let probe = probe(Some("public"));
         let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
         let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
         match entries.into_iter().next() {
-            Some((_, Entry::Resolved(relation))) => relation.family,
+            Some((_, Entry::Resolved(relation))) => relation,
             other => panic!("{name}: {other:?}"),
         }
     }
@@ -999,7 +1239,7 @@ mod tests {
     async fn resolve_reads_inheritance_and_partition_trees() {
         let mut conn = seeded().await;
         assert_eq!(
-            seeded_family(&mut conn, "ptab").await,
+            seeded_relation(&mut conn, "ptab").await.family,
             Family {
                 partitioned: true,
                 ancestors: BTreeSet::new(),
@@ -1007,7 +1247,7 @@ mod tests {
             }
         );
         assert_eq!(
-            seeded_family(&mut conn, "ptab_2").await,
+            seeded_relation(&mut conn, "ptab_2").await.family,
             Family {
                 partitioned: false,
                 ancestors: ids(&["ptab"]),
@@ -1016,7 +1256,7 @@ mod tests {
         );
         let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
         assert_eq!(
-            seeded_family(&mut conn, "inh_parent").await,
+            seeded_relation(&mut conn, "inh_parent").await.family,
             Family {
                 partitioned: false,
                 ancestors: BTreeSet::new(),
@@ -1027,14 +1267,135 @@ mod tests {
             }
         );
         assert_eq!(
-            seeded_family(&mut conn, "inh_child").await,
+            seeded_relation(&mut conn, "inh_child").await.family,
             Family {
                 partitioned: false,
                 ancestors: ids(&["inh_parent", "inh_other"]),
                 descendants: vec![grandchild],
             }
         );
-        assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
+        assert_eq!(seeded_relation(&mut conn, "users").await.family, Family::default());
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn resolve_reads_column_facts_over_every_landing_member() {
+        let mut conn = seeded().await;
+        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+        sqlx::raw_sql(SqlStr::from_static(
+            "CREATE DOMAIN facts_email AS text DEFAULT 'd@example.com'; \
+             CREATE TABLE facts_plain (id int GENERATED ALWAYS AS IDENTITY, a text, \
+               b text DEFAULT 'x', c facts_email, d text GENERATED ALWAYS AS (a) STORED); \
+             CREATE TABLE facts_p (id int, email text) PARTITION BY LIST (id); \
+             CREATE TABLE facts_p1 PARTITION OF facts_p (email DEFAULT 'p@example.com') FOR VALUES IN (1)",
+        ))
+        .execute(&mut *tx)
+        .await
+        .expect("setup");
+        let mut facts = Vec::new();
+        for name in ["facts_plain", "facts_p"] {
+            facts.extend(
+                seeded_relation(&mut tx, name)
+                    .await
+                    .columns
+                    .into_iter()
+                    .filter(|column| column.star_visible)
+                    .map(|column| (column.name, column.default, column.generated, column.on_update)),
+            );
+        }
+        tx.rollback().await.expect("rollback");
+        let fact = |name: &str, default, generated| (name.to_owned(), default, generated, false);
+        assert_eq!(
+            facts,
+            [
+                fact("id", true, false),
+                fact("a", false, false),
+                fact("b", true, false),
+                fact("c", true, false),
+                fact("d", true, true),
+                fact("id", false, false),
+                fact("email", true, false),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn resolve_reads_triggers_rules_and_the_cascades_below_every_landing_member() {
+        let mut conn = seeded().await;
+        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+        sqlx::raw_sql(SqlStr::from_static(
+            "CREATE FUNCTION fk_noop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; \
+             CREATE TABLE fk_p (a int, b int, UNIQUE (a, b)) PARTITION BY LIST (a); \
+             CREATE TABLE fk_p1 PARTITION OF fk_p FOR VALUES IN (1); \
+             CREATE TABLE fk_c (id int UNIQUE, x int, y int, \
+               FOREIGN KEY (y, x) REFERENCES fk_p (a, b) ON UPDATE CASCADE ON DELETE SET NULL); \
+             CREATE TABLE fk_g (z int REFERENCES fk_c (id) ON DELETE CASCADE, \
+               w int REFERENCES fk_c (id) ON UPDATE SET DEFAULT ON DELETE RESTRICT); \
+             CREATE TRIGGER fk_g_noop BEFORE INSERT ON fk_g FOR EACH ROW EXECUTE FUNCTION fk_noop(); \
+             ALTER TABLE fk_g DISABLE TRIGGER fk_g_noop; \
+             CREATE TABLE fk_r (id int); \
+             CREATE RULE fk_r_none AS ON DELETE TO fk_r DO INSTEAD NOTHING; \
+             CREATE TABLE fk_t (id int); \
+             CREATE TRIGGER fk_t_noop BEFORE INSERT ON fk_p1 FOR EACH ROW EXECUTE FUNCTION fk_noop()",
+        ))
+        .execute(&mut *tx)
+        .await
+        .expect("setup");
+        let mut relations = Vec::new();
+        for name in ["fk_p", "fk_c", "fk_r", "fk_t", "user_emails"] {
+            relations.push(seeded_relation(&mut tx, name).await);
+        }
+        tx.rollback().await.expect("rollback");
+        let triggers: Vec<_> = relations.iter().map(|relation| relation.triggers).collect();
+        // A partition's trigger, a rule, none, and a view's `SELECT` rule only.
+        assert_eq!(triggers, [true, false, true, false, false]);
+        let edges = |relation: &Relation| {
+            let mut edges: Vec<_> = relation
+                .cascades
+                .iter()
+                .map(|edge| {
+                    format!(
+                        "{}.{} -> {}.{} {:?} delete={} triggers={}",
+                        edge.parent.relation.name,
+                        edge.parent.column,
+                        edge.child.relation.name,
+                        edge.child.column,
+                        edge.action,
+                        edge.on_delete,
+                        edge.triggers
+                    )
+                })
+                .collect();
+            edges.sort();
+            edges
+        };
+        // `fk_p1` carries a clone of the constraint, so its edges come too.
+        // The walk takes every edge of the reached `fk_c`, though no write
+        // through `fk_p` fires them (`fk_c.id` never changes, no `fk_c` row
+        // is removed).
+        assert_eq!(
+            edges(&relations[0]),
+            [
+                "fk_c.id -> fk_g.w Default delete=false triggers=true",
+                "fk_c.id -> fk_g.z Delete delete=true triggers=true",
+                "fk_p.a -> fk_c.y Copy delete=false triggers=false",
+                "fk_p.a -> fk_c.y Null delete=true triggers=false",
+                "fk_p.b -> fk_c.x Copy delete=false triggers=false",
+                "fk_p.b -> fk_c.x Null delete=true triggers=false",
+                "fk_p1.a -> fk_c.y Copy delete=false triggers=false",
+                "fk_p1.a -> fk_c.y Null delete=true triggers=false",
+                "fk_p1.b -> fk_c.x Copy delete=false triggers=false",
+                "fk_p1.b -> fk_c.x Null delete=true triggers=false",
+            ]
+        );
+        assert_eq!(
+            edges(&relations[1]),
+            [
+                "fk_c.id -> fk_g.w Default delete=false triggers=true",
+                "fk_c.id -> fk_g.z Delete delete=true triggers=true",
+            ]
+        );
     }
 
     /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.
