@@ -45,7 +45,7 @@ docker run -i --rm \
   ghcr.io/haymon-ai/dbmcp
 ```
 
-To redact personal data in query results, add `-e DBMCP_PRIVACY_MODE=full` to any of these commands, and `-e DBMCP_PRIVACY_KEY=…` to keep hash tokens stable across restarts (see [Data Privacy](/privacy)).
+Personal data in query results is redacted by default: add `-e DBMCP_PRIVACY_MODE=none` to any of these commands to turn it off, or `-e DBMCP_PRIVACY_KEY=…` to keep hash tokens stable across restarts (see [Data Privacy](/privacy)).
 
 Images are available for `linux/amd64` and `linux/arm64`. A specific version can be pinned with `ghcr.io/haymon-ai/dbmcp:<version>`.
 

@@ -487,7 +487,11 @@ mod tests {
         assert_eq!(loaded.config.database.backend, DatabaseBackend::Mysql);
         assert_eq!(loaded.config.database.port, 3306);
         assert!(loaded.config.database.read_only);
-        assert!(loaded.config.http.is_none() && loaded.config.privacy.is_none() && loaded.config.ssh.is_none());
+        assert!(loaded.config.http.is_none() && loaded.config.ssh.is_none());
+        assert_eq!(
+            loaded.config.privacy.map(|privacy| privacy.mode),
+            Some(PrivacyMode::Full)
+        );
         assert!(loaded.warnings.is_empty());
     }
 
@@ -504,7 +508,6 @@ mod tests {
         let plain = Fixture::new().ok();
         let active = Fixture::new()
             .env("DBMCP_TRANSPORT", "http")
-            .env("DBMCP_PRIVACY_MODE", "full")
             .env("DBMCP_SSH_HOST", "bastion")
             .env("DBMCP_SSH_USER", "u")
             .env("DBMCP_SSH_PASSWORD", "p")
@@ -1726,9 +1729,9 @@ mod tests {
     #[test]
     fn privacy_rules_has_no_env_var() {
         let loaded = Fixture::new().env("DBMCP_PRIVACY_RULES", "garbage").ok();
-        assert!(loaded.config.privacy.is_none());
+        assert!(loaded.config.privacy.expect("privacy").rules.is_empty());
         let privacy = Fixture::new()
-            .env_file(".env", "DBMCP_PRIVACY_RULES=garbage\nDBMCP_PRIVACY_MODE=full\n")
+            .env_file(".env", "DBMCP_PRIVACY_RULES=garbage\n")
             .ok()
             .config
             .privacy
@@ -1737,12 +1740,10 @@ mod tests {
     }
 
     #[test]
-    fn rules_are_ignored_under_none_and_unset_mode() {
-        let body = RULES.replace("  mode: full\n", "");
-        for yaml in [body.clone(), body.replace("privacy:\n", "privacy:\n  mode: none\n")] {
-            let loaded = Fixture::new().config("dbmcp.yaml", &yaml).ok();
-            assert!(loaded.config.privacy.is_none(), "{yaml}");
-        }
+    fn rules_are_ignored_under_none() {
+        let yaml = RULES.replace("  mode: full\n", "  mode: none\n");
+        let loaded = Fixture::new().config("dbmcp.yaml", &yaml).ok();
+        assert!(loaded.config.privacy.is_none());
     }
 
     #[test]
@@ -1790,14 +1791,14 @@ mod tests {
     #[test]
     fn each_mode_resolves_its_section() {
         let model = "privacy:\n  model: models/ner\n  categories: [crypto]\n";
-        assert!(Fixture::new().config("dbmcp.yaml", model).ok().config.privacy.is_none());
         let none = Fixture::new()
             .config("dbmcp.yaml", model)
             .env("DBMCP_PRIVACY_MODE", "none");
         assert!(none.ok().config.privacy.is_none());
         let empty = Fixture::new().config("dbmcp.yaml", model).env("DBMCP_PRIVACY_MODE", "");
-        assert!(
-            empty.ok().config.privacy.is_none(),
+        assert_eq!(
+            privacy_section(&empty).mode,
+            PrivacyMode::Full,
             "empty env value falls back to the default"
         );
 
@@ -1811,6 +1812,13 @@ mod tests {
             assert_eq!(privacy.categories, Some(vec![PrivacyCategory::Crypto]));
             assert_eq!(privacy.model, Some(fixture.dir.path().join("models/ner")));
         }
+    }
+
+    #[test]
+    fn unset_mode_resolves_to_full() {
+        let privacy = privacy_section(&Fixture::new());
+        assert_eq!(privacy.mode, PrivacyMode::Full);
+        assert!(privacy.model.is_none() && privacy.rules.is_empty());
     }
 
     #[test]

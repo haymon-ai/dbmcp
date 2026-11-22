@@ -236,7 +236,7 @@
     {
       "name": "DBMCP_PRIVACY_MODE",
       "description": "Privacy of query tool output: none, rules (column rules only), or full (rules plus detection)",
-      "default": "none",
+      "default": "full",
       "choices": ["none", "rules", "full"]
     },
     {

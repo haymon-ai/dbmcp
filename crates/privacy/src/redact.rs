@@ -167,8 +167,7 @@ impl Redactor {
     ///
     /// The `hash` operator is keyed with `cfg.key`, or, when unset, with
     /// [`PrivacyConfig::MIN_KEY_BYTES`](dbmcp_config::PrivacyConfig::MIN_KEY_BYTES)
-    /// bytes drawn from the OS random source (a per-process key), logging a
-    /// warning when `cfg.operator` or any column rule hashes.
+    /// bytes drawn from the OS random source (a per-process key).
     ///
     /// # Errors
     ///
@@ -542,11 +541,6 @@ fn keyed_hash(cfg: &dbmcp_config::PrivacyConfig) -> Result<Operator, RedactorIni
     }
     let mut key = [0u8; dbmcp_config::PrivacyConfig::MIN_KEY_BYTES];
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
-    if cfg.operator == PrivacyOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash) {
-        tracing::warn!(
-            "privacy.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
-        );
-    }
     Ok(Operator::hash(&key))
 }
 

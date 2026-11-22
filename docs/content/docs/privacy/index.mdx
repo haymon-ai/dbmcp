@@ -9,7 +9,13 @@ The recording runs in `full` mode with the optional [Machine Learning](/privacy/
 
 Query results often contain personal or sensitive data (often called PII, personally identifiable information): email addresses, phone numbers, IBANs, API keys, names. <Dbmcp /> can find these values in tool output and rewrite them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
 
-The feature is **opt-in and off by default** (privacy mode `none`). Nothing is rewritten until you choose a [mode](#modes).
+The feature is **on by default** (privacy mode `full`). Set the [mode](#modes) to `rules` or `none` to narrow or turn it off.
+
+<Callout title="Why on by default">
+Peer database servers and redaction tools ship with redaction off. <Dbmcp /> deliberately does not: every response it returns leaves your trust boundary for the AI assistant's model provider. A wrong redaction is visible in the output and fixable with a setting; a leaked value cannot be taken back.
+</Callout>
+
+`hash` tokens change on every restart (and differ across replicas) unless [`privacy.key`](/privacy/redaction#hash-key) is set.
 
 ## How it works
 
@@ -29,21 +35,21 @@ Redaction applies to the **rows the query tools return** — `readQuery` results
 
 | YAML key | Environment variable | Type | Default | Description |
 |---|---|---|---|---|
-| `privacy.mode` | `DBMCP_PRIVACY_MODE` | enum | `none` | Which protection the query tools apply: `none`, `rules`, or `full` |
+| `privacy.mode` | `DBMCP_PRIVACY_MODE` | enum | `full` | Which protection the query tools apply: `none`, `rules`, or `full` |
 
 - `none`: nothing is rewritten or refused. Rows and error messages come back as the database returned them.
 - `rules`: only [column rules](/privacy/rules) apply. Ruled columns are rewritten and unsafe statements refused; nothing else is detected.
 - `full`: column rules plus detection on every string value and error message, as described above. Setting [`privacy.model`](/privacy/machine-learning) adds the machine-learning pass.
 
-The default is `none`. Any other value stops startup with the list of choices.
+The default is `full`. Any other value stops startup with the list of choices.
 
 ```yaml
 privacy:
-  mode: full
+  mode: rules
   operator: mask
 ```
 
-Or set `DBMCP_PRIVACY_MODE=full` (and optionally `DBMCP_PRIVACY_OPERATOR=mask`). See [Redaction](/privacy/redaction) for the operator, key, and categories.
+Or set `DBMCP_PRIVACY_MODE=rules` (and optionally `DBMCP_PRIVACY_OPERATOR=mask`); `DBMCP_PRIVACY_MODE=none` turns it off. See [Redaction](/privacy/redaction) for the operator, key, and categories.
 
 ## Limits
 

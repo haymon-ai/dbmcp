@@ -20,7 +20,7 @@ pub enum PrivacyMode {
 
 impl PrivacyMode {
     /// The mode an unset `privacy.mode` resolves to.
-    pub const DEFAULT: Self = Self::None;
+    pub const DEFAULT: Self = Self::Full;
 
     /// Accepted setting values, in the order error messages list them.
     pub(crate) const CHOICES: &[(&str, Self)] = &[("none", Self::None), ("rules", Self::Rules), ("full", Self::Full)];
