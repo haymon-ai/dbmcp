@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
-use dbmcp_config::{ColumnRule, PiiConfig};
+use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Dialect, ExplainForm, Family, Lineage, Member, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
+    Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn, RelationId, Role, SourceRef,
+    StatementKind,
 };
 
 use crate::deny;
@@ -115,9 +116,10 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
         .columns
         .iter()
         .map(|column| {
-            let position = combine(&column.sources, config, &names.families).ok_or(Rejection::Conflict {
-                position: column.position,
-            })?;
+            let position =
+                combine(&column.sources, column.flow, config, &names.families).ok_or(Rejection::Conflict {
+                    position: column.position,
+                })?;
             Ok(PlannedColumn {
                 position,
                 name: known_name(column),
@@ -134,7 +136,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 column: column_name(&column),
             };
             // Literals and unruled columns carry no ruled values.
-            let source = combine(&write.sources, config, &names.families).ok_or_else(laundering)?;
+            let source = combine(&write.sources, write.flow, config, &names.families).ok_or_else(laundering)?;
             if source == Position::Global {
                 continue;
             }
@@ -149,9 +151,9 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
             let family = names.families.get(target).unwrap_or(&empty);
             let mut landing = std::iter::once((target, &family.ancestors))
                 .chain(family.descendants.iter().map(|member| (&member.id, &member.ancestors)));
-            if !landing
-                .all(|(member, ancestors)| merge(direct(config, member, ancestors.iter(), &write.name)) == Some(source))
-            {
+            if !landing.all(|(member, ancestors)| {
+                merge(direct(config, member, ancestors.iter(), &write.name).map(pair)) == Some(source)
+            }) {
                 return Err(laundering());
             }
         }
@@ -302,23 +304,44 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Famil
         .find(|id| covers_ruled(config, families, id))
 }
 
-/// Combines the rules of `sources`; `None` when two ruled sources differ.
+/// Combines the rules of `sources` reaching a value by `flow`; `None` when two pairs differ.
 ///
 /// Ruled sources decide the position; unruled ones add nothing. No ruled
-/// source means global detection.
-fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig, families: &Families) -> Option<Position> {
-    merge(
-        sources
+/// source means global detection. A `hash` pair survives only on a
+/// [`Flow::Bare`] value whose every source is covered by that same pair;
+/// otherwise each `hash` pair turns into `replace` before merging, so a
+/// computed value never gets the token of a value its query chose, nor of
+/// the row an aggregate picked.
+fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PiiConfig, families: &Families) -> Option<Position> {
+    let pairs: Vec<Vec<(PiiOperator, &str)>> = sources
+        .iter()
+        .map(|source| {
+            covering(config, families, &source.relation, &source.column)
+                .map(pair)
+                .collect()
+        })
+        .collect();
+    let first = pairs.iter().flatten().next().copied();
+    let hashed = flow == Flow::Bare
+        && first.is_some_and(|first| first.0 == PiiOperator::Hash)
+        && pairs
             .iter()
-            .flat_map(|source| covering(config, families, &source.relation, &source.column)),
-    )
+            .all(|covered| !covered.is_empty() && covered.iter().all(|&p| Some(p) == first));
+    merge(pairs.into_iter().flatten().map(|(operator, entity)| match operator {
+        PiiOperator::Hash if !hashed => (PiiOperator::Replace, entity),
+        operator => (operator, entity),
+    }))
 }
 
-/// Combines `rules` into one position; `None` when two pairs differ.
+/// Returns a rule's `(operator, entity)` pair.
+fn pair(rule: &ColumnRule) -> (PiiOperator, &'static str) {
+    (rule.operator, rule.entity)
+}
+
+/// Combines `(operator, entity)` pairs into one position; `None` when two pairs differ.
 ///
-/// No rule means global detection.
-fn merge<'a>(rules: impl Iterator<Item = &'a ColumnRule>) -> Option<Position> {
-    let mut pairs = rules.map(|rule| (rule.operator, rule.entity));
+/// No pair means global detection.
+fn merge<'a>(mut pairs: impl Iterator<Item = (PiiOperator, &'a str)>) -> Option<Position> {
     let Some(first) = pairs.next() else {
         return Some(Position::Global);
     };

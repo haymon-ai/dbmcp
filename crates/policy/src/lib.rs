@@ -26,7 +26,9 @@
 //! 7. A ruled column used in `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, or a
 //!    window rejects, in the statement or in a view body it reads.
 //! 8. Each output column takes the `(operator, entity)` of its ruled
-//!    sources; two different pairs reject.
+//!    sources; two different pairs reject. A `hash` pair holds only on a
+//!    [`Flow::Bare`] column whose every source is hashed under it; on any
+//!    other column `hash` becomes `replace` before the pairs are compared.
 //! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
@@ -57,7 +59,7 @@ mod relation;
 mod tests;
 
 pub use dbmcp_sql_lineage::{
-    CatalogColumn, Entry, Family, Member, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind,
+    CatalogColumn, Entry, Family, Flow, Member, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind,
     WrittenName,
 };
 

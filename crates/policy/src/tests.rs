@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, ExplainForm, Family, FunctionUse, Lineage, LineageError, Member, Origin, OutputColumn, Reference,
-    RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
+    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Family, Flow, FunctionUse, Lineage, LineageError, Member,
+    NamePart, Origin, OutputColumn, Reference, Relation, RelationId, RelationKind, RelationUse, Role, Show, SourceRef,
+    StatementKind, TargetColumn, WrittenName, analyze,
 };
 
 use dbmcp_pii::Entity;
@@ -72,6 +73,7 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
                 name: format!("c{position}"),
                 position,
                 sources: sources.into_iter().collect(),
+                flow: Flow::Bare,
             })
             .collect(),
         references: BTreeSet::new(),
@@ -742,6 +744,185 @@ fn same_rule_pair_combines() {
     );
 }
 
+// Flow: `hash` only on bare outputs.
+
+/// The `hash` rule on `users.email` and `invoices.billing_email`, `EMAIL_ADDRESS`.
+fn hashed_emails() -> Vec<ColumnRule> {
+    vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.invoices.billing_email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+    ]
+}
+
+/// A one-column query lineage over `sources`, reaching the output by `flow`.
+fn flowed(sources: Vec<SourceRef>, flow: Flow) -> Lineage {
+    let mut lineage = select(vec![sources]);
+    lineage.columns[0].flow = flow;
+    lineage
+}
+
+const HASHED_EMAIL: Position = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
+const REPLACED_EMAIL: Position = Position::Action(PiiOperator::Replace, Entity::EmailAddress);
+
+#[test]
+fn bare_hash_output_keeps_hash() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Bare), &config),
+        HASHED_EMAIL
+    );
+}
+
+#[test]
+fn bare_union_of_same_hash_pair_keeps_hash() {
+    let config = config(hashed_emails());
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Bare,
+    );
+    assert_eq!(only(&lineage, &config), HASHED_EMAIL);
+}
+
+#[test]
+fn derived_hash_output_becomes_replace() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
+        REPLACED_EMAIL
+    );
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Derived,
+    );
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn bare_union_with_unruled_column_becomes_replace() {
+    let config = config(hashed_emails());
+    let lineage = flowed(vec![col("users", "email"), col("users", "name")], Flow::Bare);
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn bare_union_with_another_rule_merges_into_replace() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule(
+            "shop.public.invoices.billing_email",
+            PiiOperator::Replace,
+            "EMAIL_ADDRESS",
+        ),
+    ]);
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Bare,
+    );
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn derived_hash_of_different_entities_conflicts() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PiiOperator::Hash, "PHONE_NUMBER"),
+    ]);
+    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
+    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
+}
+
+#[test]
+fn derived_hash_with_mask_conflicts() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PiiOperator::Mask, "EMAIL_ADDRESS"),
+    ]);
+    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
+    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
+}
+
+#[test]
+fn derived_mask_and_redact_outputs_are_unchanged() {
+    let config = config(vec![
+        ssn("shop.public.users.ssn"),
+        rule("shop.public.users.email", PiiOperator::Redact, "EMAIL_ADDRESS"),
+    ]);
+    assert_eq!(
+        only(&flowed(vec![col("users", "ssn")], Flow::Derived), &config),
+        MASKED_SSN
+    );
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
+        Position::Action(PiiOperator::Redact, Entity::EmailAddress)
+    );
+}
+
+#[test]
+fn derived_output_without_ruled_source_stays_global() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "name")], Flow::Derived), &config),
+        Position::Global
+    );
+}
+
+/// A catalog of `shop.public` tables keyed by their bare names.
+fn tables(tables: &[(&str, &[&str])]) -> Catalog {
+    let mut catalog = Catalog::new();
+    for (name, columns) in tables {
+        let columns = columns.iter().map(|c| CatalogColumn::new(*c)).collect();
+        catalog.insert(
+            WrittenName::query(vec![NamePart::bare(*name)]),
+            Entry::Resolved(Relation::new(table(name), RelationKind::Table, columns)),
+        );
+    }
+    catalog
+}
+
+#[test]
+fn analyzed_outputs_hash_only_when_bare() {
+    let catalog = tables(&[
+        ("users", &["id", "email", "name"]),
+        ("invoices", &["id", "user_id", "billing_email"]),
+    ]);
+    let config = config(hashed_emails());
+    let cases = [
+        ("SELECT email FROM users", HASHED_EMAIL),
+        ("SELECT (u.email) AS e FROM users u", HASHED_EMAIL),
+        ("SELECT e FROM (SELECT email AS e FROM users) d", HASHED_EMAIL),
+        ("WITH c AS (SELECT email FROM users) SELECT * FROM c", HASHED_EMAIL),
+        (
+            "SELECT email FROM users UNION SELECT billing_email FROM invoices",
+            HASHED_EMAIL,
+        ),
+        ("SELECT email FROM users UNION ALL SELECT NULL", HASHED_EMAIL),
+        (
+            "SELECT u.email FROM invoices i LEFT JOIN users u ON u.id = i.user_id",
+            HASHED_EMAIL,
+        ),
+        ("SELECT email FROM users UNION SELECT name FROM users", REPLACED_EMAIL),
+        ("SELECT email FROM users UNION SELECT 'a@b.c'", REPLACED_EMAIL),
+        (
+            "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
+            REPLACED_EMAIL,
+        ),
+        ("SELECT lower(email) FROM users", REPLACED_EMAIL),
+        ("SELECT min(email) FROM users", REPLACED_EMAIL),
+        ("SELECT count(DISTINCT email) FROM users", REPLACED_EMAIL),
+        ("SELECT CAST(email AS text) FROM users", REPLACED_EMAIL),
+        ("SELECT email COLLATE \"C\" FROM users", REPLACED_EMAIL),
+        (
+            "SELECT concat(u.email, i.billing_email) FROM users u, invoices i",
+            REPLACED_EMAIL,
+        ),
+    ];
+    for (sql, expected) in cases {
+        let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
+        let positions = positions(pg(&lineage, &config).expect(sql));
+        assert_eq!(positions, [expected], "{sql}");
+    }
+}
+
 #[test]
 fn conflict_message_omits_output_name() {
     let config = config(vec![
@@ -837,10 +1018,28 @@ fn write(target: &str, column: &str, sources: Vec<SourceRef>, statement: Stateme
     lineage.writes = vec![TargetColumn {
         name: column.into(),
         sources: sources.into_iter().collect(),
+        flow: Flow::Bare,
         named: true,
     }];
     lineage.statement = statement;
     lineage
+}
+
+#[test]
+fn derived_hash_source_into_same_hash_target_rejects() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.copy.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+    ]);
+    let mut lineage = write("copy", "email", vec![col("users", "email")], StatementKind::Insert);
+    assert!(pg(&lineage, &config).is_ok());
+    lineage.writes[0].flow = Flow::Derived;
+    assert_eq!(
+        pg(&lineage, &config),
+        Err(Rejection::Laundering {
+            column: "public.copy.email".into(),
+        })
+    );
 }
 
 #[test]

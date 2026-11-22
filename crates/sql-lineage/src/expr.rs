@@ -50,14 +50,14 @@ impl Ctx<'_> {
     ) -> Result<(), LineageError> {
         match expr {
             Expr::Identifier(id) => {
-                acc.extend(level.column(clause, &[], id)?);
+                acc.extend(level.column(clause, &[], id)?.0);
                 Ok(())
             }
             Expr::CompoundIdentifier(parts) => {
                 let Some((name, qualifier)) = parts.split_last() else {
                     return Err(unsupported("empty identifier"));
                 };
-                acc.extend(level.column(clause, qualifier, name)?);
+                acc.extend(level.column(clause, qualifier, name)?.0);
                 Ok(())
             }
             Expr::IsFalse(e)
@@ -207,7 +207,7 @@ impl Ctx<'_> {
                     let Some((name, qualifier)) = parts.split_last() else {
                         return Err(unsupported("empty identifier"));
                     };
-                    acc.extend(level.column(clause, qualifier, name)?);
+                    acc.extend(level.column(clause, qualifier, name)?.0);
                 }
                 Ok(())
             }
@@ -262,7 +262,7 @@ impl Ctx<'_> {
             let Some((name, qualifier)) = parts.split_last() else {
                 return Err(unsupported("empty identifier"));
             };
-            acc.extend(level.column(clause, qualifier, name)?);
+            acc.extend(level.column(clause, qualifier, name)?.0);
         }
         for access in chain {
             match access {

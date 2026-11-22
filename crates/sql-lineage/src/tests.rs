@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Lexical, Lineage, LineageError, NamePart, Origin, Relation,
-    RelationId, RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
+    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Flow, Lexical, Lineage, LineageError, NamePart, Origin,
+    Relation, RelationId, RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
 };
 
 /// Builds a relation in schema `public`; a leading `~` marks a star-invisible column.
@@ -61,6 +61,11 @@ fn columns(lineage: &Lineage) -> Vec<(String, Vec<String>)> {
         .iter()
         .map(|c| (c.name.clone(), names(&c.sources)))
         .collect()
+}
+
+/// Returns each output column's flow, in result order.
+fn flows(lineage: &Lineage) -> Vec<Flow> {
+    lineage.columns.iter().map(|c| c.flow).collect()
 }
 
 /// Renders references as sorted `(relation.column, role)` pairs.
@@ -2638,4 +2643,388 @@ fn ctas_with_constraints_is_unsupported() {
         Dialect::Mysql,
         &create_fixture(),
     );
+}
+
+// Flow: how each value reaches its column.
+
+/// Analyzes `sql` against [`create_fixture`] in `dialect` and returns the output flows.
+fn flows_of(sql: &str, dialect: Dialect) -> Vec<Flow> {
+    flows(&on(sql, dialect).expect(sql))
+}
+
+/// Analyzes `sql` against [`create_fixture`] in `dialect` and returns each write's `(column, flow)`.
+fn write_flows(sql: &str, dialect: Dialect) -> Vec<(String, Flow)> {
+    on(sql, dialect)
+        .expect(sql)
+        .writes
+        .into_iter()
+        .map(|w| (w.name, w.flow))
+        .collect()
+}
+
+/// Every modeled dialect.
+const DIALECTS: [Dialect; 4] = [Dialect::Postgres, Dialect::Mysql, Dialect::Mariadb, Dialect::Sqlite];
+
+#[test]
+fn column_references_are_bare() {
+    for dialect in DIALECTS {
+        let quoted = if matches!(dialect, Dialect::Mysql | Dialect::Mariadb) {
+            "`email`"
+        } else {
+            "\"email\""
+        };
+        let sql = format!("SELECT email, email AS e, (email), ((u.email)), {quoted}, u.email FROM users u");
+        assert_eq!(flows_of(&sql, dialect), [Flow::Bare; 6], "{dialect:?}");
+        assert_eq!(
+            flows_of("SELECT users.email FROM users", dialect),
+            [Flow::Bare],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn passthrough_relations_keep_the_flow() {
+    let catalog = users_in_view(
+        with_view(
+            fixture(),
+            None,
+            "v",
+            &["mail", "low"],
+            "SELECT email, lower(ssn) FROM users",
+        ),
+        "v",
+    );
+    let lineage = analyze("SELECT mail, low FROM v", Dialect::Postgres, &catalog).expect("view");
+    assert_eq!(flows(&lineage), [Flow::Bare, Flow::Derived]);
+    let lineage = analyze("SELECT * FROM v", Dialect::Postgres, &catalog).expect("view star");
+    assert_eq!(flows(&lineage), [Flow::Bare, Flow::Derived]);
+    for dialect in DIALECTS {
+        let cases = [
+            "WITH c AS (SELECT email, lower(ssn) AS s FROM users) SELECT email, s FROM c",
+            "WITH c (m, s) AS (SELECT email, lower(ssn) FROM users) SELECT m, s FROM c",
+            "SELECT d.m, d.s FROM (SELECT email AS m, lower(ssn) AS s FROM users) d",
+            "SELECT * FROM (SELECT email, lower(ssn) AS s FROM users) d",
+            "SELECT d.* FROM (SELECT email, lower(ssn) AS s FROM users) d",
+        ];
+        for sql in cases {
+            assert_eq!(
+                flows_of(sql, dialect),
+                [Flow::Bare, Flow::Derived],
+                "{dialect:?}: {sql}"
+            );
+        }
+        assert_eq!(flows_of("SELECT * FROM users", dialect), [Flow::Bare; 3], "{dialect:?}");
+        assert_eq!(
+            flows_of("SELECT u.* FROM users u", dialect),
+            [Flow::Bare; 3],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn distinct_keeps_the_flow() {
+    for dialect in DIALECTS {
+        assert_eq!(flows_of("SELECT DISTINCT email FROM users", dialect), [Flow::Bare]);
+    }
+    assert_eq!(
+        flows_of("SELECT DISTINCT ON (id) email FROM users", Dialect::Postgres),
+        [Flow::Bare]
+    );
+}
+
+#[test]
+fn functions_aggregates_and_windows_are_derived() {
+    for dialect in DIALECTS {
+        let sql = "SELECT lower(email), min(email), max(email), count(DISTINCT email), \
+                   first_value(email) OVER (ORDER BY id), CASE WHEN email IS NULL THEN 'x' ELSE 'x' END, \
+                   COALESCE(email, ssn), email || ssn FROM users";
+        assert_eq!(flows_of(sql, dialect), [Flow::Derived; 8], "{dialect:?}");
+    }
+    assert_eq!(
+        flows_of("SELECT IF(email IS NULL, 'x', 'x') FROM users", Dialect::Mysql),
+        [Flow::Derived]
+    );
+    assert_eq!(
+        flows_of("SELECT iif(email IS NULL, 'x', 'x') FROM users", Dialect::Sqlite),
+        [Flow::Derived]
+    );
+}
+
+#[test]
+fn casts_and_collations_are_derived() {
+    assert_eq!(
+        flows_of(
+            "SELECT CAST(email AS text), email::text, email COLLATE \"C\" FROM users",
+            Dialect::Postgres
+        ),
+        [Flow::Derived; 3]
+    );
+    for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+        assert_eq!(
+            flows_of(
+                "SELECT CAST(email AS CHAR), CONVERT(email, CHAR), CONVERT(email USING utf8mb4), \
+                 email COLLATE utf8mb4_bin FROM users",
+                dialect
+            ),
+            [Flow::Derived; 4],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn json_access_subqueries_and_whole_rows_are_derived() {
+    assert_eq!(
+        flows_of(
+            "SELECT u.email -> 'a', (SELECT u2.email FROM users u2 LIMIT 1), users, u FROM users, users u",
+            Dialect::Postgres
+        ),
+        [Flow::Derived; 4]
+    );
+    assert_eq!(
+        flows_of("SELECT row_to_json(u.*) FROM users u", Dialect::Postgres),
+        [Flow::Derived]
+    );
+}
+
+#[test]
+fn constants_and_parameters_are_derived() {
+    assert_eq!(
+        flows_of("SELECT 'a@b.c', 1, $1, TRUE", Dialect::Postgres),
+        [Flow::Derived; 4]
+    );
+}
+
+#[test]
+fn null_literals_under_parentheses_and_casts_are_null() {
+    assert_eq!(
+        flows_of(
+            "SELECT NULL, (NULL), CAST(NULL AS text), NULL::text, (NULL)::text, COALESCE(NULL), NULLIF(NULL, 1)",
+            Dialect::Postgres
+        ),
+        [
+            Flow::Null,
+            Flow::Null,
+            Flow::Null,
+            Flow::Null,
+            Flow::Null,
+            Flow::Derived,
+            Flow::Derived
+        ]
+    );
+    for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+        assert_eq!(
+            flows_of("SELECT CONVERT(NULL, CHAR), CONVERT(NULL USING utf8mb4)", dialect),
+            [Flow::Null; 2],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn set_operations_merge_flows_per_position() {
+    for dialect in DIALECTS {
+        let cases = [
+            ("SELECT email FROM users UNION SELECT ssn FROM users", Flow::Bare),
+            ("SELECT email FROM users UNION ALL SELECT NULL", Flow::Bare),
+            ("SELECT NULL UNION SELECT email FROM users", Flow::Bare),
+            ("SELECT NULL UNION SELECT NULL", Flow::Null),
+            ("SELECT email FROM users UNION SELECT 'a@b.c'", Flow::Derived),
+            (
+                "SELECT email FROM users UNION SELECT lower(ssn) FROM users",
+                Flow::Derived,
+            ),
+            (
+                "SELECT email FROM users UNION SELECT ssn FROM users UNION SELECT 'x'",
+                Flow::Derived,
+            ),
+        ];
+        for (sql, flow) in cases {
+            assert_eq!(flows_of(sql, dialect), [flow], "{dialect:?}: {sql}");
+        }
+    }
+}
+
+#[test]
+fn values_rows_merge_flows_per_position() {
+    assert_eq!(
+        flows_of("SELECT * FROM (VALUES (NULL, 1), (NULL, NULL)) v", Dialect::Postgres),
+        [Flow::Null, Flow::Derived]
+    );
+    let writes = write_flows(
+        "INSERT INTO archive (email, ssn, id) VALUES (DEFAULT, NULL, DEFAULT), (DEFAULT, DEFAULT, NULL)",
+        // `NULL` is the identity, so `NULL` + `DEFAULT` stays `Default`.
+        Dialect::Postgres,
+    );
+    assert_eq!(
+        writes,
+        [
+            ("email".to_string(), Flow::Default),
+            ("ssn".to_string(), Flow::Default),
+            ("id".to_string(), Flow::Default),
+        ]
+    );
+}
+
+#[test]
+fn insert_sources_carry_their_flows() {
+    for dialect in DIALECTS {
+        assert_eq!(
+            write_flows(
+                "INSERT INTO archive (email, ssn) SELECT email, lower(ssn) FROM users",
+                dialect
+            ),
+            [("email".to_string(), Flow::Bare), ("ssn".to_string(), Flow::Derived)],
+            "{dialect:?}"
+        );
+        assert_eq!(
+            write_flows(
+                "INSERT INTO archive (email, ssn, id) VALUES (NULL, DEFAULT, 1)",
+                dialect
+            ),
+            [
+                ("email".to_string(), Flow::Null),
+                ("ssn".to_string(), Flow::Default),
+                ("id".to_string(), Flow::Derived),
+            ],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn update_assignments_carry_their_flows() {
+    for dialect in DIALECTS {
+        assert_eq!(
+            write_flows("UPDATE users SET email = ssn, id = DEFAULT, ssn = (email)", dialect),
+            [
+                ("email".to_string(), Flow::Bare),
+                ("id".to_string(), Flow::Default),
+                ("ssn".to_string(), Flow::Bare),
+            ],
+            "{dialect:?}"
+        );
+    }
+    assert_eq!(
+        write_flows(
+            "UPDATE users SET (email, ssn) = (SELECT o.total, o.total + 1 FROM orders o)",
+            Dialect::Postgres
+        ),
+        [("email".to_string(), Flow::Bare), ("ssn".to_string(), Flow::Derived)]
+    );
+}
+
+#[test]
+fn merge_clauses_merge_flows_per_column() {
+    let writes = write_flows(
+        "MERGE INTO users u USING orders o ON u.id = o.user_id \
+         WHEN MATCHED THEN UPDATE SET email = o.total, ssn = o.total \
+         WHEN NOT MATCHED THEN INSERT (id, email, ssn) VALUES (o.user_id, NULL, o.total + 1)",
+        Dialect::Postgres,
+    );
+    assert_eq!(
+        writes,
+        [
+            ("email".to_string(), Flow::Bare),
+            ("ssn".to_string(), Flow::Derived),
+            ("id".to_string(), Flow::Bare),
+        ]
+    );
+}
+
+#[test]
+fn using_keys_merge_both_sides_flows() {
+    for dialect in DIALECTS {
+        assert_eq!(
+            flows_of("SELECT id FROM users JOIN orders USING (id)", dialect),
+            [Flow::Bare],
+            "{dialect:?}"
+        );
+    }
+    assert_eq!(
+        flows_of(
+            "SELECT id FROM (SELECT id + 1 AS id FROM users) d FULL JOIN orders USING (id)",
+            Dialect::Postgres
+        ),
+        [Flow::Derived]
+    );
+}
+
+#[test]
+fn on_conflict_excluded_carries_the_inserted_flow() {
+    let writes = write_flows(
+        "INSERT INTO users (id, ssn) SELECT user_id, total + 1 FROM orders \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.email",
+        Dialect::Postgres,
+    );
+    assert_eq!(
+        writes,
+        [
+            ("id".to_string(), Flow::Bare),
+            ("ssn".to_string(), Flow::Derived),
+            ("email".to_string(), Flow::Default),
+        ]
+    );
+    let writes = write_flows(
+        "INSERT INTO users (id, ssn) SELECT user_id, total + 1 FROM orders \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.id, id = excluded.ssn",
+        Dialect::Postgres,
+    );
+    assert_eq!(
+        writes,
+        [
+            ("id".to_string(), Flow::Derived),
+            ("ssn".to_string(), Flow::Derived),
+            ("email".to_string(), Flow::Bare),
+        ]
+    );
+}
+
+#[test]
+fn on_duplicate_key_update_merges_into_the_inserted_flow() {
+    for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+        assert_eq!(
+            write_flows(
+                "INSERT INTO users (email) VALUES (NULL) ON DUPLICATE KEY UPDATE email = ssn",
+                dialect
+            ),
+            [("email".to_string(), Flow::Bare)],
+            "{dialect:?}"
+        );
+        assert_eq!(
+            write_flows(
+                "INSERT INTO users SET email = 'x' ON DUPLICATE KEY UPDATE ssn = email",
+                dialect
+            ),
+            [("email".to_string(), Flow::Derived), ("ssn".to_string(), Flow::Bare)],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn created_columns_carry_the_query_flow() {
+    for dialect in DIALECTS {
+        assert_eq!(
+            write_flows("CREATE TABLE t2 AS SELECT email, lower(ssn) AS s FROM users", dialect),
+            [("email".to_string(), Flow::Bare), ("s".to_string(), Flow::Derived)],
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn outer_join_padding_stays_bare() {
+    for dialect in DIALECTS {
+        assert_eq!(
+            flows_of(
+                "SELECT u.email FROM orders o LEFT JOIN users u ON u.id = o.user_id",
+                dialect
+            ),
+            [Flow::Bare],
+            "{dialect:?}"
+        );
+    }
 }

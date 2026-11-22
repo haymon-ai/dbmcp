@@ -4815,6 +4815,54 @@ async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
 }
 
 #[tokio::test]
+async fn column_rules_replace_hash_on_values_a_query_computes() {
+    let handler = handler_with_rules(100);
+    let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("stored")[0]["email"]
+        .clone();
+    assert!(is_email_token(&stored), "{stored}");
+    for guess in ["CASE WHEN email IS NULL THEN 'alice@example.com' ELSE 'alice@example.com' END"] {
+        let query = format!("SELECT {guess} AS e FROM users WHERE id = 1");
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        assert_eq!(rows[0]["e"], "<EMAIL_ADDRESS>", "{query}");
+        assert_ne!(rows[0]["e"], stored, "{query}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_replace_hash_on_min_and_max() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT MIN(email) AS lo, MAX(email) AS hi FROM users")
+        .await
+        .expect("aggregates");
+    assert_eq!(rows[0]["lo"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+    assert_eq!(rows[0]["hi"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+}
+
+#[tokio::test]
+async fn column_rules_keep_hash_on_bare_columns_through_views_ctes_and_unions() {
+    let handler = handler_with_rules(100);
+    let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("stored")[0]["email"]
+        .clone();
+    assert!(is_email_token(&stored), "{stored}");
+    for query in [
+        "SELECT email FROM user_emails WHERE id = 1",
+        "WITH c AS (SELECT id, email FROM users) SELECT email FROM c WHERE id = 1",
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert_eq!(rows[0]["email"], stored, "{query}");
+    }
+    let query = "SELECT email FROM users WHERE id = 1 UNION ALL SELECT NULL";
+    let rows = ruled_read(&handler, query).await.expect(query);
+    let mut emails: Vec<&Value> = rows.iter().map(|row| &row["email"]).collect();
+    emails.sort_by_key(|email| email.is_null());
+    assert_eq!(emails, [&stored, &Value::Null], "{query}");
+}
+
+#[tokio::test]
 async fn column_rules_follow_views_and_refuse_ruled_view_bodies() {
     let handler = handler_with_rules(100);
     let rows = ruled_read(&handler, "SELECT email FROM user_emails WHERE id = 1")

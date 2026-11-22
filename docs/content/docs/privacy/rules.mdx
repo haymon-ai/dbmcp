@@ -100,9 +100,22 @@ Every non-null value of a ruled output column is rendered as text (JSON values i
 
 ### Derived columns
 
-An output column computed from a ruled column gets that rule: `lower(email)`, `concat(email, '!')`, `coalesce(email, backup_email)`, and `count(DISTINCT email)` are all rewritten as `EMAIL_ADDRESS`. The value never shows, but the label can look odd: a count comes back as an e-mail token.
+An output column that passes a ruled column through unchanged keeps its rule: `email`, `u.email AS e`, `(email)`, and the same column read through a view, a materialized view, a CTE, a derived table, or `*`. `DISTINCT` changes nothing.
 
-Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule. Two ruled sources must agree on operator and entity. `concat(email, phone)` under different rules is refused:
+An output column computed from a ruled column keeps the rule too, except that `hash` becomes `replace`: `lower(email)`, `min(email)`, and `count(DISTINCT email)` under a `hash` rule all come back as `<EMAIL_ADDRESS>`. A token of a computed value could be the token of a value the assistant chose (`IF(email IS NULL, 'a@b.c', 'a@b.c')`) or of whichever row sorts first (`MIN(email)`), so only stored values read back unchanged get tokens. Under `mask`, `replace`, and `redact`, a computed column is rewritten by the rule as is. Either way the value never shows, but the label can look odd: a count comes back as an e-mail placeholder.
+
+Everything except a plain column reference counts as computed:
+
+- functions, including every aggregate and window function (`MIN`, `MAX`, `FIRST_VALUE`, `GROUP_CONCAT`, `string_agg`, `array_agg`, …)
+- operators, `CASE`, `IF`, `COALESCE`
+- casts (`CAST`, `::`, `CONVERT`) and `COLLATE`
+- JSON access, subscripts, and scalar subqueries
+- PostgreSQL whole-row references (`SELECT t FROM t`, `f(t.*)`)
+- constants and parameters
+
+A set operation (`UNION`, `INTERSECT`, `EXCEPT`) or a multi-row `VALUES` list keeps a `hash` token in a column only if every branch is a plain column hashed under the same rule, or a literal `NULL`. `SELECT email FROM users UNION SELECT billing_email FROM invoices` keeps the token; a branch with an unruled column, a constant, or a computed value turns the column into `replace`.
+
+Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule (as `replace`, if that rule is `hash`). Two ruled sources must agree on operator and entity, once `hash` has become `replace` for a computed column, so `hash` and `replace` on the same entity merge into `replace`. `concat(email, phone)` under different rules is refused:
 
 ```text
 column policy: output column 0 combines conflicting column rules
@@ -256,7 +269,7 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
 - **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
 - **`mask` length.** `mask` keeps the length of the value.
-- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
+- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive. Tokens appear only on bare columns, so a query cannot obtain the token of a value it chose; equal tokens still let the assistant group, count and join rows by value.
 - **Concurrent schema changes.** The catalog is read and the statement runs on one connection. On PostgreSQL both happen in one transaction; on MySQL and MariaDB the catalog is read just before the transaction opens. A view body that changed meanwhile refuses the result, but table columns are not checked again. Another session can still change a table in between. Restrict DDL on ruled tables to trusted roles.
 - **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly.
 - **MySQL GTID consistency.** With `enforce_gtid_consistency` on, writes to non-transactional tables fail inside the transaction <Dbmcp /> opens.
