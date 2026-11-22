@@ -9,6 +9,7 @@
 //! ```
 
 mod probe;
+mod rows;
 
 use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
@@ -5300,6 +5301,82 @@ async fn column_rules_apply_to_star_and_keep_nulls() {
         .expect("read");
     assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
     assert_eq!(rows[0]["ssn"], Value::Null);
+}
+
+#[tokio::test]
+async fn column_rules_follow_star_order_over_right_using_and_natural_joins() {
+    // MySQL and MariaDB put the right side first for a RIGHT join with USING or NATURAL.
+    let handler = ruled_handler(None, 100);
+    let users = "(SELECT name, credit_card, id FROM users WHERE id = 1) u";
+    let orders = "(SELECT id, user_id FROM orders WHERE id = 1) o";
+    let keys_first = || {
+        vec![
+            Value::from(1),
+            Value::from("Alice Johnson"),
+            Value::from("<CREDIT_CARD>"),
+            Value::from(1),
+        ]
+    };
+    // MySQL reads a RIGHT JOIN ... ON operand right side first; MariaDB does not.
+    let operand = match backend() {
+        DatabaseBackend::Mariadb => vec![
+            Value::from(1),
+            Value::from(7),
+            Value::from("Alice Johnson"),
+            Value::from("<CREDIT_CARD>"),
+            Value::from(1),
+        ],
+        _ => vec![
+            Value::from(1),
+            Value::from("Alice Johnson"),
+            Value::from("<CREDIT_CARD>"),
+            Value::from(7),
+            Value::from(1),
+        ],
+    };
+    for (query, expected) in [
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE FALSE UNION ALL SELECT * FROM {orders} RIGHT JOIN {users} USING (id)"
+            ),
+            keys_first(),
+        ),
+        (
+            format!("SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE FALSE UNION ALL SELECT * FROM {users} JOIN {orders} USING (id)"),
+            keys_first(),
+        ),
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE FALSE UNION ALL SELECT * FROM {orders} NATURAL RIGHT JOIN {users}"
+            ),
+            keys_first(),
+        ),
+        (
+            format!("WITH j AS (SELECT * FROM {orders} RIGHT JOIN {users} USING (id)) SELECT * FROM j"),
+            keys_first(),
+        ),
+        // No shared columns: still the right side first.
+        (
+            "SELECT 0 AS a, 0 AS b, 0 AS c WHERE FALSE UNION ALL SELECT * FROM (SELECT user_id FROM orders WHERE id = 1) o \
+             NATURAL RIGHT JOIN (SELECT name, credit_card FROM users WHERE id = 1) u"
+                .to_string(),
+            vec![
+                Value::from("Alice Johnson"),
+                Value::from("<CREDIT_CARD>"),
+                Value::from(1),
+            ],
+        ),
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d, 0 AS e WHERE FALSE UNION ALL \
+                 SELECT * FROM (SELECT 7 AS z) c RIGHT JOIN {users} ON 1 = 1 JOIN {orders} USING (id)"
+            ),
+            operand,
+        ),
+    ] {
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        rows::assert_cells(&query, &rows, &expected);
+    }
 }
 
 #[tokio::test]

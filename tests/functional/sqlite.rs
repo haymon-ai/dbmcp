@@ -11,6 +11,7 @@
 //! ```
 
 mod probe;
+mod rows;
 
 use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_sqlite::SqliteHandler;
@@ -2802,6 +2803,63 @@ async fn column_rules_apply_to_star_and_keep_nulls() {
         .expect("read");
     assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
     assert_eq!(rows[0]["ssn"], Value::Null);
+}
+
+#[tokio::test]
+async fn column_rules_follow_star_order_over_using_and_natural_joins() {
+    // SQLite keeps the left columns in place, so the key is not first here;
+    // a parenthesized join that is not first reads as a subquery, keys first.
+    let handler = handler_with_rules(100);
+    let users = "(SELECT name, credit_card, id FROM users WHERE id = 1) u";
+    let orders = "(SELECT id, user_id FROM orders WHERE id = 1) o";
+    let flat = || {
+        vec![
+            Value::from("Alice Johnson"),
+            Value::from("<CREDIT_CARD>"),
+            Value::from(1),
+            Value::from(1),
+        ]
+    };
+    for (query, expected) in [
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE 0 UNION ALL SELECT * FROM {users} JOIN {orders} USING (id)"
+            ),
+            flat(),
+        ),
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE 0 UNION ALL SELECT * FROM {users} LEFT JOIN {orders} USING (id)"
+            ),
+            flat(),
+        ),
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d WHERE 0 UNION ALL SELECT * FROM {users} NATURAL JOIN {orders}"
+            ),
+            flat(),
+        ),
+        (
+            format!("WITH j AS (SELECT * FROM {users} JOIN {orders} USING (id)) SELECT * FROM j"),
+            flat(),
+        ),
+        (
+            format!(
+                "SELECT 0 AS a, 0 AS b, 0 AS c, 0 AS d, 0 AS e WHERE 0 UNION ALL \
+                 SELECT * FROM (SELECT 7 AS z) c JOIN ({users} JOIN {orders} USING (id)) ON 1 = 1"
+            ),
+            vec![
+                Value::from(7),
+                Value::from(1),
+                Value::from("Alice Johnson"),
+                Value::from("<CREDIT_CARD>"),
+                Value::from(1),
+            ],
+        ),
+    ] {
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        rows::assert_cells(&query, &rows, &expected);
+    }
 }
 
 #[tokio::test]

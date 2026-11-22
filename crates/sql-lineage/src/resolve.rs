@@ -359,8 +359,8 @@ impl<'c> Ctx<'c> {
             return Err(unsupported("SELECT clause outside the modeled dialects"));
         }
 
-        for twj in from {
-            let tree = self.tree(twj, &level)?;
+        for (i, twj) in from.iter().enumerate() {
+            let tree = self.tree(twj, &level, i == 0)?;
             level.add(tree);
         }
 
@@ -515,10 +515,12 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
-    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
-        let mut tree = self.factor(&twj.relation, level)?;
+    ///
+    /// `first` marks the first item of its `FROM` list; see [`Ctx::factor`].
+    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>, first: bool) -> Result<Tree, LineageError> {
+        let mut tree = self.factor(&twj.relation, level, first)?;
         for join in &twj.joins {
-            let right = self.factor(&join.relation, level)?;
+            let right = self.factor(&join.relation, level, false)?;
             tree = self.join(tree, right, join, level)?;
         }
         Ok(tree)
@@ -554,7 +556,8 @@ impl<'c> Ctx<'c> {
             JoinConstraint::Natural => Keys::Natural,
             JoinConstraint::UsingAlias(..) => return Err(unsupported("USING ... AS alias")),
         };
-        let (tree, joined) = left.join(self.dialect, right, keys)?;
+        let right_join = matches!(join.join_operator, JoinOperator::Right(_) | JoinOperator::RightOuter(_));
+        let (tree, joined) = left.join(self.dialect, right, keys, right_join)?;
         self.refer(joined, Role::Join);
         let JoinConstraint::On(expr) = constraint else {
             return Ok(tree);
@@ -564,7 +567,16 @@ impl<'c> Ctx<'c> {
         Ok(on.into_tree())
     }
 
-    pub(crate) fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
+    /// Resolves one `FROM` factor.
+    ///
+    /// `first` marks the first factor of its `FROM` list: as an unaliased
+    /// parenthesized join, `SQLite` flattens only that one ([`Tree::nested`]).
+    pub(crate) fn factor(
+        &mut self,
+        factor: &TableFactor,
+        level: &Level<'_>,
+        first: bool,
+    ) -> Result<Tree, LineageError> {
         match factor {
             TableFactor::Table {
                 name,
@@ -609,9 +621,10 @@ impl<'c> Ctx<'c> {
                 table_with_joins,
                 alias,
             } => {
-                let tree = self.tree(table_with_joins, level)?;
+                let tree = self.tree(table_with_joins, level, true)?;
                 match alias {
-                    None => Ok(tree),
+                    None if first => Ok(tree),
+                    None => Ok(tree.nested(self.dialect)),
                     Some(alias) => tree.aliased(self.dialect, alias),
                 }
             }
