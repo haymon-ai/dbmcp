@@ -52,7 +52,7 @@ The following are always blocked regardless of mode:
 - `SELECT INTO OUTFILE` / `SELECT INTO DUMPFILE` — prevents writing files to the server filesystem
 - Session locks (`GET_LOCK`, `pg_advisory_*`), backend signalling (`pg_cancel_backend`, `pg_terminate_backend`), and PostgreSQL server administration functions (`pg_reload_conf`, `pg_switch_wal`, replication slots, restore points, statistics resets) — read-only transactions do not stop these
 
-On MySQL and MariaDB, `readQuery` and `explainQuery` reject executable comments (`/*! ... */` and MariaDB's `/*M! ... */`), even inside a string literal. The server runs the SQL inside them, so a query could otherwise hide a statement or function call from validation. Ordinary comments and optimizer hints (`/*+ ... */`) are allowed.
+On MySQL and MariaDB, `readQuery` and `explainQuery` reject executable comments (`/*! ... */` and MariaDB's `/*M! ... */`), even inside a string literal. The server runs the SQL inside them, so a query could otherwise hide a statement or function call from validation. Ordinary comments and optimizer hints (`/*+ ... */`) are allowed, except a comment the server reads differently from the validator: a `--` comment that starts with a control character or a non-ASCII space (such as a non-breaking space, U+00A0), and a `--` or `#` comment that holds a NUL byte. Put an ordinary ASCII space after `--`. `writeQuery` rejects these comments too, so they cannot hide a `USE`.
 
 ## Disabling Read-Only Mode
 

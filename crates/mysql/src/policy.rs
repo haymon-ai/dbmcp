@@ -443,8 +443,9 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError::MultiStatement`] or
-    /// [`SqlError::ExecutableCommentBlocked`] for SQL the parser would read
+    /// Returns [`SqlError::MultiStatement`],
+    /// [`SqlError::ExecutableCommentBlocked`], or
+    /// [`SqlError::UnreadableCharacter`] for SQL the parser would read
     /// unlike the server, [`SqlError::ReadOnlyViolation`] for a write in
     /// read-only mode, a refusal when the handler has no redactor, the
     /// reason the column rules stopped the statement, or the [`SqlError`]
