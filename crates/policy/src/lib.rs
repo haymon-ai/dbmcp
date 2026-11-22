@@ -23,16 +23,20 @@
 //!    to value-free keys; any `ANALYZE` on one rejects too.
 //! 6. `CREATE INDEX` on a ruled relation rejects: a unique key leaks values
 //!    through duplicate-key errors.
-//! 7. A ruled column used in `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, or a
-//!    window rejects, in the statement or in a view body it reads.
-//! 8. Each output column takes the `(operator, entity)` of its ruled
-//!    sources; two different pairs reject. A `hash` pair holds only on a
-//!    [`Flow::Bare`](dbmcp_sql_lineage::Flow::Bare) column whose every
-//!    source is hashed under it; on any other column `hash` becomes
-//!    `replace` before the pairs are compared.
+//! 7. A ruled column used in `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, a
+//!    window, `DISTINCT` or a deduplicating set operation, or a
+//!    set-returning function's arguments rejects, in the statement or in a
+//!    view body it reads.
+//! 8. A [`Flow::Bare`](dbmcp_sql_lineage::Flow::Bare) output column takes
+//!    the `(operator, entity)` of its ruled sources; two different pairs
+//!    reject. A `hash` pair holds only when every source is hashed under it;
+//!    otherwise `hash` becomes `replace` before the pairs are compared. Any
+//!    other output column over a ruled source reads as its entity's
+//!    placeholder, `NULL` included; its ruled sources must share the entity.
 //! 9. A bare create target resolving outside the creation schema rejects.
-//! 10. A write copying ruled values needs a target column ruled with the same
-//!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
+//! 10. A write copying ruled values needs a bare copy into a target column
+//!     ruled with the same pair and named so a rule can match it; a computed
+//!     ruled value is laundering into any target. `CREATE VIEW` is exempt.
 //! 11. A `hash`-ruled column written by a statement takes only same-hashed
 //!     bare copies, `NULL`, or `DEFAULT` when it has no default; a write that
 //!     lets the server fill one (an omitted column's default, a generated or

@@ -17,6 +17,15 @@ const fn names(dialect: Dialect) -> &'static [&'static str] {
     }
 }
 
+/// Returns the dialect's built-in set-returning function names.
+const fn set_returning(dialect: Dialect) -> &'static [&'static str] {
+    match dialect {
+        Dialect::Postgres => postgres::SET_RETURNING,
+        Dialect::Sqlite => sqlite::SET_RETURNING,
+        Dialect::Mysql | Dialect::Mariadb => &[],
+    }
+}
+
 /// Returns a function name part case-folded the way the server resolves it.
 fn fold(dialect: Dialect, ident: &Ident) -> String {
     match dialect {
@@ -25,7 +34,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
     }
 }
 
-/// Resolves a called function name to its recorded name and whether it is known.
+/// Resolves a called function name to its recorded name, whether it is known, and whether it returns a set.
 ///
 /// Known when the dialect lists the unqualified (or, on `PostgreSQL`,
 /// `pg_catalog.`-qualified) name. Matching is by name only, so a same-named
@@ -34,16 +43,16 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
 /// # Errors
 ///
 /// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
-pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<(String, bool), LineageError> {
+pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<(String, bool, bool), LineageError> {
     let parts: Vec<String> = idents(name)?.iter().map(|p| fold(dialect, p)).collect();
-    let known = match parts.as_slice() {
-        [name] => names(dialect).contains(&name.as_str()),
-        [schema, name] if dialect == Dialect::Postgres && schema == "pg_catalog" => {
-            names(dialect).contains(&name.as_str())
-        }
-        _ => false,
+    let built_in = match parts.as_slice() {
+        [name] => Some(name.as_str()),
+        [schema, name] if dialect == Dialect::Postgres && schema == "pg_catalog" => Some(name.as_str()),
+        _ => None,
     };
-    Ok((parts.join("."), known))
+    let rows = built_in.is_some_and(|name| set_returning(dialect).contains(&name));
+    let known = rows || built_in.is_some_and(|name| names(dialect).contains(&name));
+    Ok((parts.join("."), known, rows))
 }
 
 #[cfg(test)]
@@ -55,7 +64,7 @@ mod tests {
     #[test]
     fn names_are_lowercase_and_unique_per_dialect() {
         for dialect in DIALECTS {
-            let mut names = names(dialect).to_vec();
+            let mut names = [names(dialect), set_returning(dialect)].concat();
             for name in &names {
                 assert_eq!(*name, name.to_lowercase(), "{dialect:?}: {name}");
             }
@@ -171,7 +180,8 @@ mod tests {
 
     /// Resolves a name written as `parts`, returning its recorded name and verdict.
     fn call(dialect: Dialect, parts: &[Ident]) -> (String, bool) {
-        resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve")
+        let (name, known, _) = resolve(dialect, &ObjectName::from(parts.to_vec())).expect("resolve");
+        (name, known)
     }
 
     #[test]
@@ -179,6 +189,7 @@ mod tests {
         for (dialect, names) in ABSENT {
             for name in *names {
                 assert!(!super::names(*dialect).contains(name), "{dialect:?}: {name}");
+                assert!(!set_returning(*dialect).contains(name), "{dialect:?}: {name}");
             }
         }
     }

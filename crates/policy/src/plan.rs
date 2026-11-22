@@ -112,6 +112,8 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 Role::GroupBy => "GROUP BY",
                 Role::Sort => "ORDER BY",
                 Role::Window => "a window",
+                Role::Distinct => "DISTINCT or a set operation",
+                Role::Generator => "a set-returning function",
             },
             view: match &reference.origin {
                 Origin::Query => None,

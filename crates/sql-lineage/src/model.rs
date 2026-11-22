@@ -73,6 +73,14 @@ pub enum Role {
     Sort,
     /// `PARTITION BY` / `ORDER BY` inside `OVER`.
     Window,
+    /// An output of `SELECT DISTINCT` or of a deduplicating set operation.
+    ///
+    /// Deduplication compares values, so the row count can answer a condition.
+    Distinct,
+    /// An argument of a set-returning function.
+    ///
+    /// The number of rows the call returns depends on its arguments.
+    Generator,
 }
 
 /// A column used outside the projection.

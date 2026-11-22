@@ -5373,6 +5373,30 @@ async fn column_rules_read_select_list_conditions_as_the_placeholder() {
 }
 
 #[tokio::test]
+async fn column_rules_refuse_row_counts_that_compare_or_multiply_ruled_values() {
+    let handler = ruled_handler(None, 100);
+    for (query, role) in [
+        (
+            "SELECT ssn FROM users WHERE id = 1 UNION SELECT '078-05-1123'",
+            "DISTINCT or a set operation",
+        ),
+        ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
+        (
+            "SELECT count(*) AS n FROM (SELECT DISTINCT CASE WHEN ssn LIKE '0%' THEN 1 ELSE 2 END AS p FROM users) d",
+            "DISTINCT or a set operation",
+        ),
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!("(ruled) used in {role}")),
+            "{query}: {refusal}"
+        );
+    }
+    let query = "SELECT DISTINCT name FROM users WHERE id = 1 UNION SELECT 'x'";
+    assert_eq!(ruled_read(&handler, query).await.expect(query).len(), 2);
+}
+
+#[tokio::test]
 async fn column_rules_keep_hash_on_bare_columns_through_views_ctes_and_unions() {
     let handler = ruled_handler(None, 100);
     let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
@@ -5934,7 +5958,7 @@ async fn column_rules_follow_renamed_columns() {
     for query in [
         "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
         "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)",
-        "SELECT d.a, d.b FROM (SELECT DISTINCT email AS a, name AS b FROM users WHERE id = 1) AS d",
+        "SELECT d.a, d.b FROM (SELECT email AS a, name AS b FROM users WHERE id = 1) AS d",
     ] {
         let rows = ruled_read(&handler, query).await.expect(query);
         assert!(is_email_token(&rows[0]["a"]), "{query}: {}", rows[0]);

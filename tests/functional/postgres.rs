@@ -4923,6 +4923,34 @@ async fn column_rules_read_select_list_conditions_as_the_placeholder() {
 }
 
 #[tokio::test]
+async fn column_rules_refuse_row_counts_that_compare_or_multiply_ruled_values() {
+    let handler = handler_with_rules(100);
+    for (query, role) in [
+        (
+            "SELECT ssn FROM users WHERE id = 1 UNION SELECT '078-05-1123'",
+            "DISTINCT or a set operation",
+        ),
+        ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
+        (
+            "SELECT count(*) AS n FROM (SELECT DISTINCT CASE WHEN ssn LIKE '0%' THEN 1 ELSE 2 END AS p FROM users) d",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT generate_series(1, ascii(ssn)) AS n FROM users WHERE id = 1",
+            "a set-returning function",
+        ),
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!("(ruled) used in {role}")),
+            "{query}: {refusal}"
+        );
+    }
+    let query = "SELECT DISTINCT name FROM users WHERE id = 1 UNION SELECT 'x'";
+    assert_eq!(ruled_read(&handler, query).await.expect(query).len(), 2);
+}
+
+#[tokio::test]
 async fn column_rules_keep_hash_on_bare_columns_through_views_ctes_and_unions() {
     let handler = handler_with_rules(100);
     let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")

@@ -897,7 +897,7 @@ fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
         ("SELECT e FROM (SELECT email AS e FROM users) d", HASHED_EMAIL),
         ("WITH c AS (SELECT email FROM users) SELECT * FROM c", HASHED_EMAIL),
         (
-            "SELECT email FROM users UNION SELECT billing_email FROM invoices",
+            "SELECT email FROM users UNION ALL SELECT billing_email FROM invoices",
             HASHED_EMAIL,
         ),
         ("SELECT email FROM users UNION ALL SELECT NULL", HASHED_EMAIL),
@@ -905,8 +905,11 @@ fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
             "SELECT u.email FROM invoices i LEFT JOIN users u ON u.id = i.user_id",
             HASHED_EMAIL,
         ),
-        ("SELECT email FROM users UNION SELECT name FROM users", REPLACED_EMAIL),
-        ("SELECT email FROM users UNION SELECT 'a@b.c'", PLACEHOLDER_EMAIL),
+        (
+            "SELECT email FROM users UNION ALL SELECT name FROM users",
+            REPLACED_EMAIL,
+        ),
+        ("SELECT email FROM users UNION ALL SELECT 'a@b.c'", PLACEHOLDER_EMAIL),
         (
             "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
             PLACEHOLDER_EMAIL,
@@ -925,6 +928,60 @@ fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
         let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
         let positions = positions(pg(&lineage, &config).expect(sql));
         assert_eq!(positions, [expected], "{sql}");
+    }
+}
+
+#[test]
+fn row_count_uses_of_ruled_columns_reject() {
+    let catalog = tables(&[("users", &["id", "email", "ssn", "name"])]);
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let plan = |sql: &str| pg(&analyze(sql, Dialect::Postgres, &catalog).expect(sql), &config);
+    for (sql, role) in [
+        ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
+        (
+            "SELECT CASE WHEN ssn LIKE '1%' THEN 1 ELSE 2 END FROM users WHERE id = 5 UNION SELECT 1",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT count(*) FROM (SELECT DISTINCT lower(ssn) FROM users) d",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT ssn FROM users EXCEPT ALL SELECT name FROM users",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT generate_series(1, ascii(ssn)) FROM users WHERE id = 1",
+            "a set-returning function",
+        ),
+        (
+            "SELECT count(*) FROM (SELECT string_to_table(ssn, NULL) FROM users) t",
+            "a set-returning function",
+        ),
+    ] {
+        let rejection = plan(sql).expect_err(sql);
+        assert_eq!(
+            rejection,
+            Rejection::Reference {
+                column: "public.users.ssn".into(),
+                role,
+                view: None,
+            },
+            "{sql}"
+        );
+        assert_eq!(
+            rejection.to_string(),
+            format!(r#"column policy: column "public.users.ssn" (ruled) used in {role}"#),
+            "{sql}"
+        );
+    }
+    for sql in [
+        "SELECT ssn FROM users UNION ALL SELECT name FROM users",
+        "SELECT DISTINCT name FROM users",
+        "SELECT name FROM users UNION SELECT 'x'",
+        "SELECT generate_series(1, id), ssn FROM users",
+    ] {
+        assert!(plan(sql).is_ok(), "{sql}");
     }
 }
 
