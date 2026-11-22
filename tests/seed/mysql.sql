@@ -421,6 +421,22 @@ CREATE TABLE `app`.`policy_hashed_copy` (
     `email` VARCHAR(255)
 ) ENGINE=InnoDB;
 
+-- Trigger-free write targets whose `phone` and `note` are masked like `users.phone`.
+CREATE TABLE `app`.`policy_masked` (
+    `id` INT PRIMARY KEY,
+    `phone` VARCHAR(255),
+    `note` VARCHAR(255)
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`policy_masked` (`id`, `phone`, `note`) VALUES
+    (1, '+14155552671', 'first note'),
+    (2, '+44 20 7946 0958', 'second note');
+
+CREATE TABLE `app`.`policy_masked_copy` (
+    `id` INT PRIMARY KEY,
+    `phone` VARCHAR(255)
+) ENGINE=InnoDB;
+
 CREATE TABLE `app`.`policy_hashed_default` (
     `id` INT PRIMARY KEY,
     `email` VARCHAR(255) DEFAULT 'x@example.com'

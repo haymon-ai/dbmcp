@@ -96,15 +96,15 @@ Every non-null value of a ruled output column is rendered as text (JSON values i
 | `mask` | `********************`, one `*` per character |
 | `redact` | `""` |
 
-`NULL` stays `null` under every operator.
+`NULL` stays `null` under every operator on plain columns; computed columns ([below](#derived-columns)) read as the placeholder, `NULL` included.
 
 `hash` uses the same key as global detection, and the token covers the entity as well as the value. So a value gets the same token in every column ruled with the same entity, and wherever global detection finds it as that entity: an e-mail address in `users.email` and in `invoices.billing_email` hashes to one token when both rules say `EMAIL_ADDRESS`, and the assistant can match rows by token without seeing the address. The same address ruled as `PERSON` elsewhere gets an unrelated token. Set [`privacy.key`](/privacy/redaction#hash-key); without it, tokens change on every restart and differ across replicas.
 
 ### Derived columns
 
-An output column that passes a ruled column through unchanged keeps its rule: `email`, `u.email AS e`, `(email)`, and the same column read through a view, a materialized view, a CTE, a derived table, or `*`. `DISTINCT` changes nothing.
+An output column that passes a ruled column through unchanged keeps its rule: `email`, `u.email AS e`, `(email)`, and the same column read through a view, a materialized view, a CTE, a derived table, `*`, or `UNION ALL`.
 
-An output column computed from a ruled column keeps the rule too, except that `hash` becomes `replace`: `lower(email)`, `min(email)`, and `count(DISTINCT email)` under a `hash` rule all come back as `<EMAIL_ADDRESS>`. A token of a computed value could be the token of a value the assistant chose (`IF(email IS NULL, 'a@b.c', 'a@b.c')`) or of whichever row sorts first (`MIN(email)`), so only stored values read back unchanged get tokens. The value never shows, but the label can look odd: a count comes back as an e-mail placeholder.
+An output column computed from a ruled column comes back as the entity placeholder (`<EMAIL_ADDRESS>`) on every row, `NULL` included, whatever the rule's operator: `lower(email)`, `min(email)`, and `count(DISTINCT email)` all read as `<EMAIL_ADDRESS>`. Otherwise a condition in the select list (`IF(email LIKE '%.de', NULL, 1)`, `CASE WHEN ssn LIKE '1%' THEN 'Y' ELSE 'N' END`, `LENGTH(phone) > 5`) would answer the same yes/no question a refused `WHERE` would, through `null`, distinct tokens, or `mask` length. The value never shows, but the label can look odd: a count comes back as an e-mail placeholder.
 
 Everything except a plain column reference counts as computed:
 
@@ -115,9 +115,9 @@ Everything except a plain column reference counts as computed:
 - PostgreSQL whole-row references (`SELECT t FROM t`, `f(t.*)`)
 - constants and parameters
 
-A set operation (`UNION`, `INTERSECT`, `EXCEPT`) or a multi-row `VALUES` list keeps a `hash` token in a column only if every branch is a plain column hashed under the same rule, or a literal `NULL`. `SELECT email FROM users UNION SELECT billing_email FROM invoices` keeps the token; a branch with an unruled column, a constant, or a computed value turns the column into `replace`.
+`UNION ALL` or a multi-row `VALUES` list keeps a `hash` token in a column only if every branch is a plain column hashed under the same rule, or a literal `NULL`. `SELECT email FROM users UNION ALL SELECT billing_email FROM invoices` keeps the token; a branch with an unruled column turns the column into `replace`, and a branch with a constant or a computed value makes the whole column computed.
 
-Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule. Two ruled sources must agree on operator and entity; `hash` and `replace` on the same entity merge into `replace`. `concat(email, phone)` under different rules is refused:
+Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` reads as `email`'s placeholder. The ruled sources of a computed column must share the entity; their operators may differ. A plain column in a `UNION ALL` must agree with the other branches on operator and entity, except that `hash` and `replace` on the same entity merge into `replace`. `concat(email, phone)` over different entities is refused:
 
 ```text
 column policy: output column 0 combines conflicting column rules
@@ -127,7 +127,7 @@ The message names only the 0-based position: an unaliased column name is express
 
 ## Where a ruled column may appear
 
-A ruled column may be selected, but it may not appear in any other clause. A condition such as `WHERE ssn LIKE '123%'` would let the assistant learn the value one guess at a time without ever seeing it. These uses are refused:
+A ruled column may be selected, but it may not appear in any other clause. A condition such as `WHERE ssn LIKE '123%'` would let the assistant learn the value one guess at a time without ever seeing it. The select list is allowed because a condition there is computed and comes back as the placeholder (see [Derived columns](#derived-columns)), as long as the number of rows does not depend on the value. These uses are refused:
 
 | Clause | Examples |
 |--------|----------|
@@ -136,8 +136,10 @@ A ruled column may be selected, but it may not appear in any other clause. A con
 | `GROUP BY` | `GROUP BY email` |
 | `ORDER BY` | `ORDER BY ssn` |
 | a window | `PARTITION BY` and `ORDER BY` inside `OVER (…)` |
+| `DISTINCT` or a set operation | `SELECT DISTINCT ssn`, `UNION`, `INTERSECT`, `EXCEPT` (with or without `ALL`); `UNION ALL` is allowed |
+| a set-returning function | `generate_series(1, ascii(ssn))`, `string_to_table(ssn, NULL)`, `unnest`, `json_each`, … |
 
-Uses in `LIMIT` / `OFFSET` (through a subquery) are refused too, and reported as `WHERE`. Inside an aggregate in the select list, `FILTER (WHERE …)` and `WITHIN GROUP (ORDER BY …)` count as sources of that output column, so it gets the rule instead.
+Uses in `LIMIT` / `OFFSET` (through a subquery) are refused too, and reported as `WHERE`; `DISTINCT ON` is reported as `GROUP BY`. Deduplication compares values and a set-returning function turns one row into as many as its arguments ask for, so either would answer a condition through the row count: `SELECT ssn FROM users WHERE id = 5 UNION SELECT '123-45-6789'` returns one row exactly when the guess is right, even though every cell reads as a rewritten value. Inside an aggregate in the select list, `FILTER (WHERE …)` and `WITHIN GROUP (ORDER BY …)` count as sources of that output column, so it gets the rule instead.
 
 A use inside a subquery takes the clause the subquery sits in, and uses inside a view body count the same as uses in the query. So a view that filters on a ruled column cannot be queried at all:
 
@@ -228,9 +230,10 @@ On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for i
 
 With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
 
-- A target column fed by a ruled column needs a rule with the same operator and entity. An unruled target, or one ruled differently, is refused.
+- A target column fed by a ruled column needs a rule with the same operator and entity, and the ruled column must pass through unchanged. An unruled target, or one ruled differently, is refused.
+- A computed value over a ruled column (see [Derived columns](#derived-columns)) is laundering into any target, whatever its rule: stored, it would later read back as a plain column, not as the placeholder. `UPDATE users SET note = IF(email LIKE '%.de', NULL, 'x')` is refused even when `note` carries `email`'s rule; `INSERT INTO copy (email) SELECT email FROM users` passes when `copy.email` does. A column written by several clauses (an upsert's conflict clause, `MERGE` branches) counts as computed when one clause writes a constant or `DEFAULT` beside a plain copy, so `INSERT INTO copy (id, email) SELECT id, email FROM users ON CONFLICT (id) DO UPDATE SET email = DEFAULT` is refused too, as is `UPDATE users SET phone = trim(phone)`.
 - A target fed only by literals or unruled columns copies no ruled values and is always allowed, except into a `hash`-ruled column (below).
-- A new table's column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused until the column is aliased (`lower(email) AS email`) and ruled.
+- A new table's column that copies a ruled column unchanged must have a name a rule can match: `CREATE TABLE copy AS SELECT (email) FROM users` is refused until the column is aliased (`(email) AS email`) and ruled. A computed column such as `lower(email)` is laundering with or without an alias, and an unaliased one is reported by its position only, since its name is expression text.
 
 This covers `INSERT`, `UPDATE`, `MERGE`, `CREATE TABLE … AS`, PostgreSQL `SELECT INTO`, and `CREATE MATERIALIZED VIEW`. For example, `INSERT INTO audit (note) SELECT ssn FROM users` is refused unless `audit.note` carries the `ssn` rule. To copy ruled data into a new table, add a rule for the new table's columns first. `CREATE VIEW` is not laundering, since reads through the view get the base table rules, but its body passes the other checks.
 
@@ -240,7 +243,7 @@ column policy: writing column "public.audit.note" would weaken the rules of its 
 
 A `hash`-ruled column also must not take a value the statement chose: its token would let the assistant hash a guess and compare it with stored tokens. Such a column takes only:
 
-- copies of columns hashed with the same entity, passed through unchanged (a computed copy such as `lower(email)` is laundering, see above);
+- copies of columns hashed with the same entity, passed through unchanged (a computed copy is laundering, see above);
 - `NULL`;
 - `DEFAULT`, or no value at all in an `INSERT`, only when the column has no default (no `DEFAULT`, identity, sequence, or auto-increment).
 
@@ -290,10 +293,10 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Rules that match nothing.** A key with a typo or the wrong segments (see [Column keys](#column-keys)) silently has no effect.
 - **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds personal data.
 - **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
-- **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds. Withholding the message does not hide that an error happened. A `LIMIT` on an unruled column turns this into a row locator: the statement fails only when the matching row is among the first rows, so a search over the limit finds the row.
+- **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds, and `SELECT 1/(ascii(ssn) - 49) FROM users` fails exactly when `ssn` starts with `1`, with no condition at all. Withholding the message does not hide that an error happened. A `LIMIT` on an unruled column turns this into a row locator: the statement fails only when the matching row is among the first rows, so a search over the limit finds the row.
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
-- **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
-- **`mask` length.** `mask` keeps the length of the value.
+- **Nullness.** `NULL` stays `null` in plain columns, so the assistant learns which values are missing; computed columns hide it.
+- **`mask` length.** `mask` keeps the length of the values of plain columns.
 - **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`privacy.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive. Tokens appear only on bare stored values, so a query cannot hash a value of its own choosing.
 - **Concurrent schema changes.** The catalog is read and the statement runs on one connection. On PostgreSQL both happen in one transaction; on MySQL and MariaDB the catalog is read just before the transaction opens. A view body that changed meanwhile refuses the result, but table columns are not checked again. Another session can still change a table in between. Restrict DDL on ruled tables to trusted roles.
 - **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly. On MySQL and MariaDB, triggers are visible only with the `TRIGGER` privilege on the table: a trigger <Dbmcp /> cannot see that writes a `hash`-ruled column lets the assistant plant a value and read its token back, a guess oracle. Grant `TRIGGER`, or keep such tables out of read-write mode.

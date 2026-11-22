@@ -292,7 +292,10 @@ pub(super) const NAMES: &[&str] = &[
     "percent_rank",
     "rank",
     "row_number",
-    // Table functions.
+];
+
+/// The `PostgreSQL` built-in set-returning functions, lowercase.
+pub(super) const SET_RETURNING: &[&str] = &[
     "generate_series",
     "generate_subscripts",
     "json_array_elements",

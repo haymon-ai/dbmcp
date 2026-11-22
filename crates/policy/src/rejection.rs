@@ -135,13 +135,27 @@ pub enum Rejection {
         relation: String,
     },
 
-    /// A created column carrying ruled values under a name no rule can match.
+    /// A created column carrying ruled values unchanged, under a name no rule can match.
     ///
     /// Names only the position: the column's name is expression text.
     #[error(
         "column policy: created column {position} of {relation:?} carries ruled values; alias the column so a rule can name it"
     )]
     Unnamed {
+        /// The created relation, as `schema.name`.
+        relation: String,
+        /// 0-based position among the created columns.
+        position: usize,
+    },
+
+    /// An unnamed created column whose ruled values would lose their rules.
+    ///
+    /// [`Rejection::Laundering`] by position: the column's name is
+    /// expression text, and an alias would not help a computed value.
+    #[error(
+        "column policy: writing created column {position} of {relation:?} would weaken the rules of its source columns"
+    )]
+    UnnamedLaundering {
         /// The created relation, as `schema.name`.
         relation: String,
         /// 0-based position among the created columns.
@@ -184,7 +198,7 @@ impl Rejection {
             Self::RuledIndex { .. } => "index",
             Self::Reference { .. } => "reference",
             Self::Conflict { .. } => "combine",
-            Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
+            Self::Laundering { .. } | Self::Unnamed { .. } | Self::UnnamedLaundering { .. } => "laundering",
             Self::Chosen { .. } => "chosen",
             Self::Computed { .. } => "computed",
             Self::Trigger { .. } => "trigger",

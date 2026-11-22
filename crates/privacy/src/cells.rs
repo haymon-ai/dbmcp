@@ -8,6 +8,8 @@
 //!   labelled with its entity. A string is rewritten from its text, anything
 //!   else (numbers, booleans, `json`/`jsonb`, keys included) from its compact
 //!   JSON text, object keys sorted. `NULL` stays `null`.
+//! - `Placeholder`: every value, `NULL` included, becomes the entity's
+//!   placeholder (`<EMAIL_ADDRESS>`); no operator runs.
 //!
 //! Rows of `EXPLAIN`, `SHOW`, and `DESCRIBE` are not positional; redact them
 //! with no plan, which runs global detection on every cell.
@@ -48,6 +50,8 @@ pub struct PlannedColumn {
 pub enum Position {
     /// Replace every non-null value whole with the operator; the entity labels it.
     Action(PrivacyOperator, Entity),
+    /// Replace every value, `NULL` included, with the entity's placeholder.
+    Placeholder(Entity),
     /// Run global detection, as without column rules.
     Global,
 }
@@ -164,12 +168,13 @@ impl Redactor {
                 plan.columns
                     .iter()
                     .map(|column| match column.position {
-                        Position::Global => None,
-                        Position::Action(operator, entity) => Some((self.operator(operator), entity)),
+                        Position::Global => Action::Global,
+                        Position::Action(operator, entity) => Action::Whole(self.operator(operator), entity),
+                        Position::Placeholder(entity) => Action::Placeholder(entity),
                     })
                     .collect::<Vec<_>>()
             }
-            None => columns.iter().map(|_| None).collect(),
+            None => columns.iter().map(|_| Action::Global).collect(),
         };
 
         let row_count = rows.len();
@@ -179,15 +184,24 @@ impl Redactor {
             let mut roots = Vec::new();
             for row in rows {
                 for ((value, name), action) in row.iter_mut().zip(columns).zip(&actions) {
-                    match action {
-                        Some((operator, entity)) => {
-                            if rewrite_whole(value, operator, *entity) {
-                                stats.total += 1;
-                                *stats.by_entity.entry(*entity).or_insert(0) += 1;
+                    let entity = match action {
+                        Action::Whole(operator, entity) => {
+                            if !rewrite_whole(value, operator, *entity) {
+                                continue;
                             }
+                            *entity
                         }
-                        None => roots.push(Frame::KeyedChild(value, name.as_str())),
-                    }
+                        Action::Placeholder(entity) => {
+                            *value = Value::String(entity.placeholder().to_owned());
+                            *entity
+                        }
+                        Action::Global => {
+                            roots.push(Frame::KeyedChild(value, name.as_str()));
+                            continue;
+                        }
+                    };
+                    stats.total += 1;
+                    *stats.by_entity.entry(entity).or_insert(0) += 1;
                 }
             }
             (roots, stats)
@@ -227,6 +241,16 @@ impl Redactor {
             .map(|row| Value::Object(columns.iter().cloned().zip(row).collect()))
             .collect())
     }
+}
+
+/// How one output column's cells are redacted, its operator built once.
+enum Action {
+    /// Global detection under the column name.
+    Global,
+    /// A whole-value rewrite of every non-null cell by the operator.
+    Whole(Operator, Entity),
+    /// The entity's placeholder in every cell, `NULL` included.
+    Placeholder(Entity),
 }
 
 /// Rewrites a non-null `value` whole; returns `false` for `NULL`.
@@ -411,6 +435,36 @@ mod tests {
                 Value::Null
             ]
         );
+    }
+
+    #[test]
+    fn placeholder_rewrites_every_value_null_included_and_counts_each() {
+        let mut cells = cells(vec![vec![
+            json!("jane@example.com"),
+            json!(1234),
+            json!(true),
+            json!({"email": "x"}),
+            Value::Null,
+            Value::Null,
+        ]]);
+        let mut positions = vec![Position::Placeholder(Entity::EmailAddress); 5];
+        positions.push(MASKED);
+        let stats = Redactor::with_defaults()
+            .apply_cells(&mut cells, Some(&plan(positions)))
+            .expect("runs");
+        assert_eq!(
+            cells.rows[0],
+            [
+                json!("<EMAIL_ADDRESS>"),
+                json!("<EMAIL_ADDRESS>"),
+                json!("<EMAIL_ADDRESS>"),
+                json!("<EMAIL_ADDRESS>"),
+                json!("<EMAIL_ADDRESS>"),
+                Value::Null
+            ]
+        );
+        assert_eq!(stats.total, 5);
+        assert_eq!(stats.by_entity.get(&Entity::EmailAddress), Some(&5));
     }
 
     #[test]

@@ -97,6 +97,11 @@ fn pg(lineage: &Lineage, config: &PrivacyConfig) -> Result<Plan, Rejection> {
     plan_on(lineage, Dialect::Postgres, config)
 }
 
+/// Analyzes `sql` on `PostgreSQL` against `catalog` and plans it.
+fn pg_sql(sql: &str, catalog: &Catalog, config: &PrivacyConfig) -> Result<Plan, Rejection> {
+    pg(&analyze(sql, Dialect::Postgres, catalog).expect(sql), config)
+}
+
 /// Plans `lineage` on `PostgreSQL` under `names`.
 fn pg_with(lineage: &Lineage, config: &PrivacyConfig, names: &Names) -> Result<Plan, Rejection> {
     plan(lineage, Dialect::Postgres, config, names)
@@ -776,7 +781,7 @@ fn same_rule_pair_combines() {
     );
 }
 
-// Flow: `hash` only on bare outputs.
+// Flow: `hash` only on bare outputs; derived outputs read as the placeholder.
 
 /// The `hash` rule on `users.email` and `invoices.billing_email`, `EMAIL_ADDRESS`.
 fn hashed_emails() -> Vec<ColumnRule> {
@@ -799,6 +804,7 @@ fn flowed(sources: Vec<SourceRef>, flow: Flow) -> Lineage {
 
 const HASHED_EMAIL: Position = Position::Action(PrivacyOperator::Hash, Entity::EmailAddress);
 const REPLACED_EMAIL: Position = Position::Action(PrivacyOperator::Replace, Entity::EmailAddress);
+const PLACEHOLDER_EMAIL: Position = Position::Placeholder(Entity::EmailAddress);
 
 #[test]
 fn bare_hash_output_keeps_hash() {
@@ -820,17 +826,33 @@ fn bare_union_of_same_hash_pair_keeps_hash() {
 }
 
 #[test]
-fn derived_hash_output_becomes_replace() {
+fn derived_ruled_output_reads_as_the_placeholder_under_every_operator() {
+    let config = config(vec![
+        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PrivacyOperator::Mask, "PHONE_NUMBER"),
+        rule("shop.public.users.ssn", PrivacyOperator::Redact, "US_SSN"),
+        rule("shop.public.users.card", PrivacyOperator::Replace, "CREDIT_CARD"),
+    ]);
+    let cases = [
+        ("email", Entity::EmailAddress),
+        ("phone", Entity::PhoneNumber),
+        ("ssn", Entity::UsSsn),
+        ("card", Entity::CreditCard),
+    ];
+    for (column, entity) in cases {
+        assert_eq!(
+            only(&flowed(vec![col("users", column)], Flow::Derived), &config),
+            Position::Placeholder(entity),
+            "{column}"
+        );
+    }
+}
+
+#[test]
+fn derived_output_with_an_unruled_source_reads_as_the_placeholder() {
     let config = config(hashed_emails());
-    assert_eq!(
-        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
-        REPLACED_EMAIL
-    );
-    let lineage = flowed(
-        vec![col("users", "email"), col("invoices", "billing_email")],
-        Flow::Derived,
-    );
-    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+    let lineage = flowed(vec![col("users", "name"), col("users", "email")], Flow::Derived);
+    assert_eq!(only(&lineage, &config), PLACEHOLDER_EMAIL);
 }
 
 #[test]
@@ -868,29 +890,20 @@ fn derived_hash_of_different_entities_conflicts() {
 }
 
 #[test]
-fn derived_hash_with_mask_conflicts() {
+fn derived_same_entity_under_different_operators_reads_as_the_placeholder() {
     let config = config(vec![
         rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.users.phone", PrivacyOperator::Mask, "EMAIL_ADDRESS"),
+        rule(
+            "shop.public.invoices.billing_email",
+            PrivacyOperator::Mask,
+            "EMAIL_ADDRESS",
+        ),
     ]);
-    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
-    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
-}
-
-#[test]
-fn derived_mask_and_redact_outputs_are_unchanged() {
-    let config = config(vec![
-        ssn("shop.public.users.ssn"),
-        rule("shop.public.users.email", PrivacyOperator::Redact, "EMAIL_ADDRESS"),
-    ]);
-    assert_eq!(
-        only(&flowed(vec![col("users", "ssn")], Flow::Derived), &config),
-        MASKED_SSN
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Derived,
     );
-    assert_eq!(
-        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
-        Position::Action(PrivacyOperator::Redact, Entity::EmailAddress)
-    );
+    assert_eq!(only(&lineage, &config), PLACEHOLDER_EMAIL);
 }
 
 #[test]
@@ -916,7 +929,7 @@ fn tables(tables: &[(&str, &[&str])]) -> Catalog {
 }
 
 #[test]
-fn analyzed_outputs_hash_only_when_bare() {
+fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
     let catalog = tables(&[
         ("users", &["id", "email", "name"]),
         ("invoices", &["id", "user_id", "billing_email"]),
@@ -928,7 +941,7 @@ fn analyzed_outputs_hash_only_when_bare() {
         ("SELECT e FROM (SELECT email AS e FROM users) d", HASHED_EMAIL),
         ("WITH c AS (SELECT email FROM users) SELECT * FROM c", HASHED_EMAIL),
         (
-            "SELECT email FROM users UNION SELECT billing_email FROM invoices",
+            "SELECT email FROM users UNION ALL SELECT billing_email FROM invoices",
             HASHED_EMAIL,
         ),
         ("SELECT email FROM users UNION ALL SELECT NULL", HASHED_EMAIL),
@@ -936,26 +949,82 @@ fn analyzed_outputs_hash_only_when_bare() {
             "SELECT u.email FROM invoices i LEFT JOIN users u ON u.id = i.user_id",
             HASHED_EMAIL,
         ),
-        ("SELECT email FROM users UNION SELECT name FROM users", REPLACED_EMAIL),
-        ("SELECT email FROM users UNION SELECT 'a@b.c'", REPLACED_EMAIL),
         (
-            "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
+            "SELECT email FROM users UNION ALL SELECT name FROM users",
             REPLACED_EMAIL,
         ),
-        ("SELECT lower(email) FROM users", REPLACED_EMAIL),
-        ("SELECT min(email) FROM users", REPLACED_EMAIL),
-        ("SELECT count(DISTINCT email) FROM users", REPLACED_EMAIL),
-        ("SELECT CAST(email AS text) FROM users", REPLACED_EMAIL),
-        ("SELECT email COLLATE \"C\" FROM users", REPLACED_EMAIL),
+        ("SELECT email FROM users UNION ALL SELECT 'a@b.c'", PLACEHOLDER_EMAIL),
+        (
+            "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
+            PLACEHOLDER_EMAIL,
+        ),
+        ("SELECT lower(email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT min(email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT count(DISTINCT email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT CAST(email AS text) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT email COLLATE \"C\" FROM users", PLACEHOLDER_EMAIL),
         (
             "SELECT concat(u.email, i.billing_email) FROM users u, invoices i",
-            REPLACED_EMAIL,
+            PLACEHOLDER_EMAIL,
         ),
     ];
     for (sql, expected) in cases {
-        let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
-        let positions = positions(pg(&lineage, &config).expect(sql));
+        let positions = positions(pg_sql(sql, &catalog, &config).expect(sql));
         assert_eq!(positions, [expected], "{sql}");
+    }
+}
+
+#[test]
+fn row_count_uses_of_ruled_columns_reject() {
+    let catalog = tables(&[("users", &["id", "email", "ssn", "name"])]);
+    let config = config(vec![ssn("shop.public.users.ssn")]);
+    let plan = |sql: &str| pg_sql(sql, &catalog, &config);
+    for (sql, role) in [
+        ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
+        (
+            "SELECT CASE WHEN ssn LIKE '1%' THEN 1 ELSE 2 END FROM users WHERE id = 5 UNION SELECT 1",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT count(*) FROM (SELECT DISTINCT lower(ssn) FROM users) d",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT ssn FROM users EXCEPT ALL SELECT name FROM users",
+            "DISTINCT or a set operation",
+        ),
+        (
+            "SELECT generate_series(1, ascii(ssn)) FROM users WHERE id = 1",
+            "a set-returning function",
+        ),
+        (
+            "SELECT count(*) FROM (SELECT string_to_table(ssn, NULL) FROM users) t",
+            "a set-returning function",
+        ),
+    ] {
+        let rejection = plan(sql).expect_err(sql);
+        assert_eq!(
+            rejection,
+            Rejection::Reference {
+                column: "public.users.ssn".into(),
+                role,
+                view: None,
+            },
+            "{sql}"
+        );
+        assert_eq!(
+            rejection.to_string(),
+            format!(r#"column policy: column "public.users.ssn" (ruled) used in {role}"#),
+            "{sql}"
+        );
+    }
+    for sql in [
+        "SELECT ssn FROM users UNION ALL SELECT name FROM users",
+        "SELECT DISTINCT name FROM users",
+        "SELECT name FROM users UNION SELECT 'x'",
+        "SELECT generate_series(1, id), ssn FROM users",
+    ] {
+        assert!(plan(sql).is_ok(), "{sql}");
     }
 }
 
@@ -1164,14 +1233,46 @@ fn create_materialized_view_of_ruled_data_needs_a_target_rule() {
 }
 
 #[test]
+fn unnamed_created_columns_ask_for_an_alias_only_when_bare() {
+    let mut catalog = tables(&[("users", &["id", "ssn"])]);
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("copy")]),
+        Entry::Vacant(table("copy")),
+    );
+    let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.copy.ssn")]);
+    let plan = |sql: &str| pg_sql(sql, &catalog, &config);
+
+    assert_eq!(
+        plan("CREATE TABLE copy AS SELECT (ssn) FROM users"),
+        Err(Rejection::Unnamed {
+            relation: "public.copy".into(),
+            position: 0,
+        })
+    );
+    let rejection = plan("CREATE TABLE copy AS SELECT upper(ssn) FROM users").expect_err("computed");
+    assert_eq!(
+        rejection,
+        Rejection::UnnamedLaundering {
+            relation: "public.copy".into(),
+            position: 0,
+        }
+    );
+    assert_eq!(
+        rejection.to_string(),
+        r#"column policy: writing created column 0 of "public.copy" would weaken the rules of its source columns"#
+    );
+    assert_eq!(
+        plan("CREATE TABLE copy AS SELECT upper(ssn) AS ssn FROM users"),
+        Err(Rejection::Laundering {
+            column: "public.copy.ssn".into(),
+        })
+    );
+}
+
+#[test]
 fn ruled_source_into_unnamed_create_column_asks_for_an_alias() {
     let config = config(vec![ssn("shop.public.users.ssn")]);
-    let mut lineage = write(
-        "t2",
-        "upper(ssn)",
-        vec![col("users", "ssn")],
-        StatementKind::CreateTableAs,
-    );
+    let mut lineage = write("t2", "(ssn)", vec![col("users", "ssn")], StatementKind::CreateTableAs);
     lineage.writes[0].named = false;
     let rejection = pg(&lineage, &config).expect_err("rejected");
     assert_eq!(
@@ -1183,10 +1284,66 @@ fn ruled_source_into_unnamed_create_column_asks_for_an_alias() {
     );
     let message = rejection.to_string();
     assert!(message.contains("alias the column"), "{message}");
-    assert!(!message.contains("upper(ssn)"), "{message}");
+    assert!(!message.contains("(ssn)"), "{message}");
 
     lineage.writes[0].sources = BTreeSet::from([col("users", "name")]);
     assert!(pg(&lineage, &config).is_ok(), "unruled data needs no name");
+}
+
+#[test]
+fn derived_same_pair_writes_launder_and_bare_copies_pass() {
+    let mut catalog = tables(&[("masked", &["id", "phone", "note"]), ("copy", &["id", "phone"])]);
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("mv")]),
+        Entry::Vacant(table("mv")),
+    );
+    let cases = [
+        (
+            PrivacyOperator::Mask,
+            "INSERT INTO copy (phone) SELECT CASE WHEN phone LIKE '+1%' THEN NULL ELSE '1' END FROM masked",
+            "INSERT INTO copy (phone) SELECT phone FROM masked",
+            "public.copy.phone",
+        ),
+        (
+            PrivacyOperator::Redact,
+            "UPDATE masked SET note = CASE WHEN phone LIKE '+1%' THEN NULL ELSE 'x' END",
+            "UPDATE masked SET note = phone",
+            "public.masked.note",
+        ),
+        (
+            PrivacyOperator::Replace,
+            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
+             ON CONFLICT (id) DO UPDATE SET phone = lower(excluded.phone)",
+            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
+             ON CONFLICT (id) DO UPDATE SET phone = excluded.phone",
+            "public.copy.phone",
+        ),
+        (
+            PrivacyOperator::Mask,
+            "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = upper(m.phone)",
+            "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = m.phone",
+            "public.copy.phone",
+        ),
+        (
+            PrivacyOperator::Mask,
+            "CREATE MATERIALIZED VIEW mv AS SELECT lower(phone) AS phone FROM masked",
+            "CREATE MATERIALIZED VIEW mv AS SELECT phone FROM masked",
+            "public.mv.phone",
+        ),
+    ];
+    for (operator, derived, bare, column) in cases {
+        let config = config(
+            ["masked.phone", "masked.note", "copy.phone", "mv.phone"]
+                .map(|key| rule(&format!("shop.public.{key}"), operator, "PHONE_NUMBER"))
+                .to_vec(),
+        );
+        assert_eq!(
+            pg_sql(derived, &catalog, &config),
+            Err(Rejection::Laundering { column: column.into() }),
+            "{derived}"
+        );
+        assert!(pg_sql(bare, &catalog, &config).is_ok(), "{bare}");
+    }
 }
 
 #[test]

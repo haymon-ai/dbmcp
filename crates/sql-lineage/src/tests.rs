@@ -248,6 +248,60 @@ fn clause_roles_are_recorded() {
 }
 
 #[test]
+fn select_distinct_records_every_output_source() {
+    let lineage = pg("SELECT DISTINCT lower(email) AS e, id FROM users").expect("analyze");
+    assert_eq!(
+        refs(&lineage),
+        vec![r("users.email", Role::Distinct), r("users.id", Role::Distinct)]
+    );
+    let lineage = pg("SELECT DISTINCT * FROM (SELECT ssn FROM users) d").expect("analyze");
+    assert_eq!(refs(&lineage), vec![r("users.ssn", Role::Distinct)]);
+    let lineage = pg("SELECT ALL email FROM users").expect("analyze");
+    assert_eq!(refs(&lineage), Vec::new());
+}
+
+#[test]
+fn deduplicating_set_operations_record_every_output_source() {
+    for sql in [
+        "SELECT ssn FROM users UNION SELECT 'x'",
+        "SELECT ssn FROM users UNION DISTINCT SELECT 'x'",
+        "SELECT 'x' UNION ALL SELECT email FROM users UNION SELECT ssn FROM users",
+        "SELECT ssn FROM users INTERSECT SELECT email FROM users",
+        "SELECT ssn FROM users INTERSECT ALL SELECT email FROM users",
+        "SELECT ssn FROM users EXCEPT ALL SELECT email FROM users",
+    ] {
+        let lineage = pg(sql).expect(sql);
+        let mut expected = vec![r("users.ssn", Role::Distinct)];
+        if sql.contains("email") {
+            expected.insert(0, r("users.email", Role::Distinct));
+        }
+        assert_eq!(refs(&lineage), expected, "{sql}");
+    }
+    let lineage = pg("SELECT ssn FROM users UNION ALL SELECT email FROM users").expect("analyze");
+    assert_eq!(refs(&lineage), Vec::new());
+    let lineage = pg("SELECT ssn FROM users UNION ALL (SELECT email FROM users UNION SELECT 'x')").expect("analyze");
+    assert_eq!(refs(&lineage), vec![r("users.email", Role::Distinct)]);
+}
+
+#[test]
+fn set_returning_function_arguments_are_generator_references() {
+    let lineage =
+        pg("SELECT generate_series(1, ascii(ssn)) AS n, string_to_table(email, ',') AS e FROM users").expect("analyze");
+    assert_eq!(
+        columns(&lineage),
+        vec![col("n", &["users.ssn"]), col("e", &["users.email"])]
+    );
+    assert_eq!(
+        refs(&lineage),
+        vec![r("users.email", Role::Generator), r("users.ssn", Role::Generator)]
+    );
+    let lineage = on("SELECT json_each(ssn) FROM users", Dialect::Sqlite).expect("analyze");
+    assert_eq!(refs(&lineage), vec![r("users.ssn", Role::Generator)]);
+    let lineage = pg("SELECT lower(ssn) FROM users").expect("analyze");
+    assert_eq!(refs(&lineage), Vec::new());
+}
+
+#[test]
 fn window_role_covers_partition_and_order() {
     let lineage = pg("SELECT row_number() OVER (PARTITION BY email ORDER BY ssn) AS n FROM users").expect("analyze");
     assert_eq!(columns(&lineage), vec![col("n", &[])]);
@@ -281,7 +335,7 @@ fn order_by_position_and_alias_resolve_to_output() {
 
 #[test]
 fn set_operation_unions_sources_per_position() {
-    let lineage = pg("SELECT email FROM users UNION SELECT ssn FROM users ORDER BY 1").expect("analyze");
+    let lineage = pg("SELECT email FROM users UNION ALL SELECT ssn FROM users ORDER BY 1").expect("analyze");
     assert_eq!(columns(&lineage), vec![col("email", &["users.email", "users.ssn"])]);
     assert_eq!(
         refs(&lineage),
