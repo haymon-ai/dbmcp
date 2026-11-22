@@ -311,3 +311,21 @@ pub(super) const SET_RETURNING: &[&str] = &[
     "string_to_table",
     "unnest",
 ];
+
+/// The `PostgreSQL` built-in aggregates whose result depends on input row order, lowercase.
+///
+/// They collect or pick values in the order rows arrive, unless the call orders them itself.
+pub(super) const ORDER_SENSITIVE: &[&str] = &[
+    "any_value",
+    "array_agg",
+    "json_agg",
+    "json_arrayagg",
+    "json_object_agg",
+    "json_object_agg_strict",
+    "jsonb_agg",
+    "jsonb_object_agg",
+    "jsonb_object_agg_strict",
+    "jsonb_object_agg_unique",
+    "jsonb_object_agg_unique_strict",
+    "string_agg",
+];

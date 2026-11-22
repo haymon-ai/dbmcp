@@ -7,7 +7,7 @@ use dbmcp_config::{ColumnRule, PrivacyConfig, PrivacyOperator};
 use dbmcp_privacy::Entity;
 use dbmcp_privacy::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Dialect, ExplainForm, Flow, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
+    Dialect, ExplainForm, Flow, Lineage, OrderKind, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
 
 use crate::catalog::{Cascade, CascadeAction, CatalogColumn, Family, Member};
@@ -160,7 +160,47 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PrivacyConfig, names: &Nam
         writes(lineage, effects, target, config, names)?;
     }
     row_movement(lineage, effects, config, names)?;
+    order(lineage, config, &names.families)?;
     Ok(Plan { columns })
+}
+
+/// Refuses a construct whose result depends on row order, while a ruled relation is touched.
+///
+/// A copy counts only when a written value comes from a ruled relation. A
+/// query statement's own rows ([`OrderKind::Rows`]) are left to
+/// [`Planned::ordered`](crate::Planned::ordered), and so is every `EXPLAIN`,
+/// `SHOW`, and `DESCRIBE`: they return no rows of the relation.
+fn order(lineage: &Lineage, config: &PrivacyConfig, families: &Families) -> Result<(), Rejection> {
+    if matches!(
+        lineage.statement,
+        StatementKind::Explain(..) | StatementKind::Show(_) | StatementKind::Describe
+    ) {
+        return Ok(());
+    }
+    let touched = ruled_relation(lineage, config, families);
+    let copied = lineage
+        .writes
+        .iter()
+        .flat_map(|column| &column.sources)
+        .map(|source| &source.relation)
+        .find(|relation| covers_ruled(config, families, relation));
+    for order in &lineage.orders {
+        let (construct, relation) = match &order.kind {
+            OrderKind::Rows => continue,
+            OrderKind::Copy => ("a copy of rows without ORDER BY".to_string(), copied),
+            OrderKind::Limit => ("LIMIT, OFFSET, or FETCH without ORDER BY".to_string(), touched),
+            OrderKind::Window => ("a window without ORDER BY".to_string(), touched),
+            OrderKind::Aggregate(name) => (format!("aggregate {name:?} without ORDER BY"), touched),
+            OrderKind::DistinctOn => ("DISTINCT ON".to_string(), touched),
+        };
+        if let Some(relation) = relation {
+            return Err(Rejection::Unordered {
+                construct,
+                relation: relation_name(relation),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Gates written columns, server-filled `hash` columns, then cascades and triggers.
@@ -622,7 +662,11 @@ pub(crate) fn covers_ruled(config: &PrivacyConfig, families: &Families, relation
 }
 
 /// Returns the first touched relation whose family has a ruled column.
-fn ruled_relation<'a>(lineage: &'a Lineage, config: &PrivacyConfig, families: &Families) -> Option<&'a RelationId> {
+pub(crate) fn ruled_relation<'a>(
+    lineage: &'a Lineage,
+    config: &PrivacyConfig,
+    families: &Families,
+) -> Option<&'a RelationId> {
     lineage
         .relations
         .iter()

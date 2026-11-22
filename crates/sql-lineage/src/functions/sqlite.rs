@@ -107,3 +107,15 @@ pub(super) const NAMES: &[&str] = &[
 
 /// The `SQLite` built-in table-valued functions, lowercase.
 pub(super) const SET_RETURNING: &[&str] = &["json_each", "json_tree", "jsonb_each", "jsonb_tree"];
+
+/// The `SQLite` built-in aggregates whose result depends on input row order, lowercase.
+///
+/// They collect or pick values in the order rows arrive, unless the call orders them itself.
+pub(super) const ORDER_SENSITIVE: &[&str] = &[
+    "group_concat",
+    "json_group_array",
+    "json_group_object",
+    "jsonb_group_array",
+    "jsonb_group_object",
+    "string_agg",
+];

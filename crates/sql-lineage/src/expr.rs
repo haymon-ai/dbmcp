@@ -15,7 +15,7 @@ use sqlparser::ast::{
 use crate::bind::{Clause, Level, Sources};
 use crate::error::LineageError;
 use crate::functions;
-use crate::model::Role;
+use crate::model::{OrderKind, Role};
 use crate::resolve::{Ctx, MAX_EXPR_DEPTH, idents, unsupported};
 
 impl Ctx<'_> {
@@ -347,7 +347,13 @@ impl Ctx<'_> {
         if !matches!(parameters, FunctionArguments::None) {
             return Err(unsupported("parametric function"));
         }
+        let ordered = matches!(args, FunctionArguments::List(list)
+            if list.clauses.iter().any(|c| matches!(c, FunctionArgumentClause::OrderBy(_))));
+        let sensitive = functions::order_sensitive(self.dialect, name)?;
         let (name, known, rows) = functions::resolve(self.dialect, name)?;
+        if sensitive && !ordered && within_group.is_empty() && over.is_none() {
+            self.order(OrderKind::Aggregate(name.clone()));
+        }
         self.call(name, known);
         // Collect a set-returning call's arguments apart, so they can be referenced alone.
         let mut own = Sources::new();
@@ -428,7 +434,13 @@ impl Ctx<'_> {
     }
 
     /// Records a window specification's columns as [`Role::Window`] references.
+    ///
+    /// A specification without `ORDER BY` (or a base window to inherit one
+    /// from) is recorded as [`OrderKind::Window`].
     pub(crate) fn window(&mut self, spec: &WindowSpec, level: &Level<'_>, clause: Clause) -> Result<(), LineageError> {
+        if spec.order_by.is_empty() && spec.window_name.is_none() {
+            self.order(OrderKind::Window);
+        }
         let mut sources = Sources::new();
         self.all(&spec.partition_by, level, clause, &mut sources)?;
         for item in &spec.order_by {

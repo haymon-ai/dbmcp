@@ -69,7 +69,7 @@ pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
 pub use crate::explain::ExplainForm;
 pub use crate::model::{
-    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
-    SourceRef, StatementKind, TargetColumn, TypeUse,
+    Flow, FunctionUse, Lineage, OrderKind, OrderUse, Origin, OutputColumn, Reference, RelationId, RelationKind,
+    RelationUse, Role, SourceRef, StatementKind, TargetColumn, TypeUse,
 };
 pub use crate::show::Show;

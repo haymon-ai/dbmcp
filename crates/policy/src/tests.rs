@@ -81,6 +81,7 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
         relations,
         functions: BTreeSet::new(),
         types: BTreeSet::new(),
+        orders: BTreeSet::new(),
         target: None,
         writes: Vec::new(),
         statement: StatementKind::Query,
@@ -1301,7 +1302,7 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
         (
             PrivacyOperator::Mask,
             "INSERT INTO copy (phone) SELECT CASE WHEN phone LIKE '+1%' THEN NULL ELSE '1' END FROM masked",
-            "INSERT INTO copy (phone) SELECT phone FROM masked",
+            "INSERT INTO copy (phone) SELECT phone FROM masked ORDER BY id",
             "public.copy.phone",
         ),
         (
@@ -1314,7 +1315,7 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
             PrivacyOperator::Replace,
             "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
              ON CONFLICT (id) DO UPDATE SET phone = lower(excluded.phone)",
-            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
+            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked ORDER BY id \
              ON CONFLICT (id) DO UPDATE SET phone = excluded.phone",
             "public.copy.phone",
         ),
@@ -1327,7 +1328,7 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
         (
             PrivacyOperator::Mask,
             "CREATE MATERIALIZED VIEW mv AS SELECT lower(phone) AS phone FROM masked",
-            "CREATE MATERIALIZED VIEW mv AS SELECT phone FROM masked",
+            "CREATE MATERIALIZED VIEW mv AS SELECT phone FROM masked ORDER BY id",
             "public.mv.phone",
         ),
     ];

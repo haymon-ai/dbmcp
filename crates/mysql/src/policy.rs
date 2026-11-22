@@ -40,7 +40,7 @@ use dbmcp_policy::{
     RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::validation::validate_single_statement;
-use dbmcp_sql::{Connection as _, SqlError};
+use dbmcp_sql::{Connection as _, SqlError, order};
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
@@ -515,6 +515,7 @@ async fn run<'c>(
     };
     let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
     let mut planned = analyzed.plan(config)?;
+    let ordered = planned.ordered(|_| true, |positions| order::order_by(sql, &MySqlDialect {}, positions))?;
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
         return Err(Stop::Unrollable);
     }
@@ -525,7 +526,16 @@ async fn run<'c>(
     }
     let ran = async {
         let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-        let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
+        let executed = match execute(
+            &mut tx,
+            ordered.as_deref().unwrap_or(sql),
+            &mut planned,
+            &probe,
+            &owners,
+            sink,
+        )
+        .await
+        {
             Ok(executed) => executed,
             Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
             Err(stop) => {

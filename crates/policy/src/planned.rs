@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::explain;
 use crate::plan::{Families, covering, covers_ruled, is_ruled};
+use crate::rejection::Rejection;
 
 /// A planned statement, bound to the `privacy.rules` it was planned under.
 ///
@@ -19,8 +20,19 @@ pub struct Planned<'c> {
     /// The inheritance trees the statement was planned with.
     families: Families,
     withholds: bool,
+    /// How the server must order the rows, when their plan order could leak.
+    sort: Option<Sort>,
     /// Whether a first row passed [`Planned::check_first`].
     fit: bool,
+}
+
+/// The order a query's rows need: its unruled output columns.
+#[derive(Debug)]
+pub(crate) struct Sort {
+    /// 0-based positions of the unruled output columns.
+    pub(crate) positions: Vec<usize>,
+    /// The ruled relation whose plan order the rows could follow, as `schema.name`.
+    pub(crate) relation: String,
 }
 
 /// How a planned statement's rows are checked and redacted.
@@ -46,14 +58,62 @@ pub enum Unfit {
 }
 
 impl<'c> Planned<'c> {
-    pub(crate) const fn new(mode: Mode, config: &'c PrivacyConfig, families: Families, withholds: bool) -> Self {
+    pub(crate) const fn new(
+        mode: Mode,
+        config: &'c PrivacyConfig,
+        families: Families,
+        withholds: bool,
+        sort: Option<Sort>,
+    ) -> Self {
         Self {
             mode,
             config,
             families,
             withholds,
+            sort,
             fit: false,
         }
+    }
+
+    /// Whether the server must order the rows: [`Planned::ordered`] splices an order.
+    #[must_use]
+    pub const fn sorts(&self) -> bool {
+        self.sort.is_some()
+    }
+
+    /// Returns the text to run instead of the statement, when its rows need an order.
+    ///
+    /// `None` unless the statement is a query over a ruled relation whose
+    /// top-level query has no `ORDER BY`: its rows would arrive in plan
+    /// order, which can follow an index on a ruled column. Then `splice`
+    /// adds an `ORDER BY` over the given 1-based output positions: the
+    /// unruled output columns whose 0-based position `orderable` accepts (a
+    /// backend drops those its server cannot sort).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Rejection::Unsorted`] when no such column is left or `splice` fails.
+    pub fn ordered(
+        &self,
+        orderable: impl Fn(usize) -> bool,
+        splice: impl FnOnce(&[usize]) -> Option<String>,
+    ) -> Result<Option<String>, Rejection> {
+        let Some(sort) = &self.sort else {
+            return Ok(None);
+        };
+        let positions: Vec<usize> = sort
+            .positions
+            .iter()
+            .filter(|&&position| orderable(position))
+            .map(|position| position + 1)
+            .collect();
+        let spliced = if positions.is_empty() { None } else { splice(&positions) };
+        spliced.map(Some).ok_or_else(|| {
+            Rejection::Unsorted {
+                relation: sort.relation.clone(),
+            }
+            .logged()
+        })
     }
 
     /// Whether [`Planned::redact`] prunes the result to value-free `EXPLAIN` plan keys.
@@ -187,7 +247,7 @@ mod tests {
 
     /// A plan of `mode` under `config` with no inheritance trees.
     fn new_planned(mode: Mode, config: &PrivacyConfig, withholds: bool) -> Planned<'_> {
-        Planned::new(mode, config, Families::new(), withholds)
+        Planned::new(mode, config, Families::new(), withholds, None)
     }
 
     /// `count` result column names.
@@ -321,7 +381,7 @@ mod tests {
                 descendants: Vec::new(),
             },
         )]);
-        let planned = Planned::new(Mode::Global, &config, families, true);
+        let planned = Planned::new(Mode::Global, &config, families, true, None);
         let other = RelationId::new("shop", "public", "u");
         assert!(planned.joined_ruled(&other, &parent));
         assert!(!planned.joined_ruled(&child, &parent));

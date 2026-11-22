@@ -36,7 +36,7 @@ use crate::catalog::Entry;
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::explain::ExplainForm;
-use crate::model::{Flow, RelationId, RelationKind, StatementKind, TargetColumn};
+use crate::model::{Flow, OrderKind, RelationId, RelationKind, StatementKind, TargetColumn};
 use crate::resolve::{Ctx, flow, idents, unsupported};
 use crate::show::{Show, computed_filter};
 
@@ -170,6 +170,10 @@ impl Ctx<'_> {
             _ => None,
         };
         let Some(into) = into else {
+            if query.order_by.is_none() {
+                self.order(OrderKind::Rows);
+            }
+            self.top = true;
             let columns = self.query(query, Level::root(self.dialect))?;
             return Ok(Analysis {
                 columns,
@@ -192,6 +196,7 @@ impl Ctx<'_> {
         if let SetExpr::Select(select) = body.body.as_mut() {
             select.into = None;
         }
+        self.copy(&body);
         let cols = self.query(&body, Level::root(self.dialect))?;
         Ok(Analysis {
             writes: created(cols.cols)?,
@@ -256,6 +261,7 @@ impl Ctx<'_> {
         let Some(query) = &create.query else {
             return Ok(Analysis::bare(StatementKind::CreateTable, target));
         };
+        self.copy(query);
         let cols = self.query(query, Level::root(self.dialect))?;
         Ok(Analysis {
             writes: created(cols.cols)?,
@@ -284,6 +290,9 @@ impl Ctx<'_> {
             (StatementKind::CreateView, RelationKind::View)
         };
         let target = self.create_target(&idents(&create.name)?, relation)?;
+        if create.materialized {
+            self.copy(&create.query);
+        }
         let mut cols = self.query(&create.query, Level::root(self.dialect))?;
         let alias = TableAlias {
             explicit: false,
@@ -470,6 +479,7 @@ impl Ctx<'_> {
             && source.format_clause.is_none()
             && source.pipe_operators.is_empty();
         let (true, SetExpr::Values(values)) = (plain, source.body.as_ref()) else {
+            self.copy(source);
             let cols = self.query(source, Level::root(self.dialect))?;
             return Ok((cols.cols.into_iter().map(|c| (c.sources, c.flow)).collect(), cols.open));
         };
@@ -639,6 +649,8 @@ impl Ctx<'_> {
                     if insert.insert_predicate.is_some() {
                         return Err(unsupported("MERGE INSERT predicate"));
                     }
+                    // `USING` rows have no order to insert in.
+                    self.order(OrderKind::Copy);
                     let MergeInsertKind::Values(values) = &insert.kind else {
                         return Err(unsupported("MERGE INSERT ROW or *"));
                     };
@@ -759,9 +771,22 @@ impl Ctx<'_> {
             self.clause(&item.expr, level, Clause::OrderBy)?;
         }
         if let Some(limit) = limit {
+            if order_by.is_empty() {
+                self.order(OrderKind::Limit);
+            }
             self.clause(limit, level, Clause::Limit)?;
         }
         Ok(())
+    }
+
+    /// Records a write's source query without `ORDER BY` as [`OrderKind::Copy`].
+    ///
+    /// The server stores copied rows, and assigns their generated keys, in
+    /// the order they arrive.
+    fn copy(&mut self, source: &Query) {
+        if source.order_by.is_none() {
+            self.order(OrderKind::Copy);
+        }
     }
 
     /// Resolves a `RETURNING` list into output columns.

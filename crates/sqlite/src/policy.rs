@@ -27,7 +27,7 @@ use dbmcp_policy::{
     Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
     RelationId, RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
 };
-use dbmcp_sql::{Connection as _, SqlError};
+use dbmcp_sql::{Connection as _, SqlError, order};
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
@@ -245,7 +245,8 @@ async fn run<'c>(
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
-    let executed = match execute(&mut tx, sql, &mut planned, sink).await {
+    let ordered = planned.ordered(|_| true, |positions| order::order_by(sql, &SQLiteDialect {}, positions))?;
+    let executed = match execute(&mut tx, ordered.as_deref().unwrap_or(sql), &mut planned, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => {
@@ -956,12 +957,15 @@ mod tests {
             .execute(&pool)
             .await
             .expect("temp table");
-        write(&handler, "CREATE TABLE fresh AS SELECT id FROM users")
+        write(&handler, "CREATE TABLE fresh AS SELECT id FROM users ORDER BY id")
             .await
             .expect("unshadowed CTAS plans");
-        write(&handler, "CREATE TABLE temp.scratch AS SELECT id FROM users")
-            .await
-            .expect("qualified CTAS plans outside main");
+        write(
+            &handler,
+            "CREATE TABLE temp.scratch AS SELECT id FROM users ORDER BY id",
+        )
+        .await
+        .expect("qualified CTAS plans outside main");
         for sql in [
             "CREATE TABLE copy AS SELECT id FROM users",
             "CREATE VIEW copy AS SELECT id FROM users",

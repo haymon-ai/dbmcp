@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Flow, Lexical, Lineage, LineageError, NamePart, Origin,
-    Relation, RelationId, RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
+    Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Flow, Lexical, Lineage, LineageError, NamePart, OrderKind,
+    Origin, Relation, RelationId, RelationKind, Role, Show, SourceRef, StatementKind, WrittenName, analyze,
 };
 
 /// Builds a relation in schema `public`; a leading `~` marks a star-invisible column.
@@ -3346,5 +3346,131 @@ fn outer_join_padding_stays_bare() {
             [Flow::Bare],
             "{dialect:?}"
         );
+    }
+}
+
+/// Renders the recorded row-order constructs, sorted.
+fn orders(sql: &str, dialect: Dialect) -> Vec<OrderKind> {
+    let lineage = analyze(sql, dialect, &create_fixture()).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    lineage.orders.into_iter().map(|order| order.kind).collect()
+}
+
+#[test]
+fn constructs_that_depend_on_row_order_are_recorded() {
+    let aggregate = |name: &str| OrderKind::Aggregate(name.to_string());
+    let cases: Vec<(&str, Dialect, Vec<OrderKind>)> = vec![
+        ("SELECT id FROM users", Dialect::Postgres, vec![OrderKind::Rows]),
+        // A query statement's own window is ordered before it returns.
+        ("SELECT id FROM users LIMIT 3", Dialect::Postgres, vec![OrderKind::Rows]),
+        ("SELECT id FROM users ORDER BY id LIMIT 3", Dialect::Postgres, vec![]),
+        (
+            "SELECT id FROM (SELECT id FROM users LIMIT 3) d ORDER BY id",
+            Dialect::Postgres,
+            vec![OrderKind::Limit],
+        ),
+        (
+            "SELECT id FROM (SELECT id FROM users ORDER BY id LIMIT 3) d ORDER BY id",
+            Dialect::Postgres,
+            vec![],
+        ),
+        (
+            "SELECT id FROM users WHERE id IN (SELECT id FROM users FETCH FIRST 1 ROWS ONLY) ORDER BY id",
+            Dialect::Postgres,
+            vec![OrderKind::Limit],
+        ),
+        (
+            "SELECT row_number() OVER () AS n FROM users ORDER BY n",
+            Dialect::Postgres,
+            vec![OrderKind::Window],
+        ),
+        (
+            "SELECT row_number() OVER (PARTITION BY id) AS n FROM users ORDER BY n",
+            Dialect::Mysql,
+            vec![OrderKind::Window],
+        ),
+        (
+            "SELECT row_number() OVER (ORDER BY id) AS n FROM users ORDER BY n",
+            Dialect::Sqlite,
+            vec![],
+        ),
+        (
+            "SELECT array_agg(id) AS a FROM users ORDER BY a",
+            Dialect::Postgres,
+            vec![aggregate("array_agg")],
+        ),
+        (
+            "SELECT array_agg(id ORDER BY id) AS a FROM users ORDER BY a",
+            Dialect::Postgres,
+            vec![],
+        ),
+        (
+            "SELECT group_concat(id) AS a FROM users ORDER BY a",
+            Dialect::Mysql,
+            vec![aggregate("group_concat")],
+        ),
+        (
+            "SELECT group_concat(id ORDER BY id) AS a FROM users ORDER BY a",
+            Dialect::Mariadb,
+            vec![],
+        ),
+        (
+            "SELECT json_group_array(id) AS a FROM users ORDER BY a",
+            Dialect::Sqlite,
+            vec![aggregate("json_group_array")],
+        ),
+        ("SELECT count(id) AS n FROM users ORDER BY n", Dialect::Postgres, vec![]),
+        (
+            "SELECT DISTINCT ON (id) id FROM users ORDER BY id",
+            Dialect::Postgres,
+            vec![OrderKind::DistinctOn],
+        ),
+        (
+            "UPDATE users SET ssn = 'x' LIMIT 1",
+            Dialect::Mysql,
+            vec![OrderKind::Limit],
+        ),
+        ("UPDATE users SET ssn = 'x' ORDER BY id LIMIT 1", Dialect::Mysql, vec![]),
+        ("EXPLAIN SELECT id FROM users", Dialect::Postgres, vec![OrderKind::Rows]),
+    ];
+    for (sql, dialect, expected) in cases {
+        assert_eq!(orders(sql, dialect), expected, "{dialect:?}: {sql}");
+    }
+}
+
+#[test]
+fn writes_that_depend_on_row_order_are_recorded() {
+    let cases: Vec<(&str, Dialect, Vec<OrderKind>)> = vec![
+        ("DELETE FROM users LIMIT 1", Dialect::Mysql, vec![OrderKind::Limit]),
+        (
+            "INSERT INTO archive (id) SELECT id FROM users",
+            Dialect::Postgres,
+            vec![OrderKind::Copy],
+        ),
+        (
+            "INSERT INTO archive (id) SELECT id FROM users ORDER BY id",
+            Dialect::Postgres,
+            vec![],
+        ),
+        ("INSERT INTO archive (id) VALUES (1)", Dialect::Postgres, vec![]),
+        (
+            "CREATE TABLE t2 AS SELECT id FROM users",
+            Dialect::Sqlite,
+            vec![OrderKind::Copy],
+        ),
+        ("SELECT id INTO t2 FROM users", Dialect::Postgres, vec![OrderKind::Copy]),
+        (
+            "CREATE MATERIALIZED VIEW v2 AS SELECT id FROM users",
+            Dialect::Postgres,
+            vec![OrderKind::Copy],
+        ),
+        ("CREATE VIEW v2 AS SELECT id FROM users", Dialect::Postgres, vec![]),
+        (
+            "MERGE INTO archive a USING users u ON a.id = u.id WHEN NOT MATCHED THEN INSERT (id) VALUES (u.id)",
+            Dialect::Postgres,
+            vec![OrderKind::Copy],
+        ),
+    ];
+    for (sql, dialect, expected) in cases {
+        assert_eq!(orders(sql, dialect), expected, "{dialect:?}: {sql}");
     }
 }
