@@ -634,6 +634,53 @@ fn unsupported_constructs_fail_closed() {
 }
 
 #[test]
+fn index_hints_fail_closed() {
+    let cases: &[(&str, Dialect)] = &[
+        ("SELECT id FROM users FORCE INDEX (email)", Dialect::Mysql),
+        ("SELECT id FROM users USE INDEX FOR ORDER BY (email)", Dialect::Mariadb),
+        ("SELECT id FROM users IGNORE KEY (PRIMARY)", Dialect::Mysql),
+        ("UPDATE users FORCE INDEX (email) SET ssn = 'x' LIMIT 1", Dialect::Mysql),
+        ("SELECT id FROM users INDEXED BY email_idx", Dialect::Sqlite),
+        ("SELECT id FROM users NOT INDEXED", Dialect::Sqlite),
+    ];
+    for (sql, dialect) in cases {
+        assert_eq!(
+            analyze(sql, *dialect, &fixture()),
+            Err(LineageError::Unsupported(
+                "table modifier (hints/version/sample)".to_string()
+            )),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn optimizer_hint_comments_fail_closed() {
+    let cases: &[(&str, Dialect)] = &[
+        ("SELECT /*+ INDEX(users email) */ id FROM users", Dialect::Mysql),
+        ("SELECT /*+ INDEX(users email) */ id FROM users", Dialect::Mariadb),
+        ("UPDATE /*+ INDEX(users email) */ users SET ssn = 'x'", Dialect::Mysql),
+        ("SELECT /*+ IndexOnlyScan(users) */ id FROM users", Dialect::Postgres),
+        // Not attached to the AST, yet `pg_hint_plan` reads it.
+        ("SELECT id /*+ IndexOnlyScan(users) */ FROM users", Dialect::Postgres),
+        ("/*+ IndexOnlyScan(users) */ SELECT id FROM users", Dialect::Postgres),
+        ("SELECT id FROM users --+ IndexOnlyScan(users)", Dialect::Postgres),
+    ];
+    for (sql, dialect) in cases {
+        assert_eq!(
+            analyze(sql, *dialect, &fixture()),
+            Err(LineageError::Unsupported("optimizer hint comment".to_string())),
+            "{sql}"
+        );
+    }
+    for dialect in DIALECTS {
+        for sql in ["SELECT /* plain + note */ id FROM users", "SELECT id FROM users -- a+b"] {
+            assert!(analyze(sql, dialect, &fixture()).is_ok(), "{dialect:?}: {sql}");
+        }
+    }
+}
+
+#[test]
 fn wildcard_alias_is_unsupported() {
     // PostgreSQL parses `* AS name`; the other modifiers fail in the parser.
     for sql in ["SELECT * AS u FROM users", "SELECT users.* AS u FROM users"] {
