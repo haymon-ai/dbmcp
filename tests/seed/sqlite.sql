@@ -152,6 +152,22 @@ CREATE TABLE IF NOT EXISTS policy_hashed_copy (
     email TEXT
 );
 
+-- Trigger-free write targets whose `phone` and `note` are masked like `users.phone`.
+CREATE TABLE IF NOT EXISTS policy_masked (
+    id INTEGER PRIMARY KEY,
+    phone TEXT,
+    note TEXT
+);
+
+INSERT INTO policy_masked (id, phone, note) VALUES
+    (1, '+14155552671', 'first note'),
+    (2, '+44 20 7946 0958', 'second note');
+
+CREATE TABLE IF NOT EXISTS policy_masked_copy (
+    id INTEGER PRIMARY KEY,
+    phone TEXT
+);
+
 CREATE TABLE IF NOT EXISTS policy_hashed_default (
     id INTEGER PRIMARY KEY,
     email TEXT DEFAULT 'x@example.com'

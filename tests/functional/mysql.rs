@@ -1899,11 +1899,12 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 19 seeded base tables (users, posts, tags,
+    // SHOW TABLES in `app` returns 21 seeded base tables (users, posts, tags,
     // post_tags, temporal, binary_samples, posts_audit, events_by_year,
     // numeric_samples, audit, orders, policy_hashed, policy_hashed_copy,
     // policy_hashed_default, policy_hashed_generated, policy_hashed_on_update,
-    // policy_cascade_parent, policy_cascade_child, policy_hashed_trigger) plus
+    // policy_cascade_parent, policy_cascade_child, policy_hashed_trigger,
+    // policy_masked, policy_masked_copy) plus
     // 10 seeded views (active_users, active_users_v2, active_orders,
     // active_users_with_check_cascaded, active_users_with_check_local,
     // archived_users, archived_users_invoker, user_metrics_cte,
@@ -1912,8 +1913,8 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        29,
-        "SHOW TABLES must not be paginated: expected all 29 seeded tables+views, got {}",
+        31,
+        "SHOW TABLES must not be paginated: expected all 31 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -5213,6 +5214,9 @@ fn standard_rules() -> Vec<ColumnRule> {
         column_rule("policy_hashed_on_update", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
         column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
         column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_masked", "phone", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("policy_masked", "note", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", PiiOperator::Mask),
     ]
 }
 
@@ -5688,6 +5692,61 @@ async fn column_rules_refuse_derived_copies_into_hashed_columns() {
         "{refusal}"
     );
     assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
+}
+
+/// Reads `SELECT id, <column> FROM <table> ORDER BY id`.
+async fn masked_rows(handler: &MysqlHandler, table: &str, column: &str) -> Vec<Value> {
+    let query = format!("SELECT id, {column} FROM {table} ORDER BY id");
+    ruled_read(handler, &query).await.expect(&query)
+}
+
+#[tokio::test]
+async fn column_rules_refuse_derived_writes_into_same_ruled_columns() {
+    let handler = ruled_handler(None, 100);
+    let notes = masked_rows(&handler, "policy_masked", "note").await;
+    for query in [
+        "INSERT INTO policy_masked_copy (id, phone) SELECT id + 900, IF(phone LIKE '+1%', NULL, '1') FROM policy_masked",
+        "UPDATE policy_masked SET note = IF(phone LIKE '+1%', NULL, 'x')",
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(
+            refusal.contains("would weaken the rules of its source columns"),
+            "{query}: {refusal}"
+        );
+    }
+    assert_eq!(count_id(&handler, "policy_masked_copy", 901).await, 0);
+    assert_eq!(count_id(&handler, "policy_masked_copy", 902).await, 0);
+    assert_eq!(masked_rows(&handler, "policy_masked", "note").await, notes);
+
+    let query = "INSERT INTO policy_masked_copy (id, phone) SELECT id + 910, phone FROM policy_masked";
+    assert_eq!(
+        handler
+            .write_query(query.into(), None)
+            .await
+            .expect(query)
+            .rows_affected,
+        2
+    );
+    let copied: Vec<Value> = masked_rows(&handler, "policy_masked_copy", "phone")
+        .await
+        .into_iter()
+        .map(|row| row["phone"].clone())
+        .collect();
+    let stored: Vec<Value> = masked_rows(&handler, "policy_masked", "phone")
+        .await
+        .into_iter()
+        .map(|row| row["phone"].clone())
+        .collect();
+    assert_eq!(copied, stored);
+    let query = "DELETE FROM policy_masked_copy WHERE id > 900";
+    assert_eq!(
+        handler
+            .write_query(query.into(), None)
+            .await
+            .expect(query)
+            .rows_affected,
+        2
+    );
 }
 
 #[tokio::test]

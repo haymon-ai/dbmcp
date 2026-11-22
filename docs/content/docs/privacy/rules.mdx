@@ -225,9 +225,10 @@ On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for i
 
 With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
 
-- A target column fed by a ruled column needs a rule with the same operator and entity. An unruled target, or one ruled differently, is refused.
+- A target column fed by a ruled column needs a rule with the same operator and entity, and the ruled column must pass through unchanged. An unruled target, or one ruled differently, is refused.
+- A computed value over a ruled column (see [Derived columns](#derived-columns)) is laundering into any target, whatever its rule: stored, it would later read back as a plain column, not as the placeholder. `UPDATE users SET note = IF(email LIKE '%.de', NULL, 'x')` is refused even when `note` carries `email`'s rule; `INSERT INTO copy (email) SELECT email FROM users` passes when `copy.email` does.
 - A target fed only by literals or unruled columns copies no ruled values and is always allowed, except into a `hash`-ruled column (below).
-- A new table's column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused until the column is aliased (`lower(email) AS email`) and ruled.
+- A new table's column fed by a ruled column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused first for its unnamed column, and, aliased, still as a computed value.
 
 This covers `INSERT`, `UPDATE`, `MERGE`, `CREATE TABLE … AS`, PostgreSQL `SELECT INTO`, and `CREATE MATERIALIZED VIEW`. For example, `INSERT INTO audit (note) SELECT ssn FROM users` is refused unless `audit.note` carries the `ssn` rule. To copy ruled data into a new table, add a rule for the new table's columns first. `CREATE VIEW` is not laundering, since reads through the view get the base table rules, but its body passes the other checks.
 
@@ -237,7 +238,7 @@ column policy: writing column "public.audit.note" would weaken the rules of its 
 
 A `hash`-ruled column also must not take a value the statement chose: its token would let the assistant hash a guess and compare it with stored tokens. Such a column takes only:
 
-- copies of columns hashed with the same entity, passed through unchanged (a computed copy such as `lower(email)` is laundering, see above);
+- copies of columns hashed with the same entity, passed through unchanged (a computed copy is laundering, see above);
 - `NULL`;
 - `DEFAULT`, or no value at all in an `INSERT`, only when the column has no default (no `DEFAULT`, identity, sequence, or auto-increment).
 

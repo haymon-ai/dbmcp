@@ -1159,6 +1159,64 @@ fn ruled_source_into_unnamed_create_column_asks_for_an_alias() {
 }
 
 #[test]
+fn derived_same_pair_writes_launder_and_bare_copies_pass() {
+    let mut catalog = tables(&[("masked", &["id", "phone", "note"]), ("copy", &["id", "phone"])]);
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("mv")]),
+        Entry::Vacant(table("mv")),
+    );
+    let cases = [
+        (
+            PiiOperator::Mask,
+            "INSERT INTO copy (phone) SELECT CASE WHEN phone LIKE '+1%' THEN NULL ELSE '1' END FROM masked",
+            "INSERT INTO copy (phone) SELECT phone FROM masked",
+            "public.copy.phone",
+        ),
+        (
+            PiiOperator::Redact,
+            "UPDATE masked SET note = CASE WHEN phone LIKE '+1%' THEN NULL ELSE 'x' END",
+            "UPDATE masked SET note = phone",
+            "public.masked.note",
+        ),
+        (
+            PiiOperator::Replace,
+            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
+             ON CONFLICT (id) DO UPDATE SET phone = lower(excluded.phone)",
+            "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
+             ON CONFLICT (id) DO UPDATE SET phone = excluded.phone",
+            "public.copy.phone",
+        ),
+        (
+            PiiOperator::Mask,
+            "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = upper(m.phone)",
+            "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = m.phone",
+            "public.copy.phone",
+        ),
+        (
+            PiiOperator::Mask,
+            "CREATE MATERIALIZED VIEW mv AS SELECT lower(phone) AS phone FROM masked",
+            "CREATE MATERIALIZED VIEW mv AS SELECT phone FROM masked",
+            "public.mv.phone",
+        ),
+    ];
+    for (operator, derived, bare, column) in cases {
+        let config = config(
+            ["masked.phone", "masked.note", "copy.phone", "mv.phone"]
+                .map(|key| rule(&format!("shop.public.{key}"), operator, "PHONE_NUMBER"))
+                .to_vec(),
+        );
+        let lineage = analyze(derived, Dialect::Postgres, &catalog).expect(derived);
+        assert_eq!(
+            pg(&lineage, &config),
+            Err(Rejection::Laundering { column: column.into() }),
+            "{derived}"
+        );
+        let lineage = analyze(bare, Dialect::Postgres, &catalog).expect(bare);
+        assert!(pg(&lineage, &config).is_ok(), "{bare}");
+    }
+}
+
+#[test]
 fn conflicting_write_sources_reject() {
     let config = config(vec![
         ssn("shop.public.users.ssn"),

@@ -2750,6 +2750,9 @@ fn handler_with_rules(page_size: u16) -> SqliteHandler {
                 column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
                 column_rule("policy_cascade_default", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
                 column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_masked", "phone", "PHONE_NUMBER", PiiOperator::Mask),
+                column_rule("policy_masked", "note", "PHONE_NUMBER", PiiOperator::Mask),
+                column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", PiiOperator::Mask),
             ],
             ..PiiConfig::default()
         }),
@@ -3087,6 +3090,51 @@ async fn column_rules_refuse_derived_copies_into_hashed_columns() {
         error.message
     );
     assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
+}
+
+/// Reads `SELECT id, <column> FROM <table> ORDER BY id`.
+async fn masked_rows(handler: &SqliteHandler, table: &str, column: &str) -> Vec<Value> {
+    let query = format!("SELECT id, {column} FROM {table} ORDER BY id");
+    ruled_read(handler, &query).await.expect(&query)
+}
+
+#[tokio::test]
+async fn column_rules_refuse_derived_writes_into_same_ruled_columns() {
+    let handler = handler_with_rules(100);
+    let notes = masked_rows(&handler, "policy_masked", "note").await;
+    for query in [
+        "INSERT INTO policy_masked_copy (id, phone) SELECT id + 900, iif(phone LIKE '+1%', NULL, '1') FROM policy_masked",
+        "UPDATE policy_masked SET note = iif(phone LIKE '+1%', NULL, 'x')",
+    ] {
+        let refusal = ruled_write(&handler, query)
+            .await
+            .expect_err(query)
+            .message
+            .into_owned();
+        assert!(
+            refusal.contains("would weaken the rules of its source columns"),
+            "{query}: {refusal}"
+        );
+    }
+    assert_eq!(count_id(&handler, "policy_masked_copy", 901).await, 0);
+    assert_eq!(count_id(&handler, "policy_masked_copy", 902).await, 0);
+    assert_eq!(masked_rows(&handler, "policy_masked", "note").await, notes);
+
+    let query = "INSERT INTO policy_masked_copy (id, phone) SELECT id + 910, phone FROM policy_masked";
+    assert_eq!(ruled_write(&handler, query).await.expect(query), 2);
+    let copied: Vec<Value> = masked_rows(&handler, "policy_masked_copy", "phone")
+        .await
+        .into_iter()
+        .map(|row| row["phone"].clone())
+        .collect();
+    let stored: Vec<Value> = masked_rows(&handler, "policy_masked", "phone")
+        .await
+        .into_iter()
+        .map(|row| row["phone"].clone())
+        .collect();
+    assert_eq!(copied, stored);
+    let query = "DELETE FROM policy_masked_copy WHERE id > 900";
+    assert_eq!(ruled_write(&handler, query).await.expect(query), 2);
 }
 
 #[tokio::test]
