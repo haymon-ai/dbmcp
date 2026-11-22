@@ -119,10 +119,10 @@ const TRIGGERS_BRANCH: &str = "(SELECT CAST(EVENT_OBJECT_SCHEMA AS CHAR), CAST(E
 /// Per edge: its root's schema and name as bound, the parent's schema,
 /// table, and column, the child's, the rule (`CASCADE`, `SET NULL`, `SET
 /// DEFAULT`; `InnoDB` rejects the last, read anyway), and whether a parent
-/// `DELETE` fires it. Below an edge that changes a child column come that
-/// column's update edges, below one that deletes child rows every delete
-/// edge of the child. `UNION` ends the walk on cycles. Names compare in the
-/// connection collation, which may over-match (fail closed).
+/// `DELETE` fires it. Below each reached child table come all its edges,
+/// the closure [`Relation::cascades`] asks for. `UNION` ends the walk on
+/// cycles. Names compare in the connection collation, which may over-match
+/// (fail closed).
 const CASCADES_HEAD: &str = "WITH RECURSIVE \
      edge (ps, pt, pc, cs, ct, cc, rule, deletes) AS (SELECT CAST(k.REFERENCED_TABLE_SCHEMA AS CHAR), \
            CAST(k.REFERENCED_TABLE_NAME AS CHAR), CAST(k.REFERENCED_COLUMN_NAME AS CHAR), \
@@ -143,9 +143,7 @@ const ROOT: &str = "SELECT CAST(? AS CHAR), CAST(? AS CHAR)";
 const CASCADES_TAIL: &str = "), \
      walk (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) AS ( \
        SELECT roots.rs, roots.rt, live.* FROM roots JOIN live ON live.ps = roots.rs AND live.pt = roots.rt \
-       UNION SELECT w.rs, w.rt, e.* FROM walk AS w JOIN live AS e ON e.ps = w.cs AND e.pt = w.ct \
-         AND CASE WHEN w.rule = 'CASCADE' AND w.deletes = 1 THEN e.deletes = 1 \
-           ELSE e.deletes = 0 AND e.pc = w.cc END) \
+       UNION SELECT w.rs, w.rt, e.* FROM walk AS w JOIN live AS e ON e.ps = w.cs AND e.pt = w.ct) \
      SELECT rs, rt, ps, pt, pc, cs, ct, cc, rule, CAST(deletes AS SIGNED) FROM walk";
 
 /// Orders the detail rows by relation, then column position.

@@ -154,7 +154,12 @@ pub struct Relation {
     ///
     /// Analysis ignores it, like `cascades`.
     pub triggers: bool,
-    /// Referential actions that change rows of other tables, transitively.
+    /// Referential action edges reachable below the relation, firing or not.
+    ///
+    /// Every action edge of the relation (and of each `PostgreSQL`
+    /// descendant), then every action edge of each child table so reached,
+    /// transitively. The planner decides which edges a write fires; an edge
+    /// missing here is one it cannot follow (fail open).
     pub cascades: Vec<Cascade>,
 }
 
@@ -197,7 +202,7 @@ impl Relation {
         self
     }
 
-    /// Sets the referential actions that change rows of other tables.
+    /// Sets the reachable referential action edges, as [`Relation::cascades`] describes.
     #[must_use]
     pub fn with_cascades(mut self, cascades: Vec<Cascade>) -> Self {
         self.cascades = cascades;

@@ -75,12 +75,12 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// Then whether the relation or a descendant has a user trigger (enabled
 /// or not) or a non-`SELECT` rule, and the referential actions below them:
 /// per edge, the parent's schema, table, and column, the child's, the
-/// action (`copy`, `null`, `default`, `delete`), whether a parent `DELETE`
-/// fires it, and whether the child has a user trigger or non-`SELECT` rule.
-/// Each foreign key's columns pair by position. The walk starts at every
-/// edge whose parent is the relation or a descendant; below an edge that
-/// changes a child column come that column's update edges, below one that
-/// deletes child rows every delete edge of the child. `UNION` ends it on cycles.
+/// action (`confupdtype` or `confdeltype`: `c`, `n`, `d`), whether a
+/// parent `DELETE` fires it, and whether the child has a user trigger or
+/// non-`SELECT` rule. Each foreign key's columns pair by position. The walk
+/// starts at every edge whose parent is the relation or a descendant; below
+/// each reached child table come all its edges, the closure
+/// [`Relation::cascades`] asks for. `UNION` ends it on cycles.
 const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
@@ -131,8 +131,7 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
                CROSS JOIN (VALUES (false), (true)) AS d(deletes) \
                WHERE k.contype = 'f' AND CASE WHEN d.deletes THEN k.confdeltype ELSE k.confupdtype END IN ('c', 'n', 'd')), \
            walk AS (SELECT e.* FROM edge AS e WHERE e.parent IN (SELECT down.oid FROM down) \
-             UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child \
-               AND CASE WHEN w.action = 'c' AND w.deletes THEN e.deletes ELSE NOT e.deletes AND e.pcol = w.ccol END) \
+             UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child) \
            SELECT EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid IN (SELECT down.oid FROM down) AND NOT g.tgisinternal) \
                OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class IN (SELECT down.oid FROM down) AND r.ev_type <> '1') \
                AS triggers, \
@@ -142,9 +141,7 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
              array_agg(cs.nspname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_schemas, \
              array_agg(cc.relname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_names, \
              array_agg(ca.attname::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS child_columns, \
-             array_agg(CASE WHEN w.action = 'c' AND w.deletes THEN 'delete' WHEN w.action = 'c' THEN 'copy' \
-                 WHEN w.action = 'n' THEN 'null' ELSE 'default' END \
-               ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS actions, \
+             array_agg(w.action::text ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS actions, \
              array_agg(w.deletes ORDER BY w.parent, w.pcol, w.child, w.ccol, w.deletes) AS deletes, \
              array_agg(EXISTS (SELECT FROM pg_trigger AS g WHERE g.tgrelid = w.child AND NOT g.tgisinternal) \
                  OR EXISTS (SELECT FROM pg_rewrite AS r WHERE r.ev_class = w.child AND r.ev_type <> '1') \
@@ -693,9 +690,9 @@ fn with_writes(probe: &Probe, relation: Relation, writes: Writes) -> Relation {
             parent: column(ps, pn, pc),
             child: column(cs, cn, cc),
             action: match action.as_str() {
-                "copy" => CascadeAction::Copy,
-                "null" => CascadeAction::Null,
-                "delete" => CascadeAction::Delete,
+                "c" if on_delete => CascadeAction::Delete,
+                "c" => CascadeAction::Copy,
+                "n" => CascadeAction::Null,
                 _ => CascadeAction::Default,
             },
             on_delete,
@@ -1319,9 +1316,14 @@ mod tests {
             edges
         };
         // `fk_p1` carries a clone of the constraint, so its edges come too.
+        // The walk takes every edge of the reached `fk_c`, though no write
+        // through `fk_p` fires them (`fk_c.id` never changes, no `fk_c` row
+        // is removed).
         assert_eq!(
             edges(&relations[0]),
             [
+                "fk_c.id -> fk_g.w Default delete=false triggers=true",
+                "fk_c.id -> fk_g.z Delete delete=true triggers=true",
                 "fk_p.a -> fk_c.y Copy delete=false triggers=false",
                 "fk_p.a -> fk_c.y Null delete=true triggers=false",
                 "fk_p.b -> fk_c.x Copy delete=false triggers=false",

@@ -82,9 +82,9 @@ const TRIGGERS_SQL: &str = "SELECT tbl_name FROM {schema}.sqlite_schema WHERE ty
 /// leaves its schema; one naming no parent column references the parent's
 /// primary key, mapped by position. Table and column names come back as
 /// stored, not as the foreign key spells them; a key naming a missing
-/// column, which no write gets past, gives no edge. Below an edge that changes a child
-/// column come that column's update edges; below one that deletes child
-/// rows, every delete edge of the child. `UNION` ends the walk on cycles.
+/// column, which no write gets past, gives no edge. Below each reached
+/// child table come all its edges, the closure [`Relation::cascades`] asks
+/// for. `UNION` ends the walk on cycles.
 const CASCADES_SQL: &str = "WITH RECURSIVE \
      fk(parent, pcol, child, ccol, rule, deletes) AS (SELECT p.name, \
            CASE WHEN f.\"to\" IS NULL \
@@ -98,9 +98,7 @@ const CASCADES_SQL: &str = "WITH RECURSIVE \
          WHERE t.schema = ?1 AND t.type = 'table'), \
      edge AS (SELECT * FROM fk WHERE pcol IS NOT NULL AND ccol IS NOT NULL AND rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
      walk AS (SELECT * FROM edge WHERE parent = ?2 COLLATE NOCASE \
-       UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child COLLATE NOCASE \
-         AND CASE WHEN w.rule = 'CASCADE' AND w.deletes = 1 THEN e.deletes = 1 \
-           ELSE e.deletes = 0 AND e.pcol = w.ccol COLLATE NOCASE END) \
+       UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child COLLATE NOCASE) \
      SELECT parent, pcol, child, ccol, rule, deletes FROM walk";
 
 /// Extended result codes whose messages name schema objects, never values.
@@ -806,9 +804,10 @@ mod tests {
             "CREATE TABLE p (id INTEGER PRIMARY KEY, k TEXT UNIQUE);
              CREATE TABLE c (id INTEGER PRIMARY KEY, k TEXT REFERENCES P (K) ON UPDATE CASCADE ON DELETE SET NULL,
                pid INTEGER REFERENCES p ON DELETE CASCADE);
-             CREATE TABLE g (id INTEGER, ck TEXT REFERENCES c (k) ON UPDATE SET DEFAULT ON DELETE RESTRICT,
-               cid INTEGER REFERENCES c (id) ON DELETE SET DEFAULT);
-             CREATE TABLE gg (id INTEGER, k TEXT REFERENCES g (ck) ON UPDATE CASCADE);
+             CREATE TABLE g (id INTEGER PRIMARY KEY, ck TEXT REFERENCES c (k) ON UPDATE SET DEFAULT ON DELETE RESTRICT,
+               cid INTEGER REFERENCES c (id) ON UPDATE CASCADE ON DELETE SET DEFAULT);
+             CREATE TABLE gg (id INTEGER, k TEXT REFERENCES g (ck) ON UPDATE CASCADE,
+               gid INTEGER REFERENCES g ON DELETE CASCADE);
              CREATE TRIGGER g_insert AFTER INSERT ON G BEGIN SELECT 1; END;
              CREATE TEMP TRIGGER p_delete AFTER DELETE ON main.p BEGIN SELECT 1; END",
         )
@@ -846,10 +845,14 @@ mod tests {
         assert_eq!(
             edges,
             [
+                // The walk takes every edge of each reached table; no write
+                // through `p` fires this one (`c.id` never changes).
+                edge("c.id", "g.cid", CascadeAction::Copy, false, true),
                 edge("c.id", "g.cid", CascadeAction::Default, true, true),
                 edge("c.k", "g.ck", CascadeAction::Default, false, true),
-                // `SET DEFAULT` changes `g.ck`, so its update edges fire too.
                 edge("g.ck", "gg.k", CascadeAction::Copy, false, false),
+                // Nor this one: no `g` row is ever removed.
+                edge("g.id", "gg.gid", CascadeAction::Delete, true, false),
                 edge("p.id", "c.pid", CascadeAction::Delete, true, false),
                 edge("p.k", "c.k", CascadeAction::Copy, false, false),
                 edge("p.k", "c.k", CascadeAction::Null, true, false),
