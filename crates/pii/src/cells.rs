@@ -169,7 +169,7 @@ impl Redactor {
                     .iter()
                     .map(|column| match column.position {
                         Position::Global => Action::Global,
-                        Position::Action(operator, entity) => Action::Whole(self.operator(operator), entity),
+                        Position::Action(operator, entity) => Action::Whole(self.rule_operator(operator), entity),
                         Position::Placeholder(entity) => Action::Placeholder(entity),
                     })
                     .collect::<Vec<_>>()
@@ -490,21 +490,28 @@ mod tests {
     }
 
     #[test]
-    fn a_hashing_rule_token_equals_global_detection_token() {
+    fn a_hashing_rule_token_differs_from_global_detection_token() {
         let redactor = keyed(PiiOperator::Hash);
         let values = redact(
             &redactor,
             vec![
                 Position::Action(PiiOperator::Hash, Entity::EmailAddress),
+                Position::Action(PiiOperator::Hash, Entity::EmailAddress),
                 Position::Global,
             ],
-            vec![json!(EMAIL), json!(EMAIL)],
+            vec![json!(EMAIL), json!(EMAIL), json!(EMAIL)],
         );
-        assert_eq!(values[0], values[1]);
-        assert!(
-            values[0].as_str().is_some_and(|t| t.starts_with("<EMAIL_ADDRESS_")),
-            "{values:?}"
+        assert_eq!(values[0], values[1], "rules agree with each other");
+        assert_ne!(
+            values[0], values[2],
+            "a chosen value hashed globally must not match a rule"
         );
+        for value in &values {
+            assert!(
+                value.as_str().is_some_and(|t| t.starts_with("<EMAIL_ADDRESS_")),
+                "{values:?}"
+            );
+        }
     }
 
     #[test]

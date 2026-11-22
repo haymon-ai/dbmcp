@@ -104,8 +104,13 @@ pub struct Redactor {
     analyzer: Arc<Analyzer>,
     /// The operator global detection applies to every span.
     global: PiiOperator,
-    /// The keyed `hash` operator, shared by global detection and column rules.
+    /// The keyed `hash` operator of global detection.
     hash: Operator,
+    /// The `hash` operator of column rules, under a key derived for rules only.
+    ///
+    /// A separate key keeps a query from hashing a value of its own choosing
+    /// through global detection and matching a ruled column's token.
+    rule_hash: Operator,
     opts: AnalyzeOptions,
 }
 
@@ -123,20 +128,21 @@ impl Redactor {
     /// Builds a `Replace` redactor over `analyzer`.
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self::new(analyzer, PiiOperator::Replace, Operator::hash(TEST_KEY))
+        Self::new(analyzer, PiiOperator::Replace, TEST_KEY)
     }
 
-    /// Builds a redactor.
+    /// Builds a redactor whose `hash` operators derive from `key`.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
-    fn new(analyzer: Analyzer, global: PiiOperator, hash: Operator) -> Self {
+    fn new(analyzer: Analyzer, global: PiiOperator, key: &[u8]) -> Self {
         let settings = crate::context::ContextSettings::default();
         let min_score = settings.min_score_with_context;
         Self {
             analyzer: Arc::new(analyzer),
             global,
-            hash,
+            hash: Operator::hash(key),
+            rule_hash: Operator::rule_hash(key),
             opts: AnalyzeOptions {
                 min_score,
                 context: Some(settings),
@@ -163,10 +169,12 @@ impl Redactor {
     /// AWS secret, bank account, …) surface only when a nearby keyword
     /// lifts them.
     ///
-    /// The `hash` operator is keyed with `cfg.key`, or, when unset, with
+    /// The `hash` operator is keyed from `cfg.key`, or, when unset, from
     /// [`PiiConfig::MIN_KEY_BYTES`](dbmcp_config::PiiConfig::MIN_KEY_BYTES)
     /// bytes drawn from the OS random source (a per-process key), logging a
-    /// warning when `cfg.operator` or any column rule hashes.
+    /// warning when `cfg.operator` or any column rule hashes. Column rules
+    /// hash under a key derived from it for rules only, so their tokens never
+    /// equal global detection's.
     ///
     /// # Errors
     ///
@@ -178,19 +186,33 @@ impl Redactor {
         let Some(cfg) = cfg else {
             return Ok(None);
         };
-        let hash = keyed_hash(cfg)?;
+        let random;
+        let key = if let Some(key) = &cfg.key {
+            key.expose_secret().as_bytes()
+        } else {
+            random = random_key(cfg)?;
+            &random[..]
+        };
         let mut analyzer = crate::Analyzer::from_config(cfg);
         attach_ner(&mut analyzer, cfg)?;
-        Ok(Some(Self::new(analyzer, cfg.operator, hash)))
+        Ok(Some(Self::new(analyzer, cfg.operator, key)))
     }
 
-    /// Returns the operator `operator` names; `hash` uses this redactor's key.
+    /// Returns global detection's operator `operator`; `hash` uses its key.
     pub(crate) fn operator(&self, operator: PiiOperator) -> Operator {
         match operator {
             PiiOperator::Replace => Operator::Replace,
             PiiOperator::Mask => Operator::default_mask(),
             PiiOperator::Redact => Operator::Redact,
             PiiOperator::Hash => self.hash.clone(),
+        }
+    }
+
+    /// Returns a column rule's operator `operator`; `hash` uses the rules' key.
+    pub(crate) fn rule_operator(&self, operator: PiiOperator) -> Operator {
+        match operator {
+            PiiOperator::Hash => self.rule_hash.clone(),
+            other => self.operator(other),
         }
     }
 
@@ -522,11 +544,10 @@ fn redact_spans(
     *s = anon.text;
 }
 
-/// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.
-fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitError> {
-    if let Some(key) = &cfg.key {
-        return Ok(Operator::hash(key.expose_secret().as_bytes()));
-    }
+/// Draws the random per-process `hash` key used when `pii.key` is unset.
+fn random_key(
+    cfg: &dbmcp_config::PiiConfig,
+) -> Result<[u8; dbmcp_config::PiiConfig::MIN_KEY_BYTES], RedactorInitError> {
     let mut key = [0u8; dbmcp_config::PiiConfig::MIN_KEY_BYTES];
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
     if cfg.operator == PiiOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PiiOperator::Hash) {
@@ -534,7 +555,7 @@ fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitErr
             "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
         );
     }
-    Ok(Operator::hash(&key))
+    Ok(key)
 }
 
 #[cfg(test)]
@@ -810,7 +831,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Redact, Operator::hash(TEST_KEY));
+        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Redact, TEST_KEY);
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -821,7 +842,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Mask, Operator::hash(TEST_KEY));
+        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Mask, TEST_KEY);
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -831,11 +852,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = Redactor::new(
-            Analyzer::with_defaults(),
-            PiiOperator::Hash,
-            Operator::hash(KEY.as_bytes()),
-        );
+        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Hash, KEY.as_bytes());
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
