@@ -45,6 +45,7 @@ openssl rand -hex 32
 - **No key.** <Dbmcp /> draws a random key at startup and logs a warning. Tokens stay stable within one process but change on every restart and differ across replicas.
 - **Replicas.** Give every replica the same key so the same value gets the same token everywhere.
 - **Rotation.** Change the key and restart. Every token changes; old and new tokens can't be linked.
+- **Column rules.** [Rules](/privacy/rules) hash under a key derived from `privacy.key` for rules only, so a ruled column's token never equals the token global detection gives the same value.
 
 ## Categories
 

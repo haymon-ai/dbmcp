@@ -2,12 +2,15 @@
 
 use std::borrow::Cow;
 
-use hmac::{Hmac, KeyInit};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use crate::Entity;
 
 use super::{hash, mask};
+
+/// Label the column rules' hash subkey is derived over.
+const RULE_KEY_LABEL: &[u8] = b"dbmcp privacy.rules hash key v1";
 
 /// Mask coverage parameter for [`Operator::Mask`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -81,6 +84,22 @@ impl Operator {
         }
     }
 
+    /// Construct the column rules' hash operator, keyed by a subkey of `key`.
+    ///
+    /// The subkey is HMAC-SHA-256 under `key` over [`RULE_KEY_LABEL`], so
+    /// rule tokens never equal the tokens [`Self::hash`] gives for `key`.
+    /// Only the keyed HMAC state is kept, never `key` or the subkey.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: HMAC accepts keys of any length.
+    #[must_use]
+    pub(crate) fn rule_hash(key: &[u8]) -> Self {
+        let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+        mac.update(RULE_KEY_LABEL);
+        Self::hash(&mac.finalize().into_bytes())
+    }
+
     /// Tag describing this operator's variant.
     #[must_use]
     pub const fn kind(&self) -> OperatorKind {
@@ -114,6 +133,18 @@ impl Operator {
 #[cfg(test)]
 mod tests {
     use super::Operator;
+    use crate::Entity;
+
+    #[test]
+    fn rule_hash_differs_from_hash_under_the_same_key() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let span = "jane.doe@example.com";
+        let global = Operator::hash(key).apply(Entity::EmailAddress, span).into_owned();
+        let rule = Operator::rule_hash(key).apply(Entity::EmailAddress, span).into_owned();
+        assert_eq!(global, "<EMAIL_ADDRESS_4e1f0dd69c51e84c>");
+        assert_ne!(rule, global);
+        assert_eq!(rule, Operator::rule_hash(key).apply(Entity::EmailAddress, span));
+    }
 
     #[test]
     fn hash_debug_hides_the_key() {

@@ -2884,6 +2884,22 @@ async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
 }
 
 #[tokio::test]
+async fn column_rules_hash_token_differs_from_a_literal_hashed_by_global_detection() {
+    let handler = handler_with_rules(100);
+    let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("stored")[0]["email"]
+        .clone();
+    let guess = ruled_read(&handler, "SELECT 'alice@example.com' AS g")
+        .await
+        .expect("guess")[0]["g"]
+        .clone();
+    assert!(is_email_token(&stored), "{stored}");
+    assert!(is_email_token(&guess), "{guess}");
+    assert_ne!(stored, guess, "a chosen literal must not reproduce a rule token");
+}
+
+#[tokio::test]
 async fn column_rules_read_values_a_query_computes_as_the_placeholder() {
     let handler = handler_with_rules(100);
     let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
