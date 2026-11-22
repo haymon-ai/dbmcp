@@ -518,13 +518,13 @@ impl Ctx<'_> {
             return Err(unsupported("OUTPUT clause"));
         }
         let root = Level::root(self.dialect);
-        let targets = self.tree(table, &root)?;
+        let targets = self.tree(table, &root, true)?;
         let mut items = vec![targets.clone()];
         match from {
             None => {}
             Some(UpdateTableFromKind::AfterSet(from)) => {
-                for item in from {
-                    items.push(self.tree(item, &root)?);
+                for (i, item) in from.iter().enumerate() {
+                    items.push(self.tree(item, &root, i == 0)?);
                 }
             }
             Some(UpdateTableFromKind::BeforeSet(_)) => return Err(unsupported("UPDATE FROM before SET")),
@@ -589,8 +589,8 @@ impl Ctx<'_> {
         };
         let root = Level::root(self.dialect);
         let mut trees = Vec::new();
-        for item in items {
-            trees.push(self.tree(item, &root)?);
+        for (i, item) in items.iter().enumerate() {
+            trees.push(self.tree(item, &root, i == 0)?);
         }
         let level = Level::dml(self.dialect, trees);
         let target = level.written(name)?;
@@ -620,8 +620,8 @@ impl Ctx<'_> {
             return Err(unsupported("MERGE output clause"));
         }
         let root = Level::root(self.dialect);
-        let targets = self.factor(table, &root)?;
-        let source = self.factor(source, &root)?;
+        let targets = self.factor(table, &root, true)?;
+        let source = self.factor(source, &root, true)?;
         let target = targets.written(self.dialect, &[])?;
         let level = Level::dml(self.dialect, vec![targets.clone(), source]);
 

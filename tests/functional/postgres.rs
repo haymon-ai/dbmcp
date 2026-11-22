@@ -8,6 +8,7 @@
 //! ```
 
 mod probe;
+mod rows;
 
 use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
@@ -4799,6 +4800,25 @@ async fn column_rules_apply_to_star_and_keep_nulls() {
         .expect("read");
     assert!(is_email_token(&rows[0]["email"]), "{}", rows[0]);
     assert_eq!(rows[0]["ssn"], Value::Null);
+}
+
+#[tokio::test]
+async fn column_rules_follow_star_order_over_natural_joins() {
+    // PostgreSQL puts the NATURAL keys first, in the left side's order.
+    let handler = handler_with_rules(100);
+    let query = "SELECT NULL AS a, NULL AS b, NULL AS c WHERE false UNION ALL \
+                 SELECT * FROM (SELECT credit_card, name, id FROM users WHERE id = 1) l \
+                 NATURAL JOIN (SELECT id, name FROM users WHERE id = 1) r";
+    let rows = ruled_read(&handler, query).await.expect(query);
+    rows::assert_cells(
+        query,
+        &rows,
+        &[
+            Value::from("Alice Johnson"),
+            Value::from(1),
+            Value::from("<CREDIT_CARD>"),
+        ],
+    );
 }
 
 #[tokio::test]
