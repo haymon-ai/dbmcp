@@ -2964,8 +2964,18 @@ fn on_conflict_excluded_carries_the_inserted_flow() {
         [
             ("id".to_string(), Flow::Bare),
             ("ssn".to_string(), Flow::Derived),
-            ("email".to_string(), Flow::Default),
+            ("email".to_string(), Flow::Derived),
         ]
+    );
+    // An `excluded` column the `INSERT` writes as `DEFAULT` is server-filled too.
+    let writes = write_flows(
+        "INSERT INTO users (id, email) VALUES (1, DEFAULT) \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.email",
+        Dialect::Postgres,
+    );
+    assert_eq!(
+        writes,
+        [("id".to_string(), Flow::Derived), ("email".to_string(), Flow::Derived)]
     );
     let writes = write_flows(
         "INSERT INTO users (id, ssn) SELECT user_id, total + 1 FROM orders \

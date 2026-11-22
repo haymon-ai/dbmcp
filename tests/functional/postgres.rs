@@ -5096,6 +5096,9 @@ async fn column_rules_refuse_chosen_values_in_hashed_columns() {
         "INSERT INTO policy_hashed (id, email) VALUES (900, 'x@example.com')",
         "INSERT INTO policy_hashed (id, email) SELECT 900, name FROM users WHERE id = 1",
         "UPDATE policy_hashed SET email = 'x@example.com' WHERE id = 1",
+        // `excluded` holds what the server filled in for an unwritten column.
+        "INSERT INTO policy_hashed (email) VALUES (NULL) \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.id",
         "INSERT INTO policy_hashed (id, email) VALUES (1, NULL) \
          ON CONFLICT (id) DO UPDATE SET email = 'x@example.com'",
     ] {
