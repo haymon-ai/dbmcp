@@ -65,18 +65,34 @@ const PROBE_SQL: &str = "SELECT current_database()::text, \
 /// a node, as child and parent OIDs. `UNION` ends the walk on diamonds. It
 /// takes no lock and names no `inhdetachpending`, so a partition pending
 /// detach still counts.
+///
+/// Last, per column, whether the server can fill it (a default, an
+/// identity, or a domain type with a default) and whether it is generated,
+/// each OR-ed over the relation and every descendant by column name: a
+/// row written through the relation may land in any of them.
 const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::text, c.oid::int8, \
      CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid) END, \
      coalesce(cols.names, '{}'), coalesce(cols.numbers, '{}'), \
      to_regnamespace(n.schema) IS NOT NULL, \
      coalesce(tree.oids, '{}'), coalesce(tree.schemas, '{}'), coalesce(tree.names, '{}'), \
-     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}') \
+     coalesce(tree.relkinds, '{}'), coalesce(tree.children, '{}'), coalesce(tree.parents, '{}'), \
+     coalesce(cols.defaults, '{}'), coalesce(cols.generated, '{}') \
      FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS n(name, schema, ord) \
      LEFT JOIN pg_class AS c ON c.oid = to_regclass(n.name) \
      LEFT JOIN pg_namespace AS s ON s.oid = c.relnamespace \
-     LEFT JOIN LATERAL (SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
-           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers \
+     LEFT JOIN LATERAL (WITH RECURSIVE \
+           down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid) \
+           SELECT array_agg(a.attname::text ORDER BY a.attnum < 0, a.attnum) AS names, \
+           array_agg(a.attnum ORDER BY a.attnum < 0, a.attnum) AS numbers, \
+           array_agg(f.fills ORDER BY a.attnum < 0, a.attnum) AS defaults, \
+           array_agg(f.generated ORDER BY a.attnum < 0, a.attnum) AS generated \
            FROM pg_attribute AS a \
+           CROSS JOIN LATERAL (SELECT coalesce(bool_or(d.atthasdef OR d.attidentity <> '' \
+                 OR (t.typtype = 'd' AND t.typdefaultbin IS NOT NULL)), false) AS fills, \
+               coalesce(bool_or(d.attgenerated <> ''), false) AS generated \
+             FROM down JOIN pg_attribute AS d ON d.attrelid = down.oid AND d.attname = a.attname \
+               AND NOT d.attisdropped \
+             LEFT JOIN pg_type AS t ON t.oid = d.atttypid) AS f \
            WHERE a.attrelid = c.oid AND a.attnum <> 0 AND NOT a.attisdropped) AS cols ON true \
      LEFT JOIN LATERAL (WITH RECURSIVE \
            down(oid) AS (SELECT c.oid UNION SELECT i.inhrelid FROM pg_inherits AS i JOIN down ON i.inhparent = down.oid), \
@@ -238,6 +254,8 @@ type Resolved = (
     Vec<String>,
     Vec<i64>,
     Vec<i64>,
+    Vec<bool>,
+    Vec<bool>,
 );
 
 impl PostgresHandler {
@@ -555,7 +573,7 @@ async fn fetch(
 
 /// Builds the catalog entry of one resolved row.
 fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
-    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, ..) = row;
+    let (schema, relname, relkind, _, body, columns, numbers, schema_exists, .., defaults, generated) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
         return vacant(probe, name, reference, *schema_exists);
     };
@@ -571,12 +589,16 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
     let columns = columns
         .iter()
         .zip(numbers)
-        .map(|(column, &number)| {
-            if number > 0 {
+        .enumerate()
+        .map(|(index, (column, &number))| {
+            let column = if number > 0 {
                 CatalogColumn::new(column.clone())
             } else {
                 CatalogColumn::hidden(column.clone())
-            }
+            };
+            // A fact the row lacks stays `true`.
+            let fact = |facts: &[bool]| facts.get(index).copied().unwrap_or(true);
+            column.with_facts(fact(defaults), fact(generated), false)
         })
         .collect();
     let id = RelationId::new(&probe.database, schema, relname);
@@ -592,7 +614,7 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
 
 /// Builds the inheritance tree of one resolved row from its closure nodes and edges.
 fn family(probe: &Probe, row: &Resolved) -> Family {
-    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents) = row;
+    let (_, _, relkind, oid, .., oids, schemas, names, relkinds, children, parents, _, _) = row;
     let Some(owner) = *oid else {
         return Family::default();
     };
@@ -799,6 +821,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            vec![true, false],
+            vec![false, false],
         )
     }
 
@@ -926,7 +950,24 @@ mod tests {
         let relation = resolved(&row("r", "public", None)).expect("table");
         assert_eq!(
             relation.columns,
-            vec![CatalogColumn::new("id"), CatalogColumn::hidden("ctid")]
+            vec![
+                CatalogColumn::new("id").with_facts(true, false, false),
+                CatalogColumn::hidden("ctid").with_facts(false, false, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn columns_missing_from_the_fact_arrays_have_defaults_and_generate() {
+        let mut row = row("r", "public", None);
+        row.14 = Vec::new();
+        row.15 = Vec::new();
+        let relation = resolved(&row).expect("table");
+        assert!(
+            relation
+                .columns
+                .iter()
+                .all(|column| column.default && column.generated && !column.on_update)
         );
     }
 
@@ -953,6 +994,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1035,6 +1078,53 @@ mod tests {
             }
         );
         assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+    async fn resolve_reads_column_facts_over_every_landing_member() {
+        let mut conn = seeded().await;
+        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+        sqlx::raw_sql(SqlStr::from_static(
+            "CREATE DOMAIN facts_email AS text DEFAULT 'd@example.com'; \
+             CREATE TABLE facts_plain (id int GENERATED ALWAYS AS IDENTITY, a text, \
+               b text DEFAULT 'x', c facts_email, d text GENERATED ALWAYS AS (a) STORED); \
+             CREATE TABLE facts_p (id int, email text) PARTITION BY LIST (id); \
+             CREATE TABLE facts_p1 PARTITION OF facts_p (email DEFAULT 'p@example.com') FOR VALUES IN (1)",
+        ))
+        .execute(&mut *tx)
+        .await
+        .expect("setup");
+        let probe = probe(Some("public"));
+        let mut facts = Vec::new();
+        for name in ["facts_plain", "facts_p"] {
+            let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
+            let entries = fetch(&mut tx, &probe, names, &mut Owners::new()).await.expect("fetch");
+            let Some((_, Entry::Resolved(relation))) = entries.into_iter().next() else {
+                panic!("{name} resolves");
+            };
+            facts.extend(
+                relation
+                    .columns
+                    .into_iter()
+                    .filter(|column| column.star_visible)
+                    .map(|column| (column.name, column.default, column.generated, column.on_update)),
+            );
+        }
+        tx.rollback().await.expect("rollback");
+        let fact = |name: &str, default, generated| (name.to_owned(), default, generated, false);
+        assert_eq!(
+            facts,
+            [
+                fact("id", true, false),
+                fact("a", false, false),
+                fact("b", true, false),
+                fact("c", true, false),
+                fact("d", true, true),
+                fact("id", false, false),
+                fact("email", true, false),
+            ]
+        );
     }
 
     /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.

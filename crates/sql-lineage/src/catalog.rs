@@ -87,29 +87,51 @@ pub enum Lexical {
 }
 
 /// A column of a catalog relation.
+///
+/// Analysis reads only the name and `*` visibility; the other facts carry
+/// catalog knowledge to the caller's planner. Both constructors set every
+/// fact to `true` (fail closed) until [`CatalogColumn::with_facts`] sets them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogColumn {
     /// The column's actual name.
     pub name: String,
     /// Whether `*` expands to this column.
     pub star_visible: bool,
+    /// Whether the server can fill the column itself: any default, identity, sequence, or auto-increment.
+    pub default: bool,
+    /// Whether the column is generated (stored or virtual).
+    pub generated: bool,
+    /// Whether an `UPDATE` sets the column itself (`ON UPDATE CURRENT_TIMESTAMP`).
+    pub on_update: bool,
 }
 
 impl CatalogColumn {
-    /// Creates a column that `*` expands to.
+    /// Creates a column that `*` expands to, with every fact `true`.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             star_visible: true,
+            default: true,
+            generated: true,
+            on_update: true,
         }
     }
 
-    /// Creates a column that `*` skips (invisible, hidden, or system).
+    /// Creates a column that `*` skips (invisible, hidden, or system), with every fact `true`.
     pub fn hidden(name: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
             star_visible: false,
+            ..Self::new(name)
         }
+    }
+
+    /// Sets whether the column has a default, is generated, and is set by `UPDATE`.
+    #[must_use]
+    pub fn with_facts(mut self, default: bool, generated: bool, on_update: bool) -> Self {
+        self.default = default;
+        self.generated = generated;
+        self.on_update = on_update;
+        self
     }
 }
 

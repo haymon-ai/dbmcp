@@ -137,6 +137,32 @@ INSERT INTO orders (id, user_id, customer_email) VALUES
 CREATE VIEW IF NOT EXISTS users_with_ssn AS
     SELECT id, email FROM users WHERE ssn IS NOT NULL;
 
+-- Trigger-free write targets whose `email` is hashed like `users.email`.
+CREATE TABLE IF NOT EXISTS policy_hashed (
+    id INTEGER PRIMARY KEY,
+    email TEXT
+);
+
+INSERT INTO policy_hashed (id, email) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_hashed_copy (
+    id INTEGER PRIMARY KEY,
+    email TEXT
+);
+
+CREATE TABLE IF NOT EXISTS policy_hashed_default (
+    id INTEGER PRIMARY KEY,
+    email TEXT DEFAULT 'x@example.com'
+);
+
+CREATE TABLE IF NOT EXISTS policy_hashed_generated (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT GENERATED ALWAYS AS (name || '@example.com')
+);
+
 -- Triggers
 
 CREATE TRIGGER IF NOT EXISTS users_before_insert

@@ -90,14 +90,20 @@ const TABLES_FOLDED: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME
      WHERE LOWER(CAST(TABLE_SCHEMA AS CHAR)) = ? AND LOWER(CAST(TABLE_NAME AS CHAR)) = ?)";
 
 /// One relation's columns, bound with its exact schema and name.
+///
+/// Also each column's `COLUMN_DEFAULT` text (`NULL` when it has none; see
+/// [`has_default`]) and whether `GENERATION_EXPRESSION` is set.
 const COLUMNS_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(COLUMN_NAME AS CHAR), CAST(EXTRA AS CHAR), CAST(ORDINAL_POSITION AS SIGNED), \
-     CAST(NULL AS CHAR) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+     CAST(NULL AS CHAR), CAST(COLUMN_DEFAULT AS CHAR), \
+     CAST(COALESCE(GENERATION_EXPRESSION, '') <> '' AS SIGNED) \
+     FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
 
 /// One view's body, bound with its exact schema and name, shaped like [`COLUMNS_BRANCH`].
 const VIEW_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
-     CAST(VIEW_DEFINITION AS CHAR) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+     CAST(VIEW_DEFINITION AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED) \
+     FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
 
 /// Orders the detail rows by relation, then column position.
 const DETAILS_ORDER: &str = " ORDER BY 1, 2, 5";
@@ -196,6 +202,8 @@ struct Probe {
     sql_mode: String,
     /// The client charset (`character_set_client`).
     charset: String,
+    /// Whether the server is `MariaDB`, read from `VERSION()`.
+    mariadb: bool,
 }
 
 impl Probe {
@@ -220,6 +228,7 @@ impl Probe {
             lower_case,
             sql_mode,
             charset,
+            mariadb: server == DatabaseBackend::Mariadb,
         })
     }
 
@@ -309,7 +318,16 @@ struct Lookup {
 type Table = (String, String, String, Option<String>);
 
 /// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] union.
-type Detail = (String, String, Option<String>, Option<String>, i64, Option<String>);
+type Detail = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+);
 
 /// A relation found in `information_schema`, before it becomes a catalog entry.
 #[derive(Debug, Default)]
@@ -320,8 +338,29 @@ struct Found {
     engine: Option<String>,
     /// `VIEW_DEFINITION`; empty when the user may not read it.
     body: Option<String>,
-    /// Column names with their `EXTRA` flags, in ordinal order.
-    columns: Vec<(String, String)>,
+    /// Columns in ordinal order.
+    columns: Vec<FoundColumn>,
+}
+
+/// A column found in `information_schema.COLUMNS`.
+#[derive(Debug)]
+struct FoundColumn {
+    /// `COLUMN_NAME`.
+    name: String,
+    /// `EXTRA` flags.
+    extra: String,
+    /// Whether `COLUMN_DEFAULT` holds a default ([`has_default`]).
+    default: bool,
+    /// Whether `GENERATION_EXPRESSION` is set.
+    generated: bool,
+}
+
+/// Reports whether a `COLUMN_DEFAULT` text is a default.
+///
+/// `MySQL` reports `DEFAULT NULL` as SQL `NULL`; `MariaDB` as the unquoted
+/// text `NULL`, quoting string defaults, so the text means no default there.
+fn has_default(text: Option<&str>, mariadb: bool) -> bool {
+    text.is_some_and(|text| !(mariadb && text == "NULL"))
 }
 
 /// A relation the catalog reads described.
@@ -664,12 +703,17 @@ async fn fetch(
         for (schema, name) in keys {
             details = details.bind(schema.as_str()).bind(name.as_str());
         }
-        for (schema, name, column, extra, _, body) in details.fetch_all(&mut *conn).await? {
+        for (schema, name, column, extra, _, body, default, generated) in details.fetch_all(&mut *conn).await? {
             let Some(relation) = found.get_mut(&(schema, name)) else {
                 continue;
             };
             if let Some(column) = column {
-                relation.columns.push((column, extra.unwrap_or_default()));
+                relation.columns.push(FoundColumn {
+                    name: column,
+                    extra: extra.unwrap_or_default(),
+                    default: has_default(default.as_deref(), probe.mariadb),
+                    generated: generated != 0,
+                });
             }
             if body.is_some() {
                 relation.body = body;
@@ -692,7 +736,7 @@ async fn fetch(
         {
             owners.push(Owner {
                 id: resolved.id.clone(),
-                columns: found.columns.iter().map(|(column, _)| column.clone()).collect(),
+                columns: found.columns.iter().map(|column| column.name.clone()).collect(),
                 view: resolved.view_sql.clone(),
                 engine: found.engine.clone(),
             });
@@ -715,15 +759,22 @@ fn entry(schema: &str, name: &str, found: &Found) -> Entry {
     let columns = found
         .columns
         .iter()
-        .map(|(column, extra)| {
-            let invisible = extra
-                .split_whitespace()
-                .any(|flag| flag.eq_ignore_ascii_case("INVISIBLE"));
-            if invisible {
-                CatalogColumn::hidden(column)
+        .map(|column| {
+            let flag = |name: &str| {
+                column
+                    .extra
+                    .split_whitespace()
+                    .any(|flag| flag.eq_ignore_ascii_case(name))
+            };
+            let catalog = if flag("INVISIBLE") {
+                CatalogColumn::hidden(&column.name)
             } else {
-                CatalogColumn::new(column)
-            }
+                CatalogColumn::new(&column.name)
+            };
+            // `MySQL` writes `on update CURRENT_TIMESTAMP`, `MariaDB` `on update current_timestamp()`.
+            let on_update = column.extra.to_ascii_lowercase().contains("on update");
+            let default = column.default || flag("auto_increment") || flag("DEFAULT_GENERATED");
+            catalog.with_facts(default, column.generated, on_update)
         })
         .collect();
     let relation = Relation::new(RelationId::new(CATALOG, schema, name), kind, columns);
@@ -817,6 +868,7 @@ mod tests {
             lower_case,
             sql_mode: String::new(),
             charset: "utf8mb4".into(),
+            mariadb: false,
         }
     }
 
@@ -885,9 +937,18 @@ mod tests {
             engine: None,
             body: body.map(Into::into),
             columns: vec![
-                ("id".into(), "auto_increment".into()),
-                ("secret".into(), "INVISIBLE".into()),
+                column("id", "auto_increment", false, false),
+                column("secret", "INVISIBLE", false, false),
             ],
+        }
+    }
+
+    fn column(name: &str, extra: &str, default: bool, generated: bool) -> FoundColumn {
+        FoundColumn {
+            name: name.into(),
+            extra: extra.into(),
+            default,
+            generated,
         }
     }
 
@@ -921,8 +982,51 @@ mod tests {
         let relation = resolved("app", &found("BASE TABLE", None)).expect("table");
         assert_eq!(
             relation.columns,
-            vec![CatalogColumn::new("id"), CatalogColumn::hidden("secret")]
+            vec![
+                CatalogColumn::new("id").with_facts(true, false, false),
+                CatalogColumn::hidden("secret").with_facts(false, false, false)
+            ]
         );
+    }
+
+    #[test]
+    fn column_facts_follow_defaults_generation_and_extra_flags() {
+        let mut table = found("BASE TABLE", None);
+        table.columns = vec![
+            column("plain", "", false, false),
+            column("dflt", "", true, false),
+            column("now", "DEFAULT_GENERATED", false, false),
+            column("gen", "STORED GENERATED", false, true),
+            column("mysql_ts", "DEFAULT_GENERATED on update CURRENT_TIMESTAMP", true, false),
+            column("maria_ts", "on update current_timestamp()", true, false),
+        ];
+        let relation = resolved("app", &table).expect("table");
+        let facts: Vec<_> = relation
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.default, column.generated, column.on_update))
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                ("plain", false, false, false),
+                ("dflt", true, false, false),
+                ("now", true, false, false),
+                ("gen", false, true, false),
+                ("mysql_ts", true, false, true),
+                ("maria_ts", true, false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn mariadb_spells_default_null_as_unquoted_text() {
+        assert!(!has_default(None, false));
+        assert!(!has_default(None, true));
+        assert!(has_default(Some("NULL"), false));
+        assert!(!has_default(Some("NULL"), true));
+        assert!(has_default(Some("'NULL'"), true));
+        assert!(has_default(Some("0"), true));
     }
 
     #[test]

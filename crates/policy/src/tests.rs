@@ -12,7 +12,7 @@ use dbmcp_sql_lineage::{
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, Position};
 
-use crate::plan::{Families, Names, plan, touches_ruled};
+use crate::plan::{Facts, Families, Names, plan, touches_ruled};
 use crate::rejection::reject_lineage;
 use crate::{LineageClass, Rejection};
 
@@ -1032,10 +1032,11 @@ fn derived_hash_source_into_same_hash_target_rejects() {
         rule("shop.public.copy.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
     ]);
     let mut lineage = write("copy", "email", vec![col("users", "email")], StatementKind::Insert);
-    assert!(pg(&lineage, &config).is_ok());
+    let names = facts(&[("copy", &[("email", NONE)])]);
+    assert!(pg_with(&lineage, &config, &names).is_ok());
     lineage.writes[0].flow = Flow::Derived;
     assert_eq!(
-        pg(&lineage, &config),
+        pg_with(&lineage, &config, &names),
         Err(Rejection::Laundering {
             column: "public.copy.email".into(),
         })
@@ -1166,6 +1167,299 @@ fn conflicting_write_sources_reject() {
         StatementKind::Insert,
     );
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Laundering { .. })));
+}
+
+// Writes into `hash`-ruled columns.
+
+/// Column facts `(default, generated, on_update)`.
+type ColumnFacts = (bool, bool, bool);
+
+const NONE: ColumnFacts = (false, false, false);
+const DEFAULT: ColumnFacts = (true, false, false);
+const GENERATED: ColumnFacts = (false, true, false);
+const ON_UPDATE: ColumnFacts = (true, false, true);
+
+/// Names carrying the write facts of `shop.public` tables.
+fn facts(tables: &[(&str, &[(&str, ColumnFacts)])]) -> Names {
+    Names {
+        facts: tables
+            .iter()
+            .map(|(name, columns)| {
+                let columns = columns
+                    .iter()
+                    .map(|&(column, (default, generated, on_update))| {
+                        CatalogColumn::new(column).with_facts(default, generated, on_update)
+                    })
+                    .collect();
+                (table(name), Facts { columns })
+            })
+            .collect(),
+        ..Names::default()
+    }
+}
+
+/// `users.email` and `hashed.email` hashed as `EMAIL_ADDRESS`, `users.ssn` masked.
+fn hashed_target() -> PiiConfig {
+    config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.hashed.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        ssn("shop.public.users.ssn"),
+    ])
+}
+
+/// Plans a one-column write into `hashed.email` reaching it by `flow` from `sources`.
+fn into_hashed(
+    statement: StatementKind,
+    sources: Vec<SourceRef>,
+    flow: Flow,
+    email: ColumnFacts,
+) -> Result<Plan, Rejection> {
+    let mut lineage = write("hashed", "email", sources, statement);
+    lineage.writes[0].flow = flow;
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", email)])]);
+    pg_with(&lineage, &hashed_target(), &names)
+}
+
+/// The `Chosen` rejection of `public.hashed.email`.
+fn chosen() -> Result<Plan, Rejection> {
+    Err(Rejection::Chosen {
+        column: "public.hashed.email".into(),
+    })
+}
+
+/// The `Computed` rejection of `public.hashed.email`.
+fn computed() -> Result<Plan, Rejection> {
+    Err(Rejection::Computed {
+        column: "public.hashed.email".into(),
+    })
+}
+
+#[test]
+fn same_hash_bare_copy_into_hash_target_passes() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        let planned = into_hashed(statement.clone(), vec![col("users", "email")], Flow::Bare, NONE);
+        assert!(planned.is_ok(), "{statement:?}");
+    }
+}
+
+#[test]
+fn null_into_hash_target_passes() {
+    assert!(into_hashed(StatementKind::Insert, vec![], Flow::Null, NONE).is_ok());
+    assert!(into_hashed(StatementKind::Update, vec![], Flow::Null, DEFAULT).is_ok());
+}
+
+#[test]
+fn default_into_hash_target_passes_only_without_a_default() {
+    for statement in [StatementKind::Insert, StatementKind::Update] {
+        assert!(into_hashed(statement.clone(), vec![], Flow::Default, NONE).is_ok());
+        assert_eq!(
+            into_hashed(statement.clone(), vec![], Flow::Default, DEFAULT),
+            computed(),
+            "{statement:?}"
+        );
+    }
+}
+
+#[test]
+fn chosen_values_into_hash_target_reject() {
+    for (sources, flow) in [
+        (vec![], Flow::Derived),
+        (vec![col("users", "name")], Flow::Bare),
+        (vec![col("users", "name")], Flow::Derived),
+    ] {
+        for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+            assert_eq!(
+                into_hashed(statement.clone(), sources.clone(), flow, NONE),
+                chosen(),
+                "{statement:?} {sources:?} {flow:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn derived_or_other_ruled_source_into_hash_target_launders() {
+    let laundering = Err(Rejection::Laundering {
+        column: "public.hashed.email".into(),
+    });
+    for (sources, flow) in [
+        (vec![col("users", "email")], Flow::Derived),
+        (vec![col("users", "ssn")], Flow::Bare),
+    ] {
+        assert_eq!(
+            into_hashed(StatementKind::Insert, sources, flow, NONE),
+            laundering,
+            "{flow:?}"
+        );
+    }
+}
+
+/// Plans `statement` into `hashed`, writing only `id`, with `email` carrying `email` facts.
+fn beside_hashed(statement: StatementKind, email: ColumnFacts) -> Result<Plan, Rejection> {
+    let lineage = write("hashed", "id", vec![], statement);
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", email)])]);
+    pg_with(&lineage, &hashed_target(), &names)
+}
+
+#[test]
+fn omitted_hash_column_passes_only_without_a_default() {
+    assert!(beside_hashed(StatementKind::Insert, NONE).is_ok());
+    assert_eq!(beside_hashed(StatementKind::Insert, DEFAULT), computed());
+    assert!(beside_hashed(StatementKind::Update, DEFAULT).is_ok());
+}
+
+#[test]
+fn every_merge_may_omit_a_hash_column() {
+    assert!(beside_hashed(StatementKind::Merge, NONE).is_ok());
+    assert_eq!(beside_hashed(StatementKind::Merge, DEFAULT), computed());
+    let written = into_hashed(StatementKind::Merge, vec![col("users", "email")], Flow::Bare, DEFAULT);
+    assert_eq!(written, computed());
+}
+
+#[test]
+fn inserts_writing_a_defaulted_hash_column_still_refuse_since_upserts_may_omit_it() {
+    for (sources, flow) in [(vec![], Flow::Null), (vec![col("users", "email")], Flow::Bare)] {
+        let written = into_hashed(StatementKind::Insert, sources, flow, DEFAULT);
+        assert_eq!(written, computed(), "{flow:?}");
+    }
+    assert!(into_hashed(StatementKind::Update, vec![], Flow::Null, DEFAULT).is_ok());
+}
+
+#[test]
+fn hash_columns_missing_from_the_facts_have_every_fact() {
+    // A descendant's own column is not among the target's facts.
+    let config = config(vec![rule(
+        "shop.public.ptab_1.email",
+        PiiOperator::Hash,
+        "EMAIL_ADDRESS",
+    )]);
+    let mut names = tree();
+    names.facts = facts(&[("ptab", &[("id", NONE)])]).facts;
+    let lineage = write("ptab", "id", vec![], StatementKind::Update);
+    assert_eq!(
+        pg_with(&lineage, &config, &names),
+        Err(Rejection::Computed {
+            column: "public.ptab.email".into(),
+        })
+    );
+}
+
+#[test]
+fn defaults_match_exact_names_before_folded_ones() {
+    let config = hashed_target();
+    let mut lineage = write("hashed", "email", vec![], StatementKind::Update);
+    lineage.writes[0].flow = Flow::Default;
+    let plans = |columns: &[(&str, ColumnFacts)]| pg_with(&lineage, &config, &facts(&[("hashed", columns)]));
+    assert!(plans(&[("Email", DEFAULT), ("email", NONE)]).is_ok());
+    assert_eq!(plans(&[("email", DEFAULT), ("Email", NONE)]), computed());
+    lineage.writes[0].name = "EMAIL".into();
+    assert_eq!(
+        pg_with(
+            &lineage,
+            &config,
+            &facts(&[("hashed", &[("Email", NONE), ("email", DEFAULT)])])
+        ),
+        Err(Rejection::Computed {
+            column: "public.hashed.EMAIL".into(),
+        })
+    );
+}
+
+#[test]
+fn generated_hash_column_refuses_every_write_but_delete() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        assert_eq!(beside_hashed(statement.clone(), GENERATED), computed(), "{statement:?}");
+    }
+    assert!(beside_hashed(StatementKind::Delete, GENERATED).is_ok());
+}
+
+#[test]
+fn on_update_hash_column_refuses_inserts_updates_and_merges() {
+    let on_update = (false, false, true);
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        assert_eq!(beside_hashed(statement.clone(), on_update), computed(), "{statement:?}");
+    }
+    assert!(beside_hashed(StatementKind::Delete, ON_UPDATE).is_ok());
+}
+
+#[test]
+fn unhashed_tables_ignore_column_facts() {
+    let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.hashed.email")]);
+    let lineage = write("hashed", "id", vec![], StatementKind::Insert);
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", (true, true, true))])]);
+    assert!(pg_with(&lineage, &config, &names).is_ok());
+}
+
+#[test]
+fn creates_skip_the_server_filled_checks() {
+    for statement in [StatementKind::CreateTableAs, StatementKind::CreateMaterializedView] {
+        let lineage = write("hashed", "email", vec![col("users", "email")], statement.clone());
+        assert!(pg(&lineage, &hashed_target()).is_ok(), "{statement:?}");
+        let mut chosen_lineage = write("hashed", "email", vec![], statement.clone());
+        chosen_lineage.writes[0].flow = Flow::Derived;
+        assert_eq!(pg(&chosen_lineage, &hashed_target()), chosen(), "{statement:?}");
+    }
+}
+
+#[test]
+fn missing_facts_refuse_writes_to_hash_tables() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        let lineage = write("hashed", "id", vec![], statement.clone());
+        assert_eq!(pg(&lineage, &hashed_target()), computed(), "{statement:?}");
+    }
+    let lineage = write("hashed", "id", vec![], StatementKind::Delete);
+    assert!(pg(&lineage, &hashed_target()).is_ok());
+}
+
+#[test]
+fn fail_closed_column_constructors_refuse_writes_to_hash_tables() {
+    for column in [CatalogColumn::new("email"), CatalogColumn::hidden("email")] {
+        let names = Names {
+            facts: [(table("hashed"), Facts { columns: vec![column] })].into(),
+            ..Names::default()
+        };
+        let lineage = write("hashed", "id", vec![], StatementKind::Update);
+        assert_eq!(pg_with(&lineage, &hashed_target(), &names), computed());
+    }
+}
+
+#[test]
+fn hash_rules_on_a_landing_member_gate_writes_through_the_parent() {
+    let config = config(vec![rule(
+        "shop.public.ptab_1.email",
+        PiiOperator::Hash,
+        "EMAIL_ADDRESS",
+    )]);
+    let mut names = tree();
+    names.facts = facts(&[("ptab", &[("id", NONE), ("email", NONE)])]).facts;
+    let mut lineage = write("ptab", "email", vec![], StatementKind::Insert);
+    lineage.writes[0].flow = Flow::Derived;
+    assert_eq!(
+        pg_with(&lineage, &config, &names),
+        Err(Rejection::Chosen {
+            column: "public.ptab.email".into(),
+        })
+    );
+}
+
+#[test]
+fn chosen_and_computed_messages_and_gates_are_pinned() {
+    let chosen = Rejection::Chosen {
+        column: "public.hashed.email".into(),
+    };
+    assert_eq!(
+        chosen.to_string(),
+        "column policy: column \"public.hashed.email\" is hashed and only takes copies of columns hashed the same way, or NULL"
+    );
+    assert_eq!(chosen.gate(), "chosen");
+    let computed = Rejection::Computed {
+        column: "public.hashed.email".into(),
+    };
+    assert_eq!(
+        computed.to_string(),
+        "column policy: column \"public.hashed.email\" is hashed and filled by the database, so this write is refused"
+    );
+    assert_eq!(computed.gate(), "computed");
 }
 
 // Messages.

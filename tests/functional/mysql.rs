@@ -1899,9 +1899,10 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 11 seeded base tables (users, posts, tags,
+    // SHOW TABLES in `app` returns 16 seeded base tables (users, posts, tags,
     // post_tags, temporal, binary_samples, posts_audit, events_by_year,
-    // numeric_samples, audit, orders) plus
+    // numeric_samples, audit, orders, policy_hashed, policy_hashed_copy,
+    // policy_hashed_default, policy_hashed_generated, policy_hashed_on_update) plus
     // 10 seeded views (active_users, active_users_v2, active_orders,
     // active_users_with_check_cascaded, active_users_with_check_local,
     // archived_users, archived_users_invoker, user_metrics_cte,
@@ -1910,8 +1911,8 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        21,
-        "SHOW TABLES must not be paginated: expected all 21 seeded tables+views, got {}",
+        26,
+        "SHOW TABLES must not be paginated: expected all 26 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -5174,6 +5175,11 @@ fn standard_rules() -> Vec<ColumnRule> {
         column_rule("users", "phone", "PHONE_NUMBER", PiiOperator::Mask),
         column_rule("users", "ssn", "US_SSN", PiiOperator::Redact),
         column_rule("users", "credit_card", "CREDIT_CARD", PiiOperator::Replace),
+        column_rule("policy_hashed", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_hashed_default", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_hashed_generated", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_hashed_on_update", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
     ]
 }
 
@@ -5559,15 +5565,15 @@ async fn column_rules_refuse_laundering_writes() {
 #[tokio::test]
 async fn column_rules_redact_returning_rows() {
     let handler = ruled_handler(None, 100);
-    let insert = "INSERT INTO orders (user_id, customer_email) VALUES (90, 'zed@example.com') \
-                  RETURNING id, customer_email";
-    let delete = "DELETE FROM orders WHERE user_id = 90 RETURNING customer_email";
+    let insert = "INSERT INTO policy_hashed (id, email) SELECT 90, email FROM policy_hashed WHERE id = 1 \
+                  RETURNING id, email";
+    let delete = "DELETE FROM policy_hashed WHERE id = 90 RETURNING email";
     if backend() == DatabaseBackend::Mariadb {
         for query in [insert, delete] {
             let response = handler.write_query(query.into(), None).await.expect(query);
             assert_eq!(response.rows.len(), 1, "{query}");
             assert!(
-                is_email_token(&response.rows[0]["customer_email"]),
+                is_email_token(&response.rows[0]["email"]),
                 "{query}: {}",
                 response.rows[0]
             );
@@ -5576,10 +5582,123 @@ async fn column_rules_redact_returning_rows() {
         // MySQL has no `RETURNING`: a syntax error that runs nothing.
         let refusal = ruled_write_refusal(&handler, insert).await;
         assert!(!refusal.contains("alice@example.com"), "{refusal}");
-        let rows = ruled_read(&handler, "SELECT count(*) AS n FROM orders WHERE user_id = 90")
-            .await
-            .expect("count");
-        assert_eq!(rows[0]["n"], 0);
+        assert_eq!(count_id(&handler, "policy_hashed", 90).await, 0);
+    }
+}
+
+/// Counts the rows of `table` whose `id` is `id`.
+async fn count_id(handler: &MysqlHandler, table: &str, id: i64) -> Value {
+    let query = format!("SELECT count(*) AS n FROM {table} WHERE id = {id}");
+    ruled_read(handler, &query).await.expect(&query)[0]["n"].clone()
+}
+
+/// The token `SELECT email FROM <table> WHERE id = <id>` reads.
+async fn stored_token(handler: &MysqlHandler, table: &str, id: i64) -> Value {
+    let query = format!("SELECT email FROM {table} WHERE id = {id}");
+    ruled_read(handler, &query).await.expect(&query)[0]["email"].clone()
+}
+
+#[tokio::test]
+async fn column_rules_refuse_chosen_values_in_hashed_columns() {
+    let handler = ruled_handler(None, 100);
+    let before = stored_token(&handler, "policy_hashed", 1).await;
+    for query in [
+        "INSERT INTO policy_hashed (id, email) VALUES (900, 'x@example.com')",
+        "INSERT INTO policy_hashed (id, email) SELECT 900, name FROM users WHERE id = 1",
+        "UPDATE policy_hashed SET email = 'x@example.com' WHERE id = 1",
+        "INSERT INTO policy_hashed (id, email) VALUES (1, NULL) \
+         ON DUPLICATE KEY UPDATE email = 'x@example.com'",
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(
+                r#"column "app.policy_hashed.email" is hashed and only takes copies of columns hashed the same way, or NULL"#
+            ),
+            "{query}: {refusal}"
+        );
+    }
+    assert_eq!(count_id(&handler, "policy_hashed", 900).await, 0);
+    assert_eq!(stored_token(&handler, "policy_hashed", 1).await, before);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_derived_copies_into_hashed_columns() {
+    let handler = ruled_handler(None, 100);
+    let query = "INSERT INTO policy_hashed_copy (id, email) SELECT 900, lower(email) FROM policy_hashed WHERE id = 1";
+    let refusal = ruled_write_refusal(&handler, query).await;
+    assert!(
+        refusal.contains("would weaken the rules of its source columns"),
+        "{refusal}"
+    );
+    assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_writes_the_database_fills_into_hashed_columns() {
+    let handler = ruled_handler(None, 100);
+    for (table, query) in [
+        (
+            "policy_hashed_default",
+            "INSERT INTO policy_hashed_default (id) VALUES (900)",
+        ),
+        (
+            "policy_hashed_default",
+            "INSERT INTO policy_hashed_default (id, email) VALUES (900, DEFAULT)",
+        ),
+        (
+            "policy_hashed_generated",
+            "INSERT INTO policy_hashed_generated (id, name) VALUES (900, 'x')",
+        ),
+        (
+            "policy_hashed_generated",
+            "UPDATE policy_hashed_generated SET name = 'x' WHERE id = 900",
+        ),
+        (
+            "policy_hashed_on_update",
+            "INSERT INTO policy_hashed_on_update (id) VALUES (900)",
+        ),
+        (
+            "policy_hashed_on_update",
+            "UPDATE policy_hashed_on_update SET id = 901 WHERE id = 900",
+        ),
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!(
+                r#"column "app.{table}.email" is hashed and filled by the database, so this write is refused"#
+            )),
+            "{query}: {refusal}"
+        );
+        assert_eq!(count_id(&handler, table, 900).await, 0, "{query}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "INSERT INTO policy_hashed_copy (id, email) SELECT 910, email FROM policy_hashed WHERE id = 1",
+        "INSERT INTO policy_hashed (id, email) VALUES (911, NULL)",
+        // `email` is declared `DEFAULT NULL`, which `MariaDB` reports as the text `NULL`.
+        "INSERT INTO policy_hashed (id) VALUES (912)",
+        "INSERT INTO policy_hashed (id, email) VALUES (913, DEFAULT)",
+    ] {
+        let response = handler.write_query(query.into(), None).await.expect(query);
+        assert_eq!(response.rows_affected, 1, "{query}");
+    }
+    let copied = stored_token(&handler, "policy_hashed_copy", 910).await;
+    assert!(is_email_token(&copied), "{copied}");
+    assert_eq!(copied, stored_token(&handler, "policy_hashed", 1).await);
+    for id in [911, 912, 913] {
+        assert_eq!(stored_token(&handler, "policy_hashed", id).await, Value::Null);
+    }
+    for query in [
+        "DELETE FROM policy_hashed_generated WHERE id = 910",
+        "DELETE FROM policy_hashed_on_update WHERE id = 910",
+        "DELETE FROM policy_hashed_copy WHERE id = 910",
+        "DELETE FROM policy_hashed WHERE id IN (911, 912, 913)",
+    ] {
+        handler.write_query(query.into(), None).await.expect(query);
     }
 }
 

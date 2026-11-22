@@ -476,6 +476,32 @@ INSERT INTO invoices (user_id, billing_email) VALUES
     (1, 'alice@example.com'),
     (2, 'bob@example.com');
 
+-- Trigger-free write targets whose `email` is hashed like `users.email`.
+CREATE TABLE policy_hashed (
+    id INT PRIMARY KEY,
+    email TEXT
+);
+
+INSERT INTO policy_hashed (id, email) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE TABLE policy_hashed_copy (
+    id INT PRIMARY KEY,
+    email TEXT
+);
+
+CREATE TABLE policy_hashed_default (
+    id INT PRIMARY KEY,
+    email TEXT DEFAULT 'x@example.com'
+);
+
+CREATE TABLE policy_hashed_generated (
+    id INT PRIMARY KEY,
+    name TEXT,
+    email TEXT GENERATED ALWAYS AS (name || '@example.com') STORED
+);
+
 -- `policy_deferred` fails every insert at COMMIT with a message quoting the e-mail.
 CREATE TABLE policy_deferred (
     id SERIAL PRIMARY KEY,

@@ -180,6 +180,7 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
 - **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explainQuery` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
+- **Writes that could plant values in `hash`-ruled columns**: literals, parameters, unruled or computed values, defaults, generated columns, and `ON UPDATE` columns (see [Writes](#writes)).
 - **Row movement on PostgreSQL**: `UPDATE` and `MERGE` through a partitioned table whose partitions are ruled differently, even when no row would move; name the partition (see [Inheritance and partitions](#inheritance-and-partitions)).
 - **A changed inheritance tree on PostgreSQL**: a table with a ruled column that joined the tree of a table the statement read while it ran. This one is caught after the statement runs: nothing is returned and a write is rolled back, with `column policy: an inheritance tree changed while the statement ran`. Retry the statement.
 - **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
@@ -225,13 +226,28 @@ On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for i
 With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
 
 - A target column fed by a ruled column needs a rule with the same operator and entity. An unruled target, or one ruled differently, is refused.
-- A target fed only by literals or unruled columns copies no ruled values and is always allowed.
+- A target fed only by literals or unruled columns copies no ruled values and is always allowed, except into a `hash`-ruled column (below).
 - A new table's column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused until the column is aliased (`lower(email) AS email`) and ruled.
 
 This covers `INSERT`, `UPDATE`, `MERGE`, `CREATE TABLE … AS`, PostgreSQL `SELECT INTO`, and `CREATE MATERIALIZED VIEW`. For example, `INSERT INTO audit (note) SELECT ssn FROM users` is refused unless `audit.note` carries the `ssn` rule. To copy ruled data into a new table, add a rule for the new table's columns first. `CREATE VIEW` is not laundering, since reads through the view get the base table rules, but its body passes the other checks.
 
 ```text
 column policy: writing column "public.audit.note" would weaken the rules of its source columns
+```
+
+A `hash`-ruled column also must not take a value the statement chose: its token would let the assistant hash a guess and compare it with stored tokens. Such a column takes only:
+
+- copies of columns hashed with the same entity, passed through unchanged (a computed copy such as `lower(email)` is laundering, see above);
+- `NULL`;
+- `DEFAULT`, or no value at all in an `INSERT`, only when the column has no default (no `DEFAULT`, identity, sequence, or auto-increment).
+
+While `hash` rules exist, a write is also refused when the database could fill a `hash`-ruled column of its target itself: any `INSERT` or `MERGE` on a table whose `hash`-ruled column has a default, and any `INSERT`, `UPDATE`, or `MERGE` on a table whose `hash`-ruled column is generated or has MySQL's `ON UPDATE CURRENT_TIMESTAMP`. `DELETE` is allowed. Every `INSERT` and `MERGE` counts as leaving out each `hash`-ruled column, even one it writes: an upsert's conflict clause or a `MERGE` clause can write a column its insert leaves to the default, and the clauses are not told apart.
+
+For example, with `users.email` hashed, `INSERT INTO users (email) VALUES ('alice@example.com')` is refused, while `INSERT INTO users_archive (email) SELECT email FROM users` is allowed when `users_archive.email` is hashed as `EMAIL_ADDRESS` too.
+
+```text
+column policy: column "public.users.email" is hashed and only takes copies of columns hashed the same way, or NULL
+column policy: column "public.users.email" is hashed and filled by the database, so this write is refused
 ```
 
 Each statement runs in one transaction, and a result that does not fit the plan is rolled back before anything commits. Some writes cannot be undone that way:

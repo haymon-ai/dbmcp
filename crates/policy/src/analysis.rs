@@ -9,7 +9,7 @@ use dbmcp_sql_lineage::{
 };
 
 use crate::deny;
-use crate::plan::{Names, plan, touches_ruled};
+use crate::plan::{Facts, Names, plan, touches_ruled};
 use crate::planned::{Mode, Planned};
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 use crate::relation::RelationRef;
@@ -122,6 +122,13 @@ impl<'a> Analysis<'a> {
                 self.names
                     .families
                     .insert(relation.id.clone(), mem::take(&mut relation.family));
+                // Analysis still needs the columns, so the planner gets a copy of their facts.
+                self.names.facts.insert(
+                    relation.id.clone(),
+                    Facts {
+                        columns: relation.columns.clone(),
+                    },
+                );
             }
             self.catalog.insert(name, entry);
         }

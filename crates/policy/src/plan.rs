@@ -7,8 +7,8 @@ use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn, RelationId, Role, SourceRef,
-    StatementKind,
+    CatalogColumn, Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn, RelationId, Role,
+    SourceRef, StatementKind,
 };
 
 use crate::deny;
@@ -28,6 +28,7 @@ use crate::rejection::Rejection;
 /// one, a ruled column used outside the output, conflicting rules on one
 /// output column, a shadowed bare create target, or a write copying ruled
 /// values into a column not ruled the same way or not nameable by a rule,
+/// a write choosing or letting the server fill a `hash`-ruled column's value,
 /// or an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.
 ///
 /// # Panics
@@ -47,6 +48,15 @@ pub(crate) struct Names {
     pub(crate) bare: BTreeSet<RelationId>,
     /// Each resolved relation's inheritance tree; a missing one is empty.
     pub(crate) families: Families,
+    /// Each resolved relation's write facts; a missing one is all `true`.
+    pub(crate) facts: BTreeMap<RelationId, Facts>,
+}
+
+/// What a write can make the server put into a relation's columns.
+#[derive(Debug, Default)]
+pub(crate) struct Facts {
+    /// The relation's columns with their default, generated, and on-update facts.
+    pub(crate) columns: Vec<CatalogColumn>,
 }
 
 /// Reports whether `lineage` touches a relation with a ruled column.
@@ -130,16 +140,75 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     if *statement != StatementKind::CreateView
         && let Some(target) = &lineage.target
     {
-        for (position, write) in lineage.writes.iter().enumerate() {
-            let column = SourceRef::new(target.clone(), &write.name);
-            let laundering = || Rejection::Laundering {
-                column: column_name(&column),
-            };
-            // Literals and unruled columns carry no ruled values.
-            let source = combine(&write.sources, write.flow, config, &names.families).ok_or_else(laundering)?;
-            if source == Position::Global {
-                continue;
-            }
+        writes(lineage, statement, target, config, names)?;
+    }
+    row_movement(lineage, config, names)?;
+    Ok(Plan { columns })
+}
+
+/// Gates each written column, then the `hash`-ruled columns the server fills itself.
+///
+/// A ruled value must land in a column every landing member reads back
+/// under the same pair. A `hash`-ruled column takes only same-hashed bare
+/// copies, `NULL`, or `DEFAULT` without a default, and no write may let the
+/// server fill one (an omitted column's default, a generated or on-update
+/// column): its token would sign a value the statement chose.
+fn writes(
+    lineage: &Lineage,
+    statement: &StatementKind,
+    target: &RelationId,
+    config: &PiiConfig,
+    names: &Names,
+) -> Result<(), Rejection> {
+    let empty = Family::default();
+    let family = names.families.get(target).unwrap_or(&empty);
+    let landing = || {
+        std::iter::once((target, &family.ancestors))
+            .chain(family.descendants.iter().map(|member| (&member.id, &member.ancestors)))
+    };
+    let hashed = |column: &str| {
+        landing().any(|(member, ancestors)| {
+            direct(config, member, ancestors.iter(), column).any(|rule| rule.operator == PiiOperator::Hash)
+        })
+    };
+    // A `hash`-ruled column the facts lack (no facts, or a descendant's own
+    // column) has every fact.
+    let mut columns = names
+        .facts
+        .get(target)
+        .map(|facts| facts.columns.clone())
+        .unwrap_or_default();
+    for rule in &config.rules {
+        let name = &rule.key[3];
+        if rule.operator == PiiOperator::Hash
+            && hashed(name)
+            && !columns.iter().any(|column| ColumnRule::fold(&column.name) == *name)
+        {
+            columns.push(CatalogColumn::new(name.clone()));
+        }
+    }
+    // The exact name first; else every column it folds onto, `PostgreSQL` names differing in case included.
+    let defaults = |name: &str| {
+        if let Some(column) = columns.iter().find(|column| column.name == name) {
+            return column.default;
+        }
+        let mut folded = columns
+            .iter()
+            .filter(|column| ColumnRule::fold(&column.name) == ColumnRule::fold(name))
+            .peekable();
+        folded.peek().is_none() || folded.any(|column| column.default)
+    };
+    let computed = |column: &str| Rejection::Computed {
+        column: column_name(&SourceRef::new(target.clone(), column)),
+    };
+    for (position, write) in lineage.writes.iter().enumerate() {
+        let column = SourceRef::new(target.clone(), &write.name);
+        let laundering = || Rejection::Laundering {
+            column: column_name(&column),
+        };
+        // Literals and unruled columns carry no ruled values.
+        let source = combine(&write.sources, write.flow, config, &names.families).ok_or_else(laundering)?;
+        if source != Position::Global {
             if !write.named {
                 return Err(Rejection::Unnamed {
                     relation: relation_name(target),
@@ -147,19 +216,48 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
                 });
             }
             // Every member a row can land in must read back under the source's rule.
-            let empty = Family::default();
-            let family = names.families.get(target).unwrap_or(&empty);
-            let mut landing = std::iter::once((target, &family.ancestors))
-                .chain(family.descendants.iter().map(|member| (&member.id, &member.ancestors)));
-            if !landing.all(|(member, ancestors)| {
+            if !landing().all(|(member, ancestors)| {
                 merge(direct(config, member, ancestors.iter(), &write.name).map(pair)) == Some(source)
             }) {
                 return Err(laundering());
             }
         }
+        // The landing check proved a `hash` source equal to every member's pair.
+        if !hashed(&write.name) || matches!(source, Position::Action(PiiOperator::Hash, _)) {
+            continue;
+        }
+        match write.flow {
+            Flow::Null => {}
+            Flow::Default if !defaults(&write.name) => {}
+            Flow::Default => return Err(computed(&write.name)),
+            Flow::Bare | Flow::Derived => {
+                return Err(Rejection::Chosen {
+                    column: column_name(&column),
+                });
+            }
+        }
     }
-    row_movement(lineage, config, names)?;
-    Ok(Plan { columns })
+    // A created relation is new: no defaults, generated columns, or triggers.
+    if matches!(
+        statement,
+        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView
+    ) {
+        return Ok(());
+    }
+    let fills = matches!(
+        statement,
+        StatementKind::Insert | StatementKind::Update | StatementKind::Merge
+    );
+    // Lineage keeps no per-clause detail: an upsert's conflict clause and a
+    // `MERGE` clause write columns its insert may omit, so every `INSERT` and
+    // `MERGE` may leave any column to its default.
+    let omits = matches!(statement, StatementKind::Insert | StatementKind::Merge);
+    for column in columns.iter().filter(|column| hashed(&column.name)) {
+        if (omits && column.default) || (fills && (column.generated || column.on_update)) {
+            return Err(computed(&column.name));
+        }
+    }
+    Ok(())
 }
 
 /// Rejects an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.
