@@ -1217,14 +1217,21 @@ async fn test_read_query_show_warnings_rejected() {
         );
     }
 
-    // The server reads a `--` comment at a control character but not at a Unicode space.
-    for sql in ["SHOW --\x01\nWARNINGS", "SHOW --\u{a0}\nWARNINGS"] {
+    // The server starts a `--` comment at a control character but not at a
+    // Unicode space, and ends a `#` comment at a NUL byte.
+    for sql in [
+        "SHOW --\x01\nWARNINGS",
+        "SHOW --\u{a0}\nWARNINGS",
+        "SHOW # \0\nWARNINGS",
+    ] {
         let error = handler
             .read_query(sql.into(), Some("app".into()), None, None)
             .await
             .expect_err("a comment the server reads otherwise must not hide diagnostics");
         assert!(
-            error.message.contains("characters the parser cannot read"),
+            error
+                .message
+                .contains("characters the parser and the server read differently"),
             "expected unreadable-character rejection for {sql:?}, got: {}",
             error.message
         );
@@ -1285,6 +1292,19 @@ async fn test_write_query_use_statement_rejected() {
     assert!(
         error.message.contains("USE is not allowed"),
         "expected USE rejection, got: {}",
+        error.message
+    );
+
+    // A comment the server reads otherwise must not hide a USE.
+    let error = handler
+        .write_query("SELECT 1 --\u{a0}; USE analytics".into(), Some("app".into()))
+        .await
+        .expect_err("a hidden USE must be rejected by writeQuery");
+    assert!(
+        error
+            .message
+            .contains("characters the parser and the server read differently"),
+        "expected unreadable-character rejection, got: {}",
         error.message
     );
 
