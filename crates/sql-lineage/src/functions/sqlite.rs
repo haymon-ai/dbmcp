@@ -103,9 +103,7 @@ pub(super) const NAMES: &[&str] = &[
     "percent_rank",
     "rank",
     "row_number",
-    // Table functions.
-    "json_each",
-    "json_tree",
-    "jsonb_each",
-    "jsonb_tree",
 ];
+
+/// The `SQLite` built-in table-valued functions, lowercase.
+pub(super) const SET_RETURNING: &[&str] = &["json_each", "json_tree", "jsonb_each", "jsonb_tree"];

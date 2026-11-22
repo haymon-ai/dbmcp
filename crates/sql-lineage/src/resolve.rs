@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use sqlparser::ast::{
     CastKind, DataType, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator,
     LimitClause, NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor,
-    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Value,
-    Values, WildcardAdditionalOptions,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableAlias,
+    TableFactor, TableWithJoins, Value, Values, WildcardAdditionalOptions,
 };
 
 use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
@@ -251,13 +251,30 @@ impl<'c> Ctx<'c> {
                 // the left spine in a loop; right operands nest only by precedence.
                 let mut rights = Vec::new();
                 let mut leftmost = body;
-                while let SetExpr::SetOperation { left, right, .. } = leftmost {
+                let mut compares = false;
+                while let SetExpr::SetOperation {
+                    op,
+                    set_quantifier,
+                    left,
+                    right,
+                } = leftmost
+                {
+                    // Only `UNION ALL` keeps every row without comparing values.
+                    compares |= !matches!(
+                        (op, set_quantifier),
+                        (SetOperator::Union, SetQuantifier::All | SetQuantifier::AllByName)
+                    );
                     rights.push(right);
                     leftmost = left;
                 }
                 let mut cols = self.set_expr(leftmost, level, None)?;
                 for right in rights.into_iter().rev() {
                     cols = cols.union(self.set_expr(right, level, None)?)?;
+                }
+                if compares {
+                    for col in &cols.cols {
+                        self.refer(col.sources.clone(), Role::Distinct);
+                    }
                 }
                 cols
             }
@@ -367,6 +384,11 @@ impl<'c> Ctx<'c> {
         let mut out = Columns::default();
         for item in projection {
             self.select_item(item, &level, &mut out)?;
+        }
+        if matches!(select.distinct, Some(Distinct::Distinct)) {
+            for col in &out.cols {
+                self.refer(col.sources.clone(), Role::Distinct);
+            }
         }
         level.set_outputs(out);
 

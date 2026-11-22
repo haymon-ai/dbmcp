@@ -1923,11 +1923,12 @@ async fn test_read_query_non_select_show_tables_single_page() {
         without_cursor.rows, with_cursor.rows,
         "cursor must be silently ignored for non-SELECT statements"
     );
-    // SHOW TABLES in `app` returns 19 seeded base tables (users, posts, tags,
+    // SHOW TABLES in `app` returns 21 seeded base tables (users, posts, tags,
     // post_tags, temporal, binary_samples, posts_audit, events_by_year,
     // numeric_samples, audit, orders, policy_hashed, policy_hashed_copy,
     // policy_hashed_default, policy_hashed_generated, policy_hashed_on_update,
-    // policy_cascade_parent, policy_cascade_child, policy_hashed_trigger) plus
+    // policy_cascade_parent, policy_cascade_child, policy_hashed_trigger,
+    // policy_masked, policy_masked_copy) plus
     // 10 seeded views (active_users, active_users_v2, active_orders,
     // active_users_with_check_cascaded, active_users_with_check_local,
     // archived_users, archived_users_invoker, user_metrics_cte,
@@ -1936,8 +1937,8 @@ async fn test_read_query_non_select_show_tables_single_page() {
     let rows = &without_cursor.rows;
     assert_eq!(
         rows.len(),
-        29,
-        "SHOW TABLES must not be paginated: expected all 29 seeded tables+views, got {}",
+        31,
+        "SHOW TABLES must not be paginated: expected all 31 seeded tables+views, got {}",
         rows.len()
     );
 }
@@ -5237,6 +5238,9 @@ fn standard_rules() -> Vec<ColumnRule> {
         column_rule("policy_hashed_on_update", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
         column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
         column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("policy_masked", "phone", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("policy_masked", "note", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", PiiOperator::Mask),
     ]
 }
 
@@ -5416,7 +5420,7 @@ async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
 }
 
 #[tokio::test]
-async fn column_rules_replace_hash_on_values_a_query_computes() {
+async fn column_rules_read_values_a_query_computes_as_the_placeholder() {
     let handler = ruled_handler(None, 100);
     let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
         .await
@@ -5435,13 +5439,61 @@ async fn column_rules_replace_hash_on_values_a_query_computes() {
 }
 
 #[tokio::test]
-async fn column_rules_replace_hash_on_min_and_max() {
+async fn column_rules_read_min_and_max_as_the_placeholder() {
     let handler = ruled_handler(None, 100);
     let rows = ruled_read(&handler, "SELECT MIN(email) AS lo, MAX(email) AS hi FROM users")
         .await
         .expect("aggregates");
     assert_eq!(rows[0]["lo"], "<EMAIL_ADDRESS>", "{}", rows[0]);
     assert_eq!(rows[0]["hi"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+}
+
+#[tokio::test]
+async fn column_rules_read_select_list_conditions_as_the_placeholder() {
+    let handler = ruled_handler(None, 100);
+    for (expression, placeholder) in [
+        ("IF(email LIKE '%@example.com', NULL, 1)", "<EMAIL_ADDRESS>"),
+        ("IF(ssn LIKE '078%', NULL, 1)", "<US_SSN>"),
+        ("IF(credit_card LIKE '4%', NULL, 1)", "<CREDIT_CARD>"),
+        ("CASE WHEN phone LIKE '+1%' THEN 'yes' ELSE 'n' END", "<PHONE_NUMBER>"),
+        ("IF(LENGTH(phone) > 12, 'aaaaaaaaaa', 'a')", "<PHONE_NUMBER>"),
+        (
+            "CASE WHEN email LIKE 'a%' THEN 'x@example.com' ELSE 'y@example.com' END",
+            "<EMAIL_ADDRESS>",
+        ),
+        ("substr(email, 1, 1) = 'a'", "<EMAIL_ADDRESS>"),
+    ] {
+        let query = format!("SELECT {expression} AS p FROM users");
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        assert!(!rows.is_empty(), "{query}");
+        for row in &rows {
+            assert_eq!(row["p"], placeholder, "{query}: {row}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_row_counts_that_compare_or_multiply_ruled_values() {
+    let handler = ruled_handler(None, 100);
+    for (query, role) in [
+        (
+            "SELECT ssn FROM users WHERE id = 1 UNION SELECT '078-05-1123'",
+            "DISTINCT or a set operation",
+        ),
+        ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
+        (
+            "SELECT count(*) AS n FROM (SELECT DISTINCT CASE WHEN ssn LIKE '0%' THEN 1 ELSE 2 END AS p FROM users) d",
+            "DISTINCT or a set operation",
+        ),
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!("(ruled) used in {role}")),
+            "{query}: {refusal}"
+        );
+    }
+    let query = "SELECT DISTINCT name FROM users WHERE id = 1 UNION SELECT 'x'";
+    assert_eq!(ruled_read(&handler, query).await.expect(query).len(), 2);
 }
 
 #[tokio::test]
@@ -5766,6 +5818,55 @@ async fn column_rules_refuse_derived_copies_into_hashed_columns() {
     assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
 }
 
+/// The values of `<table>.<column>`, ordered by `id`.
+async fn masked_rows(handler: &MysqlHandler, table: &str, column: &str) -> Vec<Value> {
+    let query = format!("SELECT {column} FROM {table} ORDER BY id");
+    let rows = ruled_read(handler, &query).await.expect(&query);
+    rows.into_iter().map(|row| row[column].clone()).collect()
+}
+
+#[tokio::test]
+async fn column_rules_refuse_derived_writes_into_same_ruled_columns() {
+    let handler = ruled_handler(None, 100);
+    let notes = masked_rows(&handler, "policy_masked", "note").await;
+    for query in [
+        "INSERT INTO policy_masked_copy (id, phone) SELECT id + 900, IF(phone LIKE '+1%', NULL, '1') FROM policy_masked",
+        "UPDATE policy_masked SET note = IF(phone LIKE '+1%', NULL, 'x')",
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(
+            refusal.contains("would weaken the rules of its source columns"),
+            "{query}: {refusal}"
+        );
+    }
+    assert_eq!(count_id(&handler, "policy_masked_copy", 901).await, 0);
+    assert_eq!(count_id(&handler, "policy_masked_copy", 902).await, 0);
+    assert_eq!(masked_rows(&handler, "policy_masked", "note").await, notes);
+
+    let query = "INSERT INTO policy_masked_copy (id, phone) SELECT id + 910, phone FROM policy_masked";
+    assert_eq!(
+        handler
+            .write_query(query.into(), None)
+            .await
+            .expect(query)
+            .rows_affected,
+        2
+    );
+    assert_eq!(
+        masked_rows(&handler, "policy_masked_copy", "phone").await,
+        masked_rows(&handler, "policy_masked", "phone").await
+    );
+    let query = "DELETE FROM policy_masked_copy WHERE id > 900";
+    assert_eq!(
+        handler
+            .write_query(query.into(), None)
+            .await
+            .expect(query)
+            .rows_affected,
+        2
+    );
+}
+
 #[tokio::test]
 async fn column_rules_refuse_writes_the_database_fills_into_hashed_columns() {
     let handler = ruled_handler(None, 100);
@@ -5974,7 +6075,7 @@ async fn column_rules_follow_renamed_columns() {
     for query in [
         "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
         "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)",
-        "SELECT d.a, d.b FROM (SELECT DISTINCT email AS a, name AS b FROM users WHERE id = 1) AS d",
+        "SELECT d.a, d.b FROM (SELECT email AS a, name AS b FROM users WHERE id = 1) AS d",
     ] {
         let rows = ruled_read(&handler, query).await.expect(query);
         assert!(is_email_token(&rows[0]["a"]), "{query}: {}", rows[0]);

@@ -2,7 +2,8 @@
 //!
 //! The walk matches every [`Expr`] variant explicitly; kinds lineage does not
 //! model are rejected. Window specifications record their own
-//! [`Role::Window`] references; everything else (including `CASE`
+//! [`Role::Window`] references, and set-returning calls their arguments as
+//! [`Role::Generator`] references too; everything else (including `CASE`
 //! conditions, aggregate arguments, and subquery outputs) flows into the
 //! caller's source set.
 
@@ -346,8 +347,12 @@ impl Ctx<'_> {
         if !matches!(parameters, FunctionArguments::None) {
             return Err(unsupported("parametric function"));
         }
-        let (name, known) = functions::resolve(self.dialect, name)?;
+        let (name, known, rows) = functions::resolve(self.dialect, name)?;
         self.call(name, known);
+        // Collect a set-returning call's arguments apart, so they can be referenced alone.
+        let mut own = Sources::new();
+        let outer = acc;
+        let acc = if rows { &mut own } else { &mut *outer };
         match args {
             FunctionArguments::None => {}
             FunctionArguments::Subquery(query) => self.subquery(query, level, acc)?,
@@ -388,6 +393,10 @@ impl Ctx<'_> {
             self.expr(&item.expr, level, clause, acc)?;
         }
         self.opt(filter.as_deref(), level, clause, acc)?;
+        if rows {
+            outer.extend(own.iter().cloned());
+            self.refer(own, Role::Generator);
+        }
         match over {
             None | Some(WindowType::NamedWindow(_)) => Ok(()),
             Some(WindowType::WindowSpec(spec)) => self.window(spec, level, clause),

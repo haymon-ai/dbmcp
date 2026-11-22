@@ -110,7 +110,7 @@ impl<'c> Planned<'c> {
                 };
                 let rewritten = matches!(
                     plan.columns.get(position).map(|planned| planned.position),
-                    Some(Position::Action(..))
+                    Some(Position::Action(..) | Position::Placeholder(_))
                 );
                 if ruled && !rewritten {
                     return Err(Unfit::Unplanned(position));
@@ -233,6 +233,14 @@ mod tests {
             Err(Unfit::Unplanned(0))
         );
         assert_eq!(planned.check_first(&names(2), [origin(1, "t", Some("a"))]), Ok(()));
+    }
+
+    #[test]
+    fn ruled_origins_are_admitted_under_a_placeholder_position() {
+        let config = ruled();
+        let placeholder = Position::Placeholder(Entity::UsSsn);
+        let mut planned = new_planned(Mode::Positional(plan(&[placeholder])), &config, true);
+        assert_eq!(planned.check_first(&names(1), [origin(0, "t", Some("a"))]), Ok(()));
     }
 
     #[test]
