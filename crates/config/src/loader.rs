@@ -22,7 +22,7 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env::{self, Kind, SETTINGS, Setting, Value};
-use crate::error::{ConfigError, Diagnostic};
+use crate::error::{ConfigError, Diagnostic, duplicates};
 use crate::http::HttpConfig;
 use crate::log::LogLevel;
 use crate::options::LoadOptions;
@@ -207,8 +207,8 @@ impl Resolver<'_> {
     ///
     /// Activation rules run here: a section exists only when its trigger is
     /// set, and SSH settings without `ssh.host` are an error. `privacy.rules`
-    /// resolves and `privacy.key` is checked here too, so their errors show
-    /// in every privacy mode, `none` included.
+    /// resolves and `privacy.key` and `privacy.categories` are checked here
+    /// too, so their errors show in every privacy mode, `none` included.
     fn build(&self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
             .enumeration(env::TRANSPORT, Transport::CHOICES)
@@ -226,7 +226,18 @@ impl Resolver<'_> {
         let mode = self
             .enumeration(env::PRIVACY_MODE, PrivacyMode::CHOICES)
             .unwrap_or(PrivacyMode::DEFAULT);
-        let privacy = (mode != PrivacyMode::None).then(|| self.privacy(mode, operator, column_rules));
+        let categories = self.enum_list(env::PRIVACY_CATEGORIES, PrivacyCategory::CHOICES);
+        let mut category_errors = Vec::new();
+        if let Some(list) = &categories {
+            if list.is_empty() {
+                category_errors.push(
+                    Diagnostic::new(ConfigError::EmptyList(env::PRIVACY_CATEGORIES.path))
+                        .involving(&[env::PRIVACY_CATEGORIES]),
+                );
+            }
+            category_errors.extend(duplicates(env::PRIVACY_CATEGORIES, list));
+        }
+        let privacy = (mode != PrivacyMode::None).then(|| self.privacy(mode, operator, categories, column_rules));
         let key_error = self.string(env::PRIVACY_KEY).and_then(|key| {
             if key.trim().is_empty() {
                 Some(ConfigError::EmptyPrivacyKey)
@@ -252,6 +263,7 @@ impl Resolver<'_> {
             ssh,
         };
         let mut diagnostics = config.validate().err().unwrap_or_default();
+        diagnostics.extend(category_errors);
         if missing_ssh_host {
             diagnostics.push(
                 Diagnostic::new(ConfigError::MissingSshHost)
@@ -354,8 +366,14 @@ impl Resolver<'_> {
         }
     }
 
-    /// Resolves the privacy section around its mode, operator, and resolved rules.
-    fn privacy(&self, mode: PrivacyMode, operator: PrivacyOperator, rules: Vec<ColumnRule>) -> PrivacyConfig {
+    /// Resolves the privacy section around its mode, operator, categories, and resolved rules.
+    fn privacy(
+        &self,
+        mode: PrivacyMode,
+        operator: PrivacyOperator,
+        categories: Option<Vec<PrivacyCategory>>,
+        rules: Vec<ColumnRule>,
+    ) -> PrivacyConfig {
         let hashing =
             operator == PrivacyOperator::Hash || rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash);
         PrivacyConfig {
@@ -363,7 +381,7 @@ impl Resolver<'_> {
             operator,
             key: hashing.then(|| self.string(env::PRIVACY_KEY).map(Into::into)).flatten(),
             rules,
-            categories: self.enum_list(env::PRIVACY_CATEGORIES, PrivacyCategory::CHOICES),
+            categories,
             model: self.path(env::PRIVACY_MODEL),
         }
     }
@@ -1819,6 +1837,50 @@ mod tests {
         let privacy = privacy_section(&Fixture::new());
         assert_eq!(privacy.mode, PrivacyMode::Full);
         assert!(privacy.model.is_none() && privacy.rules.is_empty());
+    }
+
+    #[test]
+    fn privacy_categories_are_checked_in_every_mode() {
+        for mode in ["none", "rules", "full"] {
+            let error = Fixture::new()
+                .env("DBMCP_PRIVACY_MODE", mode)
+                .config("dbmcp.yaml", "privacy:\n  categories: [crypto, crypto]\n")
+                .err();
+            assert!(
+                error.contains("privacy.categories: duplicate entry 'crypto'"),
+                "{mode}: {error}"
+            );
+            let error = Fixture::new()
+                .env("DBMCP_PRIVACY_MODE", mode)
+                .config("dbmcp.yaml", "privacy:\n  categories: []\n")
+                .err();
+            assert!(error.contains("privacy.categories"), "{mode}: {error}");
+        }
+    }
+
+    #[test]
+    fn old_pii_env_names_name_their_replacement() {
+        for (old, new) in [
+            ("DBMCP_PII_ENABLE", "privacy.mode: replaced by DBMCP_PRIVACY_MODE"),
+            (
+                "DBMCP_PII_OPERATOR",
+                "privacy.operator: replaced by DBMCP_PRIVACY_OPERATOR",
+            ),
+            ("DBMCP_PII_KEY", "privacy.key: replaced by DBMCP_PRIVACY_KEY"),
+            (
+                "DBMCP_PII_CATEGORIES",
+                "privacy.categories: replaced by DBMCP_PRIVACY_CATEGORIES",
+            ),
+            ("DBMCP_PII_NER_ENABLE", "privacy.model: replaced by DBMCP_PRIVACY_MODEL"),
+            ("DBMCP_PII_NER_MODEL", "privacy.model: replaced by DBMCP_PRIVACY_MODEL"),
+        ] {
+            let error = Fixture::new().env(old, "secret-value").err();
+            assert!(error.contains(&format!("{old}: {new}")), "{error}");
+            assert!(!error.contains("secret-value"), "{error}");
+            let error = Fixture::new().env_file(".env", &format!("{old}=secret-value\n")).err();
+            assert!(error.contains(&format!("{old} in ")) && error.contains(new), "{error}");
+        }
+        Fixture::new().env("DBMCP_PII_KEY", "").ok();
     }
 
     #[test]

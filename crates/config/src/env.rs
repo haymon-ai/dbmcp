@@ -25,6 +25,18 @@ pub const CONFIG_FILE_VAR: &str = "DBMCP_CONFIG_FILE";
 /// Env var naming the dotenv files; a loader input, not a setting.
 pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
 
+/// Removed `DBMCP_PII_*` env names, each with the setting that replaced it.
+///
+/// A non-empty one stops startup, naming the replacement's env var.
+pub(crate) const RENAMED: &[(&str, Setting)] = &[
+    ("DBMCP_PII_ENABLE", PRIVACY_MODE),
+    ("DBMCP_PII_OPERATOR", PRIVACY_OPERATOR),
+    ("DBMCP_PII_KEY", PRIVACY_KEY),
+    ("DBMCP_PII_CATEGORIES", PRIVACY_CATEGORIES),
+    ("DBMCP_PII_NER_ENABLE", PRIVACY_MODEL),
+    ("DBMCP_PII_NER_MODEL", PRIVACY_MODEL),
+];
+
 /// One setting: its dotted YAML key path, env var name, and value kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Setting {

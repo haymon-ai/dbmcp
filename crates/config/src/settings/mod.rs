@@ -17,6 +17,9 @@
 //! [`Source`]: the env layers' setting view (see [`EnvLayers::candidates`])
 //! > the last config file setting it.
 //!
+//! A set, removed `DBMCP_PII_*` name (see [`RENAMED`]) is an
+//! [`InputError`] naming its replacement.
+//!
 //! [`Kind`]: crate::env::Kind
 
 mod files;
@@ -26,7 +29,7 @@ mod pick;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::env::{CONFIG_FILE_VAR, ENV_FILE_VAR, Raw, SETTINGS, Setting, Value};
+use crate::env::{CONFIG_FILE_VAR, ENV_FILE_VAR, RENAMED, Raw, SETTINGS, Setting, Value};
 use crate::loader::LoadErrorKind;
 use crate::options::LoadOptions;
 use crate::source::Source;
@@ -148,6 +151,15 @@ fn check(files: &ConfigFiles, layers: &EnvLayers<'_>, home: Option<&Path>) -> Re
                 }),
             }
         }
+    }
+    // A removed `DBMCP_PII_*` name names its replacement instead of being ignored.
+    for &(old, setting) in RENAMED {
+        let new = setting.env.unwrap_or(setting.path);
+        errors.extend(layers.candidates(old).map(|(.., source, _)| InputError {
+            from: source,
+            path: setting.path.to_owned(),
+            reason: format!("replaced by {new}"),
+        }));
     }
     if errors.is_empty() {
         return Ok(settings);

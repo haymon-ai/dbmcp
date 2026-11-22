@@ -4,9 +4,6 @@ use std::path::PathBuf;
 
 use secrecy::SecretString;
 
-use crate::env;
-use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
-
 /// What privacy protection the query tools apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrivacyMode {
@@ -251,28 +248,6 @@ impl PrivacyConfig {
     pub const DEFAULT_NER_THRESHOLD: f32 = 0.5;
     /// Minimum `privacy.key` length, in bytes.
     pub const MIN_KEY_BYTES: usize = 32;
-
-    /// Validates this configuration.
-    ///
-    /// The key is checked by the loader, in every mode, so not here.
-    ///
-    /// # Errors
-    ///
-    /// Returns one [`Diagnostic`] per problem: `categories` is empty or
-    /// repeats an entry.
-    pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
-        let mut errors = Vec::new();
-        if let Some(categories) = &self.categories {
-            if categories.is_empty() {
-                errors.push(
-                    Diagnostic::new(ConfigError::EmptyList(env::PRIVACY_CATEGORIES.path))
-                        .involving(&[env::PRIVACY_CATEGORIES]),
-                );
-            }
-            errors.extend(duplicates(env::PRIVACY_CATEGORIES, categories));
-        }
-        into_result(errors)
-    }
 }
 
 #[cfg(test)]
@@ -289,13 +264,6 @@ mod tests {
     fn privacy_config_default_operator_is_hash() {
         let privacy = PrivacyConfig::default();
         assert_eq!(privacy.operator, PrivacyOperator::Hash);
-    }
-
-    #[test]
-    fn default_config_validates_ok() {
-        PrivacyConfig::default()
-            .validate()
-            .expect("rule-free section must accept defaults");
     }
 
     #[test]

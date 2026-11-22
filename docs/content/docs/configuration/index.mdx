@@ -138,6 +138,7 @@ Every `DBMCP_*` environment variable name is unchanged, so each removed flag map
 Other behaviour changes to check while migrating:
 
 - **Booleans are stricter.** Boolean env vars used to accept `yes`/`no` and `on`/`off` in any case. They now accept only `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, and `True`/`False`; anything else fails startup. A bare boolean flag such as `--db-ssl` becomes `DBMCP_DB_SSL=true`; `--pii` becomes `DBMCP_PRIVACY_MODE=full`.
+- **Privacy is on by default.** Without `--pii`, redaction used to be off; it is now on (`full`). Set `DBMCP_PRIVACY_MODE=none` to keep the old behaviour. A leftover `DBMCP_PII_*` variable stops startup and names its `DBMCP_PRIVACY_*` replacement.
 - **Empty values mean unset.** An empty `DBMCP_*` value counts as unset and falls through to the next source. In particular, `--allowed-origins ""` used to disable `Origin` validation; that is now only possible with `allowed_origins: []` under `http` in the config file.
 - **Lists** keep the comma-separated env format; in the config file, write them as YAML sequences.
 

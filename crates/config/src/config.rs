@@ -49,9 +49,6 @@ impl Config {
         if let Some(http) = &self.http {
             errors.extend(http.validate().err().into_iter().flatten());
         }
-        if let Some(privacy) = &self.privacy {
-            errors.extend(privacy.validate().err().into_iter().flatten());
-        }
         if let Some(ssh) = &self.ssh {
             if self.database.backend == DatabaseBackend::Sqlite {
                 errors.push(
@@ -153,22 +150,6 @@ mod tests {
         };
         let errors = config.validate().expect_err("empty http host must fail");
         assert!(matches!(errors[0].error, ConfigError::EmptyHttpHost), "{errors:?}");
-    }
-
-    #[test]
-    fn privacy_rules_run_when_present() {
-        let config = Config {
-            privacy: Some(PrivacyConfig {
-                categories: Some(Vec::new()),
-                ..PrivacyConfig::default()
-            }),
-            ..mysql_config()
-        };
-        let errors = config.validate().expect_err("empty categories must fail");
-        assert!(
-            matches!(errors[0].error, ConfigError::EmptyList("privacy.categories")),
-            "{errors:?}"
-        );
     }
 
     #[test]

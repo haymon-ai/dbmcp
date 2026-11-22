@@ -242,7 +242,7 @@
     {
       "name": "DBMCP_PRIVACY_OPERATOR",
       "description": "Operator applied to detected PII spans",
-      "default": "replace",
+      "default": "hash",
       "choices": ["replace", "mask", "redact", "hash"]
     },
     {
