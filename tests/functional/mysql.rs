@@ -5628,52 +5628,6 @@ async fn column_rules_refuse_index_and_optimizer_hints() {
 }
 
 #[tokio::test]
-async fn column_rules_order_rows_by_unruled_columns() {
-    let handler = ruled_handler(None, 100);
-    let rows = ruled_read(&handler, "SELECT city, id FROM users WHERE id <= 3")
-        .await
-        .expect("read");
-    let cities: Vec<String> = rows
-        .iter()
-        .map(|row| row["city"].as_str().expect("city").to_owned())
-        .collect();
-    let mut sorted = cities.clone();
-    sorted.sort();
-    assert_eq!(cities, sorted);
-    let rows = ruled_read(&handler, "SELECT id, email FROM users WHERE id <= 3 ORDER BY id DESC")
-        .await
-        .expect("own order");
-    let ids: Vec<i64> = rows.iter().map(|row| row["id"].as_i64().expect("id")).collect();
-    assert_eq!(ids, [3, 2, 1]);
-    ruled_read(&handler, "SELECT email FROM users ORDER BY id")
-        .await
-        .expect("ruled output under an unruled order");
-}
-
-#[tokio::test]
-async fn column_rules_refuse_row_order_leaks() {
-    let handler = ruled_handler(None, 100);
-    for (query, reason) in [
-        ("SELECT email FROM users", "rows of ruled relation"),
-        (
-            "SELECT id FROM (SELECT id FROM users LIMIT 1) d",
-            "LIMIT, OFFSET, or FETCH without ORDER BY over ruled relation",
-        ),
-        (
-            "SELECT row_number() OVER () AS n FROM users",
-            "a window without ORDER BY over ruled relation",
-        ),
-        (
-            "SELECT group_concat(id) AS ids FROM users",
-            "without ORDER BY over ruled relation",
-        ),
-    ] {
-        let refusal = ruled_refusal(&handler, query).await;
-        assert!(refusal.contains(reason), "{query}: {refusal}");
-    }
-}
-
-#[tokio::test]
 async fn column_rules_deny_relations_the_user_cannot_see() {
     let handler = ruled_handler(Some("policy_viewer"), 100);
     let refusal = ruled_refusal(&handler, "SELECT * FROM mysql.help_topic").await;

@@ -48,13 +48,6 @@
 //! 13. An `UPDATE` or `MERGE` through a partitioned table rejects while its
 //!     leaf partitions read a ruled column under different pairs: a row
 //!     moved between them would be read back under other rules.
-//! 14. While a ruled relation is touched, a construct whose result depends
-//!     on row order rejects: `LIMIT` / `OFFSET` / `FETCH` without `ORDER BY`
-//!     below the top level or on a write, a window without `ORDER BY`, an
-//!     order-sensitive aggregate without its own `ORDER BY`, `DISTINCT ON`,
-//!     and a write copying rows of a ruled relation without `ORDER BY`. A
-//!     query statement without a top-level `ORDER BY` is ordered instead
-//!     ([`Planned::ordered`]); one with no unruled output column rejects.
 //!
 //! Each column matches the rule whose folded key equals its folded
 //! `catalog.schema.table.column`. Every read-side lookup also covers the

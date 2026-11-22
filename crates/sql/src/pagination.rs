@@ -155,7 +155,7 @@ fn number(value: u64) -> Expr {
 /// Reports an unquoted `LIMIT`, `OFFSET`, or `FETCH` word outside every parenthesis.
 ///
 /// Catches limit text the AST drops, such as a bare `LIMIT ALL` on `PostgreSQL`.
-pub(crate) fn has_top_level_limit_keyword(tokens: &[TokenWithSpan]) -> bool {
+fn has_top_level_limit_keyword(tokens: &[TokenWithSpan]) -> bool {
     let mut depth = 0_usize;
     for TokenWithSpan { token, .. } in tokens {
         match token {
@@ -178,7 +178,7 @@ pub(crate) fn has_top_level_limit_keyword(tokens: &[TokenWithSpan]) -> bool {
 ///
 /// `start` is the earliest limit expression start; the keyword is the last
 /// token before it that is not whitespace or a comment.
-pub(crate) fn limit_keyword(tokens: &[TokenWithSpan], start: Location) -> Option<Location> {
+fn limit_keyword(tokens: &[TokenWithSpan], start: Location) -> Option<Location> {
     let TokenWithSpan { token, span } = tokens
         .iter()
         .take_while(|token| token.span.start < start)
@@ -191,7 +191,7 @@ pub(crate) fn limit_keyword(tokens: &[TokenWithSpan], start: Location) -> Option
 }
 
 /// Converts a tokenizer [`Location`] (1-based line and char column) into a byte offset.
-pub(crate) fn byte_offset(sql: &str, location: Location) -> Option<usize> {
+fn byte_offset(sql: &str, location: Location) -> Option<usize> {
     let (mut line, mut column) = (1, 1);
     for (at, ch) in sql.char_indices() {
         if line == location.line && column == location.column {

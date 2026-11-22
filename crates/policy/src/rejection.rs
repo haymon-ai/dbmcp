@@ -173,29 +173,6 @@ pub enum Rejection {
         relation: String,
     },
 
-    /// A construct over a ruled relation whose result depends on row order.
-    ///
-    /// Without `ORDER BY`, rows arrive in the order of the plan the server
-    /// picks, which can follow an index on a ruled column.
-    #[error(
-        "column policy: {construct} over ruled relation {relation:?} depends on row order; add an ORDER BY on unruled columns"
-    )]
-    Unordered {
-        /// The construct, as written in SQL.
-        construct: String,
-        /// The ruled relation, as `schema.name`.
-        relation: String,
-    },
-
-    /// A query over a ruled relation with no unruled output column to order its rows by.
-    #[error(
-        "column policy: rows of ruled relation {relation:?} need an ORDER BY on unruled columns; their plan order can follow a ruled column"
-    )]
-    Unsorted {
-        /// The ruled relation, as `schema.name`.
-        relation: String,
-    },
-
     /// A bare create target that names another relation than the one created.
     ///
     /// The rules were checked against the relation the name resolved to.
@@ -226,7 +203,6 @@ impl Rejection {
             Self::Computed { .. } => "computed",
             Self::Trigger { .. } => "trigger",
             Self::RowMovement { .. } => "row-movement",
-            Self::Unordered { .. } | Self::Unsorted { .. } => "order",
             Self::ShadowedTarget { .. } => "target",
         }
     }

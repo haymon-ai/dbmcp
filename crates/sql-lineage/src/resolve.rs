@@ -22,8 +22,8 @@ use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{
-    Flow, FunctionUse, Lineage, OrderKind, OrderUse, Origin, OutputColumn, Reference, RelationId, RelationKind,
-    RelationUse, Role, SourceRef, TypeUse,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, TypeUse,
 };
 use crate::statement::{Analysis, is_default};
 use crate::types;
@@ -54,10 +54,6 @@ pub(crate) struct Ctx<'c> {
     functions: BTreeSet<FunctionUse>,
     /// Cast target types.
     types: BTreeSet<TypeUse>,
-    /// Constructs whose result depends on row order.
-    orders: BTreeSet<OrderUse>,
-    /// Whether the next query resolved is a query statement's top-level query.
-    pub(crate) top: bool,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
@@ -79,8 +75,6 @@ impl<'c> Ctx<'c> {
             relations: BTreeSet::new(),
             functions: BTreeSet::new(),
             types: BTreeSet::new(),
-            orders: BTreeSet::new(),
-            top: false,
             depth: 0,
             expr_depth: 0,
             views: Vec::new(),
@@ -125,14 +119,6 @@ impl<'c> Ctx<'c> {
         Ok(())
     }
 
-    /// Records a construct whose result depends on row order.
-    pub(crate) fn order(&mut self, kind: OrderKind) {
-        self.orders.insert(OrderUse {
-            kind,
-            origin: self.origin(),
-        });
-    }
-
     /// Ends the pass: the lineage of `analysis`, unless a name was missing.
     ///
     /// # Errors
@@ -158,7 +144,6 @@ impl<'c> Ctx<'c> {
             relations: self.relations,
             functions: self.functions,
             types: self.types,
-            orders: self.orders,
             target: analysis.target,
             writes: analysis.writes,
             statement: analysis.kind,
@@ -206,11 +191,6 @@ impl<'c> Ctx<'c> {
         } = query;
         if for_clause.is_some() || settings.is_some() || format_clause.is_some() || !pipe_operators.is_empty() {
             return Err(unsupported("query clause (FOR/SETTINGS/FORMAT/pipe)"));
-        }
-        // A query statement's own window is exempt: its rows are ordered before they return.
-        let top = std::mem::take(&mut self.top);
-        if !top && order_by.is_none() && (limit_clause.is_some() || fetch.is_some()) {
-            self.order(OrderKind::Limit);
         }
 
         if let Some(with) = with {
@@ -458,7 +438,6 @@ impl<'c> Ctx<'c> {
         match distinct {
             None | Some(Distinct::All | Distinct::Distinct) => {}
             Some(Distinct::On(exprs)) => {
-                self.order(OrderKind::DistinctOn);
                 for expr in exprs {
                     self.item(expr, level, Clause::GroupBy)?;
                 }

@@ -1,17 +1,16 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
-use dbmcp_privacy::cells::Position;
 use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, ExplainForm, Lexical, Lineage, LineageError, OrderKind, Origin, RelationId, StatementKind,
-    WrittenName, analyze,
+    Catalog, Dialect, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName,
+    analyze,
 };
 
 use crate::catalog::Entry;
 use crate::deny;
-use crate::plan::{Facts, Names, plan, relation_name, ruled_relation, touches_ruled};
-use crate::planned::{Mode, Planned, Sort};
+use crate::plan::{Facts, Names, plan, touches_ruled};
+use crate::planned::{Mode, Planned};
 use crate::rejection::{CATALOG_ROUNDS, Rejection, reject_lineage};
 use crate::relation::RelationRef;
 
@@ -204,21 +203,6 @@ impl Analyzed {
         let touches = touches_ruled(&self.lineage, config, &self.names.families);
         // `PostgreSQL` runs `CREATE INDEX` outside the planning transaction, where names may rebind.
         let withholds = touches || (self.dialect == Dialect::Postgres && *statement == StatementKind::CreateIndex);
-        // `EXPLAIN` carries its query's orders, but returns a plan.
-        let sort = (*statement == StatementKind::Query
-            && self.lineage.orders.iter().any(|order| order.kind == OrderKind::Rows))
-        .then(|| ruled_relation(&self.lineage, config, &self.names.families))
-        .flatten()
-        .map(|relation| Sort {
-            positions: plan
-                .columns
-                .iter()
-                .enumerate()
-                .filter(|(_, column)| column.position == Position::Global)
-                .map(|(position, _)| position)
-                .collect(),
-            relation: relation_name(relation),
-        });
         let mode = match statement {
             StatementKind::Explain(ExplainForm::Json | ExplainForm::QueryPlan, _) if touches => {
                 Mode::Pruned(self.dialect)
@@ -226,7 +210,7 @@ impl Analyzed {
             StatementKind::Explain(..) | StatementKind::Show(_) | StatementKind::Describe => Mode::Global,
             _ => Mode::Positional(plan),
         };
-        Ok(Planned::new(mode, config, self.names.families.clone(), withholds, sort))
+        Ok(Planned::new(mode, config, self.names.families.clone(), withholds))
     }
 }
 
@@ -422,78 +406,6 @@ mod tests {
                 "{sql}"
             );
         }
-    }
-
-    #[test]
-    fn unordered_queries_over_ruled_relations_order_by_unruled_columns() {
-        let config = ruled();
-        let unsorted = || {
-            Err(Rejection::Unsorted {
-                relation: "public.t".into(),
-            })
-        };
-        let splice = |positions: &[usize]| Some(format!("{positions:?}"));
-
-        let planned = analyzed("SELECT a, b FROM t LIMIT 5").plan(&config).expect("plan");
-        assert!(planned.sorts());
-        assert_eq!(planned.ordered(|_| true, splice), Ok(Some("[2]".into())));
-        assert_eq!(planned.ordered(|position| position != 1, splice), unsorted());
-        assert_eq!(planned.ordered(|_| true, |_| None), unsorted());
-
-        let ruled_only = analyzed("SELECT a FROM t").plan(&config).expect("plan");
-        assert_eq!(ruled_only.ordered(|_| true, splice), unsorted());
-
-        for sql in [
-            "SELECT a, b FROM t ORDER BY b",
-            "SELECT b FROM u",
-            "EXPLAIN (FORMAT JSON) SELECT a, b FROM t",
-        ] {
-            let planned = analyzed(sql).plan(&config).expect(sql);
-            assert!(!planned.sorts(), "{sql}");
-            assert_eq!(planned.ordered(|_| true, |_| None), Ok(None), "{sql}");
-        }
-    }
-
-    #[test]
-    fn constructs_depending_on_row_order_reject_over_ruled_relations() {
-        let config = ruled();
-        let cases = [
-            (
-                "SELECT b FROM (SELECT b FROM {} LIMIT 1) d ORDER BY b",
-                "LIMIT, OFFSET, or FETCH without ORDER BY",
-            ),
-            (
-                "SELECT row_number() OVER () AS n FROM {} ORDER BY n",
-                "a window without ORDER BY",
-            ),
-            (
-                "SELECT array_agg(b) AS x FROM {} ORDER BY x",
-                "aggregate \"array_agg\" without ORDER BY",
-            ),
-            ("SELECT DISTINCT ON (b) b FROM {} ORDER BY b", "DISTINCT ON"),
-            ("INSERT INTO v (b) SELECT b FROM {}", "a copy of rows without ORDER BY"),
-        ];
-        for (sql, construct) in cases {
-            let ruled = sql.replace("{}", "t");
-            assert_eq!(
-                analyzed(&ruled).plan(&config).map(|_| ()),
-                Err(Rejection::Unordered {
-                    construct: construct.into(),
-                    relation: "public.t".into(),
-                }),
-                "{ruled}"
-            );
-            let unruled = sql.replace("{}", "u");
-            assert!(analyzed(&unruled).plan(&config).is_ok(), "{unruled}");
-        }
-        // Rows copied from an unruled relation keep no ruled order.
-        assert!(analyzed("INSERT INTO t (b) SELECT b FROM u").plan(&config).is_ok());
-        // `EXPLAIN` returns a plan, not rows.
-        assert!(
-            analyzed("EXPLAIN (FORMAT JSON) SELECT b FROM (SELECT b FROM t LIMIT 1) d")
-                .plan(&config)
-                .is_ok()
-        );
     }
 
     #[test]

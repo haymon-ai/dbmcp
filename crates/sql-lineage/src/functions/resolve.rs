@@ -26,16 +26,6 @@ const fn set_returning(dialect: Dialect) -> &'static [&'static str] {
     }
 }
 
-/// Returns the dialect's built-in aggregates whose result depends on input row order.
-const fn ordered(dialect: Dialect) -> &'static [&'static str] {
-    match dialect {
-        Dialect::Postgres => postgres::ORDER_SENSITIVE,
-        Dialect::Mysql => mysql::ORDER_SENSITIVE,
-        Dialect::Mariadb => mariadb::ORDER_SENSITIVE,
-        Dialect::Sqlite => sqlite::ORDER_SENSITIVE,
-    }
-}
-
 /// Returns a function or type name part case-folded the way the server resolves it.
 fn fold(dialect: Dialect, ident: &Ident) -> String {
     match dialect {
@@ -57,15 +47,6 @@ pub(crate) fn resolve(dialect: Dialect, name: &ObjectName) -> Result<(String, bo
     let (recorded, rows) = lookup(dialect, name, set_returning(dialect))?;
     let (_, scalar) = lookup(dialect, name, names(dialect))?;
     Ok((recorded, rows || scalar, rows))
-}
-
-/// Returns whether a called function is an aggregate whose result depends on row order.
-///
-/// # Errors
-///
-/// Returns [`LineageError::Unsupported`] if a name part is not an identifier.
-pub(crate) fn order_sensitive(dialect: Dialect, name: &ObjectName) -> Result<bool, LineageError> {
-    Ok(lookup(dialect, name, ordered(dialect))?.1)
 }
 
 /// Looks up a written name in `table`, returning its recorded name and whether it is listed.
@@ -103,15 +84,6 @@ mod tests {
             names.sort_unstable();
             names.dedup();
             assert_eq!(names.len(), total, "{dialect:?}: duplicate name");
-        }
-    }
-
-    #[test]
-    fn order_sensitive_aggregates_are_known_built_ins() {
-        for dialect in DIALECTS {
-            for name in ordered(dialect) {
-                assert!(names(dialect).contains(name), "{dialect:?}: {name}");
-            }
         }
     }
 

@@ -144,35 +144,6 @@ pub struct TypeUse {
     pub origin: Origin,
 }
 
-/// A construct whose result depends on the order rows arrive in.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct OrderUse {
-    /// What depends on row order.
-    pub kind: OrderKind,
-    /// Where it was written.
-    pub origin: Origin,
-}
-
-/// What depends on the order rows arrive in, absent an `ORDER BY`.
-///
-/// Without `ORDER BY`, rows arrive in the order of the plan the server
-/// picks, which can follow an index on any column.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum OrderKind {
-    /// The rows a query statement returns: its top-level query has no `ORDER BY`.
-    Rows,
-    /// `LIMIT`, `OFFSET`, or `FETCH` below the top level, or on `UPDATE` / `DELETE`.
-    Limit,
-    /// A window specification without `ORDER BY`.
-    Window,
-    /// An order-sensitive aggregate without its own `ORDER BY`, case-folded.
-    Aggregate(String),
-    /// `DISTINCT ON`, which keeps the first row of each group.
-    DistinctOn,
-    /// Rows a write's source query copies into a relation.
-    Copy,
-}
-
 /// How a column's value reaches it from its sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Flow {
@@ -284,8 +255,6 @@ pub struct Lineage {
     pub functions: BTreeSet<FunctionUse>,
     /// Cast target types.
     pub types: BTreeSet<TypeUse>,
-    /// Constructs whose result depends on row order.
-    pub orders: BTreeSet<OrderUse>,
     /// The relation written, created, dropped, truncated, or indexed; `None` for a query.
     pub target: Option<RelationId>,
     /// Columns of `target` written, in first-write order, sources merged.

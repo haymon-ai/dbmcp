@@ -35,13 +35,12 @@ use dbmcp_policy::{
     Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection,
     Relation, RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
-use dbmcp_sql::{Connection as _, SqlError, order};
+use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlx::postgres::{PgColumn, PgQueryResult, PgRow, PgTypeInfo, PgTypeKind};
-use sqlx::{AssertSqlSafe, Column as _, FromRow as _, Row as _, SqlSafeStr as _, SqlStr, TypeInfo as _};
+use sqlx::postgres::{PgColumn, PgQueryResult, PgRow};
+use sqlx::{Column as _, FromRow as _, Row as _, SqlStr};
 
 use crate::PostgresHandler;
 use crate::connection::{PostgresConnection, quote_ident};
@@ -402,15 +401,7 @@ async fn run<'c>(
         tx.rollback().await?;
         return autocommit(conn, sql, planned, &owners, sink).await;
     }
-    let ordered = match ordered(&mut tx, sql, &planned).await {
-        Ok(ordered) => ordered,
-        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-        Err(stop) => {
-            tx.rollback().await?;
-            return Err(stop);
-        }
-    };
-    let executed = match execute(&mut tx, ordered.as_deref().unwrap_or(sql), &mut planned, &owners, sink).await {
+    let executed = match execute(&mut tx, sql, &mut planned, &owners, sink).await {
         Ok(executed) => executed,
         Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
         Err(stop) => {
@@ -528,53 +519,6 @@ async fn execute(
     };
     let (names, results) = PostgresConnection::execute_checked(conn, sql, first, sink).await?;
     Ok(Executed { names, results })
-}
-
-/// Returns the text to run instead of `sql` when its rows need an order.
-///
-/// `PostgreSQL` cannot sort some types (`json`, `xml`, geometric types, …),
-/// so the statement is prepared first and only output columns of sortable
-/// types order the rows.
-async fn ordered(conn: &mut sqlx::PgConnection, sql: &str, planned: &Planned<'_>) -> Result<Option<String>, Stop> {
-    if !planned.sorts() {
-        return Ok(None);
-    }
-    let statement = sqlx::Executor::prepare(&mut *conn, AssertSqlSafe(sql.to_owned()).into_sql_str()).await?;
-    let columns = sqlx::Statement::columns(&statement);
-    let sortable = |position: usize| columns.get(position).is_some_and(|column| sortable(column.type_info()));
-    Ok(planned.ordered(sortable, |positions| {
-        order::order_by(sql, &PostgreSqlDialect {}, positions)
-    })?)
-}
-
-/// Whether `PostgreSQL` can sort values of a type: a built-in or enum type with a B-tree order, or an array of one.
-///
-/// Domains, composites, ranges, and pseudo-types are left out: they may wrap an unsortable type.
-fn sortable(type_info: &PgTypeInfo) -> bool {
-    /// Built-in types without a B-tree operator class.
-    const UNSORTABLE: &[&str] = &[
-        "JSON",
-        "XML",
-        "POINT",
-        "LINE",
-        "LSEG",
-        "BOX",
-        "PATH",
-        "POLYGON",
-        "CIRCLE",
-        "ACLITEM",
-        "JSONPATH",
-        "TXID_SNAPSHOT",
-        "PG_SNAPSHOT",
-        "VOID",
-        "UNKNOWN",
-    ];
-    match type_info.kind() {
-        PgTypeKind::Simple => !UNSORTABLE.contains(&type_info.name().to_ascii_uppercase().as_str()),
-        PgTypeKind::Enum(_) => true,
-        PgTypeKind::Array(element) => sortable(element),
-        _ => false,
-    }
 }
 
 /// Translates each result column's OID and attribute number into its origin.

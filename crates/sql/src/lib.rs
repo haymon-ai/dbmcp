@@ -8,7 +8,6 @@
 
 pub mod connection;
 pub mod error;
-pub mod order;
 pub mod pagination;
 pub mod sanitize;
 mod timeout;

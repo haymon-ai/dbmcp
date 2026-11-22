@@ -5096,64 +5096,6 @@ async fn column_rules_refuse_optimizer_hint_comments() {
 }
 
 #[tokio::test]
-async fn column_rules_order_rows_by_unruled_columns() {
-    let handler = handler_with_rules(100);
-    let rows = ruled_read(&handler, "SELECT city, id FROM users WHERE id <= 3")
-        .await
-        .expect("read");
-    let cities: Vec<String> = rows
-        .iter()
-        .map(|row| row["city"].as_str().expect("city").to_owned())
-        .collect();
-    let mut sorted = cities.clone();
-    sorted.sort();
-    assert_eq!(cities, sorted);
-    let rows = ruled_read(&handler, "SELECT id, email FROM users WHERE id <= 3 ORDER BY id DESC")
-        .await
-        .expect("own order");
-    let ids: Vec<i64> = rows.iter().map(|row| row["id"].as_i64().expect("id")).collect();
-    assert_eq!(ids, [3, 2, 1]);
-    ruled_read(&handler, "SELECT email FROM users ORDER BY id")
-        .await
-        .expect("ruled output under an unruled order");
-}
-
-#[tokio::test]
-async fn column_rules_refuse_row_order_leaks() {
-    let handler = handler_with_rules(100);
-    for (query, reason) in [
-        ("SELECT email FROM users", "rows of ruled relation"),
-        (
-            "SELECT id FROM (SELECT id FROM users LIMIT 1) d",
-            "LIMIT, OFFSET, or FETCH without ORDER BY over ruled relation",
-        ),
-        (
-            "SELECT row_number() OVER () AS n FROM users",
-            "a window without ORDER BY over ruled relation",
-        ),
-        (
-            "SELECT string_agg(id::text, ',') AS ids FROM users",
-            "without ORDER BY over ruled relation",
-        ),
-    ] {
-        let refusal = ruled_refusal(&handler, query).await;
-        assert!(refusal.contains(reason), "{query}: {refusal}");
-    }
-}
-
-#[tokio::test]
-async fn column_rules_order_rows_by_sortable_columns_only() {
-    let handler = handler_with_rules(100);
-    let rows = ruled_read(&handler, "SELECT '{}'::json AS j, id FROM users WHERE id <= 3")
-        .await
-        .expect("json left out of the order");
-    let ids: Vec<i64> = rows.iter().map(|row| row["id"].as_i64().expect("id")).collect();
-    assert_eq!(ids, [1, 2, 3]);
-    let refusal = ruled_refusal(&handler, "SELECT '{}'::json AS j FROM users").await;
-    assert!(refusal.contains("rows of ruled relation"), "{refusal}");
-}
-
-#[tokio::test]
 async fn column_rules_deny_relations_missing_from_the_server() {
     let handler = handler_with_rules(100);
     let refusal = ruled_refusal(&handler, "SELECT * FROM pg_stat_statements").await;

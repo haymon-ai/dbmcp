@@ -12,4 +12,4 @@ mod postgres;
 mod resolve;
 mod sqlite;
 
-pub(crate) use resolve::{lookup, order_sensitive, resolve};
+pub(crate) use resolve::{lookup, resolve};
