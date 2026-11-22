@@ -5080,6 +5080,22 @@ async fn column_rules_refuse_unknown_functions() {
 }
 
 #[tokio::test]
+async fn column_rules_refuse_optimizer_hint_comments() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "SELECT /*+ IndexOnlyScan(users) */ id FROM users",
+        "SELECT id /*+ IndexOnlyScan(users) */ FROM users",
+        "SELECT id FROM users --+ SeqScan(users)",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains("column policy: statement could not be analyzed (unsupported SQL)"),
+            "{query}: {refusal}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn column_rules_deny_relations_missing_from_the_server() {
     let handler = handler_with_rules(100);
     let refusal = ruled_refusal(&handler, "SELECT * FROM pg_stat_statements").await;

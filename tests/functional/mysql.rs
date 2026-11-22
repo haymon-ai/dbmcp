@@ -5607,6 +5607,27 @@ async fn column_rules_refuse_unknown_functions_and_denied_relations() {
 }
 
 #[tokio::test]
+async fn column_rules_refuse_index_and_optimizer_hints() {
+    let handler = ruled_handler(None, 100);
+    for query in [
+        "SELECT id FROM users FORCE INDEX (PRIMARY)",
+        "SELECT id FROM users USE INDEX FOR ORDER BY (PRIMARY)",
+        "SELECT id FROM users IGNORE KEY (PRIMARY)",
+        "SELECT /*+ INDEX(users PRIMARY) */ id FROM users",
+        "SELECT id /*+ NO_INDEX(users) */ FROM users",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains("column policy: statement could not be analyzed (unsupported SQL)"),
+            "{query}: {refusal}"
+        );
+    }
+    ruled_read(&handler, "SELECT /* plain + note */ id FROM users")
+        .await
+        .expect("plain comment");
+}
+
+#[tokio::test]
 async fn column_rules_deny_relations_the_user_cannot_see() {
     let handler = ruled_handler(Some("policy_viewer"), 100);
     let refusal = ruled_refusal(&handler, "SELECT * FROM mysql.help_topic").await;

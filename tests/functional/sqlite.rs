@@ -3045,6 +3045,22 @@ async fn column_rules_refuse_unknown_functions_and_virtual_tables() {
 }
 
 #[tokio::test]
+async fn column_rules_refuse_index_hints() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "SELECT id FROM users INDEXED BY sqlite_autoindex_users_1",
+        "SELECT id FROM users NOT INDEXED",
+        "SELECT /*+ x */ id FROM users",
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains("column policy: statement could not be analyzed (unsupported SQL)"),
+            "{query}: {refusal}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn column_rules_deny_relations_not_yet_created() {
     let handler = handler_with_rules(100);
     let refusal = ruled_refusal(&handler, "SELECT * FROM sqlite_stat1").await;

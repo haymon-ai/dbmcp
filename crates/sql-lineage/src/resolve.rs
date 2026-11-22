@@ -610,7 +610,7 @@ impl<'c> Ctx<'c> {
                 partitions: _,
                 json_path,
                 sample,
-                index_directives: _,
+                index_directives,
                 inheritance,
             } => {
                 if inheritance.is_some() {
@@ -619,7 +619,12 @@ impl<'c> Ctx<'c> {
                 if args.is_some() || *with_ordinality {
                     return Err(unsupported("table function in FROM"));
                 }
-                if !with_hints.is_empty() || version.is_some() || json_path.is_some() || sample.is_some() {
+                if !with_hints.is_empty()
+                    || !index_directives.is_empty()
+                    || version.is_some()
+                    || json_path.is_some()
+                    || sample.is_some()
+                {
                     return Err(unsupported("table modifier (hints/version/sample)"));
                 }
                 self.named(name, alias.as_ref(), level)
