@@ -130,7 +130,7 @@ pub struct FunctionUse {
 pub enum Flow {
     /// A literal `NULL`, possibly parenthesized or cast.
     Null,
-    /// The `DEFAULT` keyword, or a column the statement leaves to the server.
+    /// The `DEFAULT` keyword.
     Default,
     /// A column reference passed through unchanged.
     Bare,

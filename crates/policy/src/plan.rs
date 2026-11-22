@@ -22,16 +22,7 @@ use crate::rejection::Rejection;
 ///
 /// # Errors
 ///
-/// Returns the first failing gate's [`Rejection`]: an unknown function, a
-/// denied relation or statement, `EXPLAIN` of a ruled relation other than a
-/// plain JSON or query-plan form, `EXPLAIN ANALYZE` on one, `CREATE INDEX` on
-/// one, a ruled column used outside the output, conflicting rules on one
-/// output column, a shadowed bare create target, or a write copying ruled
-/// values into a column not ruled the same way or not nameable by a rule,
-/// a write choosing or letting the server fill a `hash`-ruled column's value
-/// (a cascade's child included), a write to a relation with triggers or
-/// rules while `hash` rules exist, or an `UPDATE` or `MERGE` through a
-/// partitioned table ruled unevenly.
+/// Returns the first failing gate's [`Rejection`]; the crate docs list the gates in order.
 ///
 /// # Panics
 ///
@@ -143,28 +134,25 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
         })
         .collect::<Result<Vec<_>, _>>()?;
     create_target(lineage, names)?;
+    let family = lineage.target.as_ref().and_then(|target| names.families.get(target));
+    let effects = effects(statement, family.is_some_and(|family| family.partitioned));
     if *statement != StatementKind::CreateView
         && let Some(target) = &lineage.target
     {
-        writes(lineage, statement, target, config, names)?;
+        writes(lineage, effects, target, config, names)?;
     }
-    row_movement(lineage, config, names)?;
+    row_movement(lineage, effects, config, names)?;
     Ok(Plan { columns })
 }
 
-/// Gates each written column, the `hash`-ruled columns the server fills, then cascades and triggers.
+/// Gates written columns, server-filled `hash` columns, then cascades and triggers.
 ///
 /// A ruled value must land in a column every landing member reads back
-/// under the same pair. A `hash`-ruled column takes only same-hashed bare
-/// copies, `NULL`, or `DEFAULT` without a default, and no write may let the
-/// server fill one (an omitted column's default, a generated or on-update
-/// column, a fired cascade's `SET DEFAULT` or copy from a parent hashed
-/// otherwise): its token would sign a value the statement chose. While
-/// `hash` rules exist, no write may fire a trigger or rule, on the target
-/// or on a fired cascade's child: its body may fill one too.
+/// under the same pair; a `hash` token must never sign a value the
+/// statement could steer.
 fn writes(
     lineage: &Lineage,
-    statement: &StatementKind,
+    effects: Effects,
     target: &RelationId,
     config: &PiiConfig,
     names: &Names,
@@ -252,19 +240,12 @@ fn writes(
             }
         }
     }
-    let effects = effects(statement, family.partitioned);
-    // A created relation is new: no defaults, generated columns, or triggers.
-    if effects.creates {
-        return Ok(());
-    }
     for column in columns.iter().filter(|column| hashed(&column.name)) {
         if (effects.omits && column.default) || (effects.fills && (column.generated || column.on_update)) {
             return Err(computed(&column.name));
         }
     }
-    if !(effects.updates || effects.deletes || effects.triggers)
-        || !config.rules.iter().any(|rule| rule.operator == PiiOperator::Hash)
-    {
+    if !config.rules.iter().any(|rule| rule.operator == PiiOperator::Hash) {
         return Ok(());
     }
     let members: BTreeSet<&RelationId> = landing().map(|(member, _)| member).collect();
@@ -274,8 +255,6 @@ fn writes(
 /// What a statement does to the rows of its target, as the write gates read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Effects {
-    /// It creates the target, which has no defaults, generated columns, or triggers yet.
-    pub(crate) creates: bool,
     /// It writes rows, so the server recomputes generated and on-update columns.
     pub(crate) fills: bool,
     /// It may leave a column to the server's default.
@@ -290,7 +269,7 @@ pub(crate) struct Effects {
     pub(crate) moves: bool,
 }
 
-/// Returns what `statement` does to its target's rows; `EXPLAIN` counts as its statement.
+/// Returns what `statement`, unwrapped from any `EXPLAIN`, does to its target's rows.
 ///
 /// Lineage keeps no per-clause detail: an upsert's conflict clause and a
 /// `MERGE` clause write columns its insert may omit, so every `INSERT` and
@@ -301,7 +280,6 @@ pub(crate) struct Effects {
 /// has every effect (fail closed).
 pub(crate) fn effects(statement: &StatementKind, partitioned: bool) -> Effects {
     let none = Effects {
-        creates: false,
         fills: false,
         omits: false,
         updates: false,
@@ -310,7 +288,6 @@ pub(crate) fn effects(statement: &StatementKind, partitioned: bool) -> Effects {
         moves: false,
     };
     match statement {
-        StatementKind::Explain(_, inner) => effects(inner, partitioned),
         StatementKind::Insert => Effects {
             fills: true,
             omits: true,
@@ -327,32 +304,24 @@ pub(crate) fn effects(statement: &StatementKind, partitioned: bool) -> Effects {
             moves: true,
             ..none
         },
-        StatementKind::Merge => Effects {
-            fills: true,
-            omits: true,
-            updates: true,
-            deletes: true,
-            triggers: true,
-            moves: true,
-            ..none
-        },
         StatementKind::Delete => Effects {
             deletes: true,
             triggers: true,
             ..none
         },
         StatementKind::Truncate => Effects { triggers: true, ..none },
-        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView => Effects { creates: true, ..none },
-        StatementKind::Query
+        // A created relation is new: no defaults, generated columns, or triggers.
+        StatementKind::CreateTableAs
+        | StatementKind::CreateMaterializedView
+        | StatementKind::Query
         | StatementKind::Show(_)
         | StatementKind::Describe
         | StatementKind::CreateView
         | StatementKind::CreateTable
         | StatementKind::Drop
         | StatementKind::CreateIndex => none,
-        // A statement kind added to lineage later is refused until listed.
+        // `MERGE` may do all of it; a kind added to lineage later is refused until listed.
         _ => Effects {
-            creates: false,
             fills: true,
             omits: true,
             updates: true,
@@ -434,11 +403,10 @@ fn cascades_and_triggers(
 
 /// Returns the cascade edges a write through `members` fires, transitively.
 ///
-/// An update edge fires when the statement [updates](Effects::updates) and
-/// writes its parent column, a delete edge when it [deletes](Effects::deletes). Below a fired edge, one that changes a child
-/// column fires that column's update edges, and one that removes child rows
-/// fires every delete edge of the child. Names compare case-folded, which
-/// may over-match (fail closed).
+/// An update edge fires when the statement updates its parent column, a
+/// delete edge when it deletes; below a fired edge, a changed child column
+/// fires its update edges and a removed child row every delete edge.
+/// Case-folded names may over-match (fail closed).
 fn fired<'a>(
     lineage: &Lineage,
     effects: Effects,
@@ -450,25 +418,28 @@ fn fired<'a>(
     let relation = |a: &RelationId, b: &RelationId| {
         same(&a.catalog, &b.catalog) && same(&a.schema, &b.schema) && same(&a.name, &b.name)
     };
-    let mut fired: Vec<&Cascade> = cascades
-        .iter()
-        .filter(|edge| {
-            members.iter().any(|member| relation(member, &edge.parent.relation))
-                && if edge.on_delete {
-                    deletes
-                } else {
-                    updates
-                        && lineage
-                            .writes
-                            .iter()
-                            .any(|write| same(&write.name, &edge.parent.column))
-                }
-        })
-        .collect();
+    let mut seen = vec![false; cascades.len()];
+    let mut fired: Vec<&Cascade> = Vec::new();
+    for (index, edge) in cascades.iter().enumerate() {
+        let starts = members.iter().any(|member| relation(member, &edge.parent.relation))
+            && if edge.on_delete {
+                deletes
+            } else {
+                updates
+                    && lineage
+                        .writes
+                        .iter()
+                        .any(|write| same(&write.name, &edge.parent.column))
+            };
+        if starts {
+            seen[index] = true;
+            fired.push(edge);
+        }
+    }
     let mut next = 0;
     while let Some(&edge) = fired.get(next) {
         next += 1;
-        for below in cascades {
+        for (index, below) in cascades.iter().enumerate() {
             let follows = relation(&below.parent.relation, &edge.child.relation)
                 && match edge.action {
                     CascadeAction::Delete => below.on_delete,
@@ -476,7 +447,8 @@ fn fired<'a>(
                         !below.on_delete && same(&below.parent.column, &edge.child.column)
                     }
                 };
-            if follows && !fired.contains(&below) {
+            if follows && !seen[index] {
+                seen[index] = true;
                 fired.push(below);
             }
         }
@@ -489,17 +461,17 @@ fn fired<'a>(
 /// A row moved between partitions would be read back under the rules of
 /// another leaf, so every leaf must read each ruled column under the same
 /// pairs. Moves are decided per row at run time, so this fires even when no
-/// row would move. Lineage keeps no per-action detail, so every `MERGE` counts.
-fn row_movement(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<(), Rejection> {
+/// row would move.
+fn row_movement(lineage: &Lineage, effects: Effects, config: &PiiConfig, names: &Names) -> Result<(), Rejection> {
+    if !effects.moves {
+        return Ok(());
+    }
     let Some(target) = &lineage.target else {
         return Ok(());
     };
     let Some(family) = names.families.get(target).filter(|family| family.partitioned) else {
         return Ok(());
     };
-    if !effects(&lineage.statement, family.partitioned).moves {
-        return Ok(());
-    }
     let leaves: Vec<_> = family.descendants.iter().filter(|member| !member.partitioned).collect();
     let pairs = |member: &Member, column: &str| {
         direct(config, &member.id, member.ancestors.iter(), column)

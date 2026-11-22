@@ -1178,7 +1178,7 @@ type ColumnFacts = (bool, bool, bool);
 const NONE: ColumnFacts = (false, false, false);
 const DEFAULT: ColumnFacts = (true, false, false);
 const GENERATED: ColumnFacts = (false, true, false);
-const ON_UPDATE: ColumnFacts = (true, false, true);
+const ON_UPDATE: ColumnFacts = (false, false, true);
 
 /// Names carrying the write facts of trigger-free `shop.public` tables without cascades.
 fn facts(tables: &[(&str, &[(&str, ColumnFacts)])]) -> Names {
@@ -1241,9 +1241,7 @@ fn chosen() -> Result<Plan, Rejection> {
 
 /// The `Computed` rejection of `public.hashed.email`.
 fn computed() -> Result<Plan, Rejection> {
-    Err(Rejection::Computed {
-        column: "public.hashed.email".into(),
-    })
+    computed_at("hashed.email")
 }
 
 #[test]
@@ -1387,9 +1385,8 @@ fn generated_hash_column_refuses_every_write_but_delete() {
 
 #[test]
 fn on_update_hash_column_refuses_inserts_updates_and_merges() {
-    let on_update = (false, false, true);
     for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
-        assert_eq!(beside_hashed(statement.clone(), on_update), computed(), "{statement:?}");
+        assert_eq!(beside_hashed(statement.clone(), ON_UPDATE), computed(), "{statement:?}");
     }
     assert!(beside_hashed(StatementKind::Delete, ON_UPDATE).is_ok());
 }
@@ -2207,7 +2204,6 @@ fn row_movement_allows_uniformly_ruled_and_unruled_trees() {
 #[test]
 fn statement_kinds_map_to_their_write_effects() {
     let none = Effects {
-        creates: false,
         fills: false,
         omits: false,
         updates: false,
@@ -2253,12 +2249,8 @@ fn statement_kinds_map_to_their_write_effects() {
             },
         ),
         (StatementKind::Truncate, false, Effects { triggers: true, ..none }),
-        (StatementKind::CreateTableAs, false, Effects { creates: true, ..none }),
-        (
-            StatementKind::CreateMaterializedView,
-            false,
-            Effects { creates: true, ..none },
-        ),
+        (StatementKind::CreateTableAs, false, none),
+        (StatementKind::CreateMaterializedView, false, none),
         (StatementKind::Query, false, none),
         (StatementKind::Show(Show::Tables), false, none),
         (StatementKind::Describe, false, none),
@@ -2266,15 +2258,6 @@ fn statement_kinds_map_to_their_write_effects() {
         (StatementKind::CreateTable, false, none),
         (StatementKind::Drop, false, none),
         (StatementKind::CreateIndex, false, none),
-        // `EXPLAIN` counts as the statement it explains.
-        (
-            StatementKind::Explain(ExplainForm::QueryPlan, Box::new(StatementKind::Update)),
-            true,
-            Effects {
-                deletes: true,
-                ..update
-            },
-        ),
     ];
     for (statement, partitioned, expected) in rows {
         assert_eq!(

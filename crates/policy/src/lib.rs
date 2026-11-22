@@ -27,8 +27,9 @@
 //!    window rejects, in the statement or in a view body it reads.
 //! 8. Each output column takes the `(operator, entity)` of its ruled
 //!    sources; two different pairs reject. A `hash` pair holds only on a
-//!    [`Flow::Bare`] column whose every source is hashed under it; on any
-//!    other column `hash` becomes `replace` before the pairs are compared.
+//!    [`Flow::Bare`](dbmcp_sql_lineage::Flow::Bare) column whose every
+//!    source is hashed under it; on any other column `hash` becomes
+//!    `replace` before the pairs are compared.
 //! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
@@ -67,7 +68,7 @@ mod relation;
 #[cfg(test)]
 mod tests;
 
-pub use dbmcp_sql_lineage::{Flow, NamePart, Origin, RelationId, RelationKind, SourceRef, StatementKind, WrittenName};
+pub use dbmcp_sql_lineage::{NamePart, Origin, RelationId, RelationKind, SourceRef, StatementKind, WrittenName};
 
 pub use self::analysis::{Analysis, Analyzed, Step};
 pub use self::catalog::{Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Relation};

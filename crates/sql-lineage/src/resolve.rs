@@ -803,12 +803,11 @@ impl<'c> Ctx<'c> {
 
 /// Classifies how a projected or written value reaches its column.
 ///
-/// Parentheses are unwrapped. A literal `NULL` under parentheses and
-/// `CAST` / `TRY_CAST` / `::` / `CONVERT` is [`Flow::Null`], the `DEFAULT`
-/// keyword [`Flow::Default`], and a column reference takes the bound
-/// column's flow. Everything else is [`Flow::Derived`]; nothing is folded,
-/// so `COALESCE(NULL)` is derived too. Call it after [`Ctx::expr`] bound
-/// `expr`, so the column lookup cannot fail anew.
+/// A literal `NULL` under parentheses or `CAST` / `TRY_CAST` / `::` /
+/// `CONVERT` is [`Flow::Null`], `DEFAULT` is [`Flow::Default`], a column
+/// reference takes the bound column's flow, and anything else (even
+/// `COALESCE(NULL)`) is [`Flow::Derived`]. Call it after [`Ctx::expr`]
+/// bound `expr`, so the column lookup cannot fail anew.
 ///
 /// # Errors
 /// See [`Level::column`].

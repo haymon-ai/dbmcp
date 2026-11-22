@@ -283,9 +283,6 @@ fn regclass(reference: &RelationRef) -> String {
 }
 
 /// The write facts of one [`RESOLVE_SQL`] row, after its first 16 columns.
-///
-/// Triggers, then per cascade edge: parent schema, table, and column, child
-/// schema, table, and column, action, `DELETE`-fired, and child triggers.
 type Writes = (
     bool,
     Vec<String>,
@@ -1187,12 +1184,12 @@ mod tests {
     }
 
     /// Fetches the family of `public.<name>` from the seeded database.
-    async fn seeded_family(conn: &mut sqlx::PgConnection, name: &str) -> Family {
+    async fn seeded_relation(conn: &mut sqlx::PgConnection, name: &str) -> Relation {
         let probe = probe(Some("public"));
         let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
         let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
         match entries.into_iter().next() {
-            Some((_, Entry::Resolved(relation))) => relation.family,
+            Some((_, Entry::Resolved(relation))) => relation,
             other => panic!("{name}: {other:?}"),
         }
     }
@@ -1202,7 +1199,7 @@ mod tests {
     async fn resolve_reads_inheritance_and_partition_trees() {
         let mut conn = seeded().await;
         assert_eq!(
-            seeded_family(&mut conn, "ptab").await,
+            seeded_relation(&mut conn, "ptab").await.family,
             Family {
                 partitioned: true,
                 ancestors: BTreeSet::new(),
@@ -1210,7 +1207,7 @@ mod tests {
             }
         );
         assert_eq!(
-            seeded_family(&mut conn, "ptab_2").await,
+            seeded_relation(&mut conn, "ptab_2").await.family,
             Family {
                 partitioned: false,
                 ancestors: ids(&["ptab"]),
@@ -1219,7 +1216,7 @@ mod tests {
         );
         let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
         assert_eq!(
-            seeded_family(&mut conn, "inh_parent").await,
+            seeded_relation(&mut conn, "inh_parent").await.family,
             Family {
                 partitioned: false,
                 ancestors: BTreeSet::new(),
@@ -1230,14 +1227,14 @@ mod tests {
             }
         );
         assert_eq!(
-            seeded_family(&mut conn, "inh_child").await,
+            seeded_relation(&mut conn, "inh_child").await.family,
             Family {
                 partitioned: false,
                 ancestors: ids(&["inh_parent", "inh_other"]),
                 descendants: vec![grandchild],
             }
         );
-        assert_eq!(seeded_family(&mut conn, "users").await, Family::default());
+        assert_eq!(seeded_relation(&mut conn, "users").await.family, Family::default());
     }
 
     #[tokio::test]
@@ -1255,16 +1252,11 @@ mod tests {
         .execute(&mut *tx)
         .await
         .expect("setup");
-        let probe = probe(Some("public"));
         let mut facts = Vec::new();
         for name in ["facts_plain", "facts_p"] {
-            let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
-            let entries = fetch(&mut tx, &probe, names, &mut Owners::new()).await.expect("fetch");
-            let Some((_, Entry::Resolved(relation))) = entries.into_iter().next() else {
-                panic!("{name} resolves");
-            };
             facts.extend(
-                relation
+                seeded_relation(&mut tx, name)
+                    .await
                     .columns
                     .into_iter()
                     .filter(|column| column.star_visible)
@@ -1310,15 +1302,9 @@ mod tests {
         .execute(&mut *tx)
         .await
         .expect("setup");
-        let probe = probe(Some("public"));
         let mut relations = Vec::new();
         for name in ["fk_p", "fk_c", "fk_r", "fk_t", "user_emails"] {
-            let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
-            let entries = fetch(&mut tx, &probe, names, &mut Owners::new()).await.expect("fetch");
-            let Some((_, Entry::Resolved(relation))) = entries.into_iter().next() else {
-                panic!("{name} resolves");
-            };
-            relations.push(relation);
+            relations.push(seeded_relation(&mut tx, name).await);
         }
         tx.rollback().await.expect("rollback");
         let triggers: Vec<_> = relations.iter().map(|relation| relation.triggers).collect();

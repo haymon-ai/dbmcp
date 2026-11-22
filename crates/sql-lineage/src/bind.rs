@@ -519,11 +519,9 @@ impl Level<'_> {
     /// `SET` values and `WHERE` see the existing row under the target's
     /// name or alias, and the proposed row as `excluded`, qualified only.
     /// Each `excluded` column carries the sources and flow the `INSERT`
-    /// writes into it. A column the `INSERT` does not write, or writes as
-    /// `DEFAULT`, has no sources and the [`Flow::Derived`] flow: the server
-    /// fills it (a default, identity, or generated value), and
-    /// [`Flow::Default`] would read as the default of the `SET` target
-    /// instead.
+    /// writes into it. One it leaves out or writes as `DEFAULT` is
+    /// [`Flow::Derived`]: the server fills it, and [`Flow::Default`] would
+    /// read as the default of the `SET` target instead.
     pub(crate) fn upsert(dialect: Dialect, target: Tree, writes: &[TargetColumn]) -> Level<'static> {
         let cols = target
             .cols
