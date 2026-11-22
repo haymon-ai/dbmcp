@@ -276,7 +276,7 @@ query failed (SQLSTATE 22P02): error detail withheld under column policy
 ```
 
 - **PostgreSQL** keeps a fixed list of SQLSTATE codes from classes `08` (connection), `25` (transaction state), `40` (rollback), `42` (syntax and access), `53` (resources), `54` (statement, column, and argument limits: `54001`, `54011`, `54023`), and `57` (operator intervention). It withholds `42601`, `42602`, `42P01`, `42704`, `42725`, and `42883`, which can echo a cast's input, and `54000`, whose `tsvector` and `tsquery` input errors quote the input or its byte count. Any code not on the list, including codes added by newer PostgreSQL releases or extensions, is withheld.
-- **MySQL and MariaDB** keep a fixed list of error numbers: unknown column or table, syntax, access, unknown function, foreign key, `NOT NULL`, out of range, too long, check constraint, and duplicate column name. Invalid JSON text errors (`3140`, `3141`) are withheld: the position they report can encode a value. Everything else is withheld as `query failed (error <number>, SQLSTATE <state>): error detail withheld under column policy`.
+- **MySQL and MariaDB** keep a fixed list of error numbers: unknown column or table, syntax, access, unknown function, foreign key, `NOT NULL`, check constraint, and duplicate column name. Invalid JSON text errors (`3140`, `3141`) and out of range (`1264`) and data too long (`1406`) errors are withheld: the position or row number they report can encode a value. Everything else is withheld as `query failed (error <number>, SQLSTATE <state>): error detail withheld under column policy`.
 - **SQLite** keeps constraint failures (`CHECK`, foreign key, `NOT NULL`, primary key, unique, rowid, datatype) and malformed-JSON errors, but not `RAISE()` messages from triggers, as `query failed (SQLite code <code>): …`.
 
 Policy refusals, timeouts, and connection errors are returned as they are. Other errors, from statements that touch no ruled table, get global redaction, as without rules.
@@ -288,7 +288,7 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Rules that match nothing.** A key with a typo or the wrong segments (see [Column keys](#column-keys)) silently has no effect.
 - **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds personal data.
 - **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
-- **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds. Withholding the message does not hide that an error happened.
+- **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds. Withholding the message does not hide that an error happened. A `LIMIT` on an unruled column turns this into a row locator: the statement fails only when the matching row is among the first rows, so a search over the limit finds the row.
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
 - **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
 - **`mask` length.** `mask` keeps the length of the value.
