@@ -1133,14 +1133,46 @@ fn create_materialized_view_of_ruled_data_needs_a_target_rule() {
 }
 
 #[test]
+fn unnamed_created_columns_ask_for_an_alias_only_when_bare() {
+    let mut catalog = tables(&[("users", &["id", "ssn"])]);
+    catalog.insert(
+        WrittenName::query(vec![NamePart::bare("copy")]),
+        Entry::Vacant(table("copy")),
+    );
+    let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.copy.ssn")]);
+    let plan = |sql: &str| pg(&analyze(sql, Dialect::Postgres, &catalog).expect(sql), &config);
+
+    assert_eq!(
+        plan("CREATE TABLE copy AS SELECT (ssn) FROM users"),
+        Err(Rejection::Unnamed {
+            relation: "public.copy".into(),
+            position: 0,
+        })
+    );
+    let rejection = plan("CREATE TABLE copy AS SELECT upper(ssn) FROM users").expect_err("computed");
+    assert_eq!(
+        rejection,
+        Rejection::UnnamedLaundering {
+            relation: "public.copy".into(),
+            position: 0,
+        }
+    );
+    assert_eq!(
+        rejection.to_string(),
+        r#"column policy: writing created column 0 of "public.copy" would weaken the rules of its source columns"#
+    );
+    assert_eq!(
+        plan("CREATE TABLE copy AS SELECT upper(ssn) AS ssn FROM users"),
+        Err(Rejection::Laundering {
+            column: "public.copy.ssn".into(),
+        })
+    );
+}
+
+#[test]
 fn ruled_source_into_unnamed_create_column_asks_for_an_alias() {
     let config = config(vec![ssn("shop.public.users.ssn")]);
-    let mut lineage = write(
-        "t2",
-        "upper(ssn)",
-        vec![col("users", "ssn")],
-        StatementKind::CreateTableAs,
-    );
+    let mut lineage = write("t2", "(ssn)", vec![col("users", "ssn")], StatementKind::CreateTableAs);
     lineage.writes[0].named = false;
     let rejection = pg(&lineage, &config).expect_err("rejected");
     assert_eq!(
@@ -1152,7 +1184,7 @@ fn ruled_source_into_unnamed_create_column_asks_for_an_alias() {
     );
     let message = rejection.to_string();
     assert!(message.contains("alias the column"), "{message}");
-    assert!(!message.contains("upper(ssn)"), "{message}");
+    assert!(!message.contains("(ssn)"), "{message}");
 
     lineage.writes[0].sources = BTreeSet::from([col("users", "name")]);
     assert!(pg(&lineage, &config).is_ok(), "unruled data needs no name");

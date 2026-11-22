@@ -206,11 +206,24 @@ fn writes(
     };
     for (position, write) in lineage.writes.iter().enumerate() {
         let column = SourceRef::new(target.clone(), &write.name);
-        let laundering = || Rejection::Laundering {
-            column: column_name(&column),
+        let laundering = || {
+            if write.named {
+                Rejection::Laundering {
+                    column: column_name(&column),
+                }
+            } else {
+                Rejection::UnnamedLaundering {
+                    relation: relation_name(target),
+                    position,
+                }
+            }
         };
         // Literals and unruled columns carry no ruled values.
         let source = combine(&write.sources, write.flow, config, &names.families).ok_or_else(laundering)?;
+        // A computed ruled value never lands under a rule, so an alias would not help.
+        if matches!(source, Position::Placeholder(_)) {
+            return Err(laundering());
+        }
         if source != Position::Global {
             if !write.named {
                 return Err(Rejection::Unnamed {
