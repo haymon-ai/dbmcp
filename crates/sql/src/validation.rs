@@ -7,7 +7,7 @@ use dbmcp_sql_lineage::{Dialect, Show};
 use sqlparser::ast::{Expr, Function, Ident, ObjectName, Select, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::{self, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
-use sqlparser::tokenizer::{Token, Tokenizer};
+use sqlparser::tokenizer::{Token, Tokenizer, Whitespace};
 
 /// Classifies a validated read-only statement for pagination dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +160,8 @@ pub fn validate_single_statement(sql: &str, dialect: &impl dialect::Dialect) -> 
 /// On `MySQL`/`MariaDB` (dialects with `/*!` hints), first rejects SQL the
 /// server may read differently: executable comments (matched on raw text,
 /// string literals included) and characters the tokenizer cannot read, such
-/// as the control character that starts a `--` comment on the server only.
+/// as the control character that starts a `--` comment on the server only,
+/// or the Unicode space that starts one on the tokenizer only.
 fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Statement>, SqlError> {
     if dialect.supports_multiline_comment_hints() {
         if ["/*!", "/*M!", "/*m!"].iter().any(|p| sql.contains(p)) {
@@ -169,7 +170,7 @@ fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Sta
         let tokens = Tokenizer::new(dialect, sql)
             .tokenize()
             .map_err(|e| SqlError::Query(format!("SQL parse error: {e}")))?;
-        if tokens.iter().any(|token| matches!(token, Token::Char(_))) {
+        if tokens.iter().any(is_unreadable) {
             return Err(SqlError::UnreadableCharacter);
         }
     }
@@ -181,6 +182,20 @@ fn parse_single(sql: &str, dialect: &impl dialect::Dialect) -> Result<Option<Sta
         return Err(SqlError::MultiStatement);
     }
     Ok(statements.pop())
+}
+
+/// Reports whether `token` holds text the `MySQL` server may read otherwise.
+///
+/// The tokenizer starts a `--` comment at any Unicode space (`U+00A0`); the
+/// server only at an ASCII space or control character.
+fn is_unreadable(token: &Token) -> bool {
+    match token {
+        Token::Char(_) => true,
+        Token::Whitespace(Whitespace::SingleLineComment { prefix, comment }) => {
+            prefix == "--" && comment.chars().next().is_some_and(|ch| !ch.is_ascii())
+        }
+        _ => false,
+    }
 }
 
 /// Rejects data-modifying CTEs and `SELECT ... INTO` anywhere inside a query.
@@ -482,6 +497,38 @@ mod tests {
         ));
         assert!(validate_read("SHOW -- x\nTABLES", Dialect::Mysql).is_ok());
         assert!(validate_read("SELECT '\x01'", Dialect::Mysql).is_ok());
+    }
+
+    #[test]
+    fn unicode_space_comments_are_blocked_on_mysql() {
+        // The parser starts a `--` comment at a Unicode space; the server does not.
+        for space in ['\u{a0}', '\u{85}', '\u{2000}', '\u{2028}', '\u{3000}'] {
+            for sql in [
+                format!("SELECT 1 --{space};SELECT 2"),
+                format!("SHOW --{space}\nWARNINGS"),
+            ] {
+                for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+                    assert!(
+                        matches!(validate_read(&sql, dialect), Err(SqlError::UnreadableCharacter)),
+                        "{sql:?}"
+                    );
+                }
+                assert!(matches!(
+                    validate_single_statement(&sql, &MYSQL),
+                    Err(SqlError::UnreadableCharacter)
+                ));
+            }
+        }
+        for sql in [
+            "SELECT 1 -- \u{a0}x",
+            "SELECT 1 --\t\u{a0}x",
+            "SELECT 1 # \u{a0}x",
+            "SELECT '--\u{a0}'",
+            "SELECT 1 /* --\u{a0} */",
+        ] {
+            assert!(validate_read(sql, Dialect::Mysql).is_ok(), "{sql:?}");
+        }
+        assert!(validate_read("SELECT 1 --\u{a0}", Dialect::Postgres).is_ok());
     }
 
     #[test]

@@ -1226,6 +1226,16 @@ async fn test_read_query_show_warnings_rejected() {
         "expected unreadable-character rejection, got: {}",
         error.message
     );
+
+    let error = handler
+        .read_query("SELECT 1 --\u{a0};SELECT 2".into(), Some("app".into()), None, None)
+        .await
+        .expect_err("a Unicode-space comment must not reach the server");
+    assert!(
+        error.message.contains("characters the parser cannot read"),
+        "expected unreadable-character rejection, got: {}",
+        error.message
+    );
 }
 
 #[tokio::test]
