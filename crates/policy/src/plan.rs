@@ -252,33 +252,115 @@ fn writes(
             }
         }
     }
+    let effects = effects(statement, family.partitioned);
     // A created relation is new: no defaults, generated columns, or triggers.
-    if matches!(
-        statement,
-        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView
-    ) {
+    if effects.creates {
         return Ok(());
     }
-    let fills = matches!(
-        statement,
-        StatementKind::Insert | StatementKind::Update | StatementKind::Merge
-    );
-    // Lineage keeps no per-clause detail: an upsert's conflict clause and a
-    // `MERGE` clause write columns its insert may omit, so every `INSERT` and
-    // `MERGE` may leave any column to its default.
-    let omits = matches!(statement, StatementKind::Insert | StatementKind::Merge);
     for column in columns.iter().filter(|column| hashed(&column.name)) {
-        if (omits && column.default) || (fills && (column.generated || column.on_update)) {
+        if (effects.omits && column.default) || (effects.fills && (column.generated || column.on_update)) {
             return Err(computed(&column.name));
         }
     }
-    if !matches!(statement, StatementKind::Delete | StatementKind::Truncate) && !fills
+    if !(effects.updates || effects.deletes || effects.triggers)
         || !config.rules.iter().any(|rule| rule.operator == PiiOperator::Hash)
     {
         return Ok(());
     }
     let members: BTreeSet<&RelationId> = landing().map(|(member, _)| member).collect();
-    cascades_and_triggers(lineage, statement, target, &members, config, names)
+    cascades_and_triggers(lineage, effects, target, &members, config, names)
+}
+
+/// What a statement does to the rows of its target, as the write gates read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Effects {
+    /// It creates the target, which has no defaults, generated columns, or triggers yet.
+    pub(crate) creates: bool,
+    /// It writes rows, so the server recomputes generated and on-update columns.
+    pub(crate) fills: bool,
+    /// It may leave a column to the server's default.
+    pub(crate) omits: bool,
+    /// It fires the update edges of the columns it writes.
+    pub(crate) updates: bool,
+    /// It removes rows, firing every delete edge.
+    pub(crate) deletes: bool,
+    /// It fires the target's triggers and rules.
+    pub(crate) triggers: bool,
+    /// It may move rows between the partitions of a partitioned target.
+    pub(crate) moves: bool,
+}
+
+/// Returns what `statement` does to its target's rows; `EXPLAIN` counts as its statement.
+///
+/// Lineage keeps no per-clause detail: an upsert's conflict clause and a
+/// `MERGE` clause write columns its insert may omit, so every `INSERT` and
+/// `MERGE` may leave any column to its default. An upsert updates and a
+/// `REPLACE` deletes, so every `INSERT` fires both edge kinds; so does every
+/// `MERGE`, and an `UPDATE` through a `partitioned` table, which may move
+/// rows by deleting them (`PostgreSQL` before 15). A kind not listed here
+/// has every effect (fail closed).
+pub(crate) fn effects(statement: &StatementKind, partitioned: bool) -> Effects {
+    let none = Effects {
+        creates: false,
+        fills: false,
+        omits: false,
+        updates: false,
+        deletes: false,
+        triggers: false,
+        moves: false,
+    };
+    match statement {
+        StatementKind::Explain(_, inner) => effects(inner, partitioned),
+        StatementKind::Insert => Effects {
+            fills: true,
+            omits: true,
+            updates: true,
+            deletes: true,
+            triggers: true,
+            ..none
+        },
+        StatementKind::Update => Effects {
+            fills: true,
+            updates: true,
+            deletes: partitioned,
+            triggers: true,
+            moves: true,
+            ..none
+        },
+        StatementKind::Merge => Effects {
+            fills: true,
+            omits: true,
+            updates: true,
+            deletes: true,
+            triggers: true,
+            moves: true,
+            ..none
+        },
+        StatementKind::Delete => Effects {
+            deletes: true,
+            triggers: true,
+            ..none
+        },
+        StatementKind::Truncate => Effects { triggers: true, ..none },
+        StatementKind::CreateTableAs | StatementKind::CreateMaterializedView => Effects { creates: true, ..none },
+        StatementKind::Query
+        | StatementKind::Show(_)
+        | StatementKind::Describe
+        | StatementKind::CreateView
+        | StatementKind::CreateTable
+        | StatementKind::Drop
+        | StatementKind::CreateIndex => none,
+        // A statement kind added to lineage later is refused until listed.
+        _ => Effects {
+            creates: false,
+            fills: true,
+            omits: true,
+            updates: true,
+            deletes: true,
+            triggers: true,
+            moves: true,
+        },
+    }
 }
 
 /// Rejects writes whose cascades or triggers may fill a `hash`-ruled column.
@@ -292,7 +374,7 @@ fn writes(
 /// `TRUNCATE` fires its target's.
 fn cascades_and_triggers(
     lineage: &Lineage,
-    statement: &StatementKind,
+    effects: Effects,
     target: &RelationId,
     members: &BTreeSet<&RelationId>,
     config: &PiiConfig,
@@ -303,8 +385,7 @@ fn cascades_and_triggers(
         .facts
         .get(target)
         .map_or((true, &[][..]), |facts| (facts.triggers, facts.cascades.as_slice()));
-    let partitioned = names.families.get(target).is_some_and(|family| family.partitioned);
-    let fired = fired(lineage, statement, partitioned, members, cascades);
+    let fired = fired(lineage, effects, members, cascades);
     for edge in &fired {
         if edge.action != CascadeAction::Delete
             && let Some(other) = config.rules.iter().find(|rule| {
@@ -338,7 +419,7 @@ fn cascades_and_triggers(
             });
         }
     }
-    if triggers {
+    if effects.triggers && triggers {
         return Err(Rejection::Trigger {
             relation: relation_name(target),
         });
@@ -353,29 +434,18 @@ fn cascades_and_triggers(
 
 /// Returns the cascade edges a write through `members` fires, transitively.
 ///
-/// An upsert updates and a `REPLACE` deletes, so every `INSERT` fires both
-/// kinds; so does every `MERGE`, and an `UPDATE` through a `partitioned`
-/// table, which may move rows by deleting them (`PostgreSQL` before 15). An
-/// update edge fires when the statement writes its parent column, a delete
-/// edge on any row removal. Below a fired edge, one that changes a child
+/// An update edge fires when the statement [updates](Effects::updates) and
+/// writes its parent column, a delete edge when it [deletes](Effects::deletes). Below a fired edge, one that changes a child
 /// column fires that column's update edges, and one that removes child rows
 /// fires every delete edge of the child. Names compare case-folded, which
 /// may over-match (fail closed).
 fn fired<'a>(
     lineage: &Lineage,
-    statement: &StatementKind,
-    partitioned: bool,
+    effects: Effects,
     members: &BTreeSet<&RelationId>,
     cascades: &'a [Cascade],
 ) -> Vec<&'a Cascade> {
-    let updates = matches!(
-        statement,
-        StatementKind::Update | StatementKind::Merge | StatementKind::Insert
-    );
-    let deletes = matches!(
-        statement,
-        StatementKind::Delete | StatementKind::Merge | StatementKind::Insert
-    ) || (partitioned && *statement == StatementKind::Update);
+    let Effects { updates, deletes, .. } = effects;
     let same = |a: &str, b: &str| ColumnRule::fold(a) == ColumnRule::fold(b);
     let relation = |a: &RelationId, b: &RelationId| {
         same(&a.catalog, &b.catalog) && same(&a.schema, &b.schema) && same(&a.name, &b.name)
@@ -421,15 +491,15 @@ fn fired<'a>(
 /// pairs. Moves are decided per row at run time, so this fires even when no
 /// row would move. Lineage keeps no per-action detail, so every `MERGE` counts.
 fn row_movement(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<(), Rejection> {
-    if !matches!(lineage.statement, StatementKind::Update | StatementKind::Merge) {
-        return Ok(());
-    }
     let Some(target) = &lineage.target else {
         return Ok(());
     };
     let Some(family) = names.families.get(target).filter(|family| family.partitioned) else {
         return Ok(());
     };
+    if !effects(&lineage.statement, family.partitioned).moves {
+        return Ok(());
+    }
     let leaves: Vec<_> = family.descendants.iter().filter(|member| !member.partitioned).collect();
     let pairs = |member: &Member, column: &str| {
         direct(config, &member.id, member.ancestors.iter(), column)

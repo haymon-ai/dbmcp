@@ -13,7 +13,7 @@ use dbmcp_sql_lineage::{
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, Position};
 
-use crate::plan::{Facts, Families, Names, plan, touches_ruled};
+use crate::plan::{Effects, Facts, Families, Names, effects, plan, touches_ruled};
 use crate::rejection::reject_lineage;
 use crate::{Cascade, CascadeAction, CatalogColumn, Family, LineageClass, Member, Rejection};
 
@@ -2147,6 +2147,19 @@ fn updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
 }
 
 #[test]
+fn explained_updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let mut lineage = write("ptab", "id", vec![], StatementKind::Update);
+    lineage.statement = StatementKind::Explain(ExplainForm::QueryPlan, Box::new(StatementKind::Update));
+    assert_eq!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::RowMovement {
+            relation: "public.ptab".into(),
+        })
+    );
+}
+
+#[test]
 fn every_merge_into_a_non_uniformly_ruled_partitioned_table_rejects() {
     let config = config(vec![
         ssn("shop.public.ptab_1.email"),
@@ -2188,5 +2201,86 @@ fn row_movement_allows_uniformly_ruled_and_unruled_trees() {
         let config = config(rules);
         let lineage = write("ptab", "id", vec![], StatementKind::Update);
         assert!(pg_with(&lineage, &config, &tree()).is_ok());
+    }
+}
+
+#[test]
+fn statement_kinds_map_to_their_write_effects() {
+    let none = Effects {
+        creates: false,
+        fills: false,
+        omits: false,
+        updates: false,
+        deletes: false,
+        triggers: false,
+        moves: false,
+    };
+    let insert = Effects {
+        fills: true,
+        omits: true,
+        updates: true,
+        deletes: true,
+        triggers: true,
+        ..none
+    };
+    let update = Effects {
+        fills: true,
+        updates: true,
+        triggers: true,
+        moves: true,
+        ..none
+    };
+    let rows = [
+        (StatementKind::Insert, false, insert),
+        (StatementKind::Update, false, update),
+        // A row moved between partitions may be deleted and re-inserted.
+        (
+            StatementKind::Update,
+            true,
+            Effects {
+                deletes: true,
+                ..update
+            },
+        ),
+        (StatementKind::Merge, false, Effects { moves: true, ..insert }),
+        (
+            StatementKind::Delete,
+            false,
+            Effects {
+                deletes: true,
+                triggers: true,
+                ..none
+            },
+        ),
+        (StatementKind::Truncate, false, Effects { triggers: true, ..none }),
+        (StatementKind::CreateTableAs, false, Effects { creates: true, ..none }),
+        (
+            StatementKind::CreateMaterializedView,
+            false,
+            Effects { creates: true, ..none },
+        ),
+        (StatementKind::Query, false, none),
+        (StatementKind::Show(Show::Tables), false, none),
+        (StatementKind::Describe, false, none),
+        (StatementKind::CreateView, false, none),
+        (StatementKind::CreateTable, false, none),
+        (StatementKind::Drop, false, none),
+        (StatementKind::CreateIndex, false, none),
+        // `EXPLAIN` counts as the statement it explains.
+        (
+            StatementKind::Explain(ExplainForm::QueryPlan, Box::new(StatementKind::Update)),
+            true,
+            Effects {
+                deletes: true,
+                ..update
+            },
+        ),
+    ];
+    for (statement, partitioned, expected) in rows {
+        assert_eq!(
+            effects(&statement, partitioned),
+            expected,
+            "{statement:?} partitioned={partitioned}"
+        );
     }
 }
