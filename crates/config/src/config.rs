@@ -1,19 +1,19 @@
-//! Top-level [`Config`] composing the transport and the database, http, pii, and ssh sections.
+//! Top-level [`Config`] composing the transport and the database, http, privacy, and ssh sections.
 
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::http::HttpConfig;
-use crate::pii::PiiConfig;
+use crate::privacy::PrivacyConfig;
 use crate::ssh::SshConfig;
 use crate::transport::Transport;
 
 /// Runtime configuration for the MCP server.
 ///
 /// Composes the selected [`Transport`] with [`DatabaseConfig`] and the
-/// optional [`HttpConfig`], [`PiiConfig`], and [`SshConfig`] sections.
+/// optional [`HttpConfig`], [`PrivacyConfig`], and [`SshConfig`] sections.
 /// HTTP config is present only when `transport` / `DBMCP_TRANSPORT` is `http`;
-/// PII config only when `pii.enabled` / `DBMCP_PII_ENABLE` is on; SSH
+/// privacy config only when `privacy.mode` / `DBMCP_PRIVACY_MODE` is not `none`; SSH
 /// config only when `ssh.host` / `DBMCP_SSH_HOST` is set. The log level is
 /// returned next to it in [`Loaded`](crate::Loaded), not part of this struct.
 #[derive(Clone, Debug)]
@@ -27,8 +27,8 @@ pub struct Config {
     /// HTTP transport settings (present only when the HTTP transport is selected).
     pub http: Option<HttpConfig>,
 
-    /// PII redaction settings (`None` = redaction off).
-    pub pii: Option<PiiConfig>,
+    /// Privacy settings (`None` = privacy mode `none`).
+    pub privacy: Option<PrivacyConfig>,
 
     /// SSH tunnel settings (`None` = connect to the database directly).
     pub ssh: Option<SshConfig>,
@@ -49,9 +49,6 @@ impl Config {
         if let Some(http) = &self.http {
             errors.extend(http.validate().err().into_iter().flatten());
         }
-        if let Some(pii) = &self.pii {
-            errors.extend(pii.validate().err().into_iter().flatten());
-        }
         if let Some(ssh) = &self.ssh {
             if self.database.backend == DatabaseBackend::Sqlite {
                 errors.push(
@@ -71,7 +68,7 @@ mod tests {
     use super::*;
     use crate::database::tests::db_config;
     use crate::http::tests::config_with_host;
-    use crate::pii::PiiOperator;
+    use crate::privacy::PrivacyOperator;
     use crate::ssh::StrictHostKeyChecking;
     use crate::ssh::tests::ssh_config;
 
@@ -85,7 +82,7 @@ mod tests {
             },
             transport: Transport::Stdio,
             http: None,
-            pii: None,
+            privacy: None,
             ssh: None,
         }
     }
@@ -156,20 +153,6 @@ mod tests {
     }
 
     #[test]
-    fn pii_rules_run_when_present() {
-        let config = Config {
-            pii: Some(PiiConfig {
-                ner_enabled: true,
-                ner_model: None,
-                ..PiiConfig::default()
-            }),
-            ..mysql_config()
-        };
-        let errors = config.validate().expect_err("ner without model must fail");
-        assert!(matches!(errors[0].error, ConfigError::PiiNerModelMissing), "{errors:?}");
-    }
-
-    #[test]
     fn ssh_rules_run_when_present() {
         let config = Config {
             ssh: Some(SshConfig {
@@ -183,19 +166,19 @@ mod tests {
     }
 
     #[test]
-    fn config_debug_includes_pii_section() {
+    fn config_debug_includes_privacy_section() {
         let config = Config {
-            pii: Some(PiiConfig {
-                operator: PiiOperator::Mask,
+            privacy: Some(PrivacyConfig {
+                operator: PrivacyOperator::Mask,
                 categories: None,
-                ..PiiConfig::default()
+                ..PrivacyConfig::default()
             }),
             ..mysql_config()
         };
         let debug = format!("{config:?}");
         assert!(
-            debug.contains("pii: Some(PiiConfig { operator: Mask"),
-            "expected pii section in debug output: {debug}"
+            debug.contains("privacy: Some(PrivacyConfig { mode: Full, operator: Mask"),
+            "expected privacy section in debug output: {debug}"
         );
     }
 
@@ -227,7 +210,7 @@ mod tests {
                 keepalive_interval: Duration::ZERO,
                 local_port: None,
             }),
-            pii: None,
+            privacy: None,
         };
         let debug = format!("{config:?}");
         assert!(!debug.contains("hunter2"), "secret leaked: {debug}");

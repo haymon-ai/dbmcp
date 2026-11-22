@@ -1,6 +1,6 @@
 //! Opt-in NER integration test exercising a real ONNX model.
 //!
-//! Skips unless `PII_NER_TEST_MODEL` points at a model directory
+//! Skips unless `PRIVACY_TEST_MODEL` points at a model directory
 //! (`tokenizer.json`, `config.json`, `model.onnx`). Inference uses a
 //! statically-linked ONNX Runtime; no external library to install.
 //!
@@ -11,11 +11,11 @@
 
 use std::path::{Path, PathBuf};
 
-use dbmcp_pii::{Entity, NerEngine, RecognizerResult, Score};
+use dbmcp_privacy::{Entity, NerEngine, RecognizerResult, Score};
 
 /// Returns the configured model directory, or `None` to skip the test.
 fn model_dir() -> Option<PathBuf> {
-    std::env::var_os("PII_NER_TEST_MODEL").map(PathBuf::from)
+    std::env::var_os("PRIVACY_TEST_MODEL").map(PathBuf::from)
 }
 
 /// Loads the test engine, or `None` (with a skip note) when no model is set.
@@ -85,7 +85,7 @@ fn model_exposes_label(dir: &Path, needles: &[&str]) -> bool {
 #[test]
 fn detects_person_span() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let engine = NerEngine::load(&dir, Score::from_static(0.5)).expect("model loads");
@@ -99,7 +99,7 @@ fn detects_person_span() {
 #[test]
 fn detects_location_span() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let engine = NerEngine::load(&dir, Score::from_static(0.5)).expect("model loads");
@@ -115,7 +115,7 @@ fn detects_location_span() {
 #[test]
 fn detects_organization_span() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let engine = NerEngine::load(&dir, Score::from_static(0.5)).expect("model loads");
@@ -131,7 +131,7 @@ fn detects_organization_span() {
 #[test]
 fn detects_nrp_span() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // Requires an OntoNotes-class model exposing the NORP label.
@@ -152,7 +152,7 @@ fn detects_nrp_span() {
 #[test]
 fn detects_facility_span() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // Requires an OntoNotes-class model exposing the FAC label.
@@ -173,7 +173,7 @@ fn detects_facility_span() {
 #[test]
 fn clean_text_yields_no_spans() {
     let Some(dir) = model_dir() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let engine = NerEngine::load(&dir, Score::from_static(0.5)).expect("model loads");
@@ -186,7 +186,7 @@ fn clean_text_yields_no_spans() {
 #[test]
 fn code_like_values_yield_no_organization_or_location_spans() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let texts = [
@@ -211,7 +211,7 @@ fn code_like_values_yield_no_organization_or_location_spans() {
 #[test]
 fn names_next_to_codes_still_detected() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let out = engine.analyze("Anna Schmidt (DE)").expect("inference succeeds");
@@ -224,7 +224,7 @@ fn names_next_to_codes_still_detected() {
 #[test]
 fn acronyms_that_are_not_codes_still_detected() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     for (text, span) in [("Contract signed with BP", "BP"), ("Flight from NYC to Boston", "NYC")] {
@@ -239,7 +239,7 @@ fn acronyms_that_are_not_codes_still_detected() {
 #[test]
 fn analyze_batch_matches_single() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // Batching several texts together must not change any individual result
@@ -258,7 +258,7 @@ fn analyze_batch_matches_single() {
 #[test]
 fn analyze_batch_mixed_lengths() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // Mixed lengths force dynamic right-padding to the longest window; padded
@@ -270,7 +270,7 @@ fn analyze_batch_mixed_lengths() {
 #[test]
 fn analyze_batch_empty_interspersed() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     let texts = ["Alice Johnson", "", "Berlin"];
@@ -283,7 +283,7 @@ fn analyze_batch_empty_interspersed() {
 #[test]
 fn analyze_batch_overflow_with_short() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // A long text exceeds MAX_SEQ_LEN, so it splits into several overlapping
@@ -296,7 +296,7 @@ fn analyze_batch_overflow_with_short() {
 #[test]
 fn analyze_batch_larger_than_batch_size() {
     let Some(engine) = engine() else {
-        eprintln!("PII_NER_TEST_MODEL unset; skipping NER integration test");
+        eprintln!("PRIVACY_TEST_MODEL unset; skipping NER integration test");
         return;
     };
     // More inputs than NER_BATCH_SIZE (16) so the window list spans several

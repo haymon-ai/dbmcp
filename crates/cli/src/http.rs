@@ -204,7 +204,7 @@ mod tests {
             transport: Transport::Stdio,
             database: sqlite_memory_db_config(),
             http: None,
-            pii: None,
+            privacy: None,
             ssh: None,
         };
         let server = crate::server::build_server(&config).expect("server builds in test");

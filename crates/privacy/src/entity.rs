@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::str::FromStr;
 
-/// Built-in entity types emitted by `dbmcp_pii` recognizers.
+/// Built-in entity types emitted by `dbmcp_privacy` recognizers.
 ///
 /// Closed set; new entries are non-breaking thanks to `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -1,4 +1,4 @@
-//! Column rule (`pii.rules`) enforcement on `SQLite`.
+//! Column rule (`privacy.rules`) enforcement on `SQLite`.
 //!
 //! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
 //! statement through [`SqliteHandler::enforce`]. On one connection, inside
@@ -22,7 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
-use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
     RelationId, RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
@@ -179,7 +179,7 @@ impl SqliteHandler {
     /// else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PiiConfig,
+        policy: &PrivacyConfig,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -227,7 +227,7 @@ fn values(row: Value) -> Vec<Value> {
 async fn run<'c>(
     conn: &mut sqlx::SqliteConnection,
     read_only: bool,
-    config: &'c PiiConfig,
+    config: &'c PrivacyConfig,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
@@ -546,9 +546,9 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PiiOperator, Transport};
-    use dbmcp_pii::cells::ShapeError;
+    use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PrivacyOperator, Transport};
     use dbmcp_policy::NamePart;
+    use dbmcp_privacy::cells::ShapeError;
     use sqlx::Connection as _;
 
     use super::*;
@@ -600,23 +600,23 @@ mod tests {
             item: 0,
             key: key.map(String::from),
             entity,
-            operator: PiiOperator::Hash,
+            operator: PrivacyOperator::Hash,
         }
     }
 
-    fn rules_config() -> PiiConfig {
-        PiiConfig {
+    fn rules_config() -> PrivacyConfig {
+        PrivacyConfig {
             key: Some(KEY.into()),
             rules: vec![
                 column_rule(["main", "main", "users", "email"], "EMAIL_ADDRESS"),
                 column_rule(["main", "main", "users", "ssn"], "US_SSN"),
             ],
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         }
     }
 
     /// Builds a handler on a fresh in-memory database holding [`SETUP`] when writable.
-    async fn handler(read_only: bool, pii: PiiConfig) -> SqliteHandler {
+    async fn handler(read_only: bool, privacy: PrivacyConfig) -> SqliteHandler {
         let handler = SqliteHandler::new(&Config {
             transport: Transport::Stdio,
             database: DatabaseConfig {
@@ -626,7 +626,7 @@ mod tests {
                 ..DatabaseConfig::default()
             },
             http: None,
-            pii: Some(pii),
+            privacy: Some(privacy),
             ssh: None,
         })
         .expect("handler builds");
@@ -1016,6 +1016,6 @@ mod tests {
     #[tokio::test]
     async fn policy_exists_only_with_rules() {
         assert!(handler(false, rules_config()).await.policy.is_some());
-        assert!(handler(false, PiiConfig::default()).await.policy.is_none());
+        assert!(handler(false, PrivacyConfig::default()).await.policy.is_none());
     }
 }

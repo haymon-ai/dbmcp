@@ -7,7 +7,7 @@
 mod corpus;
 
 use corpus::Corpus;
-use dbmcp_pii::{AnalyzeOptions, Analyzer, RecognizerResult};
+use dbmcp_privacy::{AnalyzeOptions, Analyzer, RecognizerResult};
 
 /// Input sizes (bytes) swept by the throughput benches.
 pub const SIZES: &[usize] = &[1024, 8 * 1024, 64 * 1024, 512 * 1024];

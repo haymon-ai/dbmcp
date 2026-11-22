@@ -456,7 +456,7 @@ impl NerEngine {
         })
     }
 
-    /// Restricts which entities the engine emits (respects `--pii-categories`).
+    /// Restricts which entities the engine emits (respects `privacy.categories`).
     ///
     /// A span whose entity is not in the set is dropped during decoding, so it
     /// neither redacts nor displaces a regex hit.

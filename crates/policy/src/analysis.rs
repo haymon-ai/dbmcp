@@ -1,6 +1,6 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
-use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
     Catalog, Dialect, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName,
@@ -195,9 +195,9 @@ impl Analyzed {
     ///
     /// # Panics
     ///
-    /// Panics when a rule's entity is not an [`Entity`](dbmcp_pii::Entity)
+    /// Panics when a rule's entity is not an [`Entity`](dbmcp_privacy::Entity)
     /// name; the loader only accepts `ColumnRule::ENTITIES`.
-    pub fn plan<'c>(&self, config: &'c PiiConfig) -> Result<Planned<'c>, Rejection> {
+    pub fn plan<'c>(&self, config: &'c PrivacyConfig) -> Result<Planned<'c>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
         let statement = &self.lineage.statement;
         let touches = touches_ruled(&self.lineage, config, &self.names.families);
@@ -216,7 +216,7 @@ impl Analyzed {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PiiOperator};
+    use dbmcp_config::{ColumnRule, PrivacyOperator};
     use std::collections::BTreeSet;
 
     use dbmcp_sql_lineage::{RelationKind, SourceRef};
@@ -294,16 +294,16 @@ mod tests {
     }
 
     /// A config ruling `shop.public.t.a` with `mask` as `US_SSN`.
-    fn ruled() -> PiiConfig {
-        PiiConfig {
+    fn ruled() -> PrivacyConfig {
+        PrivacyConfig {
             rules: vec![ColumnRule {
                 name: "r".into(),
                 item: 0,
                 key: ["shop", "public", "t", "a"].map(String::from),
                 entity: "US_SSN",
-                operator: PiiOperator::Mask,
+                operator: PrivacyOperator::Mask,
             }],
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         }
     }
 
@@ -374,7 +374,7 @@ mod tests {
     /// Plans `analyzed` under [`ruled`] and redacts one `PostgreSQL` plan holding a `Filter`.
     async fn explain_output(analyzed: &Analyzed) -> Vec<serde_json::Value> {
         let config = ruled();
-        let redactor = dbmcp_pii::Redactor::from_config(Some(&config))
+        let redactor = dbmcp_privacy::Redactor::from_config(Some(&config))
             .expect("builds")
             .expect("configured");
         let plan = serde_json::json!([{"Plan": {"Node Type": "Seq Scan", "Filter": "(b = 'x')"}}]);
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn bare_query_names_feed_the_create_target_gate() {
-        let config = PiiConfig::default();
+        let config = PrivacyConfig::default();
         let plans = |sql, creation, entry: fn(&WrittenName) -> Entry| {
             analyzed_with(DatabaseBackend::Postgres, sql, creation, entry)
                 .plan(&config)
@@ -590,7 +590,7 @@ mod tests {
     }
 
     /// A config ruling `shop.public.t_1.a` with `mask` as `US_SSN`.
-    fn child_ruled() -> PiiConfig {
+    fn child_ruled() -> PrivacyConfig {
         let mut config = ruled();
         config.rules[0].key[2] = "t_1".into();
         config
@@ -616,10 +616,10 @@ mod tests {
     }
 
     /// A config hashing `shop.public.<table>.a` as `EMAIL_ADDRESS`.
-    fn hashed(table: &str) -> PiiConfig {
+    fn hashed(table: &str) -> PrivacyConfig {
         let mut config = ruled();
         config.rules[0].key[2] = table.into();
-        config.rules[0].operator = PiiOperator::Hash;
+        config.rules[0].operator = PrivacyOperator::Hash;
         config.rules[0].entity = "EMAIL_ADDRESS";
         config
     }

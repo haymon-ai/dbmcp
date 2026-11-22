@@ -1,4 +1,4 @@
-//! Error types for the `dbmcp-pii` crate.
+//! Error types for the `dbmcp-privacy` crate.
 
 use thiserror::Error;
 

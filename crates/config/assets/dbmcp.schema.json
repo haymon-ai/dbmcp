@@ -307,25 +307,30 @@
         }
       }
     },
-    "pii": {
-      "description": "PII redaction of query tool output; the other keys apply only when enabled.",
+    "privacy": {
+      "description": "Privacy of query tool output: column rules and detection, chosen by mode.",
       "type": [
         "object",
         "null"
       ],
       "additionalProperties": false,
       "properties": {
-        "enabled": {
-          "description": "Enable PII redaction of query tool output.",
+        "mode": {
+          "description": "none: no privacy; rules: column rules only; full: column rules plus detection on every cell and error message.",
           "type": [
-            "boolean",
             "string",
             "null"
           ],
-          "default": false
+          "enum": [
+            "none",
+            "rules",
+            "full",
+            null
+          ],
+          "default": "full"
         },
         "operator": {
-          "description": "Operator applied to detected PII spans.",
+          "description": "Operator applied to detected PII spans; the fallback for rules.",
           "type": [
             "string",
             "null"
@@ -348,7 +353,7 @@
           "minLength": 32
         },
         "categories": {
-          "description": "Category subset for the analyzer registry; all built-ins when unset.",
+          "description": "Category subset for detection under full; all built-ins when unset.",
           "type": [
             "string",
             "array",
@@ -367,24 +372,15 @@
             ]
           }
         },
-        "ner_enabled": {
-          "description": "Enable the optional ML/NER pass.",
-          "type": [
-            "boolean",
-            "string",
-            "null"
-          ],
-          "default": false
-        },
-        "ner_model": {
-          "description": "Path to the NER model directory, relative to this file.",
+        "model": {
+          "description": "Path to the NER model directory, relative to this file; turns NER on under full.",
           "type": [
             "string",
             "null"
           ]
         },
         "rules": {
-          "description": "Column rules (YAML only, requires pii.enabled): named groups of exact column keys ([[catalog.]schema.]table.column) with an entity and an optional operator; null keeps an earlier file's rules, {} clears them.",
+          "description": "Column rules (YAML only; apply under rules and full): named groups of exact column keys ([[catalog.]schema.]table.column) with an entity and an optional operator; null keeps an earlier file's rules, {} clears them.",
           "type": [
             "object",
             "null"
@@ -415,7 +411,7 @@
                 "type": "string"
               },
               "operator": {
-                "description": "Operator applied to the whole value; defaults to pii.operator.",
+                "description": "Operator applied to the whole value; defaults to privacy.operator.",
                 "type": [
                   "string",
                   "null"

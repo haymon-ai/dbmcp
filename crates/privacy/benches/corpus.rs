@@ -1,4 +1,4 @@
-//! Bench-only fixture loader for `crates/pii/benches/corpus/*.toml`.
+//! Bench-only fixture loader for `crates/privacy/benches/corpus/*.toml`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ pub struct Corpus {
 }
 
 impl Corpus {
-    /// Load `crates/pii/benches/corpus/{stem}.toml`.
+    /// Load `crates/privacy/benches/corpus/{stem}.toml`.
     ///
     /// `stem` is the bare entity stem (`"email"`, `"credit_card"`, …) — the
     /// `.toml` extension is appended.

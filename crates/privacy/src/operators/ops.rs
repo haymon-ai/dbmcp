@@ -10,7 +10,7 @@ use crate::Entity;
 use super::{hash, mask};
 
 /// Label the column rules' hash subkey is derived over.
-const RULE_KEY_LABEL: &[u8] = b"dbmcp pii.rules hash key v1";
+const RULE_KEY_LABEL: &[u8] = b"dbmcp privacy.rules hash key v1";
 
 /// Mask coverage parameter for [`Operator::Mask`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

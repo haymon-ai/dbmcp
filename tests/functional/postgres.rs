@@ -10,7 +10,7 @@
 mod probe;
 mod rows;
 
-use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
+use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PrivacyConfig, PrivacyOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use indexmap::IndexMap;
@@ -44,7 +44,7 @@ fn handler_with(config: DatabaseConfig) -> PostgresHandler {
         transport: Transport::Stdio,
         database: config,
         http: None,
-        pii: None,
+        privacy: None,
         ssh: None,
     })
     .expect("handler builds")
@@ -3868,14 +3868,14 @@ async fn test_list_tables_detailed_key_order_matches_brief_order() {
     );
 }
 
-fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
+fn handler_with_redaction(redact_privacy: bool) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: redact_pii.then(|| PiiConfig {
-            operator: PiiOperator::Replace,
-            ..PiiConfig::default()
+        privacy: redact_privacy.then(|| PrivacyConfig {
+            operator: PrivacyOperator::Replace,
+            ..PrivacyConfig::default()
         }),
         ssh: None,
     })
@@ -3883,17 +3883,17 @@ fn handler_with_redaction(redact_pii: bool) -> PostgresHandler {
 }
 
 /// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
-const PII_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
+const PRIVACY_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
 
-fn handler_with_operator(operator: PiiOperator) -> PostgresHandler {
+fn handler_with_operator(operator: PrivacyOperator) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        pii: Some(PiiConfig {
+        privacy: Some(PrivacyConfig {
             operator,
-            key: (operator == PiiOperator::Hash).then(|| PII_TEST_KEY.into()),
-            ..PiiConfig::default()
+            key: (operator == PrivacyOperator::Hash).then(|| PRIVACY_TEST_KEY.into()),
+            ..PrivacyConfig::default()
         }),
         ssh: None,
     })
@@ -3971,7 +3971,7 @@ async fn explain_analyze_redacts_plan_text() {
 
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
-    let handler = handler_with_operator(PiiOperator::Mask);
+    let handler = handler_with_operator(PrivacyOperator::Mask);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -3983,7 +3983,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
-    let handler = handler_with_operator(PiiOperator::Redact);
+    let handler = handler_with_operator(PrivacyOperator::Redact);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -3993,7 +3993,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_keyed_token() {
-    let handler = handler_with_operator(PiiOperator::Hash);
+    let handler = handler_with_operator(PrivacyOperator::Hash);
     let rows = handler
         .read_query(
             "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
@@ -4517,7 +4517,7 @@ async fn test_write_query_reports_rows_affected() {
     assert_eq!(delete.rows_affected, 2);
 }
 
-fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pii: bool) -> PostgresHandler {
+fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_privacy: bool) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
         database: DatabaseConfig {
@@ -4526,9 +4526,9 @@ fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_pi
             ..base_db_config(false)
         },
         http: None,
-        pii: redact_pii.then(|| PiiConfig {
-            operator: PiiOperator::Replace,
-            ..PiiConfig::default()
+        privacy: redact_privacy.then(|| PrivacyConfig {
+            operator: PrivacyOperator::Replace,
+            ..PrivacyConfig::default()
         }),
         ssh: None,
     })
@@ -4696,9 +4696,9 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
     assert!(response.next_cursor.is_some());
 }
 
-// Column rules (`pii.rules`)
+// Column rules (`privacy.rules`)
 
-fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, operator: PiiOperator) -> ColumnRule {
+fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, operator: PrivacyOperator) -> ColumnRule {
     ColumnRule {
         name: format!("{schema}_{table}_{column}"),
         item: 0,
@@ -4712,68 +4712,95 @@ fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, op
 /// the `policy_hashed*` tables, the `policy_cascade_*` children's `k`), mask phones, redact SSNs, and replace card numbers.
 fn standard_rules() -> Vec<ColumnRule> {
     vec![
-        column_rule("public", "users", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("public", "users", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
         column_rule(
             "public",
             "invoices",
             "billing_email",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
-        column_rule("public", "users", "phone", "PHONE_NUMBER", PiiOperator::Mask),
-        column_rule("public", "users", "ssn", "US_SSN", PiiOperator::Redact),
-        column_rule("public", "users", "credit_card", "CREDIT_CARD", PiiOperator::Replace),
-        column_rule("public", "policy_hashed", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+        column_rule("public", "users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
+        column_rule("public", "users", "ssn", "US_SSN", PrivacyOperator::Redact),
+        column_rule(
+            "public",
+            "users",
+            "credit_card",
+            "CREDIT_CARD",
+            PrivacyOperator::Replace,
+        ),
+        column_rule("public", "users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
+        column_rule("public", "users", "ssn", "US_SSN", PrivacyOperator::Redact),
+        column_rule(
+            "public",
+            "users",
+            "credit_card",
+            "CREDIT_CARD",
+            PrivacyOperator::Replace,
+        ),
+        column_rule(
+            "public",
+            "policy_hashed",
+            "email",
+            "EMAIL_ADDRESS",
+            PrivacyOperator::Hash,
+        ),
         column_rule(
             "public",
             "policy_hashed_copy",
             "email",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_default",
             "email",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_generated",
             "email",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
         column_rule(
             "public",
             "policy_cascade_child",
             "k",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
         column_rule(
             "public",
             "policy_cascade_default",
             "k",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_trigger",
             "email",
             "EMAIL_ADDRESS",
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
         ),
-        column_rule("public", "policy_masked", "phone", "PHONE_NUMBER", PiiOperator::Mask),
-        column_rule("public", "policy_masked", "note", "PHONE_NUMBER", PiiOperator::Mask),
+        column_rule(
+            "public",
+            "policy_masked",
+            "phone",
+            "PHONE_NUMBER",
+            PrivacyOperator::Mask,
+        ),
+        column_rule("public", "policy_masked", "note", "PHONE_NUMBER", PrivacyOperator::Mask),
         column_rule(
             "public",
             "policy_masked_copy",
             "phone",
             "PHONE_NUMBER",
-            PiiOperator::Mask,
+            PrivacyOperator::Mask,
         ),
     ]
 }
@@ -4789,10 +4816,10 @@ fn ruled_handler(user: Option<&str>, page_size: u16, rules: Vec<ColumnRule>) -> 
             ..base
         },
         http: None,
-        pii: Some(PiiConfig {
-            key: Some(PII_TEST_KEY.into()),
+        privacy: Some(PrivacyConfig {
+            key: Some(PRIVACY_TEST_KEY.into()),
             rules,
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         }),
         ssh: None,
     })
@@ -5508,7 +5535,7 @@ async fn column_rules_follow_renamed_columns() {
 
 #[tokio::test]
 async fn column_rules_bind_bare_names_through_the_search_path() {
-    let shadow_ssn = || vec![column_rule("shadow", "users", "ssn", "US_SSN", PiiOperator::Redact)];
+    let shadow_ssn = || vec![column_rule("shadow", "users", "ssn", "US_SSN", PrivacyOperator::Redact)];
     let query = "SELECT id FROM users WHERE ssn IS NOT NULL";
     // `postgres` resolves `users` to `public.users`, which this rule leaves alone.
     ruled_read(&ruled_handler(None, 100, shadow_ssn()), query)
@@ -5562,7 +5589,7 @@ async fn column_rules_refuse_bare_creates_when_pg_temp_leads_the_search_path() {
 async fn column_rules_apply_in_the_database_a_tool_selects() {
     // Without a pinned database, a rule applies only in the database its key names.
     let events_name_ruled_in = |catalog: &str| {
-        let mut rule = column_rule("public", "events", "name", "PERSON", PiiOperator::Replace);
+        let mut rule = column_rule("public", "events", "name", "PERSON", PrivacyOperator::Replace);
         rule.key[0] = catalog.into();
         PostgresHandler::new(&Config {
             transport: Transport::Stdio,
@@ -5571,10 +5598,10 @@ async fn column_rules_apply_in_the_database_a_tool_selects() {
                 ..base_db_config(false)
             },
             http: None,
-            pii: Some(PiiConfig {
-                key: Some(PII_TEST_KEY.into()),
+            privacy: Some(PrivacyConfig {
+                key: Some(PRIVACY_TEST_KEY.into()),
                 rules: vec![rule],
-                ..PiiConfig::default()
+                ..PrivacyConfig::default()
             }),
             ssh: None,
         })
@@ -5629,7 +5656,7 @@ async fn column_rules_withhold_errors_raised_at_commit() {
             "policy_deferred",
             "email",
             "EMAIL_ADDRESS",
-            PiiOperator::Replace,
+            PrivacyOperator::Replace,
         )],
     )
     .write_query(query.into(), None)
@@ -5694,7 +5721,7 @@ async fn list_tables_detailed_values_have_sorted_keys() {
 
 /// An e-mail hash rule on `public.<table>.email`.
 fn email_rule(table: &str) -> ColumnRule {
-    column_rule("public", table, "email", "EMAIL_ADDRESS", PiiOperator::Hash)
+    column_rule("public", table, "email", "EMAIL_ADDRESS", PrivacyOperator::Hash)
 }
 
 /// Asserts `rows` hold `count` rows, each with an e-mail token under `email`.
@@ -5794,7 +5821,7 @@ async fn column_rules_on_members_refuse_laundering_through_their_parent() {
 
 #[tokio::test]
 async fn column_rules_refuse_conflicting_rules_across_a_tree() {
-    let mask = column_rule("public", "ptab_1", "email", "EMAIL_ADDRESS", PiiOperator::Mask);
+    let mask = column_rule("public", "ptab_1", "email", "EMAIL_ADDRESS", PrivacyOperator::Mask);
     let handler = ruled_handler(None, 100, vec![email_rule("ptab"), mask]);
     for query in ["SELECT email FROM ptab", "SELECT email FROM ptab_1"] {
         let refusal = ruled_refusal(&handler, query).await;

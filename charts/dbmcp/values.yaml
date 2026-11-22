@@ -21,6 +21,8 @@ replicaCount: 1
 # environment variables, which win over this file; entries in http.allowed_hosts
 # are added to the Service DNS names, localhost, and the Ingress hosts.
 # Keep secrets out of it: use `auth`, `database.password`, or `existingSecret` below.
+# Set DBMCP_PRIVACY_KEY from a Secret through `extraEnv` (`secretKeyRef`), so
+# hash tokens stay stable across replicas and rollouts.
 config: {}
 #  database:
 #    backend: postgres
@@ -32,6 +34,8 @@ config: {}
 #      - mcp.example.com
 #    allowed_origins:
 #      - https://app.example.com
+#  privacy:
+#    mode: "rules"   # none | rules | full
 
 auth:
   # -- Bearer token clients send as `Authorization: Bearer <token>`.

@@ -5,8 +5,8 @@
 //! surface and a small set of thin delegators that per-tool
 //! implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig, PiiConfig};
-use dbmcp_pii::{MaybeRedact, Redactor};
+use dbmcp_config::{Config, DatabaseConfig, PrivacyConfig};
+use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -78,7 +78,7 @@ pub struct MysqlHandler {
     pub(crate) connection: MysqlConnection,
     pub(crate) redactor: Option<Redactor>,
     /// PII settings with column rules; `None` without rules.
-    pub(crate) policy: Option<PiiConfig>,
+    pub(crate) policy: Option<PrivacyConfig>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -100,14 +100,14 @@ impl MysqlHandler {
     /// lazy pool) and the MCP tool router. No network I/O happens here.
     /// # Errors
     ///
-    /// Returns the [`dbmcp_pii::RedactorInitError`] from
-    /// [`dbmcp_pii::Redactor::from_config`] (fail-closed startup).
-    pub fn new(config: &Config) -> Result<Self, dbmcp_pii::RedactorInitError> {
+    /// Returns the [`dbmcp_privacy::RedactorInitError`] from
+    /// [`dbmcp_privacy::Redactor::from_config`] (fail-closed startup).
+    pub fn new(config: &Config) -> Result<Self, dbmcp_privacy::RedactorInitError> {
         Ok(Self {
             config: config.database.clone(),
             connection: MysqlConnection::new(&config.database),
-            redactor: Redactor::from_config(config.pii.as_ref())?,
-            policy: config.pii.clone().filter(|pii| !pii.rules.is_empty()),
+            redactor: Redactor::from_config(config.privacy.as_ref())?,
+            policy: config.privacy.clone().filter(|privacy| !privacy.rules.is_empty()),
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })
     }
@@ -179,7 +179,7 @@ mod tests {
                 ..base_config()
             },
             http: None,
-            pii: None,
+            privacy: None,
             ssh: None,
         })
         .expect("handler builds in test")
@@ -195,7 +195,7 @@ mod tests {
                 ..base_config()
             },
             http: None,
-            pii: None,
+            privacy: None,
             ssh: None,
         })
         .expect("handler builds in test")
@@ -208,10 +208,10 @@ mod tests {
                 transport: dbmcp_config::Transport::Stdio,
                 database: base_config(),
                 http: None,
-                pii: Some(PiiConfig {
-                    operator: dbmcp_config::PiiOperator::Mask,
+                privacy: Some(PrivacyConfig {
+                    operator: dbmcp_config::PrivacyOperator::Mask,
                     rules,
-                    ..PiiConfig::default()
+                    ..PrivacyConfig::default()
                 }),
                 ssh: None,
             })
@@ -224,7 +224,7 @@ mod tests {
             item: 0,
             key: ["def", "app", "users", "email"].map(String::from),
             entity: "EMAIL_ADDRESS",
-            operator: dbmcp_config::PiiOperator::Mask,
+            operator: dbmcp_config::PrivacyOperator::Mask,
         };
         assert!(with(vec![rule]).policy.is_some());
     }

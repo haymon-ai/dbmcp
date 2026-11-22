@@ -7,7 +7,13 @@ The regex/checksum recognisers cannot catch free-form **person names**, **place 
 
 NER matches never cut regex matches: a name the model finds inside an email address or URL is covered by the regex match (see [Overlapping detections](/privacy/redaction#overlapping-detections)).
 
-It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until both `pii.enabled` and `pii.ner_enabled` are true and a model directory is supplied.
+It is **opt-in at runtime**: the ML/NER code is always built into the binary, but stays inactive until the privacy mode is `full` and a model path is set in `privacy.model`.
+
+## Settings
+
+| YAML key | Env var | Type | Default | Description |
+|----------|---------|------|---------|-------------|
+| `privacy.model` | `DBMCP_PRIVACY_MODEL` | path | *unset (no NER)* | Path to the NER model directory; setting it turns NER on under `full`, ignored in other modes |
 
 Inference uses **ONNX Runtime** — there is **no external runtime library** to install: you need only the `dbmcp` binary and a model directory. The directory must contain:
 
@@ -53,7 +59,7 @@ ls ./models/bert-ner
 
 ```bash
 DBMCP_DB_BACKEND=sqlite DBMCP_DB_NAME=app.db \
-DBMCP_PII_ENABLE=true DBMCP_PII_NER_ENABLE=true DBMCP_PII_NER_MODEL=./models/bert-ner \
+DBMCP_PRIVACY_MODE=full DBMCP_PRIVACY_MODEL=./models/bert-ner \
   dbmcp
 ```
 
@@ -63,24 +69,23 @@ or, in a config file (relative paths resolve against the file's directory):
 database:
   backend: sqlite
   name: app.db
-pii:
-  enabled: true
-  ner_enabled: true
-  ner_model: ./models/bert-ner
+privacy:
+  mode: full
+  model: ./models/bert-ner
 ```
 
 **4. Verify it loaded.** Loading is **fail-closed**: a missing file or an unusable model makes the server refuse to start, so a clean startup means the model loaded. To confirm the pass is rewriting output, run a `readQuery` over a column holding a person or place name and check the value comes back as `<PERSON>` / `<LOCATION>` (with the default `replace` operator).
 
 Behaviour notes:
 
-- **Fail-closed.** If `pii.ner_enabled` is true but the model cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
-- **Category-aware.** The NER pass respects `pii.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
+- **Fail-closed.** If a set `privacy.model` cannot be loaded, the server refuses to start. If inference fails mid-request, that request errors — it never silently falls back to regex-only.
+- **Category-aware.** The NER pass respects `privacy.categories`: `PERSON`, `ORGANIZATION`, and `NATIONALITY_RELIGION_POLITICS` are emitted only when `personal` is selected; `LOCATION` and `FACILITY` only when `contact` is. With no subset (the default), all apply. When the subset selects neither category, the model is not loaded at all.
 - **Codes are skipped.** Models trained on news text tag codes as organizations or locations with high confidence. An `ORGANIZATION`, `LOCATION`, or `FACILITY` match is therefore not redacted when it is:
   - A single letter or digit, such as the `K` in an ID like `K-1042`.
   - A listed code: every word is, in capitals, an ISO 3166 country code (`AT`, `AUT`), an ISO 4217 currency code (`EUR`), an ISO 639-1 language code (`EN`), or a SQL keyword (`AS`, `CREATE VIEW` in a view definition). Other acronyms, such as `IBM` or `NYC`, are still redacted.
   - Part of a namespaced identifier: two or more capitalised words joined by `\` or `::`, such as `App\Model\Order` or `Foo::Bar`. Paths such as `C:\Users\…` are still checked.
 
-  A `PERSON` or `NATIONALITY_RELIGION_POLITICS` match is always redacted. A name that the model mislabels as an organization and that is also a code is skipped, for example the surname `NG` written in capitals (the code for Nigeria). Regex detection is unaffected. To protect such a column anyway, rule it with [`pii.rules`](/privacy/rules).
+  A `PERSON` or `NATIONALITY_RELIGION_POLITICS` match is always redacted. A name that the model mislabels as an organization and that is also a code is skipped, for example the surname `NG` written in capitals (the code for Nigeria). Regex detection is unaffected. To protect such a column anyway, rule it with [`privacy.rules`](/privacy/rules).
 
 ## Multilingual and int8 models
 
@@ -93,7 +98,7 @@ optimum-cli export onnx \
   ./models/bert-ner-multi
 ```
 
-The output directory holds `config.json`, `tokenizer.json`, and `model.onnx`, ready for `pii.ner_model`.
+The output directory holds `config.json`, `tokenizer.json`, and `model.onnx`, ready for `privacy.model`.
 
 An int8-quantized export runs much faster on CPU: about 3.5× in our test (12 s vs 42 s for ~2k cells). Quantize an exported directory, then rename the result to `model.onnx` and copy the tokenizer across:
 

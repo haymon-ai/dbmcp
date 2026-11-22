@@ -1,6 +1,6 @@
-//! Casts one config file's `pii.rules` map and resolves the winning rules.
+//! Casts one config file's `privacy.rules` map and resolves the winning rules.
 //!
-//! `pii.rules` is a map of named rules; each lists column keys of two to
+//! `privacy.rules` is a map of named rules; each lists column keys of two to
 //! four segments (`[[catalog.]schema.]table.column`) with an entity and an
 //! optional operator. [`cast`] checks a file's value whole: names, fields,
 //! key shape, the entity, and the operator. [`resolve`] turns the winning
@@ -18,7 +18,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::node::Node;
-use crate::pii::{ColumnRule, PiiOperator};
+use crate::privacy::{ColumnRule, PrivacyOperator};
 
 /// One named rule as a config file wrote it, with folded keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +29,8 @@ pub(crate) struct Rule {
     pub columns: Vec<Key>,
     /// The entity, one of [`ColumnRule::ENTITIES`].
     pub entity: &'static str,
-    /// The rule's operator; `None` inherits `pii.operator`.
-    pub operator: Option<PiiOperator>,
+    /// The rule's operator; `None` inherits `privacy.operator`.
+    pub operator: Option<PrivacyOperator>,
 }
 
 /// A column key as written, its segments folded.
@@ -47,7 +47,7 @@ pub(crate) enum Key {
 /// The fields a rule may set.
 const FIELDS: &str = "columns, entity, operator";
 
-/// Casts a `pii.rules` mapping into its rules, in file order.
+/// Casts a `privacy.rules` mapping into its rules, in file order.
 ///
 /// # Errors
 ///
@@ -81,7 +81,7 @@ pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Res
 pub(crate) fn resolve(
     rules: &[Rule],
     database: &DatabaseConfig,
-    operator: PiiOperator,
+    operator: PrivacyOperator,
 ) -> Result<Vec<ColumnRule>, Vec<Diagnostic>> {
     let backend = database.backend;
     let pinned = database.name.as_deref().map(ColumnRule::fold);
@@ -132,18 +132,18 @@ pub(crate) fn resolve(
         }
         if !incomplete.is_empty() {
             errors.push(
-                Diagnostic::new(ConfigError::PiiRuleNeedsDatabase {
+                Diagnostic::new(ConfigError::PrivacyRuleNeedsDatabase {
                     rule: rule.name.clone(),
                     items: list(&incomplete),
                     backend,
                 })
-                .involving(&[env::PII_RULES, env::DB_BACKEND])
+                .involving(&[env::PRIVACY_RULES, env::DB_BACKEND])
                 .missing(&[env::DB_NAME]),
             );
         }
         if !foreign.is_empty() {
             errors.push(
-                Diagnostic::new(ConfigError::PiiRuleCatalog {
+                Diagnostic::new(ConfigError::PrivacyRuleCatalog {
                     rule: rule.name.clone(),
                     items: list(&foreign),
                     // PostgreSQL's catalog comes from config; name the setting, not its value.
@@ -154,8 +154,8 @@ pub(crate) fn resolve(
                     backend,
                 })
                 .involving(match backend {
-                    DatabaseBackend::Postgres => &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME],
-                    _ => &[env::PII_RULES, env::DB_BACKEND],
+                    DatabaseBackend::Postgres => &[env::PRIVACY_RULES, env::DB_BACKEND, env::DB_NAME],
+                    _ => &[env::PRIVACY_RULES, env::DB_BACKEND],
                 }),
             );
         }
@@ -174,19 +174,19 @@ fn repeats(columns: &[ColumnRule]) -> Vec<Diagnostic> {
             continue;
         };
         let error = if first.name == column.name {
-            ConfigError::PiiRuleRepeat {
+            ConfigError::PrivacyRuleRepeat {
                 rule: column.name.clone(),
                 item: column.item,
                 first: first.item,
             }
         } else {
-            ConfigError::PiiRuleShared {
+            ConfigError::PrivacyRuleShared {
                 rule: column.name.clone(),
                 item: column.item,
                 other: first.name.clone(),
             }
         };
-        errors.push(Diagnostic::new(error).involving(&[env::PII_RULES]));
+        errors.push(Diagnostic::new(error).involving(&[env::PRIVACY_RULES]));
     }
     errors
 }
@@ -298,15 +298,15 @@ fn entity(node: &Node) -> Result<&'static str, String> {
     }
 }
 
-/// Casts a rule's operator like `pii.operator`; `null` inherits it.
-fn operator(node: &Node) -> Result<Option<PiiOperator>, String> {
+/// Casts a rule's operator like `privacy.operator`; `null` inherits it.
+fn operator(node: &Node) -> Result<Option<PrivacyOperator>, String> {
     match node {
         Node::Null => Ok(None),
-        Node::Str(text) => PiiOperator::CHOICES
+        Node::Str(text) => PrivacyOperator::CHOICES
             .iter()
             .find(|(name, _)| name == text)
             .map(|&(_, operator)| Some(operator))
-            .ok_or_else(|| format!("expected one of {}", env::PII_OPERATOR_NAMES.join(", "))),
+            .ok_or_else(|| format!("expected one of {}", env::PRIVACY_OPERATOR_NAMES.join(", "))),
         other => Err(unexpected("string", other)),
     }
 }
@@ -346,7 +346,7 @@ mod tests {
             name: name.map(str::to_owned),
             ..db_config(backend)
         };
-        resolve(&rules, &database, PiiOperator::Hash)
+        resolve(&rules, &database, PrivacyOperator::Hash)
             .map(|columns| columns.iter().map(|column| column.key.join(".")).collect())
             .map_err(|errors| errors.iter().map(|error| error.error.to_string()).collect())
     }
@@ -397,7 +397,7 @@ mod tests {
             assert_eq!(
                 emails(backend, None, keys),
                 Err(vec![format!(
-                    "pii.rules: emails: columns: {items}: a key without its database requires database.name on {backend}"
+                    "privacy.rules: emails: columns: {items}: a key without its database requires database.name on {backend}"
                 )]),
                 "{backend}"
             );
@@ -411,21 +411,21 @@ mod tests {
         assert_eq!(
             emails(Mariadb, None, &["def.s.t.a", "main.s.t.b", "x.s.t.c"]),
             Err(vec![
-                "pii.rules: emails: columns: item 1, item 2: catalog segment must be def on mariadb".to_owned()
+                "privacy.rules: emails: columns: item 1, item 2: catalog segment must be def on mariadb".to_owned()
             ])
         );
         assert!(emails(Sqlite, Some("app.db"), &["Main.s.t.c"]).is_ok());
         assert_eq!(
             emails(Sqlite, Some("app.db"), &["def.s.t.c"]),
             Err(vec![
-                "pii.rules: emails: columns: item 0: catalog segment must be main on sqlite".to_owned()
+                "privacy.rules: emails: columns: item 0: catalog segment must be main on sqlite".to_owned()
             ])
         );
         assert!(emails(Postgres, Some("Shop"), &["shop.public.t.c"]).is_ok());
         assert_eq!(
             emails(Postgres, Some("shop"), &["other.public.t.c"]),
             Err(vec![
-                "pii.rules: emails: columns: item 0: catalog segment must be database.name on postgres".to_owned()
+                "privacy.rules: emails: columns: item 0: catalog segment must be database.name on postgres".to_owned()
             ])
         );
         assert!(emails(Postgres, None, &["anything.public.t.c"]).is_ok());
@@ -440,8 +440,8 @@ mod tests {
                 &["users.email", "def.shop.users.email", "SHOP.Users.Email"]
             ),
             Err(vec![
-                "pii.rules: emails: columns: item 1 repeats item 0".to_owned(),
-                "pii.rules: emails: columns: item 2 repeats item 0".to_owned(),
+                "privacy.rules: emails: columns: item 1 repeats item 0".to_owned(),
+                "privacy.rules: emails: columns: item 2 repeats item 0".to_owned(),
             ])
         );
         assert_eq!(
@@ -451,7 +451,7 @@ mod tests {
                 &[("emails", &["users.email"]), ("cards", &["main.main.users.email"])]
             ),
             Err(vec![
-                "pii.rules: cards: columns: item 0 is also in rule emails".to_owned()
+                "privacy.rules: cards: columns: item 0 is also in rule emails".to_owned()
             ])
         );
     }

@@ -320,7 +320,9 @@ async fn host_recorded_only_as_ecdsa_or_rsa_connects() {
 #[tokio::test]
 async fn tool_error_names_ssh_failure() {
     let mut command = command();
+    // The default `full` mode would redact the host in the error text.
     command
+        .env("DBMCP_PRIVACY_MODE", "none")
         .env("DBMCP_SSH_PASSWORD", "wrong")
         .env_remove("DBMCP_SSH_KEY")
         .env("DBMCP_DB_CONNECTION_TIMEOUT", "5");

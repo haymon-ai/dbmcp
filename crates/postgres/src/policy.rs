@@ -1,4 +1,4 @@
-//! Column rule (`pii.rules`) enforcement on `PostgreSQL`.
+//! Column rule (`privacy.rules`) enforcement on `PostgreSQL`.
 //!
 //! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
 //! statement through [`PostgresHandler::enforce`]. On one pooled connection
@@ -30,7 +30,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::mem;
 
-use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection,
     Relation, RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
@@ -338,7 +338,7 @@ impl PostgresHandler {
     /// else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PiiConfig,
+        policy: &PrivacyConfig,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -385,7 +385,7 @@ fn values(row: Value) -> Vec<Value> {
 /// Plans and executes one statement inside a transaction on `conn`.
 async fn run<'c>(
     conn: &mut sqlx::PgConnection,
-    config: &'c PiiConfig,
+    config: &'c PrivacyConfig,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
@@ -1404,7 +1404,7 @@ mod tests {
     async fn unchanged_across(
         conn: &mut sqlx::PgConnection,
         other: &mut sqlx::PgConnection,
-        config: &PiiConfig,
+        config: &PrivacyConfig,
         sql: &str,
         change: &'static str,
     ) -> bool {
@@ -1455,11 +1455,11 @@ mod tests {
             item: 0,
             key: ["app", "public", table, "email"].map(String::from),
             entity: "EMAIL_ADDRESS",
-            operator: dbmcp_config::PiiOperator::Hash,
+            operator: dbmcp_config::PrivacyOperator::Hash,
         };
-        let config = PiiConfig {
+        let config = PrivacyConfig {
             rules: vec![rule("drift_p2"), rule("drift_kid")],
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         };
         let read = "SELECT id, email FROM drift_p";
 

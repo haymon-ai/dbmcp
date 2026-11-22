@@ -1,5 +1,5 @@
 [package]
-name = "dbmcp-pii"
+name = "dbmcp-privacy"
 description = "PII analyzer and anonymizer for dbmcp"
 version.workspace = true
 edition.workspace = true

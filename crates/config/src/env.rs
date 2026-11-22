@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::log::LogLevel;
 use crate::node::Node;
-use crate::pii::{PiiCategory, PiiOperator};
+use crate::privacy::{PrivacyCategory, PrivacyMode, PrivacyOperator};
 use crate::rules::{self, Rule};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
@@ -24,6 +24,18 @@ pub const CONFIG_FILE_VAR: &str = "DBMCP_CONFIG_FILE";
 
 /// Env var naming the dotenv files; a loader input, not a setting.
 pub const ENV_FILE_VAR: &str = "DBMCP_ENV_FILE";
+
+/// Removed `DBMCP_PII_*` env names, each with the setting that replaced it.
+///
+/// A non-empty one stops startup, naming the replacement's env var.
+pub(crate) const RENAMED: &[(&str, Setting)] = &[
+    ("DBMCP_PII_ENABLE", PRIVACY_MODE),
+    ("DBMCP_PII_OPERATOR", PRIVACY_OPERATOR),
+    ("DBMCP_PII_KEY", PRIVACY_KEY),
+    ("DBMCP_PII_CATEGORIES", PRIVACY_CATEGORIES),
+    ("DBMCP_PII_NER_ENABLE", PRIVACY_MODEL),
+    ("DBMCP_PII_NER_MODEL", PRIVACY_MODEL),
+];
 
 /// One setting: its dotted YAML key path, env var name, and value kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +81,7 @@ pub enum Kind {
         /// Expand `~` in process env values as well.
         home_from_env: bool,
     },
-    /// The `pii.rules` map of named column rules (YAML only).
+    /// The `privacy.rules` map of named column rules (YAML only).
     Rules,
 }
 
@@ -299,8 +311,9 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
-const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
+pub(crate) const PRIVACY_OPERATOR_NAMES: [&str; PrivacyOperator::CHOICES.len()] = names(PrivacyOperator::CHOICES);
+const PRIVACY_MODE_NAMES: [&str; PrivacyMode::CHOICES.len()] = names(PrivacyMode::CHOICES);
+const PRIVACY_CATEGORY_NAMES: [&str; PrivacyCategory::CHOICES.len()] = names(PrivacyCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);
 
@@ -410,26 +423,28 @@ pub const HTTP_ALLOW_UNAUTHENTICATED: Setting = setting(
     "DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED",
     Kind::Bool,
 );
-/// `pii.enabled` / `DBMCP_PII_ENABLE`.
-pub const PII_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
-/// `pii.operator` / `DBMCP_PII_OPERATOR`.
-pub const PII_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", choice(&PII_OPERATOR_NAMES));
-/// `pii.key` / `DBMCP_PII_KEY`.
-pub const PII_KEY: Setting = setting("pii.key", "DBMCP_PII_KEY", Kind::Text);
-/// `pii.categories` / `DBMCP_PII_CATEGORIES`.
-pub const PII_CATEGORIES: Setting = setting(
-    "pii.categories",
-    "DBMCP_PII_CATEGORIES",
+/// `privacy.mode` / `DBMCP_PRIVACY_MODE`.
+pub const PRIVACY_MODE: Setting = setting("privacy.mode", "DBMCP_PRIVACY_MODE", choice(&PRIVACY_MODE_NAMES));
+/// `privacy.operator` / `DBMCP_PRIVACY_OPERATOR`.
+pub const PRIVACY_OPERATOR: Setting = setting(
+    "privacy.operator",
+    "DBMCP_PRIVACY_OPERATOR",
+    choice(&PRIVACY_OPERATOR_NAMES),
+);
+/// `privacy.key` / `DBMCP_PRIVACY_KEY`.
+pub const PRIVACY_KEY: Setting = setting("privacy.key", "DBMCP_PRIVACY_KEY", Kind::Text);
+/// `privacy.categories` / `DBMCP_PRIVACY_CATEGORIES`.
+pub const PRIVACY_CATEGORIES: Setting = setting(
+    "privacy.categories",
+    "DBMCP_PRIVACY_CATEGORIES",
     Kind::List {
-        choices: Some(&PII_CATEGORY_NAMES),
+        choices: Some(&PRIVACY_CATEGORY_NAMES),
     },
 );
-/// `pii.ner_enabled` / `DBMCP_PII_NER_ENABLE`.
-pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
-/// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
-pub const PII_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
-/// `pii.rules` (YAML only).
-pub const PII_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
+/// `privacy.model` / `DBMCP_PRIVACY_MODEL`.
+pub const PRIVACY_MODEL: Setting = setting("privacy.model", "DBMCP_PRIVACY_MODEL", FILE_PATH);
+/// `privacy.rules` (YAML only).
+pub const PRIVACY_RULES: Setting = yaml_only("privacy.rules", Kind::Rules);
 /// `ssh.host` / `DBMCP_SSH_HOST`.
 pub const SSH_HOST: Setting = setting("ssh.host", "DBMCP_SSH_HOST", Kind::Text);
 /// `ssh.port` / `DBMCP_SSH_PORT`.
@@ -489,13 +504,12 @@ pub const SETTINGS: &[Setting] = &[
     HTTP_ALLOWED_HOSTS,
     HTTP_AUTH_TOKEN,
     HTTP_ALLOW_UNAUTHENTICATED,
-    PII_ENABLE,
-    PII_OPERATOR,
-    PII_KEY,
-    PII_CATEGORIES,
-    PII_NER_ENABLE,
-    PII_NER_MODEL,
-    PII_RULES,
+    PRIVACY_MODE,
+    PRIVACY_OPERATOR,
+    PRIVACY_KEY,
+    PRIVACY_CATEGORIES,
+    PRIVACY_MODEL,
+    PRIVACY_RULES,
     SSH_HOST,
     SSH_PORT,
     SSH_USER,
@@ -692,7 +706,7 @@ mod tests {
     #[test]
     fn every_config_field_has_a_setting() {
         // One row per leaf field of `Config` plus the top-level log level.
-        assert_eq!(SETTINGS.len(), 45);
+        assert_eq!(SETTINGS.len(), 44);
     }
 
     #[test]

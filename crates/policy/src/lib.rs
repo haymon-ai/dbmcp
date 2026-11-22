@@ -1,11 +1,11 @@
-//! Column-rules (`pii.rules`) policy planner for `dbmcp`.
+//! Column-rules (`privacy.rules`) policy planner for `dbmcp`.
 //!
 //! Backends reach SQL lineage only through this crate. An [`Analysis`]
 //! analyzes one statement, asking the backend for each relation it names
 //! that the catalog lacks; the backend looks the names up on its own
 //! connection and passes back an [`Entry`] for each. The finished
 //! [`Analyzed`] statement then plans with [`Analyzed::plan`] under the
-//! `pii.rules` of a [`PiiConfig`]: one [`Position`] per output column saying
+//! `privacy.rules` of a [`PrivacyConfig`]: one [`Position`] per output column saying
 //! how its values are redacted, bound to those rules as a [`Planned`], which
 //! checks, withholds errors for, and redacts the result. Planning rejects the
 //! statement instead, before it runs, when any gate fails. The gates run in this order, all fail closed:
@@ -58,8 +58,8 @@
 //! touches a database. Rejection messages name only catalog identifiers,
 //! never a rule's name, entity, or operator, nor a value.
 //!
-//! [`PiiConfig`]: dbmcp_config::PiiConfig
-//! [`Position`]: dbmcp_pii::cells::Position
+//! [`PrivacyConfig`]: dbmcp_config::PrivacyConfig
+//! [`Position`]: dbmcp_privacy::cells::Position
 
 mod analysis;
 mod catalog;

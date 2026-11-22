@@ -65,9 +65,9 @@ This project follows the [Microsoft Pragmatic Rust Guidelines](https://microsoft
 
 Settings have no CLI flag. Each one has a YAML key path and an env var, both declared in the `SETTINGS` table in `crates/config/src/env.rs`; the loader in `crates/config/src/loader.rs` reads and casts it.
 
-- **YAML key**: the Rust field name in its section (`database.read_only`, `pii.ner_enabled`).
-- **Env var**: hand-picked, not derived from the key path: `DBMCP_` + section prefix (`DB_`, `HTTP_`, `PII_`, `SSH_`; none for top-level settings) + a SCREAMING_SNAKE concept name. Deliberate exceptions are fine (`DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Never rename or alias an existing name.
-- **YAML only**: a setting whose value has no sensible env form (a map, such as `pii.rules`) is declared with `yaml_only` and has no env var; its table row shows "— (YAML only)".
+- **YAML key**: the Rust field name in its section (`database.read_only`, `privacy.model`).
+- **Env var**: hand-picked, not derived from the key path: `DBMCP_` + section prefix (`DB_`, `HTTP_`, `PRIVACY_`, `SSH_`; none for top-level settings) + a SCREAMING_SNAKE concept name. Deliberate exceptions are fine (`DBMCP_HTTP_DANGEROUSLY_ALLOW_UNAUTHENTICATED`). Never rename or alias an existing name.
+- **YAML only**: a setting whose value has no sensible env form (a map, such as `privacy.rules`) is declared with `yaml_only` and has no env var; its table row shows "— (YAML only)".
 - Add the new row to the all-settings table in `docs/content/docs/configuration/index.mdx`, and document it on the page that explains its feature.
 
 ### Dependencies
