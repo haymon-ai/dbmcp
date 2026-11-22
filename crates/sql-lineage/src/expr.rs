@@ -72,7 +72,6 @@ impl Ctx<'_> {
             | Expr::IsJson { expr: e, .. }
             | Expr::IsNormalized { expr: e, .. }
             | Expr::UnaryOp { expr: e, .. }
-            | Expr::Cast { expr: e, .. }
             | Expr::Extract { expr: e, .. }
             | Expr::Ceil { expr: e, .. }
             | Expr::Floor { expr: e, .. }
@@ -142,7 +141,19 @@ impl Ctx<'_> {
                 self.expr(low, level, clause, acc)?;
                 self.expr(high, level, clause, acc)
             }
-            Expr::Convert { expr, styles, .. } => {
+            Expr::Cast { expr, data_type, .. } => {
+                self.cast(data_type)?;
+                self.expr(expr, level, clause, acc)
+            }
+            Expr::Convert {
+                expr,
+                data_type,
+                styles,
+                ..
+            } => {
+                if let Some(data_type) = data_type {
+                    self.cast(data_type)?;
+                }
                 self.expr(expr, level, clause, acc)?;
                 self.all(styles, level, clause, acc)
             }

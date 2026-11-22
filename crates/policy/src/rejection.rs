@@ -28,6 +28,13 @@ pub enum Rejection {
         name: String,
     },
 
+    /// A cast target type missing from the dialect's built-in table.
+    #[error("column policy: type {name:?} is not a known built-in")]
+    UnknownType {
+        /// The type name, case-folded per dialect.
+        name: String,
+    },
+
     /// A relation that exposes values outside column policy.
     #[error("column policy: relation {relation:?} is denied")]
     DeniedRelation {
@@ -183,6 +190,7 @@ impl Rejection {
         match self {
             Self::Lineage(_) | Self::CatalogRounds => "lineage",
             Self::UnknownFunction { .. } => "function",
+            Self::UnknownType { .. } => "type",
             Self::DeniedRelation { .. } => "relation",
             Self::DeniedStatement => "statement",
             Self::Explain { .. } => "explain",

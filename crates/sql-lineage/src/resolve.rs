@@ -11,10 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sqlparser::ast::{
-    CastKind, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
-    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableAlias, TableFactor,
-    TableWithJoins, Value, Values, WildcardAdditionalOptions,
+    CastKind, DataType, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator,
+    LimitClause, NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableAlias,
+    TableFactor, TableWithJoins, Value, Values, WildcardAdditionalOptions,
 };
 
 use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
@@ -22,9 +22,11 @@ use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{
-    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, TypeUse,
 };
 use crate::statement::{Analysis, is_default};
+use crate::types;
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -50,6 +52,8 @@ pub(crate) struct Ctx<'c> {
     relations: BTreeSet<RelationUse>,
     /// Functions called.
     functions: BTreeSet<FunctionUse>,
+    /// Cast target types.
+    types: BTreeSet<TypeUse>,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
@@ -70,6 +74,7 @@ impl<'c> Ctx<'c> {
             references: BTreeSet::new(),
             relations: BTreeSet::new(),
             functions: BTreeSet::new(),
+            types: BTreeSet::new(),
             depth: 0,
             expr_depth: 0,
             views: Vec::new(),
@@ -100,6 +105,20 @@ impl<'c> Ctx<'c> {
         });
     }
 
+    /// Records a type cast to in the SQL being walked.
+    ///
+    /// # Errors
+    /// Returns [`LineageError::Unsupported`] if a type name part is not an identifier.
+    pub(crate) fn cast(&mut self, data_type: &DataType) -> Result<(), LineageError> {
+        let (name, known) = types::resolve(self.dialect, data_type)?;
+        self.types.insert(TypeUse {
+            name,
+            known,
+            origin: self.origin(),
+        });
+        Ok(())
+    }
+
     /// Ends the pass: the lineage of `analysis`, unless a name was missing.
     ///
     /// # Errors
@@ -124,6 +143,7 @@ impl<'c> Ctx<'c> {
             references: self.references,
             relations: self.relations,
             functions: self.functions,
+            types: self.types,
             target: analysis.target,
             writes: analysis.writes,
             statement: analysis.kind,
@@ -356,8 +376,8 @@ impl<'c> Ctx<'c> {
             return Err(unsupported("SELECT clause outside the modeled dialects"));
         }
 
-        for twj in from {
-            let tree = self.tree(twj, &level)?;
+        for (i, twj) in from.iter().enumerate() {
+            let tree = self.tree(twj, &level, i == 0)?;
             level.add(tree);
         }
 
@@ -517,10 +537,12 @@ impl<'c> Ctx<'c> {
     }
 
     /// Resolves a `FROM` item and its joins; `level` is the `SELECT` it belongs to.
-    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>) -> Result<Tree, LineageError> {
-        let mut tree = self.factor(&twj.relation, level)?;
+    ///
+    /// `first` marks the first item of its `FROM` list; see [`Ctx::factor`].
+    pub(crate) fn tree(&mut self, twj: &TableWithJoins, level: &Level<'_>, first: bool) -> Result<Tree, LineageError> {
+        let mut tree = self.factor(&twj.relation, level, first)?;
         for join in &twj.joins {
-            let right = self.factor(&join.relation, level)?;
+            let right = self.factor(&join.relation, level, false)?;
             tree = self.join(tree, right, join, level)?;
         }
         Ok(tree)
@@ -556,7 +578,8 @@ impl<'c> Ctx<'c> {
             JoinConstraint::Natural => Keys::Natural,
             JoinConstraint::UsingAlias(..) => return Err(unsupported("USING ... AS alias")),
         };
-        let (tree, joined) = left.join(self.dialect, right, keys)?;
+        let right_join = matches!(join.join_operator, JoinOperator::Right(_) | JoinOperator::RightOuter(_));
+        let (tree, joined) = left.join(self.dialect, right, keys, right_join)?;
         self.refer(joined, Role::Join);
         let JoinConstraint::On(expr) = constraint else {
             return Ok(tree);
@@ -566,7 +589,16 @@ impl<'c> Ctx<'c> {
         Ok(on.into_tree())
     }
 
-    pub(crate) fn factor(&mut self, factor: &TableFactor, level: &Level<'_>) -> Result<Tree, LineageError> {
+    /// Resolves one `FROM` factor.
+    ///
+    /// `first` marks the first factor of its `FROM` list: as an unaliased
+    /// parenthesized join, `SQLite` flattens only that one ([`Tree::nested`]).
+    pub(crate) fn factor(
+        &mut self,
+        factor: &TableFactor,
+        level: &Level<'_>,
+        first: bool,
+    ) -> Result<Tree, LineageError> {
         match factor {
             TableFactor::Table {
                 name,
@@ -611,9 +643,10 @@ impl<'c> Ctx<'c> {
                 table_with_joins,
                 alias,
             } => {
-                let tree = self.tree(table_with_joins, level)?;
+                let tree = self.tree(table_with_joins, level, true)?;
                 match alias {
-                    None => Ok(tree),
+                    None if first => Ok(tree),
+                    None => Ok(tree.nested(self.dialect)),
                     Some(alias) => tree.aliased(self.dialect, alias),
                 }
             }

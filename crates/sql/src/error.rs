@@ -32,8 +32,8 @@ pub enum SqlError {
     #[error("Query blocked: SHOW WARNINGS and SHOW ERRORS are not allowed")]
     DiagnosticsBlocked,
 
-    /// Character the tokenizer cannot read blocked: the server may read other SQL.
-    #[error("Query blocked: SQL contains characters the parser cannot read")]
+    /// Character or comment the parser and the server read differently blocked.
+    #[error("Query blocked: SQL contains characters the parser and the server read differently")]
     UnreadableCharacter,
 
     /// Executable comment blocked: the parser and the server would read different SQL.

@@ -153,23 +153,30 @@ const RESOLVE_SQL: &str = "SELECT s.nspname::text, c.relname::text, c.relkind::t
            JOIN pg_attribute AS ca ON ca.attrelid = w.child AND ca.attnum = w.ccol) AS fk ON true \
      ORDER BY n.ord";
 
-/// `SQLSTATE` classes whose messages name schema objects or states, never values.
+/// `SQLSTATE` codes whose messages name schema objects, states, or fixed limits, never values.
 ///
-/// Syntax and access (`42`), transaction state (`25`), rollbacks (`40`),
-/// resources (`53`), limits (`54`), operator intervention (`57`), and
-/// connections (`08`).
+/// Connections (`08`), transaction state (`25`), rollbacks (`40`), syntax and
+/// access (`42`), resources (`53`), the statement, column, and argument limits
+/// of `54`, and operator intervention (`57`), as listed in `errcodes.txt` of
+/// `PostgreSQL` 18. Any other code, a new one included, is withheld.
 ///
-/// Not unsupported features (`0A`): a `reg*` cast of a three-part value
+/// Not every code of those classes: `reg*` input casts (`ssn::regclass`)
+/// quote the cast text in syntax (`42601`), undefined-relation (`42P01`),
+/// -object (`42704`), -function (`42883`), and ambiguous-function (`42725`)
+/// errors, and `invalid_name` (`42602`) quotes configuration parameter and
+/// replication slot names taken from values. Nor `54000`, whose `tsvector`
+/// and `tsquery` input errors quote the whole input or its byte count; nor
+/// unsupported features (`0A`), where a `reg*` cast of a three-part value
 /// quotes it as a cross-database reference.
-const VALUE_FREE_CLASSES: &[&str] = &["42", "25", "40", "53", "54", "57", "08"];
-
-/// Class `42` codes withheld anyway.
-///
-/// `reg*` input casts (`ssn::regclass`) quote the cast text in syntax,
-/// undefined-relation, -object, -function, and ambiguous-function errors;
-/// `invalid_name` quotes configuration parameter and replication slot names
-/// taken from values.
-const VALUE_ECHOING_CODES: &[&str] = &["42601", "42602", "42P01", "42704", "42725", "42883"];
+const VALUE_FREE_CODES: &[&str] = &[
+    "08000", "08001", "08003", "08004", "08006", "08007", "08P01", "25000", "25001", "25002", "25003", "25004",
+    "25005", "25006", "25007", "25008", "25P01", "25P02", "25P03", "25P04", "40000", "40001", "40002", "40003",
+    "40P01", "42000", "42501", "42611", "42622", "42701", "42702", "42703", "42710", "42712", "42723", "42803",
+    "42804", "42809", "42830", "42846", "42939", "428C9", "42P02", "42P03", "42P04", "42P05", "42P06", "42P07",
+    "42P08", "42P09", "42P10", "42P11", "42P12", "42P13", "42P14", "42P15", "42P16", "42P17", "42P18", "42P19",
+    "42P20", "42P21", "42P22", "53000", "53100", "53200", "53300", "53400", "54001", "54011", "54023", "57000",
+    "57014", "57P01", "57P02", "57P03", "57P04", "57P05",
+];
 
 /// Re-reads the inheritance closure of each relation OID in `$1`, in order.
 ///
@@ -841,9 +848,12 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
         return None;
     }
     let code = error.as_database_error()?.code()?;
-    let value_free =
-        VALUE_FREE_CLASSES.iter().any(|class| code.starts_with(class)) && !VALUE_ECHOING_CODES.contains(&code.as_ref());
-    (!value_free).then(|| code.into_owned())
+    (!value_free(&code)).then(|| code.into_owned())
+}
+
+/// Whether messages of the `SQLSTATE` `code` never carry a value.
+fn value_free(code: &str) -> bool {
+    VALUE_FREE_CODES.contains(&code)
 }
 
 #[cfg(test)]
@@ -860,6 +870,36 @@ mod tests {
             schema: schema.map(Into::into),
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn value_echoing_codes_are_withheld() {
+        for code in [
+            "54000", "0A000", "22P02", "42601", "42602", "42P01", "42704", "42725", "42883", "XX000", "42ZZZ",
+        ] {
+            assert!(!value_free(code), "{code}");
+        }
+        for code in [
+            "42501", "42703", "25006", "40001", "53200", "54001", "54011", "54023", "57014", "08P01",
+        ] {
+            assert!(value_free(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn value_free_codes_are_unique_and_well_formed() {
+        let mut codes = VALUE_FREE_CODES.to_vec();
+        for code in &codes {
+            assert_eq!(code.len(), 5, "{code}");
+            assert!(
+                code.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_uppercase()),
+                "{code}"
+            );
+        }
+        let total = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), total, "duplicate code");
     }
 
     #[test]

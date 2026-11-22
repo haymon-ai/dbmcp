@@ -8,6 +8,7 @@
 //! ```
 
 mod probe;
+mod rows;
 
 use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PiiConfig, PiiOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
@@ -4854,6 +4855,25 @@ async fn column_rules_apply_to_star_and_keep_nulls() {
 }
 
 #[tokio::test]
+async fn column_rules_follow_star_order_over_natural_joins() {
+    // PostgreSQL puts the NATURAL keys first, in the left side's order.
+    let handler = handler_with_rules(100);
+    let query = "SELECT NULL AS a, NULL AS b, NULL AS c WHERE false UNION ALL \
+                 SELECT * FROM (SELECT credit_card, name, id FROM users WHERE id = 1) l \
+                 NATURAL JOIN (SELECT id, name FROM users WHERE id = 1) r";
+    let rows = ruled_read(&handler, query).await.expect(query);
+    rows::assert_cells(
+        query,
+        &rows,
+        &[
+            Value::from("Alice Johnson"),
+            Value::from(1),
+            Value::from("<CREDIT_CARD>"),
+        ],
+    );
+}
+
+#[tokio::test]
 async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
     let handler = handler_with_rules(100);
     let users = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
@@ -5363,10 +5383,34 @@ async fn column_rules_withhold_value_echoing_errors() {
         "SELECT email::regclass AS x FROM users",
         // Three parts read as a cross-database reference: `0A000` quotes the value.
         "SELECT ('x.' || email)::regclass AS x FROM users",
+        // `54000` is withheld whole: `tsvector` and `tsquery` input quote the whole input or its byte count.
+        "SELECT repeat(email, 1000000000) AS x FROM users",
     ] {
         let refusal = ruled_refusal(&handler, query).await;
         assert!(refusal.contains("withheld"), "{query}: {refusal}");
         assert!(!refusal.contains("@example.com"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_casts_to_value_echoing_types() {
+    let handler = handler_with_rules(100);
+    for (query, name) in [
+        (
+            "SELECT CAST(repeat('a', 2047 + ascii(email)) AS tsvector) AS x FROM users",
+            "tsvector",
+        ),
+        (
+            "SELECT (repeat('x', 2100) || email)::tsquery AS x FROM users",
+            "tsquery",
+        ),
+        ("SELECT email::pg_catalog.tsquery AS x FROM users", "pg_catalog.tsquery"),
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!("type \"{name}\" is not a known built-in")),
+            "{query}: {refusal}"
+        );
     }
 }
 

@@ -166,14 +166,16 @@ const TRANSACTIONAL_ENGINE: &str = "InnoDB";
 ///
 /// Unknown column (1054) or table (1146), syntax (1064, which quotes the
 /// caller's own SQL), access (1142, 1143), unknown function (1305), foreign
-/// keys (1451, 1452), `NULL` (1048), range (1264), length (1406), checks
-/// (3819, `MariaDB` 4025), JSON (3140, 3141), and duplicate column names
-/// (1060, which name the caller's own output columns).
+/// keys (1451, 1452), `NULL` (1048), checks (3819, `MariaDB` 4025), and
+/// duplicate column names (1060, which name the caller's own output columns).
 ///
-/// Not arithmetic overflow (1690): its expression may print an evaluated argument.
-const VALUE_FREE_ERRORS: &[u16] = &[
-    1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 1264, 1406, 3819, 4025, 3140, 3141, 1060,
-];
+/// Not arithmetic overflow (1690): its expression may print an evaluated
+/// argument. Not invalid JSON text (3140, 3141): its position can encode a
+/// value (`CAST(CONCAT(REPEAT(' ', ASCII(email)), 'x') AS JSON)`). Not out of
+/// range (1264) or too long (1406): their row number can encode a value
+/// (`UPDATE users SET ssn = IF(ssn LIKE '1%', REPEAT('x', 99), ssn)` fails at
+/// the first matching row).
+const VALUE_FREE_ERRORS: &[u16] = &[1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 3819, 4025, 1060];
 
 /// Whether the statement may write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,8 +443,9 @@ impl MysqlHandler {
     ///
     /// # Errors
     ///
-    /// Returns [`SqlError::MultiStatement`] or
-    /// [`SqlError::ExecutableCommentBlocked`] for SQL the parser would read
+    /// Returns [`SqlError::MultiStatement`],
+    /// [`SqlError::ExecutableCommentBlocked`], or
+    /// [`SqlError::UnreadableCharacter`] for SQL the parser would read
     /// unlike the server, [`SqlError::ReadOnlyViolation`] for a write in
     /// read-only mode, a refusal when the handler has no redactor, the
     /// reason the column rules stopped the statement, or the [`SqlError`]
@@ -1231,6 +1234,21 @@ mod tests {
         let target = RelationId::new(CATALOG, "app", "source");
         let owners = [owner("source", None, Some("select 1"))];
         assert!(rolls_back(&StatementKind::CreateTableAs, Some(&target), &owners));
+    }
+
+    #[test]
+    fn value_echoing_errors_are_not_value_free() {
+        for number in [1062, 1264, 1366, 1406, 1690, 3140, 3141] {
+            assert!(!VALUE_FREE_ERRORS.contains(&number), "{number}");
+        }
+    }
+
+    #[test]
+    fn value_free_errors_are_unique() {
+        let mut numbers = VALUE_FREE_ERRORS.to_vec();
+        numbers.sort_unstable();
+        numbers.dedup();
+        assert_eq!(numbers.len(), VALUE_FREE_ERRORS.len(), "duplicate error");
     }
 
     /// Connects to the seeded `app` database that `./tests/run.sh` starts.

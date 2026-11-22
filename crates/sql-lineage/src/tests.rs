@@ -427,6 +427,27 @@ fn nested_and_subquery_functions_are_recorded() {
 }
 
 #[test]
+fn cast_types_are_recorded_and_carry_operand_sources() {
+    let lineage = pg("SELECT email::int, CAST(ssn AS tsvector), email::pg_catalog.tsquery, ssn::citext[] FROM users")
+        .expect("analyze");
+    let sources: Vec<_> = columns(&lineage).into_iter().map(|(_, sources)| sources).collect();
+    assert_eq!(
+        sources,
+        [["users.email"], ["users.ssn"], ["users.email"], ["users.ssn"]]
+    );
+    let types: Vec<_> = lineage.types.iter().map(|t| (t.name.as_str(), t.known)).collect();
+    assert_eq!(
+        types,
+        vec![
+            ("citext[]", false),
+            ("int", true),
+            ("pg_catalog.tsquery", false),
+            ("tsvector", false)
+        ]
+    );
+}
+
+#[test]
 fn repeated_function_is_recorded_once() {
     let lineage = pg("SELECT lower(email), lower(ssn) FROM users").expect("analyze");
     assert_eq!(functions(&lineage), vec![("lower", true)]);
@@ -987,6 +1008,194 @@ fn every_join_kind_merges_shared_keys_first_with_both_sources() {
     .expect("analyze");
     assert_eq!(columns(&lineage), vec![col("x", &["a.x"])]);
     assert_eq!(refs(&lineage), vec![r("a.id", Role::Join), r("b.id", Role::Join)]);
+}
+
+/// Analyzes `SELECT * …` over `l(p, k1, x, k2)`, `r(k2, y, k1, z)`, `c(z, w)`,
+/// `d(k1, q)`, `e(k2, m)`, `hi(a, k1, b)` (`k1` invisible), and `hj(k1, c2)`.
+///
+/// Returns the output names, and checks the compound and CTE wrappers keep them.
+fn star_order(dialect: Dialect, from: &str) -> Vec<String> {
+    let catalog = catalog(&[
+        ("l", &["p", "k1", "x", "k2"]),
+        ("r", &["k2", "y", "k1", "z"]),
+        ("c", &["z", "w"]),
+        ("d", &["k1", "q"]),
+        ("e", &["k2", "m"]),
+        ("hi", &["a", "~k1", "b"]),
+        ("hj", &["k1", "c2"]),
+    ]);
+    let order = |sql: &str| -> Vec<(String, Vec<String>)> {
+        columns(&analyze(sql, dialect, &catalog).unwrap_or_else(|e| panic!("{sql}: {e}")))
+    };
+    let plain = order(&format!("SELECT * FROM {from}"));
+    let width = plain.len();
+    let literals = (0..width).map(|i| format!("0 AS c{i}")).collect::<Vec<_>>().join(", ");
+    let compound = order(&format!("SELECT {literals} UNION ALL SELECT * FROM {from}"));
+    let cte = order(&format!("WITH j AS (SELECT * FROM {from}) SELECT * FROM j"));
+    for (wrapped, what) in [(&compound, "compound"), (&cte, "CTE")] {
+        let sources: Vec<_> = wrapped.iter().map(|(_, s)| s.clone()).collect();
+        let expected: Vec<_> = plain.iter().map(|(_, s)| s.clone()).collect();
+        assert_eq!(sources, expected, "{what} over {from}");
+    }
+    plain.into_iter().map(|(name, _)| name).collect()
+}
+
+#[test]
+fn star_over_sqlite_using_and_natural_joins_keeps_left_columns_in_place() {
+    // SQLite keeps the left columns in place and appends the right ones.
+    for (from, expected) in [
+        ("l JOIN r USING (k2, k1)", &["p", "k1", "x", "k2", "y", "z"][..]),
+        ("l NATURAL JOIN r", &["p", "k1", "x", "k2", "y", "z"]),
+        ("l LEFT JOIN r USING (k1)", &["p", "k1", "x", "k2", "k2", "y", "z"]),
+        ("l RIGHT JOIN r USING (k1)", &["p", "k1", "x", "k2", "k2", "y", "z"]),
+        ("l FULL JOIN r USING (k2, k1)", &["p", "k1", "x", "k2", "y", "z"]),
+        (
+            "l JOIN r USING (k1) JOIN c USING (z)",
+            &["p", "k1", "x", "k2", "k2", "y", "z", "w"],
+        ),
+        (
+            "l NATURAL JOIN r NATURAL JOIN c",
+            &["p", "k1", "x", "k2", "y", "z", "w"],
+        ),
+        (
+            "l JOIN d ON 1=1 JOIN r USING (k1)",
+            &["p", "k1", "x", "k2", "k1", "q", "k2", "y", "z"],
+        ),
+        ("l JOIN r USING (k1, k1)", &["p", "k1", "x", "k2", "k2", "y", "z"]),
+        (
+            "(l JOIN r USING (k1)) JOIN c ON 1=1",
+            &["p", "k1", "x", "k2", "k2", "y", "z", "z", "w"],
+        ),
+        (
+            "c RIGHT JOIN l ON 1=1 JOIN r USING (k1)",
+            &["z", "w", "p", "k1", "x", "k2", "k2", "y", "z"],
+        ),
+    ] {
+        assert_eq!(star_order(Dialect::Sqlite, from), expected, "SQLite: {from}");
+    }
+}
+
+#[test]
+fn star_over_a_nested_sqlite_join_follows_its_subquery_order() {
+    // SQLite reads any other parenthesized join as a subquery: each item's
+    // keys come before the item to its left, and repeated names get `:n`.
+    for (from, expected) in [
+        (
+            "c JOIN (l JOIN r USING (k1)) ON 1=1",
+            &["z", "w", "k1", "p", "x", "k2", "k2:1", "y", "z"][..],
+        ),
+        (
+            "c, (l JOIN r USING (k1))",
+            &["z", "w", "k1", "p", "x", "k2", "k2:1", "y", "z"],
+        ),
+        ("(l JOIN d USING (k1)) AS j", &["k1", "p", "x", "k2", "q"]),
+        (
+            "c JOIN (l NATURAL JOIN r) ON 1=1",
+            &["z", "w", "k2", "k1", "p", "x", "y", "z"],
+        ),
+        (
+            "l JOIN (r JOIN c USING (z)) USING (k1)",
+            &["p", "k1", "x", "k2", "z", "k2", "y", "w"],
+        ),
+        (
+            "c JOIN (l JOIN d USING (k1) JOIN e USING (k2)) ON 1=1",
+            &["z", "w", "k1", "p", "x", "k2", "k2:1", "q", "m"],
+        ),
+        (
+            "c JOIN (l JOIN r ON 1=1) ON 1=1",
+            &["z", "w", "p", "k1", "x", "k2", "k2:1", "y", "k1:1", "z"],
+        ),
+        (
+            "d JOIN (e RIGHT JOIN (c JOIN l ON 1=1) ON 1=1) USING (k1)",
+            &["k1", "q", "k2", "m", "z", "w", "p", "x", "k2:1"],
+        ),
+    ] {
+        assert_eq!(star_order(Dialect::Sqlite, from), expected, "SQLite: {from}");
+    }
+}
+
+#[test]
+fn star_over_mysql_using_and_natural_joins_follows_each_server_order() {
+    // MySQL puts the keys first in the first side's order; RIGHT makes the right side first.
+    for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+        for (from, expected) in [
+            ("l JOIN r USING (k2, k1)", &["k1", "k2", "p", "x", "y", "z"][..]),
+            ("l LEFT JOIN r USING (k2, k1)", &["k1", "k2", "p", "x", "y", "z"]),
+            ("l NATURAL JOIN r", &["k1", "k2", "p", "x", "y", "z"]),
+            ("l RIGHT JOIN r USING (k1, k2)", &["k2", "k1", "y", "z", "p", "x"]),
+            (
+                "l RIGHT OUTER JOIN r USING (k1)",
+                &["k1", "k2", "y", "z", "p", "x", "k2"],
+            ),
+            ("l NATURAL RIGHT JOIN r", &["k2", "k1", "y", "z", "p", "x"]),
+            ("l RIGHT JOIN c ON l.p = c.z", &["p", "k1", "x", "k2", "z", "w"]),
+            ("l JOIN r USING (k1, k1)", &["k1", "p", "x", "k2", "k2", "y", "z"]),
+            (
+                "c JOIN (l JOIN r USING (k1)) ON 1=1",
+                &["z", "w", "k1", "p", "x", "k2", "k2", "y", "z"],
+            ),
+            (
+                "c RIGHT JOIN l ON 1=1 JOIN r ON 1=1",
+                &["z", "w", "p", "k1", "x", "k2", "k2", "y", "k1", "z"],
+            ),
+            ("hj JOIN hi USING (k1)", &["k1", "c2", "a", "b"]),
+        ] {
+            assert_eq!(star_order(dialect, from), expected, "{dialect:?}: {from}");
+        }
+    }
+
+    // MySQL reads a USING or NATURAL operand with each RIGHT join's right side
+    // first; MariaDB only swaps the RIGHT join that has the keys.
+    for (from, mysql, mariadb) in [
+        (
+            "c RIGHT JOIN l ON 1=1 JOIN r USING (k1)",
+            &["k1", "p", "x", "k2", "z", "w", "k2", "y", "z"][..],
+            &["k1", "z", "w", "p", "x", "k2", "k2", "y", "z"][..],
+        ),
+        (
+            "d JOIN (c RIGHT JOIN l ON 1=1) USING (k1)",
+            &["k1", "q", "p", "x", "k2", "z", "w"],
+            &["k1", "q", "z", "w", "p", "x", "k2"],
+        ),
+        (
+            "d NATURAL JOIN (l RIGHT JOIN c ON 1=1)",
+            &["k1", "q", "z", "w", "p", "x", "k2"],
+            &["k1", "q", "p", "x", "k2", "z", "w"],
+        ),
+        (
+            "c RIGHT JOIN l ON 1=1 RIGHT JOIN r USING (k1)",
+            &["k1", "k2", "y", "z", "p", "x", "k2", "z", "w"],
+            &["k1", "k2", "y", "z", "z", "w", "p", "x", "k2"],
+        ),
+        (
+            "d JOIN (e RIGHT JOIN (c JOIN l ON 1=1) ON 1=1) USING (k1)",
+            &["k1", "q", "z", "w", "p", "x", "k2", "k2", "m"],
+            &["k1", "q", "k2", "m", "z", "w", "p", "x", "k2"],
+        ),
+        // MariaDB hides a merged key the first side hides.
+        ("hi JOIN hj USING (k1)", &["k1", "a", "b", "c2"], &["a", "b", "c2"]),
+        (
+            "hj RIGHT JOIN hi USING (k1)",
+            &["k1", "a", "b", "c2"],
+            &["a", "b", "c2"],
+        ),
+    ] {
+        assert_eq!(star_order(Dialect::Mysql, from), mysql, "Mysql: {from}");
+        assert_eq!(star_order(Dialect::Mariadb, from), mariadb, "Mariadb: {from}");
+    }
+}
+
+#[test]
+fn star_over_postgres_using_and_natural_joins_keeps_the_key_order() {
+    // PostgreSQL keeps the USING order, and the left side's order for NATURAL.
+    for (from, expected) in [
+        ("l JOIN r USING (k2, k1)", &["k2", "k1", "p", "x", "y", "z"][..]),
+        ("l RIGHT JOIN r USING (k2, k1)", &["k2", "k1", "p", "x", "y", "z"]),
+        ("l NATURAL JOIN r", &["k1", "k2", "p", "x", "y", "z"]),
+        ("l NATURAL RIGHT JOIN r", &["k1", "k2", "p", "x", "y", "z"]),
+    ] {
+        assert_eq!(star_order(Dialect::Postgres, from), expected, "PostgreSQL: {from}");
+    }
 }
 
 #[test]

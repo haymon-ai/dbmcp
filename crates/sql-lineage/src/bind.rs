@@ -175,18 +175,34 @@ impl Rel {
 /// How a join tree combines its two sides' columns.
 #[derive(Debug)]
 pub(crate) enum Keys {
-    /// `USING` keys, merged first; none for `ON` and `CROSS JOIN`, which concatenate.
+    /// `USING` keys, merged; none for `ON` and `CROSS JOIN`, which concatenate.
     Using(Vec<Ident>),
-    /// `NATURAL`: every visible column both sides share, merged first.
+    /// `NATURAL`: every visible column both sides share, merged.
     Natural,
+}
+
+/// One `SQLite` `FROM` item a tree holds, with the keys that join it on.
+#[derive(Debug, Clone)]
+struct Item {
+    /// The item's own columns.
+    cols: Columns,
+    /// The `USING` list, or the `NATURAL` keys in the item's order; none for the first item.
+    keys: Vec<Ident>,
 }
 
 /// One `FROM` item: the relations a qualifier can name and the combined columns.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Tree {
     rels: Vec<Rel>,
-    /// Combined columns for `*` and unqualified lookups, merged keys first.
+    /// Combined columns for `*` and unqualified lookups, in the server's `*` order.
     cols: Columns,
+    /// `MySQL`: the columns as a `USING` or `NATURAL` operand, when they differ from `cols`.
+    ///
+    /// `MySQL` rewrites each `RIGHT JOIN` as a `LEFT JOIN`, which puts its
+    /// right side first there; `*` over an `ON` join keeps the written order.
+    operand: Option<Columns>,
+    /// `SQLite`: the `FROM` items this tree flattens, for [`Tree::nested`].
+    items: Vec<Item>,
 }
 
 impl Tree {
@@ -209,6 +225,13 @@ impl Tree {
             }
             None => path,
         };
+        let items = match dialect {
+            Dialect::Sqlite => vec![Item {
+                cols: columns.clone(),
+                keys: Vec::new(),
+            }],
+            Dialect::Postgres | Dialect::Mysql | Dialect::Mariadb => Vec::new(),
+        };
         Ok(Self {
             rels: vec![Rel {
                 path,
@@ -216,6 +239,8 @@ impl Tree {
                 table: None,
             }],
             cols: columns,
+            operand: None,
+            items,
         })
     }
 
@@ -313,67 +338,282 @@ impl Tree {
     /// # Errors
     /// See [`Columns::rename`].
     pub(crate) fn aliased(self, dialect: Dialect, alias: &TableAlias) -> Result<Self, LineageError> {
-        Self::single(dialect, Vec::new(), self.cols, Some(alias))
+        Self::single(dialect, Vec::new(), self.nested(dialect).cols, Some(alias))
+    }
+
+    /// Reads this join as `SQLite` reads a parenthesized join it does not flatten.
+    ///
+    /// `SQLite` flattens one only as the first item of its `FROM` list,
+    /// unaliased; any other is a subquery over its `FROM` items. Its `*`
+    /// puts each item's keys before the item to its left and hides the
+    /// columns they merge on both items. A repeated name becomes `name:1`,
+    /// `name:2`, …, and a column whose name meets an earlier key is hidden
+    /// too. Other dialects read the join unchanged.
+    pub(crate) fn nested(self, dialect: Dialect) -> Self {
+        if dialect != Dialect::Sqlite || self.items.len() < 2 {
+            return self;
+        }
+        // Each term: the column, whether it is a merged key, whether `*` hides it.
+        let mut terms = Vec::new();
+        for (i, item) in self.items.iter().enumerate() {
+            let next = self.items.get(i + 1).map_or(&[][..], |next| next.keys.as_slice());
+            for key in next {
+                let mut sources = Sources::new();
+                let mut flow = Flow::Null;
+                // SQLite binds the key to the leftmost column and the next item's.
+                let left = self.items[..=i].iter().find_map(|item| find(dialect, key, &item.cols));
+                let right = find(dialect, key, &self.items[i + 1].cols);
+                for col in left.into_iter().chain(right) {
+                    sources.extend(col.sources.iter().cloned());
+                    flow = flow.merge(col.flow);
+                }
+                let col = Col {
+                    name: key.value.clone(),
+                    sources,
+                    flow,
+                    visible: true,
+                    named: true,
+                };
+                terms.push((col, true, false));
+            }
+            for col in item.cols.cols.iter().filter(|c| c.visible) {
+                let merged = item.keys.iter().chain(next).any(|key| dialect.matches(key, &col.name));
+                terms.push((col.clone(), false, merged));
+            }
+        }
+
+        let mut taken: Vec<(String, bool)> = Vec::new();
+        let mut cols = Vec::new();
+        for (mut col, key, mut hidden) in terms {
+            let stem = col.name.trim_end_matches(|c: char| c.is_ascii_digit());
+            let stem = stem.strip_suffix(':').unwrap_or(&col.name).to_string();
+            let mut suffix = 0;
+            while let Some(&(_, earlier)) = taken.iter().find(|(name, _)| name.eq_ignore_ascii_case(&col.name)) {
+                hidden |= earlier;
+                // Past `:4`, SQLite picks a random suffix.
+                if suffix == 4 {
+                    col.named = false;
+                    break;
+                }
+                suffix += 1;
+                col.name = format!("{stem}:{suffix}");
+            }
+            if col.named {
+                taken.push((col.name.clone(), key));
+            }
+            if !hidden {
+                cols.push(col);
+            }
+        }
+        let cols = Columns {
+            cols,
+            open: self.cols.open,
+        };
+        Self {
+            rels: self.rels,
+            items: vec![Item {
+                cols: cols.clone(),
+                keys: Vec::new(),
+            }],
+            cols,
+            operand: None,
+        }
+    }
+
+    /// Appends `right` as a comma or an `ON` join does; `right_join` marks a `RIGHT` join.
+    fn append(mut self, dialect: Dialect, right: Self, right_join: bool) -> Self {
+        let swapped = dialect == Dialect::Mysql && right_join;
+        self.operand = if swapped || self.operand.is_some() || right.operand.is_some() {
+            let (mut first, second) = if swapped {
+                (right.operand(), self.operand())
+            } else {
+                (self.operand(), right.operand())
+            };
+            first.extend(second);
+            Some(first)
+        } else {
+            None
+        };
+        self.rels.extend(right.rels);
+        self.cols.extend(right.cols);
+        self.items.extend(right.items);
+        self
+    }
+
+    /// Returns the columns as a `USING` or `NATURAL` operand.
+    fn operand(&self) -> Columns {
+        self.operand.clone().unwrap_or_else(|| self.cols.clone())
     }
 
     /// Joins `right` onto this tree, returning the merged key sources.
     ///
+    /// `right_join` marks a `RIGHT` join. The combined columns follow each
+    /// server's `*` order, which differs only under `USING` and `NATURAL`:
+    ///
+    /// - `PostgreSQL` puts the merged keys first, in `USING` order or the
+    ///   left side's for `NATURAL`, then the left and the right columns.
+    /// - `MySQL` and `MariaDB` put the keys first in the first side's order,
+    ///   then that side's columns, then the other's. The first side is the
+    ///   right one for a `RIGHT` join. `MySQL` reads each side as its
+    ///   operand, and `MariaDB` hides a key the first side hides.
+    /// - `SQLite` keeps the left columns in place, each key merged into its
+    ///   leftmost match, then appends the right ones. [`Tree::nested`]
+    ///   reorders the result as a subquery.
+    ///
+    /// Every dialect ignores a repeated `USING` key.
+    ///
     /// # Errors
     /// [`LineageError::ColumnNotFound`] or [`LineageError::AmbiguousColumn`]
-    /// when a `USING` key is missing from, or repeated in, a complete side.
-    pub(crate) fn join(mut self, dialect: Dialect, right: Self, keys: Keys) -> Result<(Self, Sources), LineageError> {
+    /// when a `USING` key is missing from, or repeated in, a complete side
+    /// (`SQLite`: repeats on the left side merge into the leftmost).
+    pub(crate) fn join(
+        self,
+        dialect: Dialect,
+        right: Self,
+        keys: Keys,
+        right_join: bool,
+    ) -> Result<(Self, Sources), LineageError> {
+        let keys = match keys {
+            Keys::Using(keys) if keys.is_empty() => {
+                return Ok((self.append(dialect, right, right_join), Sources::new()));
+            }
+            // A repeated key merges nothing more.
+            Keys::Using(keys) => Keys::Using(keys.into_iter().fold(Vec::new(), |mut unique: Vec<Ident>, key| {
+                if !unique.iter().any(|u| dialect.matches(&key, &u.value)) {
+                    unique.push(key);
+                }
+                unique
+            })),
+            Keys::Natural => Keys::Natural,
+        };
+        match dialect {
+            Dialect::Sqlite => self.join_in_place(dialect, right, keys),
+            Dialect::Postgres | Dialect::Mysql | Dialect::Mariadb => {
+                self.join_keys_first(dialect, right, keys, right_join)
+            }
+        }
+    }
+
+    /// Joins `right` on `keys` the `SQLite` way; see [`Tree::join`].
+    fn join_in_place(mut self, dialect: Dialect, mut right: Self, keys: Keys) -> Result<(Self, Sources), LineageError> {
         let keys = match keys {
             Keys::Using(keys) => keys,
-            Keys::Natural => right
-                .cols
-                .cols
-                .iter()
-                .filter(|r| r.visible)
-                // Quoted, so PostgreSQL compares actual names exactly.
-                .map(|r| Ident::with_quote('"', r.name.clone()))
-                .filter(|key| {
-                    self.cols
-                        .cols
-                        .iter()
-                        .any(|l| l.visible && dialect.matches(key, &l.name))
-                })
-                .collect(),
-        };
-
-        let mut left = self.cols;
-        let mut right_cols = right.cols;
-        let mut merged = Columns {
-            cols: Vec::new(),
-            open: left.open || right_cols.open,
+            Keys::Natural => shared(dialect, &right.cols, &self.cols),
         };
         let mut joined = Sources::new();
+        let mut extra = Vec::new();
         for key in &keys {
-            let l = take(dialect, &mut left, key)?;
-            let r = take(dialect, &mut right_cols, key)?;
-            let col = match (l, r) {
-                (Some(mut l), Some(r)) => {
-                    l.sources.extend(r.sources);
-                    l.flow = l.flow.merge(r.flow);
-                    l.visible = true;
-                    l
+            let at = self.cols.cols.iter().position(|c| dialect.matches(key, &c.name));
+            if at.is_none() && !self.cols.open {
+                return Err(LineageError::ColumnNotFound {
+                    column: key.value.clone(),
+                });
+            }
+            match (at, take(dialect, &mut right.cols, key)?) {
+                (Some(i), r) => {
+                    let l = &mut self.cols.cols[i];
+                    if let Some(r) = r {
+                        l.sources.extend(r.sources);
+                        l.flow = l.flow.merge(r.flow);
+                    }
+                    joined.extend(l.sources.iter().cloned());
+                }
+                (None, Some(r)) => {
+                    joined.extend(r.sources.iter().cloned());
+                    extra.push(r);
+                }
+                (None, None) => {}
+            }
+        }
+        if let Some(item) = right.items.first_mut() {
+            item.keys = keys;
+        }
+        self.cols.cols.extend(extra);
+        self.cols.extend(right.cols);
+        self.rels.extend(right.rels);
+        self.items.extend(right.items);
+        Ok((self, joined))
+    }
+
+    /// Joins `right` on `keys`, merged keys first; see [`Tree::join`].
+    fn join_keys_first(
+        self,
+        dialect: Dialect,
+        right: Self,
+        keys: Keys,
+        right_join: bool,
+    ) -> Result<(Self, Sources), LineageError> {
+        let left = self.operand.unwrap_or(self.cols);
+        let right_cols = right.operand.unwrap_or(right.cols);
+        let (mut first, mut second) = if right_join && dialect != Dialect::Postgres {
+            (right_cols, left)
+        } else {
+            (left, right_cols)
+        };
+        let keys = match keys {
+            Keys::Using(keys) if dialect == Dialect::Postgres => keys,
+            Keys::Using(mut keys) => {
+                keys.sort_by_key(|key| {
+                    first
+                        .cols
+                        .iter()
+                        .position(|c| dialect.matches(key, &c.name))
+                        .unwrap_or(usize::MAX)
+                });
+                keys
+            }
+            Keys::Natural => shared(dialect, &first, &second),
+        };
+
+        let open = first.open || second.open;
+        let mut joined = Sources::new();
+        let mut cols = Vec::new();
+        for key in &keys {
+            let f = take(dialect, &mut first, key)?;
+            let s = take(dialect, &mut second, key)?;
+            let col = match (f, s) {
+                (Some(mut f), Some(s)) => {
+                    f.sources.extend(s.sources);
+                    f.flow = f.flow.merge(s.flow);
+                    f.visible |= dialect != Dialect::Mariadb;
+                    f
                 }
                 (Some(col), None) | (None, Some(col)) => col,
                 (None, None) => continue,
             };
             joined.extend(col.sources.iter().cloned());
-            merged.cols.push(col);
+            cols.push(col);
         }
-        merged.cols.extend(left.cols);
-        merged.cols.extend(right_cols.cols);
-        self.rels.extend(right.rels);
-        Ok((
-            Self {
-                rels: self.rels,
-                cols: merged,
-            },
-            joined,
-        ))
+        cols.extend(first.cols);
+        cols.extend(second.cols);
+        let mut rels = self.rels;
+        rels.extend(right.rels);
+        let mut items = self.items;
+        items.extend(right.items);
+        let tree = Self {
+            rels,
+            cols: Columns { cols, open },
+            operand: None,
+            items,
+        };
+        Ok((tree, joined))
     }
+}
+
+/// Returns the first column named `key`.
+fn find<'a>(dialect: Dialect, key: &Ident, cols: &'a Columns) -> Option<&'a Col> {
+    cols.cols.iter().find(|c| dialect.matches(key, &c.name))
+}
+
+/// Returns the `NATURAL` keys: `from`'s visible columns `other` also shows, in `from`'s order.
+fn shared(dialect: Dialect, from: &Columns, other: &Columns) -> Vec<Ident> {
+    from.cols
+        .iter()
+        .filter(|c| c.visible)
+        // Quoted, so PostgreSQL compares actual names exactly.
+        .map(|c| Ident::with_quote('"', c.name.clone()))
+        .filter(|key| other.cols.iter().any(|o| o.visible && dialect.matches(key, &o.name)))
+        .collect()
 }
 
 /// Removes the one column named `key`; `None` if an open list lacks it.
@@ -580,8 +820,7 @@ impl Level<'_> {
 
     /// Adds a join tree to the `FROM` list.
     pub(crate) fn add(&mut self, tree: Tree) {
-        self.from.rels.extend(tree.rels);
-        self.from.cols.extend(tree.cols);
+        self.from = std::mem::take(&mut self.from).append(self.dialect, tree, false);
     }
 
     /// Takes the `FROM` list back out as one tree.
