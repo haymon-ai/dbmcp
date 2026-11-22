@@ -463,12 +463,22 @@ pub(crate) mod tests {
         assert!(valid(serde_json::json!({
             "emails": { "columns": ["def.shop.users.email"], "entity": "EMAIL_ADDRESS", "operator": "mask" },
         })));
+        for columns in [
+            serde_json::json!(["users.email"]),
+            serde_json::json!(["shop.users.email"]),
+        ] {
+            assert!(
+                valid(serde_json::json!({ "emails": rule(columns.clone()) })),
+                "{columns}"
+            );
+        }
         assert!(!valid(
             serde_json::json!({ "Bad": rule(serde_json::json!(["a.b.c.d"])) })
         ));
         assert!(!valid(serde_json::json!({ "emails": { "columns": ["a.b.c.d"] } })));
         for columns in [
-            serde_json::json!(["a.b.c"]),
+            serde_json::json!(["a"]),
+            serde_json::json!(["a.b.c.d.e"]),
             serde_json::json!(["a.b.*.d"]),
             serde_json::json!([]),
         ] {

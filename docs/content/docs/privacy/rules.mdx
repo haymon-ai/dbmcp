@@ -18,22 +18,25 @@ Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `expl
 `pii.rules` exists only in config files. It requires `pii.enabled: true`; rules with redaction off stop startup with `pii.rules requires pii.enabled` (an empty `{}` is accepted). The last config file that sets `pii.rules` wins it whole: rules from different files never merge, `null` leaves an earlier file's rules in place, and `{}` clears them.
 
 ```yaml
+database:
+  backend: postgres
+  name: shop
 pii:
   enabled: true
   rules:
     customer-email:
       columns:
-        - shop.public.users.email
-        - shop.public.invoices.billing_email
+        - users.email
+        - billing.invoices.email
       entity: EMAIL_ADDRESS
     national-id:
       columns:
-        - shop.public.users.ssn
+        - users.ssn
       entity: US_SSN
       operator: redact
     card-number:
       columns:
-        - shop.public.users.credit_card
+        - users.credit_card
       entity: CREDIT_CARD
       operator: replace
 ```
@@ -50,27 +53,31 @@ Each entry under `pii.rules` is one rule. The key is its name, which every error
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `columns` | yes | Non-empty list of table columns, each written `catalog.schema.table.column` |
+| `columns` | yes | Non-empty list of table columns, each written `table.column`, `schema.table.column`, or `catalog.schema.table.column` ([Column keys](#column-keys)) |
 | `entity` | yes | The [data type](/privacy/data-types) of the values, such as `EMAIL_ADDRESS`, `PHONE_NUMBER`, or `PERSON` |
 | `operator` | no | `hash`, `replace`, `mask`, or `redact`; defaults to `pii.operator` |
 
-A column may appear in only one rule, and only once in it; a repeat stops startup and names both places.
+A column may appear in only one rule, and only once in it, however its key is written; a repeat stops startup and names both places.
 
 The entity only labels the values: a ruled column is rewritten whether or not its values look like that type, and no recognizer runs on it. Machine-learning entities such as `PERSON`, `LOCATION`, and `ORGANIZATION` work as labels without `pii.ner_enabled`, so a `name` column can be ruled as `PERSON` without the model.
 
 ### Column keys
 
-A column key has exactly four dot-separated segments, compared case-insensitively. Wildcards (`*`), quotes, and whitespace are not supported, so a name containing `.` cannot be ruled. Write each name as the catalog stores it.
+A column key has two to four dot-separated segments, compared case-insensitively. Wildcards (`*`), quotes, and whitespace are not supported, so a name containing `.` cannot be ruled. Write each name as the catalog stores it.
 
-What fills the first two segments depends on the engine:
+A key names the column the way the engine's SQL qualifies it, and leading segments may be left out: <Dbmcp /> fills them from the backend and `database.name`. Every key becomes the full `catalog.schema.table.column` form:
 
-| Engine | Key |
-|--------|-----|
-| PostgreSQL | `<database>.<schema>.<table>.<column>`, for example `shop.public.users.email` |
-| MySQL / MariaDB | `def.<database>.<table>.<column>`, for example `def.shop.users.email` |
-| SQLite | `main.<schema>.<table>.<column>`, where `<schema>` is `main` or an attached database's alias, for example `main.main.users.email` |
+| Engine | `table.column` | `schema.table.column` | Full form |
+|--------|----------------|-----------------------|-----------|
+| PostgreSQL | `<database.name>.public.users.email` | `<database.name>.<schema>.users.email` | `<database>.<schema>.<table>.<column>` |
+| MySQL / MariaDB | `def.<database.name>.users.email` | `def.<database>.users.email` | `def.<database>.<table>.<column>` |
+| SQLite | `main.main.users.email` | `main.<schema>.users.email`, where `<schema>` is `main` or an attached database's alias | `main.<schema>.<table>.<column>` |
 
-Startup checks the first segment: it must be `def` on MySQL and MariaDB, `main` on SQLite, and on PostgreSQL the database in `database.name` when that is set. Without a pinned database, PostgreSQL accepts any first segment, and a rule applies when a statement runs in that database (including one chosen with a tool's `database` parameter).
+On MySQL and MariaDB a database is a schema, so three segments are `database.table.column` and work with or without `database.name`. On PostgreSQL three segments are `schema.table.column`, as in a SQL column reference; the default schema is always `public`, not the session's `search_path`. A key that leaves out the database (`table.column` on MySQL and MariaDB, any short key on PostgreSQL) needs `database.name`; without it startup stops with `a key without its database requires database.name`.
+
+Startup checks the first segment of a full key: it must be `def` on MySQL and MariaDB, `main` on SQLite, and on PostgreSQL the database in `database.name` when that is set. Without a pinned database, PostgreSQL accepts any first segment, and a rule applies when a statement runs in that database (including one chosen with a tool's `database` parameter).
+
+Repeats are found after the segments are filled in: with `database.name: shop` on PostgreSQL, `users.email` and `shop.public.users.email` name the same column.
 
 > **Check the names.** A rule for a column that does not exist (a typo, a renamed table, the database name in the wrong segment) never matches, and nothing warns you. Compare every key with `listTables` output.
 
