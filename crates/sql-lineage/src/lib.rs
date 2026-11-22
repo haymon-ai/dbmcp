@@ -62,12 +62,12 @@ mod statement;
 mod tests;
 
 pub use crate::analyze::analyze;
-pub use crate::catalog::{Catalog, CatalogColumn, Entry, Family, Lexical, Member, NamePart, Relation, WrittenName};
+pub use crate::catalog::{Catalog, CatalogColumn, Entry, Lexical, NamePart, Relation, WrittenName};
 pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
 pub use crate::explain::ExplainForm;
 pub use crate::model::{
-    FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
-    StatementKind, TargetColumn,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, StatementKind, TargetColumn,
 };
 pub use crate::show::Show;

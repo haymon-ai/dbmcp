@@ -404,6 +404,64 @@ INSERT INTO `app`.`orders` (`user_id`, `customer_email`) VALUES
     (1, 'alice@example.com'),
     (2, 'bob@example.com');
 
+-- Trigger-free write targets whose `email` is hashed like `users.email`.
+-- `policy_hashed.email` is declared `DEFAULT NULL`, which `MariaDB` reports
+-- as the text `NULL`: no default.
+CREATE TABLE `app`.`policy_hashed` (
+    `id` INT PRIMARY KEY,
+    `email` VARCHAR(255) DEFAULT NULL
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`policy_hashed` (`id`, `email`) VALUES
+    (1, 'alice@example.com'),
+    (2, 'bob@example.com');
+
+CREATE TABLE `app`.`policy_hashed_copy` (
+    `id` INT PRIMARY KEY,
+    `email` VARCHAR(255)
+) ENGINE=InnoDB;
+
+CREATE TABLE `app`.`policy_hashed_default` (
+    `id` INT PRIMARY KEY,
+    `email` VARCHAR(255) DEFAULT 'x@example.com'
+) ENGINE=InnoDB;
+
+CREATE TABLE `app`.`policy_hashed_generated` (
+    `id` INT PRIMARY KEY,
+    `name` VARCHAR(100),
+    `email` VARCHAR(255) GENERATED ALWAYS AS (CONCAT(`name`, '@example.com')) STORED
+) ENGINE=InnoDB;
+
+CREATE TABLE `app`.`policy_hashed_on_update` (
+    `id` INT PRIMARY KEY,
+    `email` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- `ON UPDATE CASCADE` copies `policy_cascade_parent.k` (unruled) into the
+-- hashed `policy_cascade_child.k`.
+CREATE TABLE `app`.`policy_cascade_parent` (
+    `k` VARCHAR(255) PRIMARY KEY
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`policy_cascade_parent` (`k`) VALUES ('alice@example.com');
+
+CREATE TABLE `app`.`policy_cascade_child` (
+    `id` INT PRIMARY KEY,
+    `k` VARCHAR(255),
+    FOREIGN KEY (`k`) REFERENCES `app`.`policy_cascade_parent` (`k`) ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+INSERT INTO `app`.`policy_cascade_child` (`id`, `k`) VALUES (1, 'alice@example.com');
+
+-- A hashed `email` on a table with a trigger.
+CREATE TABLE `app`.`policy_hashed_trigger` (
+    `id` INT PRIMARY KEY,
+    `email` VARCHAR(255)
+) ENGINE=InnoDB;
+
+CREATE TRIGGER `app`.`policy_hashed_trigger_fill` BEFORE INSERT ON `app`.`policy_hashed_trigger`
+    FOR EACH ROW SET NEW.`email` = NEW.`email`;
+
 CREATE VIEW `app`.`users_with_ssn` AS
     SELECT `id`, `name` FROM `app`.`users` WHERE `ssn` IS NOT NULL;
 

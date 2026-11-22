@@ -26,11 +26,22 @@
 //! 7. A ruled column used in `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, or a
 //!    window rejects, in the statement or in a view body it reads.
 //! 8. Each output column takes the `(operator, entity)` of its ruled
-//!    sources; two different pairs reject.
+//!    sources; two different pairs reject. A `hash` pair holds only on a
+//!    [`Flow::Bare`](dbmcp_sql_lineage::Flow::Bare) column whose every
+//!    source is hashed under it; on any other column `hash` becomes
+//!    `replace` before the pairs are compared.
 //! 9. A bare create target resolving outside the creation schema rejects.
 //! 10. A write copying ruled values needs a target column ruled with the same
 //!     pair and named so a rule can match it; `CREATE VIEW` is exempt.
-//! 11. An `UPDATE` or `MERGE` through a partitioned table rejects while its
+//! 11. A `hash`-ruled column written by a statement takes only same-hashed
+//!     bare copies, `NULL`, or `DEFAULT` when it has no default; a write that
+//!     lets the server fill one (an omitted column's default, a generated or
+//!     on-update column) rejects, and so does a fired cascade that sets a
+//!     `hash`-ruled child column to its default or copies into it from a
+//!     parent not hashed under the same pair.
+//! 12. While any `hash` rule exists, a write to a relation with triggers or
+//!     rules rejects, and so does one firing a cascade into such a table.
+//! 13. An `UPDATE` or `MERGE` through a partitioned table rejects while its
 //!     leaf partitions read a ruled column under different pairs: a row
 //!     moved between them would be read back under other rules.
 //!
@@ -47,6 +58,7 @@
 //! [`Position`]: dbmcp_pii::cells::Position
 
 mod analysis;
+mod catalog;
 mod deny;
 mod explain;
 mod plan;
@@ -56,12 +68,10 @@ mod relation;
 #[cfg(test)]
 mod tests;
 
-pub use dbmcp_sql_lineage::{
-    CatalogColumn, Entry, Family, Member, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind,
-    WrittenName,
-};
+pub use dbmcp_sql_lineage::{NamePart, Origin, RelationId, RelationKind, SourceRef, StatementKind, WrittenName};
 
 pub use self::analysis::{Analysis, Analyzed, Step};
+pub use self::catalog::{Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Relation};
 pub use self::planned::{Planned, Unfit};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};
 pub use self::relation::RelationRef;

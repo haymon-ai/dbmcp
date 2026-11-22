@@ -36,8 +36,8 @@ use crate::catalog::Entry;
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::explain::ExplainForm;
-use crate::model::{RelationId, RelationKind, StatementKind, TargetColumn};
-use crate::resolve::{Ctx, idents, unsupported};
+use crate::model::{Flow, RelationId, RelationKind, StatementKind, TargetColumn};
+use crate::resolve::{Ctx, flow, idents, unsupported};
 use crate::show::{Show, computed_filter};
 
 /// What a statement resolves to, before output positions are numbered.
@@ -390,8 +390,8 @@ impl Ctx<'_> {
                     found: values.len(),
                 });
             }
-            for (column, sources) in names.iter().zip(values) {
-                write(&mut writes, column, sources);
+            for (column, (sources, flow)) in names.iter().zip(values) {
+                write(&mut writes, column, sources, flow);
             }
         }
         let level = Level::dml(self.dialect, vec![tree.clone()]);
@@ -455,11 +455,11 @@ impl Ctx<'_> {
         Ok((names, open))
     }
 
-    /// Resolves an `INSERT` source into per-position sources, with its openness.
+    /// Resolves an `INSERT` source into per-position sources and flows, plus openness.
     ///
     /// A bare `VALUES` list accepts `DEFAULT`, which has no source; any other
-    /// query resolves as usual.
-    fn insert_source(&mut self, source: &Query) -> Result<(Vec<Sources>, bool), LineageError> {
+    /// query resolves as usual. Rows merge their flows per position.
+    fn insert_source(&mut self, source: &Query) -> Result<(Vec<(Sources, Flow)>, bool), LineageError> {
         let plain = source.with.is_none()
             && source.order_by.is_none()
             && source.limit_clause.is_none()
@@ -471,10 +471,10 @@ impl Ctx<'_> {
             && source.pipe_operators.is_empty();
         let (true, SetExpr::Values(values)) = (plain, source.body.as_ref()) else {
             let cols = self.query(source, Level::root(self.dialect))?;
-            return Ok((cols.cols.into_iter().map(|c| c.sources).collect(), cols.open));
+            return Ok((cols.cols.into_iter().map(|c| (c.sources, c.flow)).collect(), cols.open));
         };
         let level = Level::root(self.dialect);
-        let mut out: Vec<Sources> = Vec::new();
+        let mut out: Vec<(Sources, Flow)> = Vec::new();
         for (r, row) in values.rows.iter().enumerate() {
             if r > 0 && row.content.len() != out.len() {
                 return Err(LineageError::ColumnCountMismatch {
@@ -484,10 +484,13 @@ impl Ctx<'_> {
                 });
             }
             for (i, expr) in row.content.iter().enumerate() {
-                let sources = self.value(expr, &level)?;
+                let (sources, flow) = self.value(expr, &level)?;
                 match out.get_mut(i) {
-                    Some(acc) => acc.extend(sources),
-                    None => out.push(sources),
+                    Some((acc, acc_flow)) => {
+                        acc.extend(sources);
+                        *acc_flow = acc_flow.merge(flow);
+                    }
+                    None => out.push((sources, flow)),
                 }
             }
         }
@@ -651,8 +654,8 @@ impl Ctx<'_> {
                         });
                     }
                     for (column, expr) in names.iter().zip(&row.content) {
-                        let sources = self.value(expr, &level)?;
-                        write(&mut writes, column, sources);
+                        let (sources, flow) = self.value(expr, &level)?;
+                        write(&mut writes, column, sources, flow);
                     }
                 }
                 MergeAction::Update(update) => {
@@ -675,13 +678,14 @@ impl Ctx<'_> {
         })
     }
 
-    /// Resolves one written value; `DEFAULT` has no sources.
-    fn value(&mut self, expr: &Expr, level: &Level<'_>) -> Result<Sources, LineageError> {
-        let mut sources = Sources::new();
-        if !is_default(expr) {
-            self.expr(expr, level, Clause::Projection, &mut sources)?;
+    /// Resolves one written value and its flow; `DEFAULT` has no sources.
+    fn value(&mut self, expr: &Expr, level: &Level<'_>) -> Result<(Sources, Flow), LineageError> {
+        if is_default(expr) {
+            return Ok((Sources::new(), Flow::Default));
         }
-        Ok(sources)
+        let mut sources = Sources::new();
+        self.expr(expr, level, Clause::Projection, &mut sources)?;
+        Ok((sources, flow(expr, level)?))
     }
 
     /// Resolves one `SET` assignment into target-column writes.
@@ -697,7 +701,8 @@ impl Ctx<'_> {
         target: &mut Option<RelationId>,
         writes: &mut Vec<TargetColumn>,
     ) -> Result<(), LineageError> {
-        let (columns, values): (Vec<&ObjectName>, Vec<Sources>) = match (&assignment.target, &assignment.value) {
+        let (columns, values): (Vec<&ObjectName>, Vec<(Sources, Flow)>) = match (&assignment.target, &assignment.value)
+        {
             (AssignmentTarget::ColumnName(column), value) => (vec![column], vec![self.value(value, level)?]),
             (AssignmentTarget::Tuple(columns), Expr::Tuple(values)) if columns.len() == values.len() => {
                 let mut all = Vec::new();
@@ -717,12 +722,12 @@ impl Ctx<'_> {
                 }
                 (
                     columns.iter().collect(),
-                    cols.cols.into_iter().map(|c| c.sources).collect(),
+                    cols.cols.into_iter().map(|c| (c.sources, c.flow)).collect(),
                 )
             }
             (AssignmentTarget::Tuple(_), _) => return Err(unsupported("tuple assignment")),
         };
-        for (column, sources) in columns.into_iter().zip(values) {
+        for (column, (sources, flow)) in columns.into_iter().zip(values) {
             let Some((id, name)) = targets.target(self.dialect, &idents(column)?)? else {
                 continue;
             };
@@ -731,7 +736,7 @@ impl Ctx<'_> {
                 Some(_) => {}
                 None => *target = Some(id),
             }
-            write(writes, &name, sources);
+            write(writes, &name, sources, flow);
         }
         Ok(())
     }
@@ -852,19 +857,24 @@ fn created(cols: Vec<Col>) -> Result<Vec<TargetColumn>, LineageError> {
         writes.push(TargetColumn {
             name: col.name,
             sources: col.sources,
+            flow: col.flow,
             named: col.named,
         });
     }
     Ok(writes)
 }
 
-/// Merges sources into the write of target column `name`, appending it when new.
-fn write(writes: &mut Vec<TargetColumn>, name: &str, sources: Sources) {
+/// Merges sources and flow into column `name`'s write, appending it when new.
+fn write(writes: &mut Vec<TargetColumn>, name: &str, sources: Sources, flow: Flow) {
     match writes.iter_mut().find(|w| w.name == name) {
-        Some(existing) => existing.sources.extend(sources),
+        Some(existing) => {
+            existing.sources.extend(sources);
+            existing.flow = existing.flow.merge(flow);
+        }
         None => writes.push(TargetColumn {
             name: name.to_string(),
             sources,
+            flow,
             named: true,
         }),
     }
@@ -909,7 +919,7 @@ fn calls_values(expr: &Expr) -> bool {
 }
 
 /// Returns whether a value is the `DEFAULT` keyword.
-fn is_default(expr: &Expr) -> bool {
+pub(crate) fn is_default(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier(ident) if ident.quote_style.is_none() && ident.value.eq_ignore_ascii_case("default"))
 }
 
