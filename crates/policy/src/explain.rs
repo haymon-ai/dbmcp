@@ -4,7 +4,7 @@
 //! listed, an unlisted key drops with its whole subtree. The outer shape of
 //! the result must match the dialect's, else the result is refused.
 
-use dbmcp_pii::RedactionError;
+use dbmcp_privacy::RedactionError;
 use dbmcp_sql_lineage::Dialect;
 use serde_json::Value;
 

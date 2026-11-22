@@ -25,7 +25,7 @@ repository = "https://github.com/haymon-ai/dbmcp"
 dbmcp-cli = { path = "crates/cli", version = "0.19.0" }
 dbmcp-config = { path = "crates/config", version = "0.19.0" }
 dbmcp-mysql = { path = "crates/mysql", version = "0.19.0" }
-dbmcp-pii = { path = "crates/pii", version = "0.19.0" }
+dbmcp-privacy = { path = "crates/privacy", version = "0.19.0" }
 dbmcp-policy = { path = "crates/policy", version = "0.19.0" }
 dbmcp-postgres = { path = "crates/postgres", version = "0.19.0" }
 dbmcp-server = { path = "crates/server", version = "0.19.0" }

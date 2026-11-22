@@ -5,14 +5,14 @@
 //! `Hash`). `Hash` emits a keyed token `<{TYPE}_{16 hex}>` (HMAC-SHA-256),
 //! and is what [`Redactor::from_config`] uses by default. An optional ML/NER pass detects person, location, organization,
 //! NRP, and facility spans (which entities depend on the model's labels); it
-//! is always compiled and enabled at runtime via `PiiConfig`. Inference runs
+//! is always compiled and enabled at runtime via `PrivacyConfig`. Inference runs
 //! locally via ONNX Runtime with no network. Wired into the MCP server's
 //! query tool output via [`Redactor`].
 //!
 //! # Quickstart
 //!
 //! ```
-//! use dbmcp_pii::{AnalyzeOptions, Analyzer, Operator, anonymize};
+//! use dbmcp_privacy::{AnalyzeOptions, Analyzer, Operator, anonymize};
 //!
 //! let analyzer = Analyzer::with_defaults();
 //! let text = "ping me at jane.doe@example.com";

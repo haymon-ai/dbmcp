@@ -1047,8 +1047,8 @@ name = "dbmcp-mysql"
 version = "0.19.0"
 dependencies = [
  "dbmcp-config",
- "dbmcp-pii",
  "dbmcp-policy",
+ "dbmcp-privacy",
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-truncate",
@@ -1067,7 +1067,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbmcp-pii"
+name = "dbmcp-policy"
+version = "0.19.0"
+dependencies = [
+ "dbmcp-config",
+ "dbmcp-privacy",
+ "dbmcp-sql-lineage",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "dbmcp-postgres"
+version = "0.19.0"
+dependencies = [
+ "dbmcp-config",
+ "dbmcp-policy",
+ "dbmcp-privacy",
+ "dbmcp-server",
+ "dbmcp-sql",
+ "dbmcp-truncate",
+ "indexmap",
+ "moka",
+ "rmcp",
+ "schemars",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "sqlx-json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "dbmcp-privacy"
 version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
@@ -1088,44 +1126,6 @@ dependencies = [
  "tokenizers",
  "tokio",
  "toml",
- "tracing",
-]
-
-[[package]]
-name = "dbmcp-policy"
-version = "0.19.0"
-dependencies = [
- "dbmcp-config",
- "dbmcp-pii",
- "dbmcp-sql-lineage",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "dbmcp-postgres"
-version = "0.19.0"
-dependencies = [
- "dbmcp-config",
- "dbmcp-pii",
- "dbmcp-policy",
- "dbmcp-server",
- "dbmcp-sql",
- "dbmcp-truncate",
- "indexmap",
- "moka",
- "rmcp",
- "schemars",
- "secrecy",
- "serde",
- "serde_json",
- "sqlparser",
- "sqlx",
- "sqlx-json",
- "thiserror",
- "tokio",
  "tracing",
 ]
 
@@ -1174,8 +1174,8 @@ name = "dbmcp-sqlite"
 version = "0.19.0"
 dependencies = [
  "dbmcp-config",
- "dbmcp-pii",
  "dbmcp-policy",
+ "dbmcp-privacy",
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-truncate",

@@ -33,7 +33,7 @@
 use std::collections::BTreeMap;
 use std::mem;
 
-use dbmcp_config::{DatabaseBackend, PiiConfig};
+use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
     RelationRef, StatementKind, Step, Unfit, WrittenName,
@@ -350,7 +350,7 @@ impl MysqlHandler {
     /// of anything else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PiiConfig,
+        policy: &PrivacyConfig,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -401,7 +401,7 @@ fn values(row: Value) -> Vec<Value> {
 /// Plans one statement on `conn`, then executes it inside a transaction.
 async fn run<'c>(
     conn: &mut sqlx::MySqlConnection,
-    config: &'c PiiConfig,
+    config: &'c PrivacyConfig,
     backend: DatabaseBackend,
     sql: &str,
     access: Access,

@@ -21,7 +21,7 @@ pub mod generic;
 mod prelude;
 pub mod usa;
 
-// Flat re-exports preserve the `dbmcp_pii::recognizers::<name>` public API.
+// Flat re-exports preserve the `dbmcp_privacy::recognizers::<name>` public API.
 pub use can::sin_can;
 pub use deu::{
     commercial_register_deu, driving_licence_deu, health_insurance_deu, id_card_deu, license_plate_deu,

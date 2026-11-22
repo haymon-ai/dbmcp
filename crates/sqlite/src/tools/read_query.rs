@@ -1,6 +1,6 @@
 //! MCP tool: `readQuery`.
 
-use dbmcp_pii::MaybeRedact as _;
+use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{ReadQueryResponse, resolve_timeout};

@@ -1,6 +1,6 @@
 //! Analyzer engine: registry + entry point + analyze-time options.
 
-use dbmcp_config::{PiiCategory, PiiConfig};
+use dbmcp_config::{PrivacyCategory, PrivacyConfig};
 
 use crate::Category;
 use crate::context::{ContextSettings, apply_context_boost};
@@ -103,14 +103,14 @@ impl Analyzer {
         self.recognizers.iter()
     }
 
-    /// Resolve a [`PiiConfig`] to an [`Analyzer`].
+    /// Resolve a [`PrivacyConfig`] to an [`Analyzer`].
     ///
     /// - `categories` unset → [`Analyzer::with_defaults`].
     /// - `categories` set → builder filters the registry by category set.
     /// - On builder error, falls back to `with_defaults` and logs at `warn`
     ///   level so a misconfiguration never disables redaction silently.
     #[must_use]
-    pub fn from_config(config: &PiiConfig) -> Self {
+    pub fn from_config(config: &PrivacyConfig) -> Self {
         let Some(cats) = config.categories.as_ref() else {
             return Self::with_defaults();
         };
@@ -138,15 +138,15 @@ impl Analyzer {
     }
 }
 
-fn map_category(c: PiiCategory) -> Category {
+fn map_category(c: PrivacyCategory) -> Category {
     match c {
-        PiiCategory::Personal => Category::Personal,
-        PiiCategory::Financial => Category::Financial,
-        PiiCategory::Government => Category::Government,
-        PiiCategory::Contact => Category::Contact,
-        PiiCategory::Network => Category::Network,
-        PiiCategory::DigitalIdentity => Category::DigitalIdentity,
-        PiiCategory::Crypto => Category::Crypto,
+        PrivacyCategory::Personal => Category::Personal,
+        PrivacyCategory::Financial => Category::Financial,
+        PrivacyCategory::Government => Category::Government,
+        PrivacyCategory::Contact => Category::Contact,
+        PrivacyCategory::Network => Category::Network,
+        PrivacyCategory::DigitalIdentity => Category::DigitalIdentity,
+        PrivacyCategory::Crypto => Category::Crypto,
     }
 }
 

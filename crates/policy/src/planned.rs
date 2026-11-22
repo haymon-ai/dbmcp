@@ -1,8 +1,8 @@
 //! A planned statement: its result checks, error withholding, and redaction.
 
-use dbmcp_config::PiiConfig;
-use dbmcp_pii::cells::{Cells, Plan, Position, ShapeError, check_columns};
-use dbmcp_pii::{RedactionError, Redactor};
+use dbmcp_config::PrivacyConfig;
+use dbmcp_privacy::cells::{Cells, Plan, Position, ShapeError, check_columns};
+use dbmcp_privacy::{RedactionError, Redactor};
 use dbmcp_sql_lineage::{Dialect, RelationId};
 use serde_json::Value;
 
@@ -15,7 +15,7 @@ use crate::plan::{Families, covering, covers_ruled, is_ruled};
 #[derive(Debug)]
 pub struct Planned<'c> {
     mode: Mode,
-    config: &'c PiiConfig,
+    config: &'c PrivacyConfig,
     /// The inheritance trees the statement was planned with.
     families: Families,
     withholds: bool,
@@ -46,7 +46,7 @@ pub enum Unfit {
 }
 
 impl<'c> Planned<'c> {
-    pub(crate) const fn new(mode: Mode, config: &'c PiiConfig, families: Families, withholds: bool) -> Self {
+    pub(crate) const fn new(mode: Mode, config: &'c PrivacyConfig, families: Families, withholds: bool) -> Self {
         Self {
             mode,
             config,
@@ -155,24 +155,24 @@ impl<'c> Planned<'c> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PiiOperator};
-    use dbmcp_pii::Entity;
-    use dbmcp_pii::cells::PlannedColumn;
+    use dbmcp_config::{ColumnRule, PrivacyOperator};
+    use dbmcp_privacy::Entity;
+    use dbmcp_privacy::cells::PlannedColumn;
     use serde_json::json;
 
     use super::*;
 
     /// A config ruling `shop.public.t.a`.
-    fn ruled() -> PiiConfig {
-        PiiConfig {
+    fn ruled() -> PrivacyConfig {
+        PrivacyConfig {
             rules: vec![ColumnRule {
                 name: "r".into(),
                 item: 0,
                 key: ["shop", "public", "t", "a"].map(String::from),
                 entity: "US_SSN",
-                operator: PiiOperator::Mask,
+                operator: PrivacyOperator::Mask,
             }],
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         }
     }
 
@@ -186,7 +186,7 @@ mod tests {
     }
 
     /// A plan of `mode` under `config` with no inheritance trees.
-    fn new_planned(mode: Mode, config: &PiiConfig, withholds: bool) -> Planned<'_> {
+    fn new_planned(mode: Mode, config: &PrivacyConfig, withholds: bool) -> Planned<'_> {
         Planned::new(mode, config, Families::new(), withholds)
     }
 
@@ -205,13 +205,13 @@ mod tests {
     }
 
     /// The redactor `config` builds.
-    fn redactor(config: &PiiConfig) -> Redactor {
+    fn redactor(config: &PrivacyConfig) -> Redactor {
         Redactor::from_config(Some(config))
             .expect("builds")
             .expect("configured")
     }
 
-    const ACTION: Position = Position::Action(PiiOperator::Mask, Entity::UsSsn);
+    const ACTION: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
 
     #[test]
     fn echoing_errors_are_withheld_only_when_the_plan_withholds() {

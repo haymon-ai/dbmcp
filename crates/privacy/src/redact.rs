@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use dbmcp_config::{PiiCategory, PiiOperator};
+use dbmcp_config::{PrivacyCategory, PrivacyOperator};
 use secrecy::ExposeSecret;
 use serde_json::Value;
 
@@ -103,7 +103,7 @@ struct LeafSlot<'a> {
 pub struct Redactor {
     analyzer: Arc<Analyzer>,
     /// The operator global detection applies to every span.
-    global: PiiOperator,
+    global: PrivacyOperator,
     /// The keyed `hash` operator, shared by global detection and column rules.
     hash: Operator,
     opts: AnalyzeOptions,
@@ -123,14 +123,14 @@ impl Redactor {
     /// Builds a `Replace` redactor over `analyzer`.
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self::new(analyzer, PiiOperator::Replace, Operator::hash(TEST_KEY))
+        Self::new(analyzer, PrivacyOperator::Replace, Operator::hash(TEST_KEY))
     }
 
     /// Builds a redactor.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
-    fn new(analyzer: Analyzer, global: PiiOperator, hash: Operator) -> Self {
+    fn new(analyzer: Analyzer, global: PrivacyOperator, hash: Operator) -> Self {
         let settings = crate::context::ContextSettings::default();
         let min_score = settings.min_score_with_context;
         Self {
@@ -147,14 +147,14 @@ impl Redactor {
     /// Override the per-call [`AnalyzeOptions`] used by every leaf scan.
     ///
     /// Used by the binary layer to enable context-aware scoring per
-    /// `PiiContextConfig`. Default (off) preserves today's behaviour.
+    /// `PrivacyContextConfig`. Default (off) preserves today's behaviour.
     #[must_use]
     pub fn with_analyze_options(mut self, opts: AnalyzeOptions) -> Self {
         self.opts = opts;
         self
     }
 
-    /// Resolve a [`dbmcp_config::PiiConfig`] to an optional [`Redactor`].
+    /// Resolve a [`dbmcp_config::PrivacyConfig`] to an optional [`Redactor`].
     ///
     /// Returns `None` when `cfg` is `None` (redaction off). Otherwise, the
     /// redactor runs the context-aware confidence boost over every leaf and
@@ -164,7 +164,7 @@ impl Redactor {
     /// lifts them.
     ///
     /// The `hash` operator is keyed with `cfg.key`, or, when unset, with
-    /// [`PiiConfig::MIN_KEY_BYTES`](dbmcp_config::PiiConfig::MIN_KEY_BYTES)
+    /// [`PrivacyConfig::MIN_KEY_BYTES`](dbmcp_config::PrivacyConfig::MIN_KEY_BYTES)
     /// bytes drawn from the OS random source (a per-process key), logging a
     /// warning when `cfg.operator` or any column rule hashes.
     ///
@@ -174,7 +174,7 @@ impl Redactor {
     /// enabled but fails to load, and [`RedactorInitError::Rng`] when the
     /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
     /// is fail-closed and never degrades to regex-only when NER was requested.
-    pub fn from_config(cfg: Option<&dbmcp_config::PiiConfig>) -> Result<Option<Self>, RedactorInitError> {
+    pub fn from_config(cfg: Option<&dbmcp_config::PrivacyConfig>) -> Result<Option<Self>, RedactorInitError> {
         let Some(cfg) = cfg else {
             return Ok(None);
         };
@@ -185,12 +185,12 @@ impl Redactor {
     }
 
     /// Returns the operator `operator` names; `hash` uses this redactor's key.
-    pub(crate) fn operator(&self, operator: PiiOperator) -> Operator {
+    pub(crate) fn operator(&self, operator: PrivacyOperator) -> Operator {
         match operator {
-            PiiOperator::Replace => Operator::Replace,
-            PiiOperator::Mask => Operator::default_mask(),
-            PiiOperator::Redact => Operator::Redact,
-            PiiOperator::Hash => self.hash.clone(),
+            PrivacyOperator::Replace => Operator::Replace,
+            PrivacyOperator::Mask => Operator::default_mask(),
+            PrivacyOperator::Redact => Operator::Redact,
+            PrivacyOperator::Hash => self.hash.clone(),
         }
     }
 
@@ -445,7 +445,7 @@ pub(crate) fn log_redactions(stats: &RedactionStats, row_count: Option<usize>) {
 }
 
 /// Loads the NER engine and attaches it, failing closed on any load error.
-fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PiiConfig) -> Result<(), RedactorInitError> {
+fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PrivacyConfig) -> Result<(), RedactorInitError> {
     if !cfg.ner_enabled {
         return Ok(());
     }
@@ -456,10 +456,10 @@ fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PiiConfig) -> Result<
         return Ok(());
     }
     let Some(model) = cfg.ner_model.as_ref() else {
-        // `PiiConfig::validate` rejects this, but stay defensive and fail-closed.
+        // `PrivacyConfig::validate` rejects this, but stay defensive and fail-closed.
         return Err(RedactorInitError::Ner("model path missing".to_owned()));
     };
-    let threshold = crate::Score::from_static(dbmcp_config::PiiConfig::DEFAULT_NER_THRESHOLD);
+    let threshold = crate::Score::from_static(dbmcp_config::PrivacyConfig::DEFAULT_NER_THRESHOLD);
     let mut engine =
         crate::ner::NerEngine::load(model, threshold).map_err(|e| RedactorInitError::Ner(e.to_string()))?;
     engine.set_allowed(allowed);
@@ -468,10 +468,10 @@ fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PiiConfig) -> Result<
 }
 
 /// Category each NER-emitted entity belongs to; `None` for ones NER never emits.
-fn ner_entity_category(entity: Entity) -> Option<PiiCategory> {
+fn ner_entity_category(entity: Entity) -> Option<PrivacyCategory> {
     match entity {
-        Entity::Person | Entity::Organization | Entity::Nrp => Some(PiiCategory::Personal),
-        Entity::Location | Entity::Facility => Some(PiiCategory::Contact),
+        Entity::Person | Entity::Organization | Entity::Nrp => Some(PrivacyCategory::Personal),
+        Entity::Location | Entity::Facility => Some(PrivacyCategory::Contact),
         _ => None,
     }
 }
@@ -479,7 +479,7 @@ fn ner_entity_category(entity: Entity) -> Option<PiiCategory> {
 /// Resolves the NER entities permitted by the category filter.
 ///
 /// An unset category subset means all NER entities apply.
-fn allowed_ner_entities(cfg: &dbmcp_config::PiiConfig) -> Vec<Entity> {
+fn allowed_ner_entities(cfg: &dbmcp_config::PrivacyConfig) -> Vec<Entity> {
     let selected = cfg.categories.as_ref();
     crate::ner::NER_ENTITIES
         .iter()
@@ -523,13 +523,13 @@ fn redact_spans(
 }
 
 /// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.
-fn keyed_hash(cfg: &dbmcp_config::PiiConfig) -> Result<Operator, RedactorInitError> {
+fn keyed_hash(cfg: &dbmcp_config::PrivacyConfig) -> Result<Operator, RedactorInitError> {
     if let Some(key) = &cfg.key {
         return Ok(Operator::hash(key.expose_secret().as_bytes()));
     }
-    let mut key = [0u8; dbmcp_config::PiiConfig::MIN_KEY_BYTES];
+    let mut key = [0u8; dbmcp_config::PrivacyConfig::MIN_KEY_BYTES];
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
-    if cfg.operator == PiiOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PiiOperator::Hash) {
+    if cfg.operator == PrivacyOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash) {
         tracing::warn!(
             "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
         );
@@ -552,15 +552,15 @@ mod tests {
     /// The 32-byte test key from the keyed-token spec vectors.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
-    fn hash_config(key: Option<&str>) -> dbmcp_config::PiiConfig {
-        dbmcp_config::PiiConfig {
-            operator: PiiOperator::Hash,
+    fn hash_config(key: Option<&str>) -> dbmcp_config::PrivacyConfig {
+        dbmcp_config::PrivacyConfig {
+            operator: PrivacyOperator::Hash,
             key: key.map(Into::into),
-            ..dbmcp_config::PiiConfig::default()
+            ..dbmcp_config::PrivacyConfig::default()
         }
     }
 
-    fn build(cfg: &dbmcp_config::PiiConfig) -> Redactor {
+    fn build(cfg: &dbmcp_config::PrivacyConfig) -> Redactor {
         Redactor::from_config(Some(cfg))
             .expect("config ok")
             .expect("redactor present")
@@ -810,7 +810,11 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Redact, Operator::hash(TEST_KEY));
+        let r = Redactor::new(
+            Analyzer::with_defaults(),
+            PrivacyOperator::Redact,
+            Operator::hash(TEST_KEY),
+        );
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -821,7 +825,11 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::new(Analyzer::with_defaults(), PiiOperator::Mask, Operator::hash(TEST_KEY));
+        let r = Redactor::new(
+            Analyzer::with_defaults(),
+            PrivacyOperator::Mask,
+            Operator::hash(TEST_KEY),
+        );
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -833,7 +841,7 @@ mod tests {
     fn whole_leaf_match_hash_matches_text_column() {
         let r = Redactor::new(
             Analyzer::with_defaults(),
-            PiiOperator::Hash,
+            PrivacyOperator::Hash,
             Operator::hash(KEY.as_bytes()),
         );
         let mut json_rows = vec![json!({"v": "x@y.com"})];
@@ -1205,10 +1213,10 @@ mod tests {
 
     #[test]
     fn from_config_bad_model_path_fails_closed() {
-        let cfg = dbmcp_config::PiiConfig {
+        let cfg = dbmcp_config::PrivacyConfig {
             ner_enabled: true,
             ner_model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
-            ..dbmcp_config::PiiConfig::default()
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let err = Redactor::from_config(Some(&cfg)).expect_err("unreadable model must fail closed");
         assert!(matches!(err, RedactorInitError::Ner(_)));
@@ -1216,9 +1224,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_unset_categories_allows_all() {
-        let cfg = dbmcp_config::PiiConfig {
+        let cfg = dbmcp_config::PrivacyConfig {
             ner_enabled: true,
-            ..dbmcp_config::PiiConfig::default()
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let allowed = allowed_ner_entities(&cfg);
         assert_eq!(allowed.len(), 5, "unset categories must allow every NER entity");
@@ -1235,9 +1243,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_personal_only_gates_to_personal_entities() {
-        let cfg = dbmcp_config::PiiConfig {
-            categories: Some(vec![dbmcp_config::PiiCategory::Personal]),
-            ..dbmcp_config::PiiConfig::default()
+        let cfg = dbmcp_config::PrivacyConfig {
+            categories: Some(vec![dbmcp_config::PrivacyCategory::Personal]),
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let allowed = allowed_ner_entities(&cfg);
         assert!(allowed.contains(&Entity::Person));
@@ -1249,9 +1257,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_contact_only_gates_to_contact_entities() {
-        let cfg = dbmcp_config::PiiConfig {
-            categories: Some(vec![dbmcp_config::PiiCategory::Contact]),
-            ..dbmcp_config::PiiConfig::default()
+        let cfg = dbmcp_config::PrivacyConfig {
+            categories: Some(vec![dbmcp_config::PrivacyCategory::Contact]),
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let allowed = allowed_ner_entities(&cfg);
         assert!(allowed.contains(&Entity::Location));
@@ -1263,9 +1271,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_unrelated_category_is_empty() {
-        let cfg = dbmcp_config::PiiConfig {
-            categories: Some(vec![dbmcp_config::PiiCategory::Financial]),
-            ..dbmcp_config::PiiConfig::default()
+        let cfg = dbmcp_config::PrivacyConfig {
+            categories: Some(vec![dbmcp_config::PrivacyCategory::Financial]),
+            ..dbmcp_config::PrivacyConfig::default()
         };
         assert!(
             allowed_ner_entities(&cfg).is_empty(),
@@ -1279,14 +1287,14 @@ mod tests {
         // moved out for inference must be restored verbatim when it yields no
         // spans. Dropping the restore would silently blank every non-PII string
         // under NER, so this guards that invariant. Skips without a local model.
-        let Some(dir) = std::env::var_os("PII_NER_TEST_MODEL").map(std::path::PathBuf::from) else {
-            eprintln!("PII_NER_TEST_MODEL unset; skipping NER redactor test");
+        let Some(dir) = std::env::var_os("PRIVACY_TEST_MODEL").map(std::path::PathBuf::from) else {
+            eprintln!("PRIVACY_TEST_MODEL unset; skipping NER redactor test");
             return;
         };
-        let cfg = dbmcp_config::PiiConfig {
+        let cfg = dbmcp_config::PrivacyConfig {
             ner_enabled: true,
             ner_model: Some(dir),
-            ..dbmcp_config::PiiConfig::default()
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let r = Redactor::from_config(Some(&cfg))
             .expect("config ok")
@@ -1337,18 +1345,18 @@ mod tests {
 
     #[test]
     fn from_config_maps_each_operator() {
-        let cfg = |operator| dbmcp_config::PiiConfig {
+        let cfg = |operator| dbmcp_config::PrivacyConfig {
             operator,
-            ..dbmcp_config::PiiConfig::default()
+            ..dbmcp_config::PrivacyConfig::default()
         };
         let global = |operator| {
             let r = build(&cfg(operator));
             r.operator(r.global)
         };
-        assert!(matches!(global(PiiOperator::Replace), Operator::Replace));
-        assert!(matches!(global(PiiOperator::Mask), Operator::Mask { .. }));
-        assert!(matches!(global(PiiOperator::Redact), Operator::Redact));
-        assert!(matches!(global(PiiOperator::Hash), Operator::Hash { .. }));
+        assert!(matches!(global(PrivacyOperator::Replace), Operator::Replace));
+        assert!(matches!(global(PrivacyOperator::Mask), Operator::Mask { .. }));
+        assert!(matches!(global(PrivacyOperator::Redact), Operator::Redact));
+        assert!(matches!(global(PrivacyOperator::Hash), Operator::Hash { .. }));
     }
 
     #[test]

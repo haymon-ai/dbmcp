@@ -348,7 +348,7 @@ This is a Cargo workspace with the following crates:
 | `dbmcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
 | `dbmcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
 | `dbmcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
-| `dbmcp-pii` | `crates/pii/` | PII detection and anonymisation of query output |
+| `dbmcp-privacy` | `crates/privacy/` | PII detection and anonymisation of query output |
 | `dbmcp-sql-lineage` | `crates/sql-lineage/` | Column-level SQL lineage extraction |
 | `dbmcp-ssh` | `crates/ssh/` | SSH tunnel for database connections |
 | `sqlx-json` | `crates/sqlx-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |

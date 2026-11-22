@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use dbmcp_pii::{
+use dbmcp_privacy::{
     AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Detector, Entity, Operator, RecognizerResult, Score,
     ValidationOutcome, anonymize, operators::OperatorKind,
 };

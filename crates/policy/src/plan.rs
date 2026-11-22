@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
-use dbmcp_config::{ColumnRule, PiiConfig};
-use dbmcp_pii::Entity;
-use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
+use dbmcp_config::{ColumnRule, PrivacyConfig};
+use dbmcp_privacy::Entity;
+use dbmcp_privacy::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
     Dialect, ExplainForm, Family, Lineage, Member, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
@@ -33,7 +33,12 @@ use crate::rejection::Rejection;
 ///
 /// Panics when a rule's entity is not an [`Entity`] name; the loader only
 /// accepts `ColumnRule::ENTITIES`, which a test ties to [`Entity`].
-pub(crate) fn plan(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+pub(crate) fn plan(
+    lineage: &Lineage,
+    dialect: Dialect,
+    config: &PrivacyConfig,
+    names: &Names,
+) -> Result<Plan, Rejection> {
     gate(lineage, dialect, config, names).map_err(Rejection::logged)
 }
 
@@ -54,12 +59,12 @@ pub(crate) struct Names {
 /// ruled when its family is. Backends use it to decide whether database
 /// errors must be sanitized.
 #[must_use]
-pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig, families: &Families) -> bool {
+pub(crate) fn touches_ruled(lineage: &Lineage, config: &PrivacyConfig, families: &Families) -> bool {
     ruled_relation(lineage, config, families).is_some()
 }
 
 /// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+fn gate(lineage: &Lineage, dialect: Dialect, config: &PrivacyConfig, names: &Names) -> Result<Plan, Rejection> {
     if let Some(function) = lineage.functions.iter().find(|function| !function.known) {
         return Err(Rejection::UnknownFunction {
             name: function.name.clone(),
@@ -166,7 +171,7 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
 /// another leaf, so every leaf must read each ruled column under the same
 /// pairs. Moves are decided per row at run time, so this fires even when no
 /// row would move. Lineage keeps no per-action detail, so every `MERGE` counts.
-fn row_movement(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<(), Rejection> {
+fn row_movement(lineage: &Lineage, config: &PrivacyConfig, names: &Names) -> Result<(), Rejection> {
     if !matches!(lineage.statement, StatementKind::Update | StatementKind::Merge) {
         return Ok(());
     }
@@ -228,7 +233,7 @@ fn known_name(column: &OutputColumn) -> Option<String> {
 
 /// Returns the rule whose key is the folded `catalog.schema.table.column`.
 #[must_use]
-pub(crate) fn rule<'a>(config: &'a PiiConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
+pub(crate) fn rule<'a>(config: &'a PrivacyConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
     let key = [
         ColumnRule::fold(&relation.catalog),
         ColumnRule::fold(&relation.schema),
@@ -251,7 +256,7 @@ fn reach<'f>(families: &'f Families, relation: &'f RelationId) -> impl Iterator<
 /// Rows read through a relation then follow every rule a direct read of
 /// the member they live in would.
 pub(crate) fn covering<'a>(
-    config: &'a PiiConfig,
+    config: &'a PrivacyConfig,
     families: &'a Families,
     relation: &'a RelationId,
     column: &'a str,
@@ -263,7 +268,7 @@ pub(crate) fn covering<'a>(
 ///
 /// These are the rules a direct read of `member.column` follows.
 fn direct<'a>(
-    config: &'a PiiConfig,
+    config: &'a PrivacyConfig,
     member: &'a RelationId,
     ancestors: impl Iterator<Item = &'a RelationId>,
     column: &'a str,
@@ -274,7 +279,7 @@ fn direct<'a>(
 }
 
 /// Reports whether any rule names a column of `relation`.
-pub(crate) fn is_ruled(relation: &RelationId, config: &PiiConfig) -> bool {
+pub(crate) fn is_ruled(relation: &RelationId, config: &PrivacyConfig) -> bool {
     config.rules.iter().any(|rule| rule_on(rule, relation))
 }
 
@@ -289,12 +294,12 @@ fn rule_on(rule: &ColumnRule, relation: &RelationId) -> bool {
 }
 
 /// Reports whether any rule names a column of `relation` or of its family.
-pub(crate) fn covers_ruled(config: &PiiConfig, families: &Families, relation: &RelationId) -> bool {
+pub(crate) fn covers_ruled(config: &PrivacyConfig, families: &Families, relation: &RelationId) -> bool {
     reach(families, relation).any(|relation| is_ruled(relation, config))
 }
 
 /// Returns the first touched relation whose family has a ruled column.
-fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Families) -> Option<&'a RelationId> {
+fn ruled_relation<'a>(lineage: &'a Lineage, config: &PrivacyConfig, families: &Families) -> Option<&'a RelationId> {
     lineage
         .relations
         .iter()
@@ -306,7 +311,7 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Famil
 ///
 /// Ruled sources decide the position; unruled ones add nothing. No ruled
 /// source means global detection.
-fn combine(sources: &BTreeSet<SourceRef>, config: &PiiConfig, families: &Families) -> Option<Position> {
+fn combine(sources: &BTreeSet<SourceRef>, config: &PrivacyConfig, families: &Families) -> Option<Position> {
     merge(
         sources
             .iter()

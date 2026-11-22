@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::log::LogLevel;
 use crate::node::Node;
-use crate::pii::{PiiCategory, PiiOperator};
+use crate::privacy::{PrivacyCategory, PrivacyOperator};
 use crate::rules::{self, Rule};
 use crate::ssh::StrictHostKeyChecking;
 use crate::transport::Transport;
@@ -299,8 +299,8 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
 const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
 const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
 const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-pub(crate) const PII_OPERATOR_NAMES: [&str; PiiOperator::CHOICES.len()] = names(PiiOperator::CHOICES);
-const PII_CATEGORY_NAMES: [&str; PiiCategory::CHOICES.len()] = names(PiiCategory::CHOICES);
+pub(crate) const PRIVACY_OPERATOR_NAMES: [&str; PrivacyOperator::CHOICES.len()] = names(PrivacyOperator::CHOICES);
+const PRIVACY_CATEGORY_NAMES: [&str; PrivacyCategory::CHOICES.len()] = names(PrivacyCategory::CHOICES);
 const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
     names(StrictHostKeyChecking::CHOICES);
 
@@ -411,25 +411,25 @@ pub const HTTP_ALLOW_UNAUTHENTICATED: Setting = setting(
     Kind::Bool,
 );
 /// `pii.enabled` / `DBMCP_PII_ENABLE`.
-pub const PII_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
+pub const PRIVACY_ENABLE: Setting = setting("pii.enabled", "DBMCP_PII_ENABLE", Kind::Bool);
 /// `pii.operator` / `DBMCP_PII_OPERATOR`.
-pub const PII_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", choice(&PII_OPERATOR_NAMES));
+pub const PRIVACY_OPERATOR: Setting = setting("pii.operator", "DBMCP_PII_OPERATOR", choice(&PRIVACY_OPERATOR_NAMES));
 /// `pii.key` / `DBMCP_PII_KEY`.
-pub const PII_KEY: Setting = setting("pii.key", "DBMCP_PII_KEY", Kind::Text);
+pub const PRIVACY_KEY: Setting = setting("pii.key", "DBMCP_PII_KEY", Kind::Text);
 /// `pii.categories` / `DBMCP_PII_CATEGORIES`.
-pub const PII_CATEGORIES: Setting = setting(
+pub const PRIVACY_CATEGORIES: Setting = setting(
     "pii.categories",
     "DBMCP_PII_CATEGORIES",
     Kind::List {
-        choices: Some(&PII_CATEGORY_NAMES),
+        choices: Some(&PRIVACY_CATEGORY_NAMES),
     },
 );
 /// `pii.ner_enabled` / `DBMCP_PII_NER_ENABLE`.
-pub const PII_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
+pub const PRIVACY_NER_ENABLE: Setting = setting("pii.ner_enabled", "DBMCP_PII_NER_ENABLE", Kind::Bool);
 /// `pii.ner_model` / `DBMCP_PII_NER_MODEL`.
-pub const PII_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
+pub const PRIVACY_NER_MODEL: Setting = setting("pii.ner_model", "DBMCP_PII_NER_MODEL", FILE_PATH);
 /// `pii.rules` (YAML only).
-pub const PII_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
+pub const PRIVACY_RULES: Setting = yaml_only("pii.rules", Kind::Rules);
 /// `ssh.host` / `DBMCP_SSH_HOST`.
 pub const SSH_HOST: Setting = setting("ssh.host", "DBMCP_SSH_HOST", Kind::Text);
 /// `ssh.port` / `DBMCP_SSH_PORT`.
@@ -489,13 +489,13 @@ pub const SETTINGS: &[Setting] = &[
     HTTP_ALLOWED_HOSTS,
     HTTP_AUTH_TOKEN,
     HTTP_ALLOW_UNAUTHENTICATED,
-    PII_ENABLE,
-    PII_OPERATOR,
-    PII_KEY,
-    PII_CATEGORIES,
-    PII_NER_ENABLE,
-    PII_NER_MODEL,
-    PII_RULES,
+    PRIVACY_ENABLE,
+    PRIVACY_OPERATOR,
+    PRIVACY_KEY,
+    PRIVACY_CATEGORIES,
+    PRIVACY_NER_ENABLE,
+    PRIVACY_NER_MODEL,
+    PRIVACY_RULES,
     SSH_HOST,
     SSH_PORT,
     SSH_USER,

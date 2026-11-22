@@ -271,7 +271,7 @@ pub(crate) mod tests {
             database: db_config(backend),
             transport: Transport::Stdio,
             http: None,
-            pii: None,
+            privacy: None,
             ssh: None,
         }
     }

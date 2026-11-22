@@ -26,7 +26,7 @@ use crate::error::{ConfigError, Diagnostic};
 use crate::http::HttpConfig;
 use crate::log::LogLevel;
 use crate::options::LoadOptions;
-use crate::pii::{ColumnRule, PiiCategory, PiiConfig, PiiOperator};
+use crate::privacy::{ColumnRule, PrivacyCategory, PrivacyConfig, PrivacyOperator};
 use crate::rules::{self, Rule};
 use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
@@ -216,16 +216,16 @@ impl Resolver<'_> {
         let database = self.database();
         let http = (transport == Transport::Http).then(|| self.http());
         let operator = self
-            .enumeration(env::PII_OPERATOR, PiiOperator::CHOICES)
-            .unwrap_or(PiiConfig::DEFAULT_OPERATOR);
+            .enumeration(env::PRIVACY_OPERATOR, PrivacyOperator::CHOICES)
+            .unwrap_or(PrivacyConfig::DEFAULT_OPERATOR);
         let (column_rules, rule_errors) = match rules::resolve(self.rules(), &database, operator) {
             Ok(column_rules) => (column_rules, Vec::new()),
             Err(errors) => (Vec::new(), errors),
         };
-        let pii = self
-            .bool(env::PII_ENABLE)
+        let privacy = self
+            .bool(env::PRIVACY_ENABLE)
             .unwrap_or(false)
-            .then(|| self.pii(operator, column_rules));
+            .then(|| self.privacy(operator, column_rules));
         let ssh_set: Vec<Setting> = SETTINGS
             .iter()
             .copied()
@@ -233,13 +233,13 @@ impl Resolver<'_> {
             .collect();
         let ssh = ssh_set.contains(&env::SSH_HOST).then(|| self.ssh());
         let missing_ssh_host = ssh.is_none() && !ssh_set.is_empty();
-        let rules_without_pii = pii.is_none() && !self.rules().is_empty();
+        let rules_without_privacy = privacy.is_none() && !self.rules().is_empty();
 
         let config = Config {
             transport,
             database,
             http,
-            pii,
+            privacy,
             ssh,
         };
         let mut diagnostics = config.validate().err().unwrap_or_default();
@@ -251,9 +251,11 @@ impl Resolver<'_> {
             );
         }
         diagnostics.extend(rule_errors);
-        if rules_without_pii {
-            diagnostics
-                .push(Diagnostic::new(ConfigError::PiiRulesWithoutPii).involving(&[env::PII_RULES, env::PII_ENABLE]));
+        if rules_without_privacy {
+            diagnostics.push(
+                Diagnostic::new(ConfigError::PrivacyRulesWithoutPrivacy)
+                    .involving(&[env::PRIVACY_RULES, env::PRIVACY_ENABLE]),
+            );
         }
         if !diagnostics.is_empty() {
             return Err(diagnostics);
@@ -339,7 +341,7 @@ impl Resolver<'_> {
 
     /// Returns the winning `pii.rules` value; unset is no rules.
     fn rules(&self) -> &[Rule] {
-        match self.settings.get(env::PII_RULES) {
+        match self.settings.get(env::PRIVACY_RULES) {
             None => &[],
             Some(Value::Rules(rules)) => rules,
             Some(_) => unreachable!("pii.rules is not a rules setting"),
@@ -347,15 +349,18 @@ impl Resolver<'_> {
     }
 
     /// Resolves the PII section around its operator and resolved rules.
-    fn pii(&self, operator: PiiOperator, rules: Vec<ColumnRule>) -> PiiConfig {
-        let hashing = operator == PiiOperator::Hash || rules.iter().any(|rule| rule.operator == PiiOperator::Hash);
-        PiiConfig {
+    fn privacy(&self, operator: PrivacyOperator, rules: Vec<ColumnRule>) -> PrivacyConfig {
+        let hashing =
+            operator == PrivacyOperator::Hash || rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash);
+        PrivacyConfig {
             operator,
-            key: hashing.then(|| self.string(env::PII_KEY).map(Into::into)).flatten(),
+            key: hashing.then(|| self.string(env::PRIVACY_KEY).map(Into::into)).flatten(),
             rules,
-            categories: self.enum_list(env::PII_CATEGORIES, PiiCategory::CHOICES),
-            ner_enabled: self.bool(env::PII_NER_ENABLE).unwrap_or(PiiConfig::DEFAULT_NER_ENABLED),
-            ner_model: self.path(env::PII_NER_MODEL),
+            categories: self.enum_list(env::PRIVACY_CATEGORIES, PrivacyCategory::CHOICES),
+            ner_enabled: self
+                .bool(env::PRIVACY_NER_ENABLE)
+                .unwrap_or(PrivacyConfig::DEFAULT_NER_ENABLED),
+            ner_model: self.path(env::PRIVACY_NER_MODEL),
         }
     }
 
@@ -478,7 +483,7 @@ mod tests {
         assert_eq!(loaded.config.database.backend, DatabaseBackend::Mysql);
         assert_eq!(loaded.config.database.port, 3306);
         assert!(loaded.config.database.read_only);
-        assert!(loaded.config.http.is_none() && loaded.config.pii.is_none() && loaded.config.ssh.is_none());
+        assert!(loaded.config.http.is_none() && loaded.config.privacy.is_none() && loaded.config.ssh.is_none());
         assert!(loaded.warnings.is_empty());
     }
 
@@ -502,7 +507,7 @@ mod tests {
             .ok();
         let db = &plain.config.database;
         let http = active.config.http.as_ref().expect("http");
-        let pii = active.config.pii.as_ref().expect("pii");
+        let privacy = active.config.privacy.as_ref().expect("pii");
         let ssh = active.config.ssh.as_ref().expect("ssh");
         let document = crate::schema::tests::document();
         let mut compared = 0;
@@ -529,9 +534,9 @@ mod tests {
                 "http.allowed_origins" => http.allowed_origins.clone().into(),
                 "http.allowed_hosts" => http.allowed_hosts.clone().into(),
                 "http.allow_unauthenticated" => http.allow_unauthenticated.into(),
-                "pii.enabled" => plain.config.pii.is_some().into(),
-                "pii.operator" => choice(PiiOperator::CHOICES, &pii.operator),
-                "pii.ner_enabled" => pii.ner_enabled.into(),
+                "pii.enabled" => plain.config.privacy.is_some().into(),
+                "pii.operator" => choice(PrivacyOperator::CHOICES, &privacy.operator),
+                "pii.ner_enabled" => privacy.ner_enabled.into(),
                 "ssh.port" => ssh.port.into(),
                 "ssh.strict_host_key_checking" => choice(StrictHostKeyChecking::CHOICES, &ssh.strict_host_key_checking),
                 "ssh.keepalive_interval" => ssh.keepalive_interval.as_secs().into(),
@@ -1095,7 +1100,7 @@ mod tests {
             Some(conf.join("certs/ca.pem").display().to_string())
         );
         assert_eq!(
-            loaded.config.pii.expect("pii").ner_model,
+            loaded.config.privacy.expect("pii").ner_model,
             Some(fixture.dir.path().join("home").join("models"))
         );
     }
@@ -1152,8 +1157,8 @@ mod tests {
         assert_eq!(http.allowed_hosts, ["a", "b"]);
         assert!(http.allowed_origins.is_empty(), "[] disables Origin validation");
         assert_eq!(
-            loaded.config.pii.expect("pii").categories,
-            Some(vec![PiiCategory::Crypto, PiiCategory::Network])
+            loaded.config.privacy.expect("pii").categories,
+            Some(vec![PrivacyCategory::Crypto, PrivacyCategory::Network])
         );
     }
 
@@ -1200,10 +1205,10 @@ mod tests {
         assert!(loaded.config.http.is_none());
     }
 
-    const PII_KEY_32: &str = "0123456789abcdef0123456789abcdef";
+    const PRIVACY_KEY_32: &str = "0123456789abcdef0123456789abcdef";
 
     /// A fixture with PII on under `operator`.
-    fn pii_fixture(operator: &str) -> Fixture {
+    fn privacy_fixture(operator: &str) -> Fixture {
         Fixture::new()
             .env("DBMCP_PII_ENABLE", "true")
             .env("DBMCP_PII_OPERATOR", operator)
@@ -1211,63 +1216,69 @@ mod tests {
 
     #[test]
     fn pii_key_is_kept_only_for_the_hash_operator() {
-        let pii = pii_fixture("hash")
-            .env("DBMCP_PII_KEY", PII_KEY_32)
+        let privacy = privacy_fixture("hash")
+            .env("DBMCP_PII_KEY", PRIVACY_KEY_32)
             .ok()
             .config
-            .pii
+            .privacy
             .expect("pii");
-        assert_eq!(pii.key.as_ref().map(ExposeSecret::expose_secret), Some(PII_KEY_32));
+        assert_eq!(
+            privacy.key.as_ref().map(ExposeSecret::expose_secret),
+            Some(PRIVACY_KEY_32)
+        );
 
-        let pii = pii_fixture("replace")
+        let privacy = privacy_fixture("replace")
             .env("DBMCP_PII_KEY", "short")
             .ok()
             .config
-            .pii
+            .privacy
             .expect("pii");
-        assert!(pii.key.is_none());
+        assert!(privacy.key.is_none());
 
         let loaded = Fixture::new().env("DBMCP_PII_KEY", "short").ok();
-        assert!(loaded.config.pii.is_none());
+        assert!(loaded.config.privacy.is_none());
     }
 
     #[test]
     fn pii_defaults_to_hash_and_keeps_an_unset_key_unset() {
         let loaded = Fixture::new().config("dbmcp.yaml", "pii:\n  enabled: true\n").ok();
-        let pii = loaded.config.pii.expect("pii");
-        assert_eq!(pii.operator, PiiOperator::Hash);
-        assert!(pii.key.is_none());
+        let privacy = loaded.config.privacy.expect("pii");
+        assert_eq!(privacy.operator, PrivacyOperator::Hash);
+        assert!(privacy.key.is_none());
 
         let loaded = Fixture::new()
-            .config("dbmcp.yaml", &format!("pii:\n  enabled: true\n  key: {PII_KEY_32}\n"))
+            .config(
+                "dbmcp.yaml",
+                &format!("pii:\n  enabled: true\n  key: {PRIVACY_KEY_32}\n"),
+            )
             .ok();
-        assert!(loaded.config.pii.expect("pii").key.is_some());
+        assert!(loaded.config.privacy.expect("pii").key.is_some());
     }
 
     #[test]
     fn pii_key_rules() {
-        let error = pii_fixture("hash").env("DBMCP_PII_KEY", "s3krt").err();
+        let error = privacy_fixture("hash").env("DBMCP_PII_KEY", "s3krt").err();
         assert!(error.contains("pii.key must be at least 32 bytes, got 5"), "{error}");
         assert!(error.contains("DBMCP_PII_KEY"), "{error}");
         assert!(!error.contains("s3krt"), "key leaked: {error}");
 
-        let error = pii_fixture("hash").env("DBMCP_PII_KEY", &" ".repeat(32)).err();
+        let error = privacy_fixture("hash").env("DBMCP_PII_KEY", &" ".repeat(32)).err();
         assert!(error.contains("pii.key must not be empty when set"), "{error}");
     }
 
     #[test]
     fn pii_key_env_overrides_yaml() {
         let env_key = "e".repeat(32);
-        let loaded = pii_fixture("hash")
+        let loaded = privacy_fixture("hash")
             .config("dbmcp.yaml", &format!("pii:\n  key: {}\n", "y".repeat(32)))
             .env("DBMCP_PII_KEY", &env_key)
             .ok();
-        let pii = loaded.config.pii.expect("pii");
+        let privacy = loaded.config.privacy.expect("pii");
         assert_eq!(
-            pii.key.as_ref().map(ExposeSecret::expose_secret),
+            privacy.key.as_ref().map(ExposeSecret::expose_secret),
             Some(env_key.as_str())
         );
-        let debug = format!("{pii:?}");
+        let debug = format!("{privacy:?}");
         assert!(!debug.contains(&env_key), "key leaked: {debug}");
     }
 
@@ -1433,8 +1444,8 @@ mod tests {
     }
 
     /// Loads the fixture and returns its PII section.
-    fn pii_section(fixture: &Fixture) -> PiiConfig {
-        fixture.ok().config.pii.expect("pii enabled")
+    fn privacy_section(fixture: &Fixture) -> PrivacyConfig {
+        fixture.ok().config.privacy.expect("pii enabled")
     }
 
     /// Two rules on `MySQL` keys; `cards` sets its own operator.
@@ -1453,8 +1464,9 @@ mod tests {
 ";
 
     /// Renders rules as `(name, item, key, entity, operator)`.
-    fn rule_rows(pii: &PiiConfig) -> Vec<(String, usize, String, &'static str, PiiOperator)> {
-        pii.rules
+    fn rule_rows(privacy: &PrivacyConfig) -> Vec<(String, usize, String, &'static str, PrivacyOperator)> {
+        privacy
+            .rules
             .iter()
             .map(|r| (r.name.clone(), r.item, r.key.join("."), r.entity, r.operator))
             .collect()
@@ -1462,38 +1474,38 @@ mod tests {
 
     #[test]
     fn rules_flatten_one_column_rule_per_listed_column() {
-        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", RULES));
+        let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", RULES));
         assert_eq!(
-            rule_rows(&pii),
+            rule_rows(&privacy),
             vec![
                 (
                     "emails".into(),
                     0,
                     "def.shop.users.email".into(),
                     "EMAIL_ADDRESS",
-                    PiiOperator::Hash
+                    PrivacyOperator::Hash
                 ),
                 (
                     "emails".into(),
                     1,
                     "def.shop.orders.email".into(),
                     "EMAIL_ADDRESS",
-                    PiiOperator::Hash
+                    PrivacyOperator::Hash
                 ),
                 (
                     "cards".into(),
                     0,
                     "def.shop.payments.pan".into(),
                     "CREDIT_CARD",
-                    PiiOperator::Mask
+                    PrivacyOperator::Mask
                 ),
             ]
         );
-        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &format!("{RULES}  operator: redact\n")));
-        assert_eq!(pii.rules[0].operator, PiiOperator::Redact);
+        let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", &format!("{RULES}  operator: redact\n")));
+        assert_eq!(privacy.rules[0].operator, PrivacyOperator::Redact);
         let inherit = RULES.replace("      operator: mask\n", "      operator: ~\n");
-        let pii = pii_section(&Fixture::new().config("dbmcp.yaml", &inherit));
-        assert_eq!(pii.rules[2].operator, PiiOperator::Hash);
+        let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", &inherit));
+        assert_eq!(privacy.rules[2].operator, PrivacyOperator::Hash);
     }
 
     #[test]
@@ -1648,7 +1660,7 @@ mod tests {
             "b.yaml",
             "pii:\n  rules:\n    phones:\n      columns: [def.shop.users.phone]\n      entity: PHONE_NUMBER\n",
         );
-        let names: Vec<String> = pii_section(&fixture).rules.into_iter().map(|r| r.name).collect();
+        let names: Vec<String> = privacy_section(&fixture).rules.into_iter().map(|r| r.name).collect();
         assert_eq!(names, ["phones"]);
     }
 
@@ -1656,13 +1668,13 @@ mod tests {
     fn null_rules_keep_earlier_ones_and_empty_clears() {
         for null in ["pii:\n  rules:\n", "pii:\n  rules: ~\n"] {
             let fixture = Fixture::new().config("a.yaml", RULES).config("b.yaml", null);
-            assert_eq!(pii_section(&fixture).rules.len(), 3, "{null:?}");
+            assert_eq!(privacy_section(&fixture).rules.len(), 3, "{null:?}");
         }
         let fixture = Fixture::new()
             .config("a.yaml", RULES)
             .config("b.yaml", "pii:\n  rules: {}\n");
-        assert!(pii_section(&fixture).rules.is_empty());
-        assert!(fixture.ok().config.pii.expect("pii").rules.is_empty());
+        assert!(privacy_section(&fixture).rules.is_empty());
+        assert!(fixture.ok().config.privacy.expect("pii").rules.is_empty());
     }
 
     #[test]
@@ -1686,14 +1698,14 @@ mod tests {
     #[test]
     fn pii_rules_has_no_env_var() {
         let loaded = Fixture::new().env("DBMCP_PII_RULES", "garbage").ok();
-        assert!(loaded.config.pii.is_none());
-        let pii = Fixture::new()
+        assert!(loaded.config.privacy.is_none());
+        let privacy = Fixture::new()
             .env_file(".env", "DBMCP_PII_RULES=garbage\nDBMCP_PII_ENABLE=true\n")
             .ok()
             .config
-            .pii
+            .privacy
             .expect("pii");
-        assert!(pii.rules.is_empty());
+        assert!(privacy.rules.is_empty());
     }
 
     #[test]
@@ -1721,7 +1733,7 @@ mod tests {
                 .config("dbmcp.yaml", "pii:\n  rules: {}\n")
                 .ok()
                 .config
-                .pii
+                .privacy
                 .is_none()
         );
         Fixture::new()
@@ -1733,16 +1745,19 @@ mod tests {
     #[test]
     fn pii_key_is_kept_when_a_rule_hashes() {
         let hashing = "  rules:\n    emails:\n      columns: [def.shop.users.email]\n      entity: EMAIL_ADDRESS\n";
-        let fixture = pii_fixture("mask")
-            .env("DBMCP_PII_KEY", PII_KEY_32)
+        let fixture = privacy_fixture("mask")
+            .env("DBMCP_PII_KEY", PRIVACY_KEY_32)
             .config("dbmcp.yaml", &format!("pii:\n{hashing}      operator: hash\n"));
-        let pii = pii_section(&fixture);
-        assert_eq!(pii.key.as_ref().map(ExposeSecret::expose_secret), Some(PII_KEY_32));
+        let privacy = privacy_section(&fixture);
+        assert_eq!(
+            privacy.key.as_ref().map(ExposeSecret::expose_secret),
+            Some(PRIVACY_KEY_32)
+        );
 
-        let fixture = pii_fixture("mask")
-            .env("DBMCP_PII_KEY", PII_KEY_32)
+        let fixture = privacy_fixture("mask")
+            .env("DBMCP_PII_KEY", PRIVACY_KEY_32)
             .config("dbmcp.yaml", &format!("pii:\n{hashing}"));
-        assert!(pii_section(&fixture).key.is_none());
+        assert!(privacy_section(&fixture).key.is_none());
     }
 
     #[test]
@@ -1758,12 +1773,16 @@ mod tests {
             let fixture = Fixture::new()
                 .env("DBMCP_DB_BACKEND", backend)
                 .env("DBMCP_DB_NAME", name)
-                .env("DBMCP_PII_KEY", PII_KEY_32)
+                .env("DBMCP_PII_KEY", PRIVACY_KEY_32)
                 .config(
                     "dbmcp.yaml",
                     &format!("pii:\n  enabled: true\n  rules:\n    emails:\n      columns: [{key}]\n      entity: EMAIL_ADDRESS\n"),
                 );
-            let keys: Vec<String> = pii_section(&fixture).rules.iter().map(|r| r.key.join(".")).collect();
+            let keys: Vec<String> = privacy_section(&fixture)
+                .rules
+                .iter()
+                .map(|r| r.key.join("."))
+                .collect();
             assert_eq!(keys, [expanded], "{backend} {key}");
         }
     }
@@ -1837,7 +1856,7 @@ mod tests {
       operator: mask
 ",
         );
-        assert_eq!(pii_section(&fixture).rules.len(), 5);
-        assert_eq!(fixture.ok().config.pii.expect("pii enabled").rules.len(), 5);
+        assert_eq!(privacy_section(&fixture).rules.len(), 5);
+        assert_eq!(fixture.ok().config.privacy.expect("pii enabled").rules.len(), 5);
     }
 }

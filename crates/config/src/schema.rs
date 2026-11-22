@@ -306,7 +306,7 @@ pub(crate) mod tests {
                     assert_eq!(rule["required"], serde_json::json!(["columns", "entity"]), "{path}");
                     assert_eq!(
                         rule["properties"]["operator"]["enum"],
-                        nullable(&env::PII_OPERATOR_NAMES),
+                        nullable(&env::PRIVACY_OPERATOR_NAMES),
                         "{path}"
                     );
                 }

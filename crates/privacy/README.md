@@ -1,7 +1,7 @@
-# dbmcp-pii
+# dbmcp-privacy
 
-[![Crates.io](https://img.shields.io/crates/v/dbmcp-pii.svg)](https://crates.io/crates/dbmcp-pii)
-[![Docs.rs](https://docs.rs/dbmcp-pii/badge.svg)](https://docs.rs/dbmcp-pii)
+[![Crates.io](https://img.shields.io/crates/v/dbmcp-privacy.svg)](https://crates.io/crates/dbmcp-privacy)
+[![Docs.rs](https://docs.rs/dbmcp-privacy/badge.svg)](https://docs.rs/dbmcp-privacy)
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 

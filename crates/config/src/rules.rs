@@ -18,7 +18,7 @@ use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::node::Node;
-use crate::pii::{ColumnRule, PiiOperator};
+use crate::privacy::{ColumnRule, PrivacyOperator};
 
 /// One named rule as a config file wrote it, with folded keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub(crate) struct Rule {
     /// The entity, one of [`ColumnRule::ENTITIES`].
     pub entity: &'static str,
     /// The rule's operator; `None` inherits `pii.operator`.
-    pub operator: Option<PiiOperator>,
+    pub operator: Option<PrivacyOperator>,
 }
 
 /// A column key as written, its segments folded.
@@ -81,7 +81,7 @@ pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Res
 pub(crate) fn resolve(
     rules: &[Rule],
     database: &DatabaseConfig,
-    operator: PiiOperator,
+    operator: PrivacyOperator,
 ) -> Result<Vec<ColumnRule>, Vec<Diagnostic>> {
     let backend = database.backend;
     let pinned = database.name.as_deref().map(ColumnRule::fold);
@@ -132,18 +132,18 @@ pub(crate) fn resolve(
         }
         if !incomplete.is_empty() {
             errors.push(
-                Diagnostic::new(ConfigError::PiiRuleNeedsDatabase {
+                Diagnostic::new(ConfigError::PrivacyRuleNeedsDatabase {
                     rule: rule.name.clone(),
                     items: list(&incomplete),
                     backend,
                 })
-                .involving(&[env::PII_RULES, env::DB_BACKEND])
+                .involving(&[env::PRIVACY_RULES, env::DB_BACKEND])
                 .missing(&[env::DB_NAME]),
             );
         }
         if !foreign.is_empty() {
             errors.push(
-                Diagnostic::new(ConfigError::PiiRuleCatalog {
+                Diagnostic::new(ConfigError::PrivacyRuleCatalog {
                     rule: rule.name.clone(),
                     items: list(&foreign),
                     // PostgreSQL's catalog comes from config; name the setting, not its value.
@@ -154,8 +154,8 @@ pub(crate) fn resolve(
                     backend,
                 })
                 .involving(match backend {
-                    DatabaseBackend::Postgres => &[env::PII_RULES, env::DB_BACKEND, env::DB_NAME],
-                    _ => &[env::PII_RULES, env::DB_BACKEND],
+                    DatabaseBackend::Postgres => &[env::PRIVACY_RULES, env::DB_BACKEND, env::DB_NAME],
+                    _ => &[env::PRIVACY_RULES, env::DB_BACKEND],
                 }),
             );
         }
@@ -174,19 +174,19 @@ fn repeats(columns: &[ColumnRule]) -> Vec<Diagnostic> {
             continue;
         };
         let error = if first.name == column.name {
-            ConfigError::PiiRuleRepeat {
+            ConfigError::PrivacyRuleRepeat {
                 rule: column.name.clone(),
                 item: column.item,
                 first: first.item,
             }
         } else {
-            ConfigError::PiiRuleShared {
+            ConfigError::PrivacyRuleShared {
                 rule: column.name.clone(),
                 item: column.item,
                 other: first.name.clone(),
             }
         };
-        errors.push(Diagnostic::new(error).involving(&[env::PII_RULES]));
+        errors.push(Diagnostic::new(error).involving(&[env::PRIVACY_RULES]));
     }
     errors
 }
@@ -299,14 +299,14 @@ fn entity(node: &Node) -> Result<&'static str, String> {
 }
 
 /// Casts a rule's operator like `pii.operator`; `null` inherits it.
-fn operator(node: &Node) -> Result<Option<PiiOperator>, String> {
+fn operator(node: &Node) -> Result<Option<PrivacyOperator>, String> {
     match node {
         Node::Null => Ok(None),
-        Node::Str(text) => PiiOperator::CHOICES
+        Node::Str(text) => PrivacyOperator::CHOICES
             .iter()
             .find(|(name, _)| name == text)
             .map(|&(_, operator)| Some(operator))
-            .ok_or_else(|| format!("expected one of {}", env::PII_OPERATOR_NAMES.join(", "))),
+            .ok_or_else(|| format!("expected one of {}", env::PRIVACY_OPERATOR_NAMES.join(", "))),
         other => Err(unexpected("string", other)),
     }
 }
@@ -346,7 +346,7 @@ mod tests {
             name: name.map(str::to_owned),
             ..db_config(backend)
         };
-        resolve(&rules, &database, PiiOperator::Hash)
+        resolve(&rules, &database, PrivacyOperator::Hash)
             .map(|columns| columns.iter().map(|column| column.key.join(".")).collect())
             .map_err(|errors| errors.iter().map(|error| error.error.to_string()).collect())
     }

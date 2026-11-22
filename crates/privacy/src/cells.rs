@@ -14,7 +14,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use dbmcp_config::{ColumnRule, PiiOperator};
+use dbmcp_config::{ColumnRule, PrivacyOperator};
 use serde_json::Value;
 
 use crate::redact::{Frame, log_redactions};
@@ -47,7 +47,7 @@ pub struct PlannedColumn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Position {
     /// Replace every non-null value whole with the operator; the entity labels it.
-    Action(PiiOperator, Entity),
+    Action(PrivacyOperator, Entity),
     /// Run global detection, as without column rules.
     Global,
 }
@@ -245,7 +245,7 @@ fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::PiiConfig;
+    use dbmcp_config::PrivacyConfig;
     use serde_json::json;
 
     use super::*;
@@ -287,16 +287,16 @@ mod tests {
     }
 
     /// A redactor from a config with `operator` and a fixed key.
-    fn keyed(operator: PiiOperator) -> Redactor {
-        let config = PiiConfig {
+    fn keyed(operator: PrivacyOperator) -> Redactor {
+        let config = PrivacyConfig {
             operator,
             key: Some(KEY.to_string().into()),
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         };
         Redactor::from_config(Some(&config)).expect("builds").expect("enabled")
     }
 
-    const MASKED: Position = Position::Action(PiiOperator::Mask, Entity::UsSsn);
+    const MASKED: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
 
     #[test]
     fn push_keeps_the_first_row_names_and_later_values() {
@@ -402,7 +402,7 @@ mod tests {
     fn action_replace_writes_the_entity_placeholder() {
         let values = redact(
             &Redactor::with_defaults(),
-            vec![Position::Action(PiiOperator::Replace, Entity::Person)],
+            vec![Position::Action(PrivacyOperator::Replace, Entity::Person)],
             vec![json!("Jane Doe")],
         );
         assert_eq!(values, [json!("<PERSON>")]);
@@ -437,11 +437,11 @@ mod tests {
 
     #[test]
     fn a_hashing_rule_token_equals_global_detection_token() {
-        let redactor = keyed(PiiOperator::Hash);
+        let redactor = keyed(PrivacyOperator::Hash);
         let values = redact(
             &redactor,
             vec![
-                Position::Action(PiiOperator::Hash, Entity::EmailAddress),
+                Position::Action(PrivacyOperator::Hash, Entity::EmailAddress),
                 Position::Global,
             ],
             vec![json!(EMAIL), json!(EMAIL)],
@@ -455,10 +455,10 @@ mod tests {
 
     #[test]
     fn a_hashing_rule_under_another_global_operator_hashes() {
-        let redactor = keyed(PiiOperator::Mask);
+        let redactor = keyed(PrivacyOperator::Mask);
         let values = redact(
             &redactor,
-            vec![Position::Action(PiiOperator::Hash, Entity::EmailAddress)],
+            vec![Position::Action(PrivacyOperator::Hash, Entity::EmailAddress)],
             vec![json!(EMAIL)],
         );
         assert!(
@@ -471,8 +471,8 @@ mod tests {
 
     #[test]
     fn a_ruled_json_cell_hashes_its_sorted_key_text() {
-        let redactor = keyed(PiiOperator::Hash);
-        let hashed = Position::Action(PiiOperator::Hash, Entity::UsSsn);
+        let redactor = keyed(PrivacyOperator::Hash);
+        let hashed = Position::Action(PrivacyOperator::Hash, Entity::UsSsn);
         let values = redact(
             &redactor,
             vec![hashed, hashed, hashed],
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn a_ruled_json_cell_masks_to_its_sorted_key_length() {
-        let redactor = keyed(PiiOperator::Mask);
+        let redactor = keyed(PrivacyOperator::Mask);
         let values = redact(&redactor, vec![MASKED], vec![json!({"b": 1, "a": {"d": 2, "c": 3}})]);
         assert_eq!(values[0], json!("*".repeat(SORTED.len())));
     }
@@ -510,7 +510,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_plan_matches_row_redaction_of_the_row_objects() {
-        let redactor = keyed(PiiOperator::Hash);
+        let redactor = keyed(PrivacyOperator::Hash);
         let columns = ["contact", "ssn", "doc", "n", "contact"].map(String::from).to_vec();
         let rows = vec![
             vec![

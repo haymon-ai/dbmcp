@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use dbmcp_pii::{Analyzer, ChunkCount, Operator, RecognizerResult, anonymize};
+use dbmcp_privacy::{Analyzer, ChunkCount, Operator, RecognizerResult, anonymize};
 
 mod common;
 

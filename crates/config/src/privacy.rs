@@ -9,7 +9,7 @@ use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 
 /// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum PiiOperator {
+pub enum PrivacyOperator {
     /// Replace each detected span with an entity-aware placeholder.
     Replace,
     /// Mask each detected span with `'*'` (length-preserving).
@@ -21,7 +21,7 @@ pub enum PiiOperator {
     Hash,
 }
 
-impl PiiOperator {
+impl PrivacyOperator {
     /// Accepted setting values, in the order error messages list them.
     pub(crate) const CHOICES: &[(&str, Self)] = &[
         ("replace", Self::Replace),
@@ -31,7 +31,7 @@ impl PiiOperator {
     ];
 }
 
-impl std::fmt::Display for PiiOperator {
+impl std::fmt::Display for PrivacyOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Replace => write!(f, "replace"),
@@ -44,10 +44,10 @@ impl std::fmt::Display for PiiOperator {
 
 /// PII categories selectable via the `pii.categories` setting.
 ///
-/// Mirror enum of `dbmcp_pii::Category`; the binary layer converts. The
+/// Mirror enum of `dbmcp_privacy::Category`; the binary layer converts. The
 /// wire format (kebab-case) lives in `dbmcp-config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PiiCategory {
+pub enum PrivacyCategory {
     /// Personal identifiers: names, emails, DOB.
     Personal,
     /// Financial identifiers: cards, IBANs, bank accounts.
@@ -64,7 +64,7 @@ pub enum PiiCategory {
     Crypto,
 }
 
-impl PiiCategory {
+impl PrivacyCategory {
     /// Accepted setting values, in the order error messages list them.
     pub(crate) const CHOICES: &[(&str, Self)] = &[
         ("personal", Self::Personal),
@@ -77,7 +77,7 @@ impl PiiCategory {
     ];
 }
 
-impl std::fmt::Display for PiiCategory {
+impl std::fmt::Display for PrivacyCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::Personal => "personal",
@@ -104,13 +104,13 @@ pub struct ColumnRule {
     /// The entity the column holds, one of [`ColumnRule::ENTITIES`].
     pub entity: &'static str,
     /// The operator: the rule's own, else `pii.operator`.
-    pub operator: PiiOperator,
+    pub operator: PrivacyOperator,
 }
 
 impl ColumnRule {
-    /// Entity names a rule may use, in `dbmcp_pii::Entity::ALL` order.
+    /// Entity names a rule may use, in `dbmcp_privacy::Entity::ALL` order.
     ///
-    /// Mirrors `dbmcp_pii::Entity::as_str`; a test in `dbmcp-pii` ties the two.
+    /// Mirrors `dbmcp_privacy::Entity::as_str`; a test in `dbmcp-privacy` ties the two.
     pub const ENTITIES: [&'static str; 52] = [
         "EMAIL_ADDRESS",
         "CREDIT_CARD",
@@ -180,16 +180,16 @@ impl ColumnRule {
 ///
 /// Present in [`crate::Config`] only when redaction is enabled.
 #[derive(Clone, Debug, Default)]
-pub struct PiiConfig {
+pub struct PrivacyConfig {
     /// Which built-in operator rewrites detected spans.
-    pub operator: PiiOperator,
+    pub operator: PrivacyOperator,
     /// HMAC key for the `hash` operator, at least 32 bytes; never logged.
     ///
-    /// Set only when [`Self::operator`] or a rule's operator is [`PiiOperator::Hash`].
+    /// Set only when [`Self::operator`] or a rule's operator is [`PrivacyOperator::Hash`].
     pub key: Option<SecretString>,
     /// Optional explicit category set; routes the analyzer through
-    /// `dbmcp_pii::Analyzer::builder().categories(...)`.
-    pub categories: Option<Vec<PiiCategory>>,
+    /// `dbmcp_privacy::Analyzer::builder().categories(...)`.
+    pub categories: Option<Vec<PrivacyCategory>>,
     /// Whether the optional ML/NER pass (person, location, organization, NRP, facility) runs.
     ///
     /// Requires a model path; ignored otherwise. Off by default.
@@ -201,9 +201,9 @@ pub struct PiiConfig {
     pub rules: Vec<ColumnRule>,
 }
 
-impl PiiConfig {
+impl PrivacyConfig {
     /// Default PII operator when no override is supplied.
-    pub const DEFAULT_OPERATOR: PiiOperator = PiiOperator::Hash;
+    pub const DEFAULT_OPERATOR: PrivacyOperator = PrivacyOperator::Hash;
     /// Default ML/NER pass state (off — opt-in only).
     pub const DEFAULT_NER_ENABLED: bool = false;
     /// NER confidence floor applied to every detected span.
@@ -223,24 +223,25 @@ impl PiiConfig {
         if let Some(key) = &self.key {
             let key = key.expose_secret();
             if key.trim().is_empty() {
-                errors.push(Diagnostic::new(ConfigError::EmptyPiiKey).involving(&[env::PII_KEY]));
+                errors.push(Diagnostic::new(ConfigError::EmptyPrivacyKey).involving(&[env::PRIVACY_KEY]));
             } else if key.len() < Self::MIN_KEY_BYTES {
-                errors.push(Diagnostic::new(ConfigError::PiiKeyTooShort(key.len())).involving(&[env::PII_KEY]));
+                errors.push(Diagnostic::new(ConfigError::PrivacyKeyTooShort(key.len())).involving(&[env::PRIVACY_KEY]));
             }
         }
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
                 errors.push(
-                    Diagnostic::new(ConfigError::EmptyList(env::PII_CATEGORIES.path)).involving(&[env::PII_CATEGORIES]),
+                    Diagnostic::new(ConfigError::EmptyList(env::PRIVACY_CATEGORIES.path))
+                        .involving(&[env::PRIVACY_CATEGORIES]),
                 );
             }
-            errors.extend(duplicates(env::PII_CATEGORIES, categories));
+            errors.extend(duplicates(env::PRIVACY_CATEGORIES, categories));
         }
         if self.ner_enabled && self.ner_model.is_none() {
             errors.push(
-                Diagnostic::new(ConfigError::PiiNerModelMissing)
-                    .involving(&[env::PII_NER_ENABLE])
-                    .missing(&[env::PII_NER_MODEL]),
+                Diagnostic::new(ConfigError::PrivacyNerModelMissing)
+                    .involving(&[env::PRIVACY_NER_ENABLE])
+                    .missing(&[env::PRIVACY_NER_MODEL]),
             );
         }
         into_result(errors)
@@ -258,53 +259,53 @@ mod tests {
     }
 
     #[test]
-    fn pii_config_default_operator_is_hash() {
-        let pii = PiiConfig::default();
-        assert_eq!(pii.operator, PiiOperator::Hash);
+    fn privacy_config_default_operator_is_hash() {
+        let privacy = PrivacyConfig::default();
+        assert_eq!(privacy.operator, PrivacyOperator::Hash);
     }
 
     #[test]
     fn default_config_validates_ok() {
-        PiiConfig::default()
+        PrivacyConfig::default()
             .validate()
             .expect("rule-free section must accept defaults");
     }
 
     #[test]
-    fn pii_config_default_ner_disabled() {
-        assert!(!PiiConfig::default().ner_enabled);
+    fn privacy_config_default_ner_disabled() {
+        assert!(!PrivacyConfig::default().ner_enabled);
     }
 
     #[test]
     fn ner_enabled_without_model_errors() {
-        let cfg = PiiConfig {
+        let cfg = PrivacyConfig {
             ner_enabled: true,
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         };
         let errors = cfg.validate().expect_err("ner without model must error");
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(&e.error, ConfigError::PiiNerModelMissing)),
-            "expected PiiNerModelMissing in {errors:?}"
+                .any(|e| matches!(&e.error, ConfigError::PrivacyNerModelMissing)),
+            "expected PrivacyNerModelMissing in {errors:?}"
         );
     }
 
     #[test]
     fn ner_enabled_with_model_validates_ok() {
-        let cfg = PiiConfig {
+        let cfg = PrivacyConfig {
             ner_enabled: true,
             ner_model: Some(PathBuf::from("/models/ner")),
-            ..PiiConfig::default()
+            ..PrivacyConfig::default()
         };
         cfg.validate().expect("ner with model path must validate");
     }
 
     #[test]
-    fn pii_operator_display_lowercase() {
-        assert_eq!(PiiOperator::Replace.to_string(), "replace");
-        assert_eq!(PiiOperator::Mask.to_string(), "mask");
-        assert_eq!(PiiOperator::Redact.to_string(), "redact");
-        assert_eq!(PiiOperator::Hash.to_string(), "hash");
+    fn privacy_operator_display_lowercase() {
+        assert_eq!(PrivacyOperator::Replace.to_string(), "replace");
+        assert_eq!(PrivacyOperator::Mask.to_string(), "mask");
+        assert_eq!(PrivacyOperator::Redact.to_string(), "redact");
+        assert_eq!(PrivacyOperator::Hash.to_string(), "hash");
     }
 }

@@ -1,6 +1,6 @@
 //! MCP tool: `writeQuery`.
 
-use dbmcp_pii::MaybeRedact as _;
+use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 use dbmcp_sql::validation::validate_write;
