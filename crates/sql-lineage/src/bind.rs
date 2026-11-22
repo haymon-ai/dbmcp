@@ -18,7 +18,7 @@ use sqlparser::ast::{Expr, Ident, TableAlias, Value};
 
 use crate::dialect::Dialect;
 use crate::error::LineageError;
-use crate::model::{RelationId, Role, SourceRef, TargetColumn};
+use crate::model::{Flow, RelationId, Role, SourceRef, TargetColumn};
 use crate::resolve::unsupported;
 
 /// Physical sources of a value.
@@ -31,6 +31,8 @@ pub(crate) struct Col {
     pub name: String,
     /// Physical sources backing the column.
     pub sources: Sources,
+    /// How the value reaches the column from its sources.
+    pub flow: Flow,
     /// Whether `*` expands to the column.
     pub visible: bool,
     /// Whether `name` is the name the server keeps (not engine-specific expression text).
@@ -86,6 +88,7 @@ impl Columns {
             .zip(right.cols)
             .map(|(mut l, r)| {
                 l.sources.extend(r.sources);
+                l.flow = l.flow.merge(r.flow);
                 l
             })
             .collect();
@@ -356,15 +359,18 @@ impl Tree {
             let next = self.items.get(i + 1).map_or(&[][..], |next| next.keys.as_slice());
             for key in next {
                 let mut sources = Sources::new();
+                let mut flow = Flow::Null;
                 // SQLite binds the key to the leftmost column and the next item's.
                 let left = self.items[..=i].iter().find_map(|item| find(dialect, key, &item.cols));
                 let right = find(dialect, key, &self.items[i + 1].cols);
                 for col in left.into_iter().chain(right) {
                     sources.extend(col.sources.iter().cloned());
+                    flow = flow.merge(col.flow);
                 }
                 let col = Col {
                     name: key.value.clone(),
                     sources,
+                    flow,
                     visible: true,
                     named: true,
                 };
@@ -506,7 +512,10 @@ impl Tree {
             match (at, take(dialect, &mut right.cols, key)?) {
                 (Some(i), r) => {
                     let l = &mut self.cols.cols[i];
-                    l.sources.extend(r.into_iter().flat_map(|r| r.sources));
+                    if let Some(r) = r {
+                        l.sources.extend(r.sources);
+                        l.flow = l.flow.merge(r.flow);
+                    }
                     joined.extend(l.sources.iter().cloned());
                 }
                 (None, Some(r)) => {
@@ -565,6 +574,7 @@ impl Tree {
             let col = match (f, s) {
                 (Some(mut f), Some(s)) => {
                     f.sources.extend(s.sources);
+                    f.flow = f.flow.merge(s.flow);
                     f.visible |= dialect != Dialect::Mariadb;
                     f
                 }
@@ -748,22 +758,27 @@ impl Level<'_> {
     ///
     /// `SET` values and `WHERE` see the existing row under the target's
     /// name or alias, and the proposed row as `excluded`, qualified only.
-    /// Each `excluded` column carries the sources the `INSERT` writes into
-    /// it; a column the `INSERT` does not write has none.
+    /// Each `excluded` column carries the sources and flow the `INSERT`
+    /// writes into it. One it leaves out or writes as `DEFAULT` is
+    /// [`Flow::Derived`]: the server fills it, and [`Flow::Default`] would
+    /// read as the default of the `SET` target instead.
     pub(crate) fn upsert(dialect: Dialect, target: Tree, writes: &[TargetColumn]) -> Level<'static> {
         let cols = target
             .cols
             .cols
             .iter()
-            .map(|c| Col {
-                name: c.name.clone(),
-                sources: writes
-                    .iter()
-                    .find(|w| w.name == c.name)
-                    .map(|w| w.sources.clone())
-                    .unwrap_or_default(),
-                visible: c.visible,
-                named: true,
+            .map(|c| {
+                let written = writes.iter().find(|w| w.name == c.name);
+                Col {
+                    name: c.name.clone(),
+                    sources: written.map(|w| w.sources.clone()).unwrap_or_default(),
+                    flow: match written.map(|w| w.flow) {
+                        None | Some(Flow::Default) => Flow::Derived,
+                        Some(flow) => flow,
+                    },
+                    visible: c.visible,
+                    named: true,
+                }
             })
             .collect();
         let excluded = Rel {
@@ -917,25 +932,31 @@ impl Level<'_> {
         Ok(None)
     }
 
-    /// Binds a column reference written in `clause`.
+    /// Binds a column reference written in `clause`, with its flow.
     ///
     /// Searches the `FROM` relations innermost level first; where `clause`
     /// allows it, an unqualified name also binds to this level's outputs,
-    /// and a reference matching both takes both sources. On `PostgreSQL`, an
-    /// unqualified name no level's columns bind is a whole-row reference to
-    /// the relation it names, if any.
+    /// and a reference matching both takes both sources, flows merged. On
+    /// `PostgreSQL`, an unqualified name no level's columns bind is a
+    /// whole-row reference to the relation it names, if any, which is
+    /// [`Flow::Derived`].
     ///
     /// # Errors
     /// [`LineageError::AmbiguousColumn`] when more than one candidate binds
     /// at the first level that has any; [`LineageError::ColumnNotFound`] when
     /// no level binds it.
-    pub(crate) fn column(&self, clause: Clause, qualifier: &[Ident], name: &Ident) -> Result<Sources, LineageError> {
+    pub(crate) fn column(
+        &self,
+        clause: Clause,
+        qualifier: &[Ident],
+        name: &Ident,
+    ) -> Result<(Sources, Flow), LineageError> {
         let mut found = self.input(qualifier, name);
         if qualifier.is_empty()
             && matches!(found, Err(LineageError::ColumnNotFound { .. }))
             && let Some(whole_row) = self.whole_row(std::slice::from_ref(name)).transpose()
         {
-            found = whole_row;
+            found = whole_row.map(|sources| (sources, Flow::Derived));
         }
         let alias = if qualifier.is_empty() && clause.sees_outputs(self.dialect) {
             self.output_named(name)
@@ -943,11 +964,11 @@ impl Level<'_> {
             None
         };
         match (found, alias) {
-            (Ok(mut sources), Some(alias)) => {
+            (Ok((mut sources, flow)), Some((alias, alias_flow))) => {
                 sources.extend(alias);
-                Ok(sources)
+                Ok((sources, flow.merge(alias_flow)))
             }
-            (Ok(sources), None) => Ok(sources),
+            (Ok(found), None) => Ok(found),
             (Err(LineageError::ColumnNotFound { .. } | LineageError::AmbiguousColumn { .. }), Some(alias)) => Ok(alias),
             (Err(err), _) => Err(err),
         }
@@ -964,7 +985,7 @@ impl Level<'_> {
     pub(crate) fn output_item(&self, clause: Clause, expr: &Expr) -> Result<Option<Sources>, LineageError> {
         if clause == Clause::OrderBy
             && let Expr::Identifier(name) = expr
-            && let Some(sources) = self.output_named(name)
+            && let Some((sources, _)) = self.output_named(name)
         {
             return Ok(Some(sources));
         }
@@ -984,33 +1005,38 @@ impl Level<'_> {
         Ok(None)
     }
 
-    /// Returns the union of the outputs `name` matches, `None` for no match.
-    fn output_named(&self, name: &Ident) -> Option<Sources> {
+    /// Unions the outputs `name` matches, flows merged; `None` for no match.
+    fn output_named(&self, name: &Ident) -> Option<(Sources, Flow)> {
         let mut hits = self
             .outputs
             .cols
             .iter()
             .filter(|c| self.dialect.matches(name, &c.name))
             .peekable();
-        hits.peek()
-            .is_some()
-            .then(|| hits.flat_map(|c| c.sources.iter().cloned()).collect())
+        let first = hits.peek()?.flow;
+        Some(hits.fold((Sources::new(), first), |(mut sources, flow), c| {
+            sources.extend(c.sources.iter().cloned());
+            (sources, flow.merge(c.flow))
+        }))
     }
 
     /// Binds a column reference against `FROM` relations only.
-    fn input(&self, qualifier: &[Ident], name: &Ident) -> Result<Sources, LineageError> {
+    ///
+    /// A column an open relation could hold binds with no sources and the
+    /// [`Flow::Bare`] flow; analysis then fails on the missing name anyway.
+    fn input(&self, qualifier: &[Ident], name: &Ident) -> Result<(Sources, Flow), LineageError> {
         for at in self.visible() {
             if qualifier.is_empty() {
                 if let Some(col) = unique(self.dialect, &at.from.cols.cols, name, qualifier)? {
-                    return Ok(col.sources.clone());
+                    return Ok((col.sources.clone(), col.flow));
                 }
                 if at.from.cols.open {
-                    return Ok(Sources::new());
+                    return Ok((Sources::new(), Flow::Bare));
                 }
             } else if let Some(rel) = at.relation_here(qualifier)? {
                 return match unique(self.dialect, &rel.columns.cols, name, qualifier)? {
-                    Some(col) => Ok(col.sources.clone()),
-                    None if rel.columns.open => Ok(Sources::new()),
+                    Some(col) => Ok((col.sources.clone(), col.flow)),
+                    None if rel.columns.open => Ok((Sources::new(), Flow::Bare)),
                     None => Err(not_found(qualifier, name)),
                 };
             }

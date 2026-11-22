@@ -11,10 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sqlparser::ast::{
-    Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
-    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Values,
-    WildcardAdditionalOptions,
+    CastKind, DataType, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator,
+    LimitClause, NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Value,
+    Values, WildcardAdditionalOptions,
 };
 
 use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
@@ -22,9 +22,11 @@ use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{
-    FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, TypeUse,
 };
-use crate::statement::Analysis;
+use crate::statement::{Analysis, is_default};
+use crate::types;
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -50,6 +52,8 @@ pub(crate) struct Ctx<'c> {
     relations: BTreeSet<RelationUse>,
     /// Functions called.
     functions: BTreeSet<FunctionUse>,
+    /// Cast target types.
+    types: BTreeSet<TypeUse>,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
@@ -70,6 +74,7 @@ impl<'c> Ctx<'c> {
             references: BTreeSet::new(),
             relations: BTreeSet::new(),
             functions: BTreeSet::new(),
+            types: BTreeSet::new(),
             depth: 0,
             expr_depth: 0,
             views: Vec::new(),
@@ -100,6 +105,20 @@ impl<'c> Ctx<'c> {
         });
     }
 
+    /// Records a type cast to in the SQL being walked.
+    ///
+    /// # Errors
+    /// Returns [`LineageError::Unsupported`] if a type name part is not an identifier.
+    pub(crate) fn cast(&mut self, data_type: &DataType) -> Result<(), LineageError> {
+        let (name, known) = types::resolve(self.dialect, data_type)?;
+        self.types.insert(TypeUse {
+            name,
+            known,
+            origin: self.origin(),
+        });
+        Ok(())
+    }
+
     /// Ends the pass: the lineage of `analysis`, unless a name was missing.
     ///
     /// # Errors
@@ -118,11 +137,13 @@ impl<'c> Ctx<'c> {
                     name: col.name,
                     position,
                     sources: col.sources,
+                    flow: col.flow,
                 })
                 .collect(),
             references: self.references,
             relations: self.relations,
             functions: self.functions,
+            types: self.types,
             target: analysis.target,
             writes: analysis.writes,
             statement: analysis.kind,
@@ -268,11 +289,16 @@ impl<'c> Ctx<'c> {
             for (i, expr) in row.content.iter().enumerate() {
                 let mut sources = BTreeSet::new();
                 self.expr(expr, level, Clause::Projection, &mut sources)?;
+                let flow = flow(expr, level)?;
                 match cols.get_mut(i) {
-                    Some(col) => col.sources.extend(sources),
+                    Some(col) => {
+                        col.sources.extend(sources);
+                        col.flow = col.flow.merge(flow);
+                    }
                     None => cols.push(Col {
                         name: self.dialect.values_column(i),
                         sources,
+                        flow,
                         visible: true,
                         named: false,
                     }),
@@ -430,6 +456,7 @@ impl<'c> Ctx<'c> {
         out.cols.push(Col {
             name,
             sources,
+            flow: flow(expr, level)?,
             visible: true,
             named,
         });
@@ -647,6 +674,7 @@ impl<'c> Ctx<'c> {
             .map(|c| Col {
                 name: c.name.clone(),
                 sources: BTreeSet::from([SourceRef::new(relation.id.clone(), c.name.clone())]),
+                flow: Flow::Bare,
                 visible: c.star_visible,
                 named: true,
             })
@@ -774,6 +802,7 @@ impl<'c> Ctx<'c> {
                 .map(|c| Col {
                     name: c.name.clone(),
                     sources: Sources::new(),
+                    flow: Flow::Derived,
                     visible: c.star_visible,
                     named: true,
                 })
@@ -795,12 +824,62 @@ impl<'c> Ctx<'c> {
             .map(|(c, b)| Col {
                 name: c.name.clone(),
                 sources: b.sources,
+                flow: b.flow,
                 visible: c.star_visible,
                 named: true,
             })
             .collect();
         self.expanded.insert(relation.id.clone(), cols.clone());
         Ok(cols)
+    }
+}
+
+/// Classifies how a projected or written value reaches its column.
+///
+/// A literal `NULL` under parentheses or `CAST` / `TRY_CAST` / `::` /
+/// `CONVERT` is [`Flow::Null`], `DEFAULT` is [`Flow::Default`], a column
+/// reference takes the bound column's flow, and anything else (even
+/// `COALESCE(NULL)`) is [`Flow::Derived`]. Call it after [`Ctx::expr`]
+/// bound `expr`, so the column lookup cannot fail anew.
+///
+/// # Errors
+/// See [`Level::column`].
+pub(crate) fn flow(expr: &Expr, level: &Level<'_>) -> Result<Flow, LineageError> {
+    let mut expr = expr;
+    while let Expr::Nested(inner) = expr {
+        expr = inner;
+    }
+    if is_null(expr) {
+        return Ok(Flow::Null);
+    }
+    if is_default(expr) {
+        return Ok(Flow::Default);
+    }
+    match expr {
+        Expr::Identifier(id) => Ok(level.column(Clause::Projection, &[], id)?.1),
+        Expr::CompoundIdentifier(parts) => match parts.split_last() {
+            Some((name, qualifier)) => Ok(level.column(Clause::Projection, qualifier, name)?.1),
+            None => Err(unsupported("empty identifier")),
+        },
+        _ => Ok(Flow::Derived),
+    }
+}
+
+/// Returns whether `expr` is a literal `NULL` under parentheses and plain casts.
+fn is_null(expr: &Expr) -> bool {
+    match expr {
+        Expr::Value(value) => matches!(value.value, Value::Null),
+        Expr::Nested(inner)
+        | Expr::Cast {
+            kind: CastKind::Cast | CastKind::TryCast | CastKind::DoubleColon,
+            expr: inner,
+            format: None,
+            ..
+        } => is_null(inner),
+        Expr::Convert {
+            expr: inner, styles, ..
+        } if styles.is_empty() => is_null(inner),
+        _ => false,
     }
 }
 

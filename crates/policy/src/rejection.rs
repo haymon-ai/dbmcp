@@ -28,6 +28,13 @@ pub enum Rejection {
         name: String,
     },
 
+    /// A cast target type missing from the dialect's built-in table.
+    #[error("column policy: type {name:?} is not a known built-in")]
+    UnknownType {
+        /// The type name, case-folded per dialect.
+        name: String,
+    },
+
     /// A relation that exposes values outside column policy.
     #[error("column policy: relation {relation:?} is denied")]
     DeniedRelation {
@@ -97,6 +104,37 @@ pub enum Rejection {
         column: String,
     },
 
+    /// A write choosing the value of a `hash`-ruled column.
+    ///
+    /// Its token would sign a value the statement picked.
+    #[error("column policy: column {column:?} is hashed and only takes copies of columns hashed the same way, or NULL")]
+    Chosen {
+        /// The target column, as `schema.table.column`.
+        column: String,
+    },
+
+    /// A write letting the server fill a `hash`-ruled column.
+    ///
+    /// A default, generated, or on-update value may be one the statement
+    /// steered, and its token would sign it.
+    #[error("column policy: column {column:?} is hashed and filled by the database, so this write is refused")]
+    Computed {
+        /// The target column, as `schema.table.column`.
+        column: String,
+    },
+
+    /// A write to a relation with triggers or rules while `hash` rules exist.
+    ///
+    /// The target's own, or those of a table a fired cascade changes: their
+    /// bodies may fill a `hash`-ruled column with a value the statement steered.
+    #[error(
+        "column policy: relation {relation:?} has triggers or rules, which may fill hashed columns, so writes to it are refused"
+    )]
+    Trigger {
+        /// The relation with the trigger or rule, as `schema.name`.
+        relation: String,
+    },
+
     /// A created column carrying ruled values under a name no rule can match.
     ///
     /// Names only the position: the column's name is expression text.
@@ -138,6 +176,7 @@ impl Rejection {
         match self {
             Self::Lineage(_) | Self::CatalogRounds => "lineage",
             Self::UnknownFunction { .. } => "function",
+            Self::UnknownType { .. } => "type",
             Self::DeniedRelation { .. } => "relation",
             Self::DeniedStatement => "statement",
             Self::Explain { .. } => "explain",
@@ -146,6 +185,9 @@ impl Rejection {
             Self::Reference { .. } => "reference",
             Self::Conflict { .. } => "combine",
             Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
+            Self::Chosen { .. } => "chosen",
+            Self::Computed { .. } => "computed",
+            Self::Trigger { .. } => "trigger",
             Self::RowMovement { .. } => "row-movement",
             Self::ShadowedTarget { .. } => "target",
         }

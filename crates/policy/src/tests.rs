@@ -3,17 +3,19 @@
 use std::collections::BTreeSet;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
+use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
-    Catalog, Dialect, ExplainForm, Family, FunctionUse, Lineage, LineageError, Member, Origin, OutputColumn, Reference,
-    RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
+    Catalog, Dialect, Entry, ExplainForm, Flow, FunctionUse, Lineage, LineageError, NamePart, Origin, OutputColumn,
+    Reference, Relation, RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn,
+    TypeUse, WrittenName, analyze,
 };
 
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, Position};
 
-use crate::plan::{Families, Names, plan, touches_ruled};
+use crate::plan::{Effects, Facts, Families, Names, effects, plan, touches_ruled};
 use crate::rejection::reject_lineage;
-use crate::{LineageClass, Rejection};
+use crate::{Cascade, CascadeAction, CatalogColumn, Family, LineageClass, Member, Rejection};
 
 const DB: &str = "shop";
 const SCHEMA: &str = "public";
@@ -72,11 +74,13 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
                 name: format!("c{position}"),
                 position,
                 sources: sources.into_iter().collect(),
+                flow: Flow::Bare,
             })
             .collect(),
         references: BTreeSet::new(),
         relations,
         functions: BTreeSet::new(),
+        types: BTreeSet::new(),
         target: None,
         writes: Vec::new(),
         statement: StatementKind::Query,
@@ -238,6 +242,36 @@ fn known_function_passes() {
     let mut lineage = select(vec![vec![col("users", "name")]]);
     lineage.functions.insert(FunctionUse {
         name: "lower".into(),
+        known: true,
+        origin: Origin::Query,
+    });
+    assert!(pg(&lineage, &config(vec![])).is_ok());
+}
+
+// Unknown cast types.
+
+#[test]
+fn unknown_type_rejects_in_any_origin() {
+    let config = config(vec![]);
+    for origin in [Origin::Query, Origin::View(table("v"))] {
+        let mut lineage = select(vec![vec![]]);
+        lineage.types.insert(TypeUse {
+            name: "tsquery".into(),
+            known: false,
+            origin,
+        });
+        assert_eq!(
+            pg(&lineage, &config),
+            Err(Rejection::UnknownType { name: "tsquery".into() })
+        );
+    }
+}
+
+#[test]
+fn known_type_passes() {
+    let mut lineage = select(vec![vec![col("users", "name")]]);
+    lineage.types.insert(TypeUse {
+        name: "int".into(),
         known: true,
         origin: Origin::Query,
     });
@@ -742,6 +776,185 @@ fn same_rule_pair_combines() {
     );
 }
 
+// Flow: `hash` only on bare outputs.
+
+/// The `hash` rule on `users.email` and `invoices.billing_email`, `EMAIL_ADDRESS`.
+fn hashed_emails() -> Vec<ColumnRule> {
+    vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.invoices.billing_email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+    ]
+}
+
+/// A one-column query lineage over `sources`, reaching the output by `flow`.
+fn flowed(sources: Vec<SourceRef>, flow: Flow) -> Lineage {
+    let mut lineage = select(vec![sources]);
+    lineage.columns[0].flow = flow;
+    lineage
+}
+
+const HASHED_EMAIL: Position = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
+const REPLACED_EMAIL: Position = Position::Action(PiiOperator::Replace, Entity::EmailAddress);
+
+#[test]
+fn bare_hash_output_keeps_hash() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Bare), &config),
+        HASHED_EMAIL
+    );
+}
+
+#[test]
+fn bare_union_of_same_hash_pair_keeps_hash() {
+    let config = config(hashed_emails());
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Bare,
+    );
+    assert_eq!(only(&lineage, &config), HASHED_EMAIL);
+}
+
+#[test]
+fn derived_hash_output_becomes_replace() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
+        REPLACED_EMAIL
+    );
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Derived,
+    );
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn bare_union_with_unruled_column_becomes_replace() {
+    let config = config(hashed_emails());
+    let lineage = flowed(vec![col("users", "email"), col("users", "name")], Flow::Bare);
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn bare_union_with_another_rule_merges_into_replace() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule(
+            "shop.public.invoices.billing_email",
+            PiiOperator::Replace,
+            "EMAIL_ADDRESS",
+        ),
+    ]);
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Bare,
+    );
+    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+}
+
+#[test]
+fn derived_hash_of_different_entities_conflicts() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PiiOperator::Hash, "PHONE_NUMBER"),
+    ]);
+    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
+    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
+}
+
+#[test]
+fn derived_hash_with_mask_conflicts() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PiiOperator::Mask, "EMAIL_ADDRESS"),
+    ]);
+    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
+    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
+}
+
+#[test]
+fn derived_mask_and_redact_outputs_are_unchanged() {
+    let config = config(vec![
+        ssn("shop.public.users.ssn"),
+        rule("shop.public.users.email", PiiOperator::Redact, "EMAIL_ADDRESS"),
+    ]);
+    assert_eq!(
+        only(&flowed(vec![col("users", "ssn")], Flow::Derived), &config),
+        MASKED_SSN
+    );
+    assert_eq!(
+        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
+        Position::Action(PiiOperator::Redact, Entity::EmailAddress)
+    );
+}
+
+#[test]
+fn derived_output_without_ruled_source_stays_global() {
+    let config = config(hashed_emails());
+    assert_eq!(
+        only(&flowed(vec![col("users", "name")], Flow::Derived), &config),
+        Position::Global
+    );
+}
+
+/// A catalog of `shop.public` tables keyed by their bare names.
+fn tables(tables: &[(&str, &[&str])]) -> Catalog {
+    let mut catalog = Catalog::new();
+    for (name, columns) in tables {
+        let columns = columns.iter().map(|c| lineage::CatalogColumn::new(*c)).collect();
+        catalog.insert(
+            WrittenName::query(vec![NamePart::bare(*name)]),
+            Entry::Resolved(Relation::new(table(name), RelationKind::Table, columns)),
+        );
+    }
+    catalog
+}
+
+#[test]
+fn analyzed_outputs_hash_only_when_bare() {
+    let catalog = tables(&[
+        ("users", &["id", "email", "name"]),
+        ("invoices", &["id", "user_id", "billing_email"]),
+    ]);
+    let config = config(hashed_emails());
+    let cases = [
+        ("SELECT email FROM users", HASHED_EMAIL),
+        ("SELECT (u.email) AS e FROM users u", HASHED_EMAIL),
+        ("SELECT e FROM (SELECT email AS e FROM users) d", HASHED_EMAIL),
+        ("WITH c AS (SELECT email FROM users) SELECT * FROM c", HASHED_EMAIL),
+        (
+            "SELECT email FROM users UNION SELECT billing_email FROM invoices",
+            HASHED_EMAIL,
+        ),
+        ("SELECT email FROM users UNION ALL SELECT NULL", HASHED_EMAIL),
+        (
+            "SELECT u.email FROM invoices i LEFT JOIN users u ON u.id = i.user_id",
+            HASHED_EMAIL,
+        ),
+        ("SELECT email FROM users UNION SELECT name FROM users", REPLACED_EMAIL),
+        ("SELECT email FROM users UNION SELECT 'a@b.c'", REPLACED_EMAIL),
+        (
+            "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
+            REPLACED_EMAIL,
+        ),
+        ("SELECT lower(email) FROM users", REPLACED_EMAIL),
+        ("SELECT min(email) FROM users", REPLACED_EMAIL),
+        ("SELECT count(DISTINCT email) FROM users", REPLACED_EMAIL),
+        ("SELECT CAST(email AS text) FROM users", REPLACED_EMAIL),
+        ("SELECT email COLLATE \"C\" FROM users", REPLACED_EMAIL),
+        (
+            "SELECT concat(u.email, i.billing_email) FROM users u, invoices i",
+            REPLACED_EMAIL,
+        ),
+    ];
+    for (sql, expected) in cases {
+        let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
+        let positions = positions(pg(&lineage, &config).expect(sql));
+        assert_eq!(positions, [expected], "{sql}");
+    }
+}
+
 #[test]
 fn conflict_message_omits_output_name() {
     let config = config(vec![
@@ -837,10 +1050,29 @@ fn write(target: &str, column: &str, sources: Vec<SourceRef>, statement: Stateme
     lineage.writes = vec![TargetColumn {
         name: column.into(),
         sources: sources.into_iter().collect(),
+        flow: Flow::Bare,
         named: true,
     }];
     lineage.statement = statement;
     lineage
+}
+
+#[test]
+fn derived_hash_source_into_same_hash_target_rejects() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.copy.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+    ]);
+    let mut lineage = write("copy", "email", vec![col("users", "email")], StatementKind::Insert);
+    let names = facts(&[("copy", &[("email", NONE)])]);
+    assert!(pg_with(&lineage, &config, &names).is_ok());
+    lineage.writes[0].flow = Flow::Derived;
+    assert_eq!(
+        pg_with(&lineage, &config, &names),
+        Err(Rejection::Laundering {
+            column: "public.copy.email".into(),
+        })
+    );
 }
 
 #[test]
@@ -969,6 +1201,628 @@ fn conflicting_write_sources_reject() {
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Laundering { .. })));
 }
 
+// Writes into `hash`-ruled columns.
+
+/// Column facts `(default, generated, on_update)`.
+type ColumnFacts = (bool, bool, bool);
+
+const NONE: ColumnFacts = (false, false, false);
+const DEFAULT: ColumnFacts = (true, false, false);
+const GENERATED: ColumnFacts = (false, true, false);
+const ON_UPDATE: ColumnFacts = (false, false, true);
+
+/// Names carrying the write facts of trigger-free `shop.public` tables without cascades.
+fn facts(tables: &[(&str, &[(&str, ColumnFacts)])]) -> Names {
+    Names {
+        facts: tables
+            .iter()
+            .map(|(name, columns)| {
+                let columns = columns
+                    .iter()
+                    .map(|&(column, (default, generated, on_update))| CatalogColumn {
+                        name: column.into(),
+                        star_visible: true,
+                        default,
+                        generated,
+                        on_update,
+                    })
+                    .collect();
+                (
+                    table(name),
+                    Facts {
+                        columns,
+                        triggers: false,
+                        cascades: Vec::new(),
+                    },
+                )
+            })
+            .collect(),
+        ..Names::default()
+    }
+}
+
+/// `users.email` and `hashed.email` hashed as `EMAIL_ADDRESS`, `users.ssn` masked.
+fn hashed_target() -> PiiConfig {
+    config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.hashed.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        ssn("shop.public.users.ssn"),
+    ])
+}
+
+/// Plans a one-column write into `hashed.email` reaching it by `flow` from `sources`.
+fn into_hashed(
+    statement: StatementKind,
+    sources: Vec<SourceRef>,
+    flow: Flow,
+    email: ColumnFacts,
+) -> Result<Plan, Rejection> {
+    let mut lineage = write("hashed", "email", sources, statement);
+    lineage.writes[0].flow = flow;
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", email)])]);
+    pg_with(&lineage, &hashed_target(), &names)
+}
+
+/// The `Chosen` rejection of `public.hashed.email`.
+fn chosen() -> Result<Plan, Rejection> {
+    Err(Rejection::Chosen {
+        column: "public.hashed.email".into(),
+    })
+}
+
+/// The `Computed` rejection of `public.hashed.email`.
+fn computed() -> Result<Plan, Rejection> {
+    computed_at("hashed.email")
+}
+
+#[test]
+fn same_hash_bare_copy_into_hash_target_passes() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        let planned = into_hashed(statement.clone(), vec![col("users", "email")], Flow::Bare, NONE);
+        assert!(planned.is_ok(), "{statement:?}");
+    }
+}
+
+#[test]
+fn null_into_hash_target_passes() {
+    assert!(into_hashed(StatementKind::Insert, vec![], Flow::Null, NONE).is_ok());
+    assert!(into_hashed(StatementKind::Update, vec![], Flow::Null, DEFAULT).is_ok());
+}
+
+#[test]
+fn default_into_hash_target_passes_only_without_a_default() {
+    for statement in [StatementKind::Insert, StatementKind::Update] {
+        assert!(into_hashed(statement.clone(), vec![], Flow::Default, NONE).is_ok());
+        assert_eq!(
+            into_hashed(statement.clone(), vec![], Flow::Default, DEFAULT),
+            computed(),
+            "{statement:?}"
+        );
+    }
+}
+
+#[test]
+fn chosen_values_into_hash_target_reject() {
+    for (sources, flow) in [
+        (vec![], Flow::Derived),
+        (vec![col("users", "name")], Flow::Bare),
+        (vec![col("users", "name")], Flow::Derived),
+    ] {
+        for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+            assert_eq!(
+                into_hashed(statement.clone(), sources.clone(), flow, NONE),
+                chosen(),
+                "{statement:?} {sources:?} {flow:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn derived_or_other_ruled_source_into_hash_target_launders() {
+    let laundering = Err(Rejection::Laundering {
+        column: "public.hashed.email".into(),
+    });
+    for (sources, flow) in [
+        (vec![col("users", "email")], Flow::Derived),
+        (vec![col("users", "ssn")], Flow::Bare),
+    ] {
+        assert_eq!(
+            into_hashed(StatementKind::Insert, sources, flow, NONE),
+            laundering,
+            "{flow:?}"
+        );
+    }
+}
+
+/// Plans `statement` into `hashed`, writing only `id`, with `email` carrying `email` facts.
+fn beside_hashed(statement: StatementKind, email: ColumnFacts) -> Result<Plan, Rejection> {
+    let lineage = write("hashed", "id", vec![], statement);
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", email)])]);
+    pg_with(&lineage, &hashed_target(), &names)
+}
+
+#[test]
+fn omitted_hash_column_passes_only_without_a_default() {
+    assert!(beside_hashed(StatementKind::Insert, NONE).is_ok());
+    assert_eq!(beside_hashed(StatementKind::Insert, DEFAULT), computed());
+    assert!(beside_hashed(StatementKind::Update, DEFAULT).is_ok());
+}
+
+#[test]
+fn every_merge_may_omit_a_hash_column() {
+    assert!(beside_hashed(StatementKind::Merge, NONE).is_ok());
+    assert_eq!(beside_hashed(StatementKind::Merge, DEFAULT), computed());
+    let written = into_hashed(StatementKind::Merge, vec![col("users", "email")], Flow::Bare, DEFAULT);
+    assert_eq!(written, computed());
+}
+
+#[test]
+fn inserts_writing_a_defaulted_hash_column_still_refuse_since_upserts_may_omit_it() {
+    for (sources, flow) in [(vec![], Flow::Null), (vec![col("users", "email")], Flow::Bare)] {
+        let written = into_hashed(StatementKind::Insert, sources, flow, DEFAULT);
+        assert_eq!(written, computed(), "{flow:?}");
+    }
+    assert!(into_hashed(StatementKind::Update, vec![], Flow::Null, DEFAULT).is_ok());
+}
+
+#[test]
+fn hash_columns_missing_from_the_facts_have_every_fact() {
+    // A descendant's own column is not among the target's facts.
+    let config = config(vec![rule(
+        "shop.public.ptab_1.email",
+        PiiOperator::Hash,
+        "EMAIL_ADDRESS",
+    )]);
+    let mut names = tree();
+    names.facts = facts(&[("ptab", &[("id", NONE)])]).facts;
+    let lineage = write("ptab", "id", vec![], StatementKind::Update);
+    assert_eq!(
+        pg_with(&lineage, &config, &names),
+        Err(Rejection::Computed {
+            column: "public.ptab.email".into(),
+        })
+    );
+}
+
+#[test]
+fn defaults_match_exact_names_before_folded_ones() {
+    let config = hashed_target();
+    let mut lineage = write("hashed", "email", vec![], StatementKind::Update);
+    lineage.writes[0].flow = Flow::Default;
+    let plans = |columns: &[(&str, ColumnFacts)]| pg_with(&lineage, &config, &facts(&[("hashed", columns)]));
+    assert!(plans(&[("Email", DEFAULT), ("email", NONE)]).is_ok());
+    assert_eq!(plans(&[("email", DEFAULT), ("Email", NONE)]), computed());
+    lineage.writes[0].name = "EMAIL".into();
+    assert_eq!(
+        pg_with(
+            &lineage,
+            &config,
+            &facts(&[("hashed", &[("Email", NONE), ("email", DEFAULT)])])
+        ),
+        Err(Rejection::Computed {
+            column: "public.hashed.EMAIL".into(),
+        })
+    );
+}
+
+#[test]
+fn generated_hash_column_refuses_every_write_but_delete() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        assert_eq!(beside_hashed(statement.clone(), GENERATED), computed(), "{statement:?}");
+    }
+    assert!(beside_hashed(StatementKind::Delete, GENERATED).is_ok());
+}
+
+#[test]
+fn on_update_hash_column_refuses_inserts_updates_and_merges() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        assert_eq!(beside_hashed(statement.clone(), ON_UPDATE), computed(), "{statement:?}");
+    }
+    assert!(beside_hashed(StatementKind::Delete, ON_UPDATE).is_ok());
+}
+
+#[test]
+fn unhashed_tables_ignore_column_facts() {
+    let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.hashed.email")]);
+    let lineage = write("hashed", "id", vec![], StatementKind::Insert);
+    let names = facts(&[("hashed", &[("id", DEFAULT), ("email", (true, true, true))])]);
+    assert!(pg_with(&lineage, &config, &names).is_ok());
+}
+
+#[test]
+fn creates_skip_the_server_filled_checks() {
+    for statement in [StatementKind::CreateTableAs, StatementKind::CreateMaterializedView] {
+        let lineage = write("hashed", "email", vec![col("users", "email")], statement.clone());
+        assert!(pg(&lineage, &hashed_target()).is_ok(), "{statement:?}");
+        let mut chosen_lineage = write("hashed", "email", vec![], statement.clone());
+        chosen_lineage.writes[0].flow = Flow::Derived;
+        assert_eq!(pg(&chosen_lineage, &hashed_target()), chosen(), "{statement:?}");
+    }
+}
+
+#[test]
+fn missing_facts_refuse_writes_to_hash_tables() {
+    for statement in [StatementKind::Insert, StatementKind::Update, StatementKind::Merge] {
+        let lineage = write("hashed", "id", vec![], statement.clone());
+        assert_eq!(pg(&lineage, &hashed_target()), computed(), "{statement:?}");
+    }
+    let lineage = write("hashed", "id", vec![], StatementKind::Delete);
+    assert_eq!(pg(&lineage, &hashed_target()), trigger("hashed"));
+}
+
+#[test]
+fn columns_with_every_fact_refuse_writes_to_hash_tables() {
+    for star_visible in [true, false] {
+        let column = CatalogColumn {
+            name: "email".into(),
+            star_visible,
+            default: true,
+            generated: true,
+            on_update: true,
+        };
+        let names = Names {
+            facts: [(
+                table("hashed"),
+                Facts {
+                    columns: vec![column],
+                    triggers: false,
+                    cascades: Vec::new(),
+                },
+            )]
+            .into(),
+            ..Names::default()
+        };
+        let lineage = write("hashed", "id", vec![], StatementKind::Update);
+        assert_eq!(pg_with(&lineage, &hashed_target(), &names), computed());
+    }
+}
+
+#[test]
+fn hash_rules_on_a_landing_member_gate_writes_through_the_parent() {
+    let config = config(vec![rule(
+        "shop.public.ptab_1.email",
+        PiiOperator::Hash,
+        "EMAIL_ADDRESS",
+    )]);
+    let mut names = tree();
+    names.facts = facts(&[("ptab", &[("id", NONE), ("email", NONE)])]).facts;
+    let mut lineage = write("ptab", "email", vec![], StatementKind::Insert);
+    lineage.writes[0].flow = Flow::Derived;
+    assert_eq!(
+        pg_with(&lineage, &config, &names),
+        Err(Rejection::Chosen {
+            column: "public.ptab.email".into(),
+        })
+    );
+}
+
+// Cascades and triggers.
+
+/// The `Trigger` rejection of `public.<relation>`.
+fn trigger(relation: &str) -> Result<Plan, Rejection> {
+    Err(Rejection::Trigger {
+        relation: format!("public.{relation}"),
+    })
+}
+
+/// A cascade edge from `parent` to `child` (`table.column`) doing `action`.
+fn edge(parent: &str, child: &str, action: CascadeAction, on_delete: bool) -> Cascade {
+    let split = |name: &str| {
+        let (table, column) = name.split_once('.').expect("table.column");
+        col(table, column)
+    };
+    Cascade {
+        parent: split(parent),
+        child: split(child),
+        action,
+        on_delete,
+        triggers: false,
+    }
+}
+
+/// `child.k` hashed as `EMAIL_ADDRESS`, plus `parent` rules.
+fn cascade_rules(parent: Vec<ColumnRule>) -> PiiConfig {
+    let mut rules = vec![rule("shop.public.child.k", PiiOperator::Hash, "EMAIL_ADDRESS")];
+    rules.extend(parent);
+    config(rules)
+}
+
+/// Plans `statement` on `parent` writing `k`, whose facts list `cascades`.
+fn through_parent(statement: StatementKind, config: &PiiConfig, cascades: Vec<Cascade>) -> Result<Plan, Rejection> {
+    let mut lineage = write("parent", "k", vec![], statement);
+    lineage.writes[0].flow = Flow::Derived;
+    let mut names = facts(&[("parent", &[("k", NONE)])]);
+    names.facts.get_mut(&table("parent")).expect("parent facts").cascades = cascades;
+    pg_with(&lineage, config, &names)
+}
+
+/// The `Computed` rejection of `public.<column>`.
+fn computed_at(column: &str) -> Result<Plan, Rejection> {
+    Err(Rejection::Computed {
+        column: format!("public.{column}"),
+    })
+}
+
+#[test]
+fn copy_cascades_into_a_hash_column_need_the_same_pair_on_the_parent() {
+    let copy = vec![edge("parent.k", "child.k", CascadeAction::Copy, false)];
+    assert_eq!(
+        through_parent(StatementKind::Update, &cascade_rules(vec![]), copy.clone()),
+        computed_at("child.k")
+    );
+    let masked = vec![rule("shop.public.parent.k", PiiOperator::Mask, "EMAIL_ADDRESS")];
+    assert_eq!(
+        through_parent(StatementKind::Update, &cascade_rules(masked), copy.clone()),
+        computed_at("child.k")
+    );
+    let same = vec![rule("shop.public.parent.k", PiiOperator::Hash, "EMAIL_ADDRESS")];
+    let mut lineage = write("parent", "k", vec![col("child", "k")], StatementKind::Update);
+    let mut names = facts(&[("parent", &[("k", NONE)])]);
+    names.facts.get_mut(&table("parent")).expect("parent facts").cascades = copy;
+    assert!(pg_with(&lineage, &cascade_rules(same), &names).is_ok());
+    lineage.writes[0] = TargetColumn {
+        name: "other".into(),
+        sources: BTreeSet::new(),
+        flow: Flow::Derived,
+        named: true,
+    };
+    assert!(
+        pg_with(&lineage, &cascade_rules(vec![]), &names).is_ok(),
+        "unwritten parent column"
+    );
+}
+
+#[test]
+fn update_cascades_fire_on_updates_merges_and_inserts_only() {
+    let copy = vec![edge("parent.k", "child.k", CascadeAction::Copy, false)];
+    for statement in [StatementKind::Update, StatementKind::Merge, StatementKind::Insert] {
+        assert_eq!(
+            through_parent(statement.clone(), &cascade_rules(vec![]), copy.clone()),
+            computed_at("child.k"),
+            "{statement:?}"
+        );
+    }
+    assert!(through_parent(StatementKind::Delete, &cascade_rules(vec![]), copy).is_ok());
+}
+
+#[test]
+fn set_default_cascades_into_a_hash_column_are_computed() {
+    for on_delete in [false, true] {
+        let default = vec![edge("parent.k", "child.k", CascadeAction::Default, on_delete)];
+        let statement = if on_delete {
+            StatementKind::Delete
+        } else {
+            StatementKind::Update
+        };
+        assert_eq!(
+            through_parent(statement, &cascade_rules(vec![]), default),
+            computed_at("child.k"),
+            "{on_delete}"
+        );
+    }
+}
+
+#[test]
+fn set_null_and_delete_cascades_pass() {
+    let edges = vec![
+        edge("parent.k", "child.k", CascadeAction::Null, false),
+        edge("parent.k", "child.k", CascadeAction::Null, true),
+        edge("parent.k", "child.k", CascadeAction::Delete, true),
+    ];
+    for statement in [StatementKind::Update, StatementKind::Delete, StatementKind::Merge] {
+        let planned = through_parent(statement.clone(), &cascade_rules(vec![]), edges.clone());
+        assert!(planned.is_ok(), "{statement:?}");
+    }
+}
+
+#[test]
+fn cascades_into_unhashed_columns_pass() {
+    let config = config(vec![rule("shop.public.other.e", PiiOperator::Hash, "EMAIL_ADDRESS")]);
+    let edges = vec![edge("parent.k", "child.k", CascadeAction::Default, false)];
+    assert!(through_parent(StatementKind::Update, &config, edges).is_ok());
+}
+
+#[test]
+fn transitive_cascades_are_followed() {
+    let rules = config(vec![rule(
+        "shop.public.grandchild.k",
+        PiiOperator::Hash,
+        "EMAIL_ADDRESS",
+    )]);
+    let chain = |first: CascadeAction, second: Cascade| {
+        vec![
+            edge("parent.k", "child.k", first, first == CascadeAction::Delete),
+            second,
+        ]
+    };
+    let computed = computed_at("grandchild.k");
+    // An updated child column fires the update edges of that column.
+    let update = edge("child.k", "grandchild.k", CascadeAction::Default, false);
+    assert_eq!(
+        through_parent(
+            StatementKind::Update,
+            &rules,
+            chain(CascadeAction::Copy, update.clone())
+        ),
+        computed
+    );
+    assert_eq!(
+        through_parent(
+            StatementKind::Update,
+            &rules,
+            chain(CascadeAction::Null, update.clone())
+        ),
+        computed
+    );
+    let other_column = edge("child.j", "grandchild.k", CascadeAction::Default, false);
+    assert!(
+        through_parent(
+            StatementKind::Update,
+            &rules,
+            chain(CascadeAction::Copy, other_column.clone())
+        )
+        .is_ok()
+    );
+    // A removed child row fires every delete edge of the child.
+    let delete = edge("child.j", "grandchild.k", CascadeAction::Default, true);
+    assert_eq!(
+        through_parent(
+            StatementKind::Delete,
+            &rules,
+            chain(CascadeAction::Delete, delete.clone())
+        ),
+        computed
+    );
+    assert!(
+        through_parent(
+            StatementKind::Delete,
+            &rules,
+            chain(CascadeAction::Delete, other_column)
+        )
+        .is_ok()
+    );
+    assert!(through_parent(StatementKind::Update, &rules, chain(CascadeAction::Copy, delete)).is_ok());
+}
+
+#[test]
+fn cascades_changing_a_child_with_other_hash_columns_are_computed() {
+    // A generated or on-update column of the child may be recomputed from the changed column.
+    let rules = config(vec![rule("shop.public.child.h", PiiOperator::Hash, "EMAIL_ADDRESS")]);
+    for action in [CascadeAction::Copy, CascadeAction::Null, CascadeAction::Default] {
+        let edges = vec![edge("parent.k", "child.k", action, false)];
+        assert_eq!(
+            through_parent(StatementKind::Update, &rules, edges),
+            computed_at("child.h"),
+            "{action:?}"
+        );
+    }
+    let delete = vec![edge("parent.k", "child.k", CascadeAction::Delete, true)];
+    assert!(through_parent(StatementKind::Delete, &rules, delete).is_ok());
+}
+
+#[test]
+fn updates_through_a_partitioned_target_fire_delete_edges() {
+    let default = vec![edge("ptab.k", "child.k", CascadeAction::Default, true)];
+    let mut lineage = write("ptab", "k", vec![], StatementKind::Update);
+    lineage.writes[0].flow = Flow::Derived;
+    let mut names = tree();
+    names.facts = facts(&[("ptab", &[("k", NONE)])]).facts;
+    names.facts.get_mut(&table("ptab")).expect("ptab facts").cascades = default.clone();
+    assert_eq!(
+        pg_with(&lineage, &cascade_rules(vec![]), &names),
+        computed_at("child.k")
+    );
+    // A table that is not partitioned moves no rows.
+    assert!(through_parent(StatementKind::Update, &cascade_rules(vec![]), default).is_ok());
+}
+
+#[test]
+fn cascade_relations_match_case_folded() {
+    let mut copy = edge("parent.k", "child.k", CascadeAction::Copy, false);
+    copy.parent.relation = RelationId::new("SHOP", "Public", "Parent");
+    assert_eq!(
+        through_parent(StatementKind::Update, &cascade_rules(vec![]), vec![copy.clone()]),
+        computed_at("child.k")
+    );
+    let mut first = edge("parent.k", "mid.k", CascadeAction::Copy, false);
+    first.child.relation = RelationId::new(DB, SCHEMA, "MID");
+    let second = edge("mid.k", "child.k", CascadeAction::Default, false);
+    assert_eq!(
+        through_parent(StatementKind::Update, &cascade_rules(vec![]), vec![first, second]),
+        computed_at("child.k")
+    );
+}
+
+#[test]
+fn truncate_of_a_triggered_table_is_refused_while_hash_rules_exist() {
+    let lineage = ddl(StatementKind::Truncate, "plain");
+    let mut names = facts(&[("plain", &[("id", NONE)])]);
+    assert!(pg_with(&lineage, &hashed_target(), &names).is_ok());
+    names.facts.get_mut(&table("plain")).expect("plain facts").triggers = true;
+    assert_eq!(pg_with(&lineage, &hashed_target(), &names), trigger("plain"));
+}
+
+/// `hashed_target`, writing `hashed.id`, with `hashed` carrying `triggers` and `cascades`.
+fn into_triggered(statement: StatementKind, triggers: bool, cascades: Vec<Cascade>) -> Result<Plan, Rejection> {
+    let lineage = write("hashed", "id", vec![], statement);
+    let mut names = facts(&[("hashed", &[("id", NONE), ("email", NONE)])]);
+    let facts = names.facts.get_mut(&table("hashed")).expect("hashed facts");
+    facts.triggers = triggers;
+    facts.cascades = cascades;
+    pg_with(&lineage, &hashed_target(), &names)
+}
+
+#[test]
+fn triggers_on_the_target_refuse_every_write_while_hash_rules_exist() {
+    for statement in [
+        StatementKind::Insert,
+        StatementKind::Update,
+        StatementKind::Delete,
+        StatementKind::Merge,
+    ] {
+        assert_eq!(
+            into_triggered(statement.clone(), true, Vec::new()),
+            trigger("hashed"),
+            "{statement:?}"
+        );
+        assert!(into_triggered(statement, false, Vec::new()).is_ok());
+    }
+    // Whether or not the target has a ruled column.
+    let lineage = write("plain", "id", vec![], StatementKind::Update);
+    let mut names = facts(&[("plain", &[("id", NONE)])]);
+    names.facts.get_mut(&table("plain")).expect("plain facts").triggers = true;
+    assert_eq!(pg_with(&lineage, &hashed_target(), &names), trigger("plain"));
+    // No `hash` rule, no trigger gate.
+    let masked = config(vec![ssn("shop.public.users.ssn")]);
+    assert!(pg_with(&lineage, &masked, &names).is_ok());
+    // A create targets a new relation.
+    let created = write("plain", "id", vec![], StatementKind::CreateTableAs);
+    assert!(pg_with(&created, &hashed_target(), &names).is_ok());
+}
+
+#[test]
+fn triggers_on_a_fired_cascade_child_refuse_the_write() {
+    let mut fired = edge("hashed.id", "audit.id", CascadeAction::Delete, true);
+    fired.triggers = true;
+    assert_eq!(
+        into_triggered(StatementKind::Delete, false, vec![fired.clone()]),
+        trigger("audit")
+    );
+    assert!(
+        into_triggered(StatementKind::Update, false, vec![fired]).is_ok(),
+        "not fired"
+    );
+}
+
+#[test]
+fn chosen_computed_and_trigger_messages_and_gates_are_pinned() {
+    let chosen = Rejection::Chosen {
+        column: "public.hashed.email".into(),
+    };
+    assert_eq!(
+        chosen.to_string(),
+        "column policy: column \"public.hashed.email\" is hashed and only takes copies of columns hashed the same way, or NULL"
+    );
+    assert_eq!(chosen.gate(), "chosen");
+    let computed = Rejection::Computed {
+        column: "public.hashed.email".into(),
+    };
+    assert_eq!(
+        computed.to_string(),
+        "column policy: column \"public.hashed.email\" is hashed and filled by the database, so this write is refused"
+    );
+    assert_eq!(computed.gate(), "computed");
+    let trigger = Rejection::Trigger {
+        relation: "public.hashed".into(),
+    };
+    assert_eq!(
+        trigger.to_string(),
+        "column policy: relation \"public.hashed\" has triggers or rules, which may fill hashed columns, so writes to it are refused"
+    );
+    assert_eq!(trigger.gate(), "trigger");
+}
+
 // Messages.
 
 #[test]
@@ -1003,6 +1857,10 @@ fn rejection_messages_escape_identifiers() {
         (
             Rejection::UnknownFunction { name: name.into() },
             format!("column policy: function {escaped} is not a known built-in"),
+        ),
+        (
+            Rejection::UnknownType { name: name.into() },
+            format!("column policy: type {escaped} is not a known built-in"),
         ),
         (
             Rejection::DeniedRelation { relation: name.into() },
@@ -1321,6 +2179,19 @@ fn updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
 }
 
 #[test]
+fn explained_updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
+    let config = config(vec![ssn("shop.public.ptab_1.email")]);
+    let mut lineage = write("ptab", "id", vec![], StatementKind::Update);
+    lineage.statement = StatementKind::Explain(ExplainForm::QueryPlan, Box::new(StatementKind::Update));
+    assert_eq!(
+        pg_with(&lineage, &config, &tree()),
+        Err(Rejection::RowMovement {
+            relation: "public.ptab".into(),
+        })
+    );
+}
+
+#[test]
 fn every_merge_into_a_non_uniformly_ruled_partitioned_table_rejects() {
     let config = config(vec![
         ssn("shop.public.ptab_1.email"),
@@ -1362,5 +2233,72 @@ fn row_movement_allows_uniformly_ruled_and_unruled_trees() {
         let config = config(rules);
         let lineage = write("ptab", "id", vec![], StatementKind::Update);
         assert!(pg_with(&lineage, &config, &tree()).is_ok());
+    }
+}
+
+#[test]
+fn statement_kinds_map_to_their_write_effects() {
+    let none = Effects {
+        fills: false,
+        omits: false,
+        updates: false,
+        deletes: false,
+        triggers: false,
+        moves: false,
+    };
+    let insert = Effects {
+        fills: true,
+        omits: true,
+        updates: true,
+        deletes: true,
+        triggers: true,
+        ..none
+    };
+    let update = Effects {
+        fills: true,
+        updates: true,
+        triggers: true,
+        moves: true,
+        ..none
+    };
+    let rows = [
+        (StatementKind::Insert, false, insert),
+        (StatementKind::Update, false, update),
+        // A row moved between partitions may be deleted and re-inserted.
+        (
+            StatementKind::Update,
+            true,
+            Effects {
+                deletes: true,
+                ..update
+            },
+        ),
+        (StatementKind::Merge, false, Effects { moves: true, ..insert }),
+        (
+            StatementKind::Delete,
+            false,
+            Effects {
+                deletes: true,
+                triggers: true,
+                ..none
+            },
+        ),
+        (StatementKind::Truncate, false, Effects { triggers: true, ..none }),
+        (StatementKind::CreateTableAs, false, none),
+        (StatementKind::CreateMaterializedView, false, none),
+        (StatementKind::Query, false, none),
+        (StatementKind::Show(Show::Tables), false, none),
+        (StatementKind::Describe, false, none),
+        (StatementKind::CreateView, false, none),
+        (StatementKind::CreateTable, false, none),
+        (StatementKind::Drop, false, none),
+        (StatementKind::CreateIndex, false, none),
+    ];
+    for (statement, partitioned, expected) in rows {
+        assert_eq!(
+            effects(&statement, partitioned),
+            expected,
+            "{statement:?} partitioned={partitioned}"
+        );
     }
 }

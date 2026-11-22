@@ -50,14 +50,14 @@ impl Ctx<'_> {
     ) -> Result<(), LineageError> {
         match expr {
             Expr::Identifier(id) => {
-                acc.extend(level.column(clause, &[], id)?);
+                acc.extend(level.column(clause, &[], id)?.0);
                 Ok(())
             }
             Expr::CompoundIdentifier(parts) => {
                 let Some((name, qualifier)) = parts.split_last() else {
                     return Err(unsupported("empty identifier"));
                 };
-                acc.extend(level.column(clause, qualifier, name)?);
+                acc.extend(level.column(clause, qualifier, name)?.0);
                 Ok(())
             }
             Expr::IsFalse(e)
@@ -71,7 +71,6 @@ impl Ctx<'_> {
             | Expr::IsJson { expr: e, .. }
             | Expr::IsNormalized { expr: e, .. }
             | Expr::UnaryOp { expr: e, .. }
-            | Expr::Cast { expr: e, .. }
             | Expr::Extract { expr: e, .. }
             | Expr::Ceil { expr: e, .. }
             | Expr::Floor { expr: e, .. }
@@ -141,7 +140,19 @@ impl Ctx<'_> {
                 self.expr(low, level, clause, acc)?;
                 self.expr(high, level, clause, acc)
             }
-            Expr::Convert { expr, styles, .. } => {
+            Expr::Cast { expr, data_type, .. } => {
+                self.cast(data_type)?;
+                self.expr(expr, level, clause, acc)
+            }
+            Expr::Convert {
+                expr,
+                data_type,
+                styles,
+                ..
+            } => {
+                if let Some(data_type) = data_type {
+                    self.cast(data_type)?;
+                }
                 self.expr(expr, level, clause, acc)?;
                 self.all(styles, level, clause, acc)
             }
@@ -207,7 +218,7 @@ impl Ctx<'_> {
                     let Some((name, qualifier)) = parts.split_last() else {
                         return Err(unsupported("empty identifier"));
                     };
-                    acc.extend(level.column(clause, qualifier, name)?);
+                    acc.extend(level.column(clause, qualifier, name)?.0);
                 }
                 Ok(())
             }
@@ -262,7 +273,7 @@ impl Ctx<'_> {
             let Some((name, qualifier)) = parts.split_last() else {
                 return Err(unsupported("empty identifier"));
             };
-            acc.extend(level.column(clause, qualifier, name)?);
+            acc.extend(level.column(clause, qualifier, name)?.0);
         }
         for access in chain {
             match access {
