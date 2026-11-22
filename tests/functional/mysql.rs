@@ -5868,6 +5868,22 @@ async fn column_rules_withhold_value_echoing_errors() {
     let refusal = ruled_write_refusal(&handler, "UPDATE orders SET user_id = 'leak-me' WHERE id = 1").await;
     assert!(refusal.contains("withheld"), "{refusal}");
     assert!(!refusal.contains("leak-me"), "{refusal}");
+    // 1264 and 1406 report the failing row, which a value computed from a ruled column can choose.
+    for (query, number) in [
+        (
+            "INSERT INTO audit (user_id) SELECT 99999999999 FROM users WHERE id = 1",
+            1264,
+        ),
+        (
+            "INSERT INTO audit (action) SELECT REPEAT('x', 41) FROM users WHERE id = 1",
+            1406,
+        ),
+    ] {
+        let refusal = ruled_write_refusal(&handler, query).await;
+        assert!(refusal.contains(&format!("error {number}")), "{refusal}");
+        assert!(refusal.contains("withheld"), "{refusal}");
+        assert!(!refusal.contains("at row"), "{refusal}");
+    }
     if backend() == DatabaseBackend::Mysql {
         let refusal = ruled_refusal(&handler, "SELECT JSON_EXTRACT('{}', email) AS x FROM users").await;
         assert!(refusal.contains("withheld"), "{refusal}");
