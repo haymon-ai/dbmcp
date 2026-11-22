@@ -2036,11 +2036,8 @@ async fn test_read_query_vector_is_number_array() {
 
 #[tokio::test]
 async fn test_read_query_json_column_shape_per_flavour() {
-    // #330: MariaDB stores JSON as LONGTEXT and only its extended column
-    // metadata (`format=json`) marks it, which sqlx does not read, so the
-    // value arrives as a JSON string. Once sqlx exposes the marker and dbmcp
-    // reads it, the MariaDB arm flips to an object: drop the MariaDB
-    // JSON-as-text lines in the docs then too.
+    // MariaDB JSON is LONGTEXT; sqlx ignores its `format=json` marker (#330).
+    // When that lands, the MariaDB arm becomes an object: update the docs too.
     let expected = serde_json::json!({
         "contact": {"name": "Alice Johnson", "email": "alice@example.com", "phone": "+14155552671"},
         "address": {"city": "San Francisco", "country": "USA"},

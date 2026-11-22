@@ -31,7 +31,7 @@ Default values for `database.port` and `database.user` depend on the selected ba
 
 On MySQL and MariaDB, dbmcp checks the server's `VERSION()` against `database.backend` when the first connection opens (on first use, not at startup) and logs one warning per process on a mismatch; while `pii.rules` exist, a mismatch refuses every statement. `explainQuery`'s `analyze` also follows `database.backend`: `EXPLAIN ANALYZE` for `mysql`, `ANALYZE FORMAT=JSON` for `mariadb`, so a mismatch makes it fail with a syntax error.
 
-On MariaDB, `JSON` columns (and JSON built by `JSON_OBJECT` and similar functions) come back as a JSON **string**, not a parsed object as on MySQL: MariaDB stores `JSON` as `LONGTEXT`, and the client library cannot tell the two apart yet. Parse the string on the client side. SQLite JSON is text the same way.
+On MariaDB, JSON values come back as a JSON **string**, not an object as on MySQL, because MariaDB stores `JSON` as `LONGTEXT`. Parse them on the client side. SQLite JSON is text too.
 
 SQLite does not use host, port, or user — only `database.name` (the file path) is required. In a YAML or env file, a relative SQLite path resolves against that file's directory; `:memory:` is passed through unchanged.
 
