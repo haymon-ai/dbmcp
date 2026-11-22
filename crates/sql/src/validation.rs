@@ -192,7 +192,7 @@ fn is_unreadable(token: &Token) -> bool {
     match token {
         Token::Char(_) => true,
         Token::Whitespace(Whitespace::SingleLineComment { prefix, comment }) => {
-            prefix == "--" && comment.chars().next().is_some_and(|ch| !ch.is_ascii())
+            prefix == "--" && comment.starts_with(|ch: char| !ch.is_ascii())
         }
         _ => false,
     }
@@ -471,6 +471,23 @@ mod tests {
         ));
     }
 
+    /// Asserts that both `MySQL` dialects and the single-statement check refuse `sql`.
+    fn assert_unreadable(sql: &str) {
+        for dialect in [Dialect::Mysql, Dialect::Mariadb] {
+            assert!(
+                matches!(validate_read(sql, dialect), Err(SqlError::UnreadableCharacter)),
+                "{sql:?}"
+            );
+        }
+        assert!(
+            matches!(
+                validate_single_statement(sql, &MYSQL),
+                Err(SqlError::UnreadableCharacter)
+            ),
+            "{sql:?}"
+        );
+    }
+
     #[test]
     fn control_characters_are_blocked_on_mysql() {
         // The server starts a `--` comment at a control character; the parser does not.
@@ -484,17 +501,8 @@ mod tests {
             "SHOW --\x01\nTABLES",
             "SELECT 1 --\x01\n",
         ] {
-            for dialect in [Dialect::Mysql, Dialect::Mariadb] {
-                assert!(
-                    matches!(validate_read(sql, dialect), Err(SqlError::UnreadableCharacter)),
-                    "{sql:?}"
-                );
-            }
+            assert_unreadable(sql);
         }
-        assert!(matches!(
-            validate_single_statement("SELECT 1 --\x01\n", &MYSQL),
-            Err(SqlError::UnreadableCharacter)
-        ));
         assert!(validate_read("SHOW -- x\nTABLES", Dialect::Mysql).is_ok());
         assert!(validate_read("SELECT '\x01'", Dialect::Mysql).is_ok());
     }
@@ -503,21 +511,8 @@ mod tests {
     fn unicode_space_comments_are_blocked_on_mysql() {
         // The parser starts a `--` comment at a Unicode space; the server does not.
         for space in ['\u{a0}', '\u{85}', '\u{2000}', '\u{2028}', '\u{3000}'] {
-            for sql in [
-                format!("SELECT 1 --{space};SELECT 2"),
-                format!("SHOW --{space}\nWARNINGS"),
-            ] {
-                for dialect in [Dialect::Mysql, Dialect::Mariadb] {
-                    assert!(
-                        matches!(validate_read(&sql, dialect), Err(SqlError::UnreadableCharacter)),
-                        "{sql:?}"
-                    );
-                }
-                assert!(matches!(
-                    validate_single_statement(&sql, &MYSQL),
-                    Err(SqlError::UnreadableCharacter)
-                ));
-            }
+            assert_unreadable(&format!("SELECT 1 --{space};SELECT 2"));
+            assert_unreadable(&format!("SHOW --{space}\nWARNINGS"));
         }
         for sql in [
             "SELECT 1 -- \u{a0}x",

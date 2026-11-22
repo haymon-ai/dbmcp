@@ -1217,25 +1217,18 @@ async fn test_read_query_show_warnings_rejected() {
         );
     }
 
-    let error = handler
-        .read_query("SHOW --\x01\nWARNINGS".into(), Some("app".into()), None, None)
-        .await
-        .expect_err("a control-character comment must not hide diagnostics");
-    assert!(
-        error.message.contains("characters the parser cannot read"),
-        "expected unreadable-character rejection, got: {}",
-        error.message
-    );
-
-    let error = handler
-        .read_query("SELECT 1 --\u{a0};SELECT 2".into(), Some("app".into()), None, None)
-        .await
-        .expect_err("a Unicode-space comment must not reach the server");
-    assert!(
-        error.message.contains("characters the parser cannot read"),
-        "expected unreadable-character rejection, got: {}",
-        error.message
-    );
+    // The server reads a `--` comment at a control character but not at a Unicode space.
+    for sql in ["SHOW --\x01\nWARNINGS", "SHOW --\u{a0}\nWARNINGS"] {
+        let error = handler
+            .read_query(sql.into(), Some("app".into()), None, None)
+            .await
+            .expect_err("a comment the server reads otherwise must not hide diagnostics");
+        assert!(
+            error.message.contains("characters the parser cannot read"),
+            "expected unreadable-character rejection for {sql:?}, got: {}",
+            error.message
+        );
+    }
 }
 
 #[tokio::test]
