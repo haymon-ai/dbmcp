@@ -136,6 +136,35 @@ pub struct TypeUse {
     pub origin: Origin,
 }
 
+/// How a column's value reaches it from its sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Flow {
+    /// A literal `NULL`, possibly parenthesized or cast.
+    Null,
+    /// The `DEFAULT` keyword.
+    Default,
+    /// A column reference passed through unchanged.
+    Bare,
+    /// Any other expression.
+    Derived,
+}
+
+impl Flow {
+    /// Combines the flows of two values that land in one column.
+    ///
+    /// `Null` is the identity; two `Bare` or two `Default` flows keep their
+    /// kind; every other pair is `Derived`.
+    #[must_use]
+    pub const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Null, flow) | (flow, Self::Null) => flow,
+            (Self::Bare, Self::Bare) => Self::Bare,
+            (Self::Default, Self::Default) => Self::Default,
+            _ => Self::Derived,
+        }
+    }
+}
+
 /// One column in a statement's result set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputColumn {
@@ -145,6 +174,8 @@ pub struct OutputColumn {
     pub position: usize,
     /// Physical columns whose values flow into this one; empty for constants.
     pub sources: BTreeSet<SourceRef>,
+    /// How the value reaches the column from its sources.
+    pub flow: Flow,
 }
 
 /// The kind of statement analyzed.
@@ -193,6 +224,8 @@ pub struct TargetColumn {
     pub name: String,
     /// Physical columns whose values flow into the target column.
     pub sources: BTreeSet<SourceRef>,
+    /// How the written values reach the column, merged over every write.
+    pub flow: Flow,
     /// Whether `name` is the name the server stores.
     ///
     /// `false` only for a created column from an unaliased expression or a

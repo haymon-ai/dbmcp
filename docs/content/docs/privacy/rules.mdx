@@ -100,9 +100,22 @@ Every non-null value of a ruled output column is rendered as text (JSON values i
 
 ### Derived columns
 
-An output column computed from a ruled column gets that rule: `lower(email)`, `concat(email, '!')`, `coalesce(email, backup_email)`, and `count(DISTINCT email)` are all rewritten as `EMAIL_ADDRESS`. The value never shows, but the label can look odd: a count comes back as an e-mail token.
+An output column that passes a ruled column through unchanged keeps its rule: `email`, `u.email AS e`, `(email)`, and the same column read through a view, a materialized view, a CTE, a derived table, or `*`. `DISTINCT` changes nothing.
 
-Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule. Two ruled sources must agree on operator and entity. `concat(email, phone)` under different rules is refused:
+An output column computed from a ruled column keeps the rule too, except that `hash` becomes `replace`: `lower(email)`, `min(email)`, and `count(DISTINCT email)` under a `hash` rule all come back as `<EMAIL_ADDRESS>`. A token of a computed value could be the token of a value the assistant chose (`IF(email IS NULL, 'a@b.c', 'a@b.c')`) or of whichever row sorts first (`MIN(email)`), so only stored values read back unchanged get tokens. The value never shows, but the label can look odd: a count comes back as an e-mail placeholder.
+
+Everything except a plain column reference counts as computed:
+
+- functions, including every aggregate and window function (`MIN`, `MAX`, `FIRST_VALUE`, `GROUP_CONCAT`, `string_agg`, `array_agg`, …)
+- operators, `CASE`, `IF`, `COALESCE`
+- casts (`CAST`, `::`, `CONVERT`) and `COLLATE`
+- JSON access, subscripts, and scalar subqueries
+- PostgreSQL whole-row references (`SELECT t FROM t`, `f(t.*)`)
+- constants and parameters
+
+A set operation (`UNION`, `INTERSECT`, `EXCEPT`) or a multi-row `VALUES` list keeps a `hash` token in a column only if every branch is a plain column hashed under the same rule, or a literal `NULL`. `SELECT email FROM users UNION SELECT billing_email FROM invoices` keeps the token; a branch with an unruled column, a constant, or a computed value turns the column into `replace`.
+
+Unruled sources mixed in add nothing: `concat(name, ' <', email, '>')` gets the `email` rule. Two ruled sources must agree on operator and entity; `hash` and `replace` on the same entity merge into `replace`. `concat(email, phone)` under different rules is refused:
 
 ```text
 column policy: output column 0 combines conflicting column rules
@@ -142,7 +155,7 @@ On PostgreSQL, a plain `FROM parent` also reads the rows of every inheritance ch
 - **Siblings never.** A rule on `ptab_1.email` does not cover `SELECT email FROM ptab_2`.
 - **Multiple inheritance.** Rows read through a parent also follow the rules of their table's other parents. If `child` inherits both `parent` and `other`, a rule on `other.email` covers `SELECT email FROM parent`, which reads `child`'s rows.
 - **Writes.** Copying a ruled column into a tree checks every member a row can land in: the named table and each of its descendants must read the written column back under exactly the source's rule (their own or an ancestor's). `INSERT INTO ptab SELECT email FROM staging`, with `staging.email` ruled, is refused while `ptab_2.email` is unruled. Rule the top-most parent (`ptab.email`) the same way to cover every member.
-- **Row movement.** An `UPDATE` or `MERGE` through a partitioned table is refused while its partitions read any ruled column under different rules: changing a partition key moves the row into another partition, where it would be read back under that partition's rules. With only `ptab_1.email` ruled, `UPDATE ptab SET id = 160` is refused. It is refused even when no row would move, and every `MERGE` counts, whatever its actions. Name the partition instead (`UPDATE ptab_1 …`), or rule the partitioned table itself.
+- **Row movement.** An `UPDATE` or `MERGE` through a partitioned table is refused while its partitions read any ruled column under different rules: changing a partition key moves the row into another partition, where it would be read back under that partition's rules. With only `ptab_1.email` ruled, `UPDATE ptab SET id = 160` is refused. It is refused even when no row would move, every `MERGE` counts, whatever its actions, and so does an `EXPLAIN` of either. Name the partition instead (`UPDATE ptab_1 …`), or rule the partitioned table itself.
 
 Every other check counts the tree the same way: a ruled column of any member cannot appear in a `WHERE` or `JOIN` through the parent, an `EXPLAIN` of the parent is pruned, its errors are withheld, `CREATE INDEX` on it is refused, and its whole-row references are rewritten or refused. Views over a parent get the same coverage. Columns that exist only on one child match nothing on the parent.
 
@@ -168,6 +181,7 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
 - **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explainQuery` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
+- **Writes that could plant values in `hash`-ruled columns**: literals, parameters, unruled or computed values, defaults, generated columns, `ON UPDATE` columns, foreign-key cascades, and, while `hash` rules exist, every write to a table with triggers or rules (see [Writes](#writes)).
 - **Row movement on PostgreSQL**: `UPDATE` and `MERGE` through a partitioned table whose partitions are ruled differently, even when no row would move; name the partition (see [Inheritance and partitions](#inheritance-and-partitions)).
 - **A changed inheritance tree on PostgreSQL**: a table with a ruled column that joined the tree of a table the statement read while it ran. This one is caught after the statement runs: nothing is returned and a write is rolled back, with `column policy: an inheritance tree changed while the statement ran`. Retry the statement.
 - **Schema changes and other statements**: only `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE TABLE` (with or without `AS`), PostgreSQL `SELECT INTO`, `CREATE [MATERIALIZED] VIEW`, `DROP`, `TRUNCATE`, `CREATE INDEX`, `SHOW`, `DESCRIBE`, and `EXPLAIN` are analyzed, and only their plain forms: DDL with expressions, `CHECK`, `REFERENCES`, or `CASCADE` is refused. Everything else is refused, including every `ALTER`, `RENAME`, `CREATE TRIGGER | FUNCTION | PROCEDURE`, `COPY`, `GRANT`, `LOAD DATA`, and SQLite `ATTACH` and `PRAGMA`. **Migrations cannot run through <Dbmcp /> while rules exist**; run them with your migration tool.
@@ -213,13 +227,34 @@ On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for i
 With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
 
 - A target column fed by a ruled column needs a rule with the same operator and entity. An unruled target, or one ruled differently, is refused.
-- A target fed only by literals or unruled columns copies no ruled values and is always allowed.
+- A target fed only by literals or unruled columns copies no ruled values and is always allowed, except into a `hash`-ruled column (below).
 - A new table's column must have a name a rule can match: `CREATE TABLE copy AS SELECT lower(email) FROM users` is refused until the column is aliased (`lower(email) AS email`) and ruled.
 
 This covers `INSERT`, `UPDATE`, `MERGE`, `CREATE TABLE … AS`, PostgreSQL `SELECT INTO`, and `CREATE MATERIALIZED VIEW`. For example, `INSERT INTO audit (note) SELECT ssn FROM users` is refused unless `audit.note` carries the `ssn` rule. To copy ruled data into a new table, add a rule for the new table's columns first. `CREATE VIEW` is not laundering, since reads through the view get the base table rules, but its body passes the other checks.
 
 ```text
 column policy: writing column "public.audit.note" would weaken the rules of its source columns
+```
+
+A `hash`-ruled column also must not take a value the statement chose: its token would let the assistant hash a guess and compare it with stored tokens. Such a column takes only:
+
+- copies of columns hashed with the same entity, passed through unchanged (a computed copy such as `lower(email)` is laundering, see above);
+- `NULL`;
+- `DEFAULT`, or no value at all in an `INSERT`, only when the column has no default (no `DEFAULT`, identity, sequence, or auto-increment).
+
+A write is also refused when the database could fill a `hash`-ruled column of its target itself: any `INSERT` or `MERGE` on a table whose `hash`-ruled column has a default, and any `INSERT`, `UPDATE`, or `MERGE` on a table whose `hash`-ruled column is generated or has MySQL's `ON UPDATE CURRENT_TIMESTAMP`. `DELETE` is allowed. Every `INSERT` and `MERGE` counts as leaving out each `hash`-ruled column, even one it writes: an upsert's conflict clause or a `MERGE` clause can write a column its insert leaves to the default, and the clauses are not told apart.
+
+Foreign-key actions and triggers write too, so while `hash` rules exist a write is also refused when:
+
+- it fires a cascade into a `hash`-ruled column of another table: an `ON UPDATE CASCADE` from a parent column not hashed with the same entity, or an `ON UPDATE` / `ON DELETE SET DEFAULT`. `SET NULL` and `ON DELETE CASCADE` are allowed. A cascade that changes a child column (anything but `ON DELETE CASCADE`) is also refused while the child has another `hash`-ruled column: the database may recompute it as a generated or `ON UPDATE` column. Cascades are followed through every table they reach. An `UPDATE` fires the update actions of the columns it writes, a `DELETE` the delete actions; every `INSERT` (an upsert updates, MySQL's `REPLACE` deletes), every `MERGE`, and every `UPDATE` through a PostgreSQL partitioned table (which may move rows by deleting them) fires both kinds.
+- its target has a trigger (enabled or not) or, on PostgreSQL, a rule other than a view's `SELECT` rule, whether or not the target has a ruled column. This covers `TRUNCATE` too. On PostgreSQL that covers every descendant of the target, and on PostgreSQL and SQLite every table a fired cascade changes, since cascaded changes fire their triggers there. MySQL and MariaDB fire no triggers on cascaded changes.
+
+For example, with `users.email` hashed, `INSERT INTO users (email) VALUES ('alice@example.com')` is refused, while `INSERT INTO users_archive (email) SELECT email FROM users` is allowed when `users_archive.email` is hashed as `EMAIL_ADDRESS` too.
+
+```text
+column policy: column "public.users.email" is hashed and only takes copies of columns hashed the same way, or NULL
+column policy: column "public.users.email" is hashed and filled by the database, so this write is refused
+column policy: relation "public.users" has triggers or rules, which may fill hashed columns, so writes to it are refused
 ```
 
 Each statement runs in one transaction, and a result that does not fit the plan is rolled back before anything commits. Some writes cannot be undone that way:
@@ -257,9 +292,9 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
 - **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
 - **`mask` length.** `mask` keeps the length of the value.
-- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
+- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive. Tokens appear only on bare stored values, so a query cannot hash a value of its own choosing.
 - **Concurrent schema changes.** The catalog is read and the statement runs on one connection. On PostgreSQL both happen in one transaction; on MySQL and MariaDB the catalog is read just before the transaction opens. A view body that changed meanwhile refuses the result, but table columns are not checked again. Another session can still change a table in between. Restrict DDL on ruled tables to trusted roles.
-- **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly.
+- **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly. On MySQL and MariaDB, triggers are visible only with the `TRIGGER` privilege on the table: a trigger <Dbmcp /> cannot see that writes a `hash`-ruled column lets the assistant plant a value and read its token back, a guess oracle. Grant `TRIGGER`, or keep such tables out of read-write mode.
 - **MySQL GTID consistency.** With `enforce_gtid_consistency` on, writes to non-transactional tables fail inside the transaction <Dbmcp /> opens.
 
 Metadata tools (`listTables`, `listViews`, …) are not covered by column rules: they return schema objects, not query rows.

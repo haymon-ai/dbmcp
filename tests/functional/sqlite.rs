@@ -2725,8 +2725,8 @@ fn column_rule(table: &str, column: &str, entity: &'static str, operator: PiiOpe
     }
 }
 
-/// A handler whose rules hash e-mails (`users`, `orders`), mask phones,
-/// redact SSNs, and replace card numbers.
+/// A handler whose rules hash e-mails (`users`, `orders`, the `policy_hashed*`
+/// tables, the `policy_cascade_*` children's `k`), mask phones, redact SSNs, and replace card numbers.
 fn handler_with_rules(page_size: u16) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
@@ -2743,6 +2743,13 @@ fn handler_with_rules(page_size: u16) -> SqliteHandler {
                 column_rule("users", "phone", "PHONE_NUMBER", PiiOperator::Mask),
                 column_rule("users", "ssn", "US_SSN", PiiOperator::Redact),
                 column_rule("users", "credit_card", "CREDIT_CARD", PiiOperator::Replace),
+                column_rule("policy_hashed", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_hashed_default", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_hashed_generated", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_cascade_default", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
             ],
             ..PiiConfig::default()
         }),
@@ -2808,6 +2815,57 @@ async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
         .expect("orders");
     assert!(is_email_token(&users[0]["email"]));
     assert_eq!(users[0]["email"], orders[0]["customer_email"]);
+}
+
+#[tokio::test]
+async fn column_rules_replace_hash_on_values_a_query_computes() {
+    let handler = handler_with_rules(100);
+    let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("stored")[0]["email"]
+        .clone();
+    assert!(is_email_token(&stored), "{stored}");
+    for guess in [
+        "iif(email IS NULL, 'alice@example.com', 'alice@example.com')",
+        "CASE WHEN email IS NULL THEN 'alice@example.com' ELSE 'alice@example.com' END",
+    ] {
+        let query = format!("SELECT {guess} AS e FROM users WHERE id = 1");
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        assert_eq!(rows[0]["e"], "<EMAIL_ADDRESS>", "{query}");
+        assert_ne!(rows[0]["e"], stored, "{query}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_replace_hash_on_min_and_max() {
+    let handler = handler_with_rules(100);
+    let rows = ruled_read(&handler, "SELECT MIN(email) AS lo, MAX(email) AS hi FROM users")
+        .await
+        .expect("aggregates");
+    assert_eq!(rows[0]["lo"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+    assert_eq!(rows[0]["hi"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+}
+
+#[tokio::test]
+async fn column_rules_keep_hash_on_bare_columns_through_views_ctes_and_unions() {
+    let handler = handler_with_rules(100);
+    let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
+        .await
+        .expect("stored")[0]["email"]
+        .clone();
+    assert!(is_email_token(&stored), "{stored}");
+    for query in [
+        "SELECT email FROM active_users WHERE id = 1",
+        "WITH c AS (SELECT id, email FROM users) SELECT email FROM c WHERE id = 1",
+    ] {
+        let rows = ruled_read(&handler, query).await.expect(query);
+        assert_eq!(rows[0]["email"], stored, "{query}");
+    }
+    let query = "SELECT email FROM users WHERE id = 1 UNION ALL SELECT NULL";
+    let rows = ruled_read(&handler, query).await.expect(query);
+    let mut emails: Vec<&Value> = rows.iter().map(|row| &row["email"]).collect();
+    emails.sort_by_key(|email| email.is_null());
+    assert_eq!(emails, [&stored, &Value::Null], "{query}");
 }
 
 #[tokio::test]
@@ -2942,12 +3000,169 @@ async fn column_rules_redact_returning_rows() {
     let handler = handler_with_rules(100);
     let response = handler
         .write_query(QueryRequest {
-            query: "UPDATE users SET name = name WHERE id = 1 RETURNING id, email".into(),
+            query: "UPDATE policy_hashed SET email = email WHERE id = 2 RETURNING id, email".into(),
         })
         .await
         .expect("update");
     assert_eq!(response.rows_affected, 1);
     assert!(is_email_token(&response.rows[0]["email"]), "{}", response.rows[0]);
+}
+
+async fn ruled_write(handler: &SqliteHandler, query: &str) -> Result<u64, rmcp::model::ErrorData> {
+    handler
+        .write_query(QueryRequest { query: query.into() })
+        .await
+        .map(|response| response.rows_affected)
+}
+
+/// Counts the rows of `table` whose `id` is `id`.
+async fn count_id(handler: &SqliteHandler, table: &str, id: i64) -> Value {
+    let query = format!("SELECT count(*) AS n FROM {table} WHERE id = {id}");
+    ruled_read(handler, &query).await.expect(&query)[0]["n"].clone()
+}
+
+/// The token `SELECT email FROM <table> WHERE id = <id>` reads.
+async fn stored_token(handler: &SqliteHandler, table: &str, id: i64) -> Value {
+    let query = format!("SELECT email FROM {table} WHERE id = {id}");
+    ruled_read(handler, &query).await.expect(&query)[0]["email"].clone()
+}
+
+#[tokio::test]
+async fn column_rules_refuse_chosen_values_in_hashed_columns() {
+    let handler = handler_with_rules(100);
+    let before = stored_token(&handler, "policy_hashed", 1).await;
+    for query in [
+        "INSERT INTO policy_hashed (id, email) VALUES (900, 'x@example.com')",
+        "INSERT INTO policy_hashed (id, email) SELECT 900, name FROM users WHERE id = 1",
+        "UPDATE policy_hashed SET email = 'x@example.com' WHERE id = 1",
+        // `excluded` holds what the server filled in for an unwritten column.
+        "INSERT INTO policy_hashed (email) VALUES (NULL) \
+         ON CONFLICT (id) DO UPDATE SET email = excluded.id",
+    ] {
+        let error = ruled_write(&handler, query).await.expect_err(query);
+        assert!(
+            error.message.contains(
+                r#"column "main.policy_hashed.email" is hashed and only takes copies of columns hashed the same way, or NULL"#
+            ),
+            "{query}: {}",
+            error.message
+        );
+    }
+    assert_eq!(count_id(&handler, "policy_hashed", 900).await, 0);
+    assert_eq!(stored_token(&handler, "policy_hashed", 1).await, before);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_derived_copies_into_hashed_columns() {
+    let handler = handler_with_rules(100);
+    let query = "INSERT INTO policy_hashed_copy (id, email) SELECT 900, lower(email) FROM policy_hashed WHERE id = 1";
+    let error = ruled_write(&handler, query).await.expect_err(query);
+    assert!(
+        error.message.contains("would weaken the rules of its source columns"),
+        "{}",
+        error.message
+    );
+    assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
+}
+
+#[tokio::test]
+async fn column_rules_refuse_writes_the_database_fills_into_hashed_columns() {
+    let handler = handler_with_rules(100);
+    for (table, query) in [
+        (
+            "policy_hashed_default",
+            "INSERT INTO policy_hashed_default (id) VALUES (900)",
+        ),
+        (
+            "policy_hashed_generated",
+            "INSERT INTO policy_hashed_generated (id, name) VALUES (900, 'x')",
+        ),
+        (
+            "policy_hashed_generated",
+            "UPDATE policy_hashed_generated SET name = 'x' WHERE id = 900",
+        ),
+    ] {
+        let error = ruled_write(&handler, query).await.expect_err(query);
+        assert!(
+            error.message.contains(&format!(
+                r#"column "main.{table}.email" is hashed and filled by the database, so this write is refused"#
+            )),
+            "{query}: {}",
+            error.message
+        );
+        assert_eq!(count_id(&handler, table, 900).await, 0, "{query}");
+    }
+}
+
+/// Counts the rows of `policy_cascade_parent` whose `k` is `k`.
+async fn count_parent(handler: &SqliteHandler, k: &str) -> Value {
+    let query = format!("SELECT count(*) AS n FROM policy_cascade_parent WHERE k = '{k}'");
+    ruled_read(handler, &query).await.expect(&query)[0]["n"].clone()
+}
+
+#[tokio::test]
+async fn column_rules_refuse_writes_cascades_or_triggers_could_steer_into_hashed_columns() {
+    let handler = handler_with_rules(100);
+    let child = stored_k(&handler, "policy_cascade_child").await;
+    let default = stored_k(&handler, "policy_cascade_default").await;
+    for (query, refusal) in [
+        (
+            "UPDATE policy_cascade_parent SET k = 'y@example.com' WHERE k = 'alice@example.com'",
+            r#"column "main.policy_cascade_child.k" is hashed and filled by the database, so this write is refused"#,
+        ),
+        (
+            "UPDATE policy_cascade_parent SET j = 'b' WHERE j = 'a'",
+            r#"column "main.policy_cascade_default.k" is hashed and filled by the database, so this write is refused"#,
+        ),
+        (
+            "DELETE FROM policy_cascade_parent WHERE k = 'alice@example.com'",
+            r#"relation "main.policy_hashed_trigger" has triggers or rules, which may fill hashed columns, so writes to it are refused"#,
+        ),
+        (
+            "INSERT INTO policy_hashed_trigger (id, email) VALUES (900, NULL)",
+            r#"relation "main.policy_hashed_trigger" has triggers or rules, which may fill hashed columns, so writes to it are refused"#,
+        ),
+    ] {
+        let error = ruled_write(&handler, query).await.expect_err(query);
+        assert!(error.message.contains(refusal), "{query}: {}", error.message);
+    }
+    assert_eq!(count_parent(&handler, "alice@example.com").await, 1);
+    assert_eq!(stored_k(&handler, "policy_cascade_child").await, child);
+    assert_eq!(stored_k(&handler, "policy_cascade_default").await, default);
+    assert_eq!(count_id(&handler, "policy_hashed_trigger", 900).await, 0);
+}
+
+/// The token `SELECT k FROM <table> WHERE id = 1` reads.
+async fn stored_k(handler: &SqliteHandler, table: &str) -> Value {
+    let query = format!("SELECT k FROM {table} WHERE id = 1");
+    let token = ruled_read(handler, &query).await.expect(&query)[0]["k"].clone();
+    assert!(is_email_token(&token), "{token}");
+    token
+}
+
+#[tokio::test]
+async fn column_rules_allow_same_hash_copies_nulls_and_omitted_hashed_columns() {
+    let handler = handler_with_rules(100);
+    for query in [
+        "INSERT INTO policy_hashed_copy (id, email) SELECT 910, email FROM policy_hashed WHERE id = 1",
+        "INSERT INTO policy_hashed (id, email) VALUES (911, NULL)",
+        "INSERT INTO policy_hashed (id) VALUES (912)",
+    ] {
+        assert_eq!(ruled_write(&handler, query).await.expect(query), 1, "{query}");
+    }
+    let copied = stored_token(&handler, "policy_hashed_copy", 910).await;
+    assert!(is_email_token(&copied), "{copied}");
+    assert_eq!(copied, stored_token(&handler, "policy_hashed", 1).await);
+    for id in [911, 912] {
+        assert_eq!(stored_token(&handler, "policy_hashed", id).await, Value::Null);
+    }
+    for query in [
+        "DELETE FROM policy_hashed_generated WHERE id = 910",
+        "DELETE FROM policy_hashed_copy WHERE id = 910",
+        "DELETE FROM policy_hashed WHERE id IN (911, 912)",
+    ] {
+        ruled_write(&handler, query).await.expect(query);
+    }
 }
 
 #[tokio::test]
