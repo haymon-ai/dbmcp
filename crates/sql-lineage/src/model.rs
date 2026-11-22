@@ -125,6 +125,17 @@ pub struct FunctionUse {
     pub origin: Origin,
 }
 
+/// A type the statement casts to.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct TypeUse {
+    /// Type name, case-folded per dialect.
+    pub name: String,
+    /// Whether the dialect's type table lists it.
+    pub known: bool,
+    /// Where it was cast to.
+    pub origin: Origin,
+}
+
 /// One column in a statement's result set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputColumn {
@@ -201,6 +212,8 @@ pub struct Lineage {
     pub relations: BTreeSet<RelationUse>,
     /// Functions called.
     pub functions: BTreeSet<FunctionUse>,
+    /// Cast target types.
+    pub types: BTreeSet<TypeUse>,
     /// The relation written, created, dropped, truncated, or indexed; `None` for a query.
     pub target: Option<RelationId>,
     /// Columns of `target` written, in first-write order, sources merged.

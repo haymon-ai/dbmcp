@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_sql_lineage::{
     Catalog, Dialect, ExplainForm, Family, FunctionUse, Lineage, LineageError, Member, Origin, OutputColumn, Reference,
-    RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, analyze,
+    RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn, TypeUse, analyze,
 };
 
 use dbmcp_pii::Entity;
@@ -77,6 +77,7 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
         references: BTreeSet::new(),
         relations,
         functions: BTreeSet::new(),
+        types: BTreeSet::new(),
         target: None,
         writes: Vec::new(),
         statement: StatementKind::Query,
@@ -238,6 +239,36 @@ fn known_function_passes() {
     let mut lineage = select(vec![vec![col("users", "name")]]);
     lineage.functions.insert(FunctionUse {
         name: "lower".into(),
+        known: true,
+        origin: Origin::Query,
+    });
+    assert!(pg(&lineage, &config(vec![])).is_ok());
+}
+
+// Unknown cast types.
+
+#[test]
+fn unknown_type_rejects_in_any_origin() {
+    let config = config(vec![]);
+    for origin in [Origin::Query, Origin::View(table("v"))] {
+        let mut lineage = select(vec![vec![]]);
+        lineage.types.insert(TypeUse {
+            name: "tsquery".into(),
+            known: false,
+            origin,
+        });
+        assert_eq!(
+            pg(&lineage, &config),
+            Err(Rejection::UnknownType { name: "tsquery".into() })
+        );
+    }
+}
+
+#[test]
+fn known_type_passes() {
+    let mut lineage = select(vec![vec![col("users", "name")]]);
+    lineage.types.insert(TypeUse {
+        name: "int".into(),
         known: true,
         origin: Origin::Query,
     });
@@ -1003,6 +1034,10 @@ fn rejection_messages_escape_identifiers() {
         (
             Rejection::UnknownFunction { name: name.into() },
             format!("column policy: function {escaped} is not a known built-in"),
+        ),
+        (
+            Rejection::UnknownType { name: name.into() },
+            format!("column policy: type {escaped} is not a known built-in"),
         ),
         (
             Rejection::DeniedRelation { relation: name.into() },

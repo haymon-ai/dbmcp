@@ -5005,10 +5005,34 @@ async fn column_rules_withhold_value_echoing_errors() {
         "SELECT email::regclass AS x FROM users",
         // Three parts read as a cross-database reference: `0A000` quotes the value.
         "SELECT ('x.' || email)::regclass AS x FROM users",
+        // `54000` is withheld whole: `tsvector` and `tsquery` input quote the whole input or its byte count.
+        "SELECT repeat(email, 1000000000) AS x FROM users",
     ] {
         let refusal = ruled_refusal(&handler, query).await;
         assert!(refusal.contains("withheld"), "{query}: {refusal}");
         assert!(!refusal.contains("@example.com"), "{query}: {refusal}");
+    }
+}
+
+#[tokio::test]
+async fn column_rules_refuse_casts_to_value_echoing_types() {
+    let handler = handler_with_rules(100);
+    for (query, name) in [
+        (
+            "SELECT CAST(repeat('a', 2047 + ascii(email)) AS tsvector) AS x FROM users",
+            "tsvector",
+        ),
+        (
+            "SELECT (repeat('x', 2100) || email)::tsquery AS x FROM users",
+            "tsquery",
+        ),
+        ("SELECT email::pg_catalog.tsquery AS x FROM users", "pg_catalog.tsquery"),
+    ] {
+        let refusal = ruled_refusal(&handler, query).await;
+        assert!(
+            refusal.contains(&format!("type \"{name}\" is not a known built-in")),
+            "{query}: {refusal}"
+        );
     }
 }
 

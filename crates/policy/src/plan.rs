@@ -21,8 +21,8 @@ use crate::rejection::Rejection;
 ///
 /// # Errors
 ///
-/// Returns the first failing gate's [`Rejection`]: an unknown function, a
-/// denied relation or statement, `EXPLAIN` of a ruled relation other than a
+/// Returns the first failing gate's [`Rejection`]: an unknown function or
+/// cast target type, a denied relation or statement, `EXPLAIN` of a ruled relation other than a
 /// plain JSON or query-plan form, `EXPLAIN ANALYZE` on one, `CREATE INDEX` on
 /// one, a ruled column used outside the output, conflicting rules on one
 /// output column, a shadowed bare create target, or a write copying ruled
@@ -58,13 +58,24 @@ pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig, families: &Fa
     ruled_relation(lineage, config, families).is_some()
 }
 
-/// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+/// Refuses a called function or cast target type missing from the dialect's tables.
+fn built_ins(lineage: &Lineage) -> Result<(), Rejection> {
     if let Some(function) = lineage.functions.iter().find(|function| !function.known) {
         return Err(Rejection::UnknownFunction {
             name: function.name.clone(),
         });
     }
+    if let Some(cast) = lineage.types.iter().find(|cast| !cast.known) {
+        return Err(Rejection::UnknownType {
+            name: cast.name.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Runs every gate in order.
+fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+    built_ins(lineage)?;
     deny::lineage(dialect, lineage)?;
     let mut statement = &lineage.statement;
     while let StatementKind::Explain(_, inner) = statement {
