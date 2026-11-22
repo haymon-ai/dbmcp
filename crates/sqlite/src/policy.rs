@@ -24,8 +24,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId,
-    RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
+    RelationId, RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
@@ -421,12 +421,14 @@ async fn fetch(
             .filter(|(key, ..)| usize::try_from(*key).is_ok_and(|key| key == index))
             .map(|(_, column, hidden, default)| {
                 // `hidden` = 1 marks virtual-table hidden columns; 2 and 3 are generated columns.
-                let column = if *hidden == 1 {
-                    CatalogColumn::hidden(column)
-                } else {
-                    CatalogColumn::new(column)
-                };
-                column.with_facts(*default, matches!(hidden, 2 | 3), false)
+                CatalogColumn {
+                    name: column.clone(),
+                    star_visible: *hidden != 1,
+                    default: *default,
+                    generated: matches!(hidden, 2 | 3),
+                    // `SQLite` has no on-update columns.
+                    on_update: false,
+                }
             })
             .collect();
         if !triggers.contains_key(&listed.schema) {
@@ -439,17 +441,25 @@ async fn fetch(
         } else {
             Vec::new()
         };
-        let id = RelationId::new(CATALOG, &listed.schema, &listed.name);
-        let mut relation = Relation::new(id, kind, columns)
-            .with_triggers(triggered.contains(&listed.name.to_lowercase()))
-            .with_cascades(cascades);
-        if kind == RelationKind::View {
+        let view_sql = if kind == RelationKind::View {
             let Some(body) = view_body(conn, listed).await? else {
                 entries.push((name, Entry::Absent));
                 continue;
             };
-            relation = relation.with_view_sql(body);
-        }
+            Some(body)
+        } else {
+            None
+        };
+        let relation = Relation {
+            id: RelationId::new(CATALOG, &listed.schema, &listed.name),
+            kind,
+            columns,
+            view_sql,
+            // `SQLite` has no inheritance.
+            family: Family::default(),
+            triggers: triggered.contains(&listed.name.to_lowercase()),
+            cascades,
+        };
         entries.push((name, Entry::Resolved(relation)));
     }
     Ok(entries)

@@ -7,10 +7,10 @@ use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    Cascade, CascadeAction, CatalogColumn, Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn,
-    RelationId, Role, SourceRef, StatementKind,
+    Dialect, ExplainForm, Flow, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
 
+use crate::catalog::{Cascade, CascadeAction, CatalogColumn, Family, Member};
 use crate::deny;
 use crate::rejection::Rejection;
 
@@ -193,7 +193,13 @@ fn writes(
             && hashed(name)
             && !columns.iter().any(|column| ColumnRule::fold(&column.name) == *name)
         {
-            columns.push(CatalogColumn::new(name.clone()));
+            columns.push(CatalogColumn {
+                name: name.clone(),
+                star_visible: true,
+                default: true,
+                generated: true,
+                on_update: true,
+            });
         }
     }
     // The exact name first; else every column it folds onto, `PostgreSQL` names differing in case included.

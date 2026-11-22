@@ -619,10 +619,7 @@ async fn fetch(
     for ((name, reference), row) in names.into_iter().zip(rows) {
         let writes = writes(&row)?;
         let row = Resolved::from_row(&row)?;
-        let entry = match entry(probe, &name, &reference, &row) {
-            Entry::Resolved(relation) => Entry::Resolved(with_writes(probe, relation, writes)),
-            other => other,
-        };
+        let entry = entry(probe, &name, &reference, &row, writes);
         let (_, _, _, oid, body, names, numbers, ..) = row;
         if let (Entry::Resolved(relation), Some(oid)) = (&entry, oid.and_then(|oid| u32::try_from(oid).ok())) {
             owners.entry(oid).or_insert_with(|| Owner {
@@ -653,10 +650,10 @@ fn writes(row: &PgRow) -> Result<Writes, sqlx::Error> {
     ))
 }
 
-/// Sets the triggers and cascades of `writes` on a resolved relation.
+/// Reads whether a relation has triggers, and its cascades, from `writes`.
 ///
 /// An action the walk does not name sets the child's default (fail closed).
-fn with_writes(probe: &Probe, relation: Relation, writes: Writes) -> Relation {
+fn triggers_and_cascades(probe: &Probe, writes: Writes) -> (bool, Vec<Cascade>) {
     let (
         triggers,
         parent_schemas,
@@ -684,7 +681,7 @@ fn with_writes(probe: &Probe, relation: Relation, writes: Writes) -> Relation {
             child_triggers.get(index),
         ) else {
             // Arrays of unequal length: the relation counts as triggered.
-            return relation.with_triggers(true).with_cascades(cascades);
+            return (true, cascades);
         };
         cascades.push(Cascade {
             parent: column(ps, pn, pc),
@@ -699,11 +696,11 @@ fn with_writes(probe: &Probe, relation: Relation, writes: Writes) -> Relation {
             triggers: child,
         });
     }
-    relation.with_triggers(triggers).with_cascades(cascades)
+    (triggers, cascades)
 }
 
 /// Builds the catalog entry of one resolved row.
-fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved) -> Entry {
+fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resolved, writes: Writes) -> Entry {
     let (schema, relname, relkind, _, body, columns, numbers, schema_exists, .., defaults, generated) = row;
     let (Some(schema), Some(relname), Some(relkind)) = (schema, relname, relkind) else {
         return vacant(probe, name, reference, *schema_exists);
@@ -722,25 +719,33 @@ fn entry(probe: &Probe, name: &WrittenName, reference: &RelationRef, row: &Resol
         .zip(numbers)
         .enumerate()
         .map(|(index, (column, &number))| {
-            let column = if number > 0 {
-                CatalogColumn::new(column.clone())
-            } else {
-                CatalogColumn::hidden(column.clone())
-            };
-            // A fact the row lacks stays `true`.
+            // A fact the row lacks is `true` (fail closed).
             let fact = |facts: &[bool]| facts.get(index).copied().unwrap_or(true);
-            column.with_facts(fact(defaults), fact(generated), false)
+            CatalogColumn {
+                name: column.clone(),
+                star_visible: number > 0,
+                default: fact(defaults),
+                generated: fact(generated),
+                // `PostgreSQL` has no on-update columns.
+                on_update: false,
+            }
         })
         .collect();
-    let id = RelationId::new(&probe.database, schema, relname);
-    let relation = Relation::new(id, kind, columns).with_family(family(probe, row));
-    if !matches!(kind, RelationKind::View | RelationKind::MatView) {
-        return Entry::Resolved(relation);
-    }
-    match body.as_deref().map(view_query) {
-        Some(query) if !query.is_empty() => Entry::Resolved(relation.with_view_sql(query)),
-        _ => Entry::Absent,
-    }
+    let view_sql = match body.as_deref().map(view_query) {
+        _ if !matches!(kind, RelationKind::View | RelationKind::MatView) => None,
+        Some(query) if !query.is_empty() => Some(query),
+        _ => return Entry::Absent,
+    };
+    let (triggers, cascades) = triggers_and_cascades(probe, writes);
+    Entry::Resolved(Relation {
+        id: RelationId::new(&probe.database, schema, relname),
+        kind,
+        columns,
+        view_sql,
+        family: family(probe, row),
+        triggers,
+        cascades,
+    })
 }
 
 /// Builds the inheritance tree of one resolved row from its closure nodes and edges.
@@ -1049,7 +1054,13 @@ mod tests {
 
     fn resolved(row: &Resolved) -> Option<Relation> {
         let name = WrittenName::query(vec![NamePart::bare("r")]);
-        match entry(&probe(Some("public")), &name, &reference(None, "r"), row) {
+        match entry(
+            &probe(Some("public")),
+            &name,
+            &reference(None, "r"),
+            row,
+            Writes::default(),
+        ) {
             Entry::Resolved(relation) => Some(relation),
             _ => None,
         }
@@ -1082,8 +1093,20 @@ mod tests {
         assert_eq!(
             relation.columns,
             vec![
-                CatalogColumn::new("id").with_facts(true, false, false),
-                CatalogColumn::hidden("ctid").with_facts(false, false, false)
+                CatalogColumn {
+                    name: "id".into(),
+                    star_visible: true,
+                    default: true,
+                    generated: false,
+                    on_update: false,
+                },
+                CatalogColumn {
+                    name: "ctid".into(),
+                    star_visible: false,
+                    default: false,
+                    generated: false,
+                    on_update: false,
+                }
             ]
         );
     }
@@ -1135,7 +1158,13 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            entry(&probe(Some("public")), &name, &reference(None, "n"), &row),
+            entry(
+                &probe(Some("public")),
+                &name,
+                &reference(None, "n"),
+                &row,
+                Writes::default()
+            ),
             Entry::Vacant(RelationId::new(DB, "public", "n"))
         );
     }

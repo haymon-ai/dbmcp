@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 
 use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
+use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
-    Cascade, CascadeAction, Catalog, CatalogColumn, Dialect, Entry, ExplainForm, Family, Flow, FunctionUse, Lineage,
-    LineageError, Member, NamePart, Origin, OutputColumn, Reference, Relation, RelationId, RelationKind, RelationUse,
-    Role, Show, SourceRef, StatementKind, TargetColumn, WrittenName, analyze,
+    Catalog, Dialect, Entry, ExplainForm, Flow, FunctionUse, Lineage, LineageError, NamePart, Origin, OutputColumn,
+    Reference, Relation, RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn,
+    WrittenName, analyze,
 };
 
 use dbmcp_pii::Entity;
@@ -14,7 +15,7 @@ use dbmcp_pii::cells::{Plan, Position};
 
 use crate::plan::{Facts, Families, Names, plan, touches_ruled};
 use crate::rejection::reject_lineage;
-use crate::{LineageClass, Rejection};
+use crate::{Cascade, CascadeAction, CatalogColumn, Family, LineageClass, Member, Rejection};
 
 const DB: &str = "shop";
 const SCHEMA: &str = "public";
@@ -870,7 +871,7 @@ fn derived_output_without_ruled_source_stays_global() {
 fn tables(tables: &[(&str, &[&str])]) -> Catalog {
     let mut catalog = Catalog::new();
     for (name, columns) in tables {
-        let columns = columns.iter().map(|c| CatalogColumn::new(*c)).collect();
+        let columns = columns.iter().map(|c| lineage::CatalogColumn::new(*c)).collect();
         catalog.insert(
             WrittenName::query(vec![NamePart::bare(*name)]),
             Entry::Resolved(Relation::new(table(name), RelationKind::Table, columns)),
@@ -1187,8 +1188,12 @@ fn facts(tables: &[(&str, &[(&str, ColumnFacts)])]) -> Names {
             .map(|(name, columns)| {
                 let columns = columns
                     .iter()
-                    .map(|&(column, (default, generated, on_update))| {
-                        CatalogColumn::new(column).with_facts(default, generated, on_update)
+                    .map(|&(column, (default, generated, on_update))| CatalogColumn {
+                        name: column.into(),
+                        star_visible: true,
+                        default,
+                        generated,
+                        on_update,
                     })
                     .collect();
                 (
@@ -1419,8 +1424,15 @@ fn missing_facts_refuse_writes_to_hash_tables() {
 }
 
 #[test]
-fn fail_closed_column_constructors_refuse_writes_to_hash_tables() {
-    for column in [CatalogColumn::new("email"), CatalogColumn::hidden("email")] {
+fn columns_with_every_fact_refuse_writes_to_hash_tables() {
+    for star_visible in [true, false] {
+        let column = CatalogColumn {
+            name: "email".into(),
+            star_visible,
+            default: true,
+            generated: true,
+            on_update: true,
+        };
         let names = Names {
             facts: [(
                 table("hashed"),

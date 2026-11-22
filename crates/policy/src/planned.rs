@@ -307,7 +307,7 @@ mod tests {
         let parent = RelationId::new("shop", "public", "t");
         let families = Families::from([(
             child.clone(),
-            dbmcp_sql_lineage::Family {
+            crate::Family {
                 partitioned: false,
                 ancestors: [parent.clone()].into(),
                 descendants: Vec::new(),

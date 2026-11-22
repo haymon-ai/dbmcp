@@ -36,8 +36,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId,
-    RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
+    RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -875,28 +875,32 @@ fn entry(schema: &str, name: &str, found: &Found) -> Entry {
                     .split_whitespace()
                     .any(|flag| flag.eq_ignore_ascii_case(name))
             };
-            let catalog = if flag("INVISIBLE") {
-                CatalogColumn::hidden(&column.name)
-            } else {
-                CatalogColumn::new(&column.name)
-            };
-            // `MySQL` writes `on update CURRENT_TIMESTAMP`, `MariaDB` `on update current_timestamp()`.
-            let on_update = column.extra.to_ascii_lowercase().contains("on update");
-            let default = column.default || flag("auto_increment") || flag("DEFAULT_GENERATED");
-            catalog.with_facts(default, column.generated, on_update)
+            CatalogColumn {
+                name: column.name.clone(),
+                star_visible: !flag("INVISIBLE"),
+                default: column.default || flag("auto_increment") || flag("DEFAULT_GENERATED"),
+                generated: column.generated,
+                // `MySQL` writes `on update CURRENT_TIMESTAMP`, `MariaDB` `on update current_timestamp()`.
+                on_update: column.extra.to_ascii_lowercase().contains("on update"),
+            }
         })
         .collect();
-    let relation = Relation::new(RelationId::new(CATALOG, schema, name), kind, columns)
-        .with_triggers(found.triggers)
-        .with_cascades(found.cascades.clone());
-    if kind != RelationKind::View {
-        return Entry::Resolved(relation);
-    }
     // An empty body means the user may not read it (another definer, no `SHOW VIEW`).
-    match found.body.as_deref().map(str::trim) {
-        Some(body) if !body.is_empty() => Entry::Resolved(relation.with_view_sql(body)),
-        _ => Entry::Absent,
-    }
+    let view_sql = match found.body.as_deref().map(str::trim) {
+        _ if kind != RelationKind::View => None,
+        Some(body) if !body.is_empty() => Some(body.to_owned()),
+        _ => return Entry::Absent,
+    };
+    Entry::Resolved(Relation {
+        id: RelationId::new(CATALOG, schema, name),
+        kind,
+        columns,
+        view_sql,
+        // `MySQL` and `MariaDB` have no inheritance.
+        family: Family::default(),
+        triggers: found.triggers,
+        cascades: found.cascades.clone(),
+    })
 }
 
 /// Builds the entries of names nothing resolves to.
@@ -1114,8 +1118,20 @@ mod tests {
         assert_eq!(
             relation.columns,
             vec![
-                CatalogColumn::new("id").with_facts(true, false, false),
-                CatalogColumn::hidden("secret").with_facts(false, false, false)
+                CatalogColumn {
+                    name: "id".into(),
+                    star_visible: true,
+                    default: true,
+                    generated: false,
+                    on_update: false,
+                },
+                CatalogColumn {
+                    name: "secret".into(),
+                    star_visible: false,
+                    default: false,
+                    generated: false,
+                    on_update: false,
+                }
             ]
         );
     }

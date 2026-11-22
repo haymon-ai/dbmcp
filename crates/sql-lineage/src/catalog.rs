@@ -6,12 +6,12 @@
 //! [`Entry::Resolved`] relation, [`Entry::Vacant`] when nothing exists under
 //! the name, or [`Entry::Absent`] when something exists that it cannot describe.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Origin, RelationId, RelationKind, SourceRef};
+use crate::model::{Origin, RelationId, RelationKind};
 
 /// One part of a relation name as written in SQL.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -87,51 +87,29 @@ pub enum Lexical {
 }
 
 /// A column of a catalog relation.
-///
-/// Analysis reads only the name and `*` visibility; the other facts carry
-/// catalog knowledge to the caller's planner. Both constructors set every
-/// fact to `true` (fail closed) until [`CatalogColumn::with_facts`] sets them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogColumn {
     /// The column's actual name.
     pub name: String,
     /// Whether `*` expands to this column.
     pub star_visible: bool,
-    /// Whether the server can fill the column itself: any default, identity, sequence, or auto-increment.
-    pub default: bool,
-    /// Whether the column is generated (stored or virtual).
-    pub generated: bool,
-    /// Whether an `UPDATE` sets the column itself (`ON UPDATE CURRENT_TIMESTAMP`).
-    pub on_update: bool,
 }
 
 impl CatalogColumn {
-    /// Creates a column that `*` expands to, with every fact `true`.
+    /// Creates a column that `*` expands to.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             star_visible: true,
-            default: true,
-            generated: true,
-            on_update: true,
         }
     }
 
-    /// Creates a column that `*` skips (invisible, hidden, or system), with every fact `true`.
+    /// Creates a column that `*` skips (invisible, hidden, or system).
     pub fn hidden(name: impl Into<String>) -> Self {
         Self {
             star_visible: false,
             ..Self::new(name)
         }
-    }
-
-    /// Sets whether the column has a default, is generated, and is set by `UPDATE`.
-    #[must_use]
-    pub fn with_facts(mut self, default: bool, generated: bool, on_update: bool) -> Self {
-        self.default = default;
-        self.generated = generated;
-        self.on_update = on_update;
-        self
     }
 }
 
@@ -146,28 +124,10 @@ pub struct Relation {
     pub columns: Vec<CatalogColumn>,
     /// The view's query, without `CREATE VIEW`, for views.
     pub view_sql: Option<String>,
-    /// The relation's inheritance tree; empty unless the backend reads one.
-    ///
-    /// Analysis ignores it; it carries catalog knowledge to the caller's planner.
-    pub family: Family,
-    /// Whether it or a `PostgreSQL` descendant has user triggers or non-`SELECT` rules.
-    ///
-    /// Analysis ignores it, like `cascades`.
-    pub triggers: bool,
-    /// Referential action edges reachable below the relation, firing or not.
-    ///
-    /// Every action edge of the relation (and of each `PostgreSQL`
-    /// descendant), then every action edge of each child table so reached,
-    /// transitively. The planner decides which edges a write fires; an edge
-    /// missing here is one it cannot follow (fail open).
-    pub cascades: Vec<Cascade>,
 }
 
 impl Relation {
-    /// Creates a relation without a view body, inheritance tree, or cascades.
-    ///
-    /// It counts as having triggers (fail closed) until
-    /// [`Relation::with_triggers`] says otherwise.
+    /// Creates a relation without a view body.
     #[must_use]
     pub fn new(id: RelationId, kind: RelationKind, columns: Vec<CatalogColumn>) -> Self {
         Self {
@@ -175,9 +135,6 @@ impl Relation {
             kind,
             columns,
             view_sql: None,
-            family: Family::default(),
-            triggers: true,
-            cascades: Vec::new(),
         }
     }
 
@@ -187,92 +144,6 @@ impl Relation {
         self.view_sql = Some(sql.into());
         self
     }
-
-    /// Sets the inheritance tree.
-    #[must_use]
-    pub fn with_family(mut self, family: Family) -> Self {
-        self.family = family;
-        self
-    }
-
-    /// Sets whether the relation has a user trigger or a non-`SELECT` rule.
-    #[must_use]
-    pub fn with_triggers(mut self, triggers: bool) -> Self {
-        self.triggers = triggers;
-        self
-    }
-
-    /// Sets the reachable referential action edges, as [`Relation::cascades`] describes.
-    #[must_use]
-    pub fn with_cascades(mut self, cascades: Vec<Cascade>) -> Self {
-        self.cascades = cascades;
-        self
-    }
-}
-
-/// One referential action edge from a parent column to a child column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Cascade {
-    /// The referenced column.
-    pub parent: SourceRef,
-    /// The referencing column the action writes, or whose rows it removes.
-    pub child: SourceRef,
-    /// What the action writes into the child.
-    pub action: CascadeAction,
-    /// Whether a `DELETE` of the parent fires it (otherwise an `UPDATE` of `parent` does).
-    pub on_delete: bool,
-    /// Whether the child relation has a user trigger or a non-`SELECT` rule.
-    pub triggers: bool,
-}
-
-/// What a referential action writes into the child.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CascadeAction {
-    /// `CASCADE` on update: copies the parent's new value.
-    Copy,
-    /// `SET NULL`.
-    Null,
-    /// `SET DEFAULT`: the child column's default.
-    Default,
-    /// `CASCADE` on delete: removes child rows.
-    Delete,
-}
-
-/// A relation's inheritance tree, as relation identities only.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Family {
-    /// Whether the relation itself is a partitioned table.
-    pub partitioned: bool,
-    /// Every ancestor, transitively.
-    pub ancestors: BTreeSet<RelationId>,
-    /// Every descendant, transitively, each with its own ancestors.
-    pub descendants: Vec<Member>,
-}
-
-impl Family {
-    /// Returns every relation whose rules can reach the family's owner.
-    ///
-    /// Its ancestors, its descendants, and every descendant's ancestors.
-    #[must_use]
-    pub fn relations(&self) -> BTreeSet<&RelationId> {
-        let mut relations: BTreeSet<&RelationId> = self.ancestors.iter().collect();
-        for member in &self.descendants {
-            relations.insert(&member.id);
-            relations.extend(&member.ancestors);
-        }
-        relations
-    }
-}
-
-/// A descendant in a [`Family`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Member {
-    /// The descendant's identity.
-    pub id: RelationId,
-    /// Whether it is a partitioned table, which holds no rows itself.
-    pub partitioned: bool,
-    /// Every ancestor of this member, transitively, from every parent it has.
-    pub ancestors: BTreeSet<RelationId>,
 }
 
 /// What the backend found for a written name.

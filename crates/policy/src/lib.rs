@@ -57,6 +57,7 @@
 //! [`Position`]: dbmcp_pii::cells::Position
 
 mod analysis;
+mod catalog;
 mod deny;
 mod explain;
 mod plan;
@@ -66,12 +67,10 @@ mod relation;
 #[cfg(test)]
 mod tests;
 
-pub use dbmcp_sql_lineage::{
-    Cascade, CascadeAction, CatalogColumn, Entry, Family, Flow, Member, NamePart, Origin, Relation, RelationId,
-    RelationKind, SourceRef, StatementKind, WrittenName,
-};
+pub use dbmcp_sql_lineage::{Flow, NamePart, Origin, RelationId, RelationKind, SourceRef, StatementKind, WrittenName};
 
 pub use self::analysis::{Analysis, Analyzed, Step};
+pub use self::catalog::{Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Relation};
 pub use self::planned::{Planned, Unfit};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};
 pub use self::relation::RelationRef;
