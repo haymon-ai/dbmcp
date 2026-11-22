@@ -5794,6 +5794,13 @@ async fn column_rules_withhold_value_echoing_errors() {
     if backend() == DatabaseBackend::Mysql {
         let refusal = ruled_refusal(&handler, "SELECT JSON_EXTRACT('{}', email) AS x FROM users").await;
         assert!(refusal.contains("withheld"), "{refusal}");
+        // 3141 reports the position of the invalid JSON text, here the first character's code.
+        let refusal = ruled_refusal(
+            &handler,
+            "SELECT CAST(CONCAT(REPEAT(' ', ASCII(email)), 'x') AS JSON) AS x FROM users",
+        )
+        .await;
+        assert!(refusal.contains("withheld"), "{refusal}");
     }
 }
 

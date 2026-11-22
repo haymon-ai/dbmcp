@@ -167,12 +167,14 @@ const TRANSACTIONAL_ENGINE: &str = "InnoDB";
 /// Unknown column (1054) or table (1146), syntax (1064, which quotes the
 /// caller's own SQL), access (1142, 1143), unknown function (1305), foreign
 /// keys (1451, 1452), `NULL` (1048), range (1264), length (1406), checks
-/// (3819, `MariaDB` 4025), JSON (3140, 3141), and duplicate column names
-/// (1060, which name the caller's own output columns).
+/// (3819, `MariaDB` 4025), and duplicate column names (1060, which name the
+/// caller's own output columns).
 ///
-/// Not arithmetic overflow (1690): its expression may print an evaluated argument.
+/// Not arithmetic overflow (1690): its expression may print an evaluated
+/// argument. Not invalid JSON text (3140, 3141): its position can encode a
+/// value (`CAST(CONCAT(REPEAT(' ', ASCII(email)), 'x') AS JSON)`).
 const VALUE_FREE_ERRORS: &[u16] = &[
-    1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 1264, 1406, 3819, 4025, 3140, 3141, 1060,
+    1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 1264, 1406, 3819, 4025, 1060,
 ];
 
 /// Whether the statement may write.

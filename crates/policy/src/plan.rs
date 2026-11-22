@@ -66,13 +66,24 @@ pub(crate) fn touches_ruled(lineage: &Lineage, config: &PiiConfig, families: &Fa
     ruled_relation(lineage, config, families).is_some()
 }
 
-/// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+/// Refuses a called function or cast target type missing from the dialect's tables.
+fn built_ins(lineage: &Lineage) -> Result<(), Rejection> {
     if let Some(function) = lineage.functions.iter().find(|function| !function.known) {
         return Err(Rejection::UnknownFunction {
             name: function.name.clone(),
         });
     }
+    if let Some(cast) = lineage.types.iter().find(|cast| !cast.known) {
+        return Err(Rejection::UnknownType {
+            name: cast.name.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Runs every gate in order.
+fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
+    built_ins(lineage)?;
     deny::lineage(dialect, lineage)?;
     let mut statement = &lineage.statement;
     while let StatementKind::Explain(_, inner) = statement {

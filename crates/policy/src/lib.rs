@@ -12,7 +12,7 @@
 //!
 //! 1. Lineage errors reject, and so do names still missing after
 //!    [`CATALOG_ROUNDS`] catalog rounds.
-//! 2. Functions missing from the dialect's built-in table reject.
+//! 2. Functions and cast target types missing from the dialect's built-in tables reject.
 //! 3. Denied relations (statistics, statement text, raw pages, virtual
 //!    tables) reject.
 //! 4. Denied statements (`SHOW WARNINGS` and friends, every `PostgreSQL`

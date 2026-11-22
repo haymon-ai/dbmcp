@@ -11,10 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sqlparser::ast::{
-    CastKind, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator, LimitClause,
-    NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Value, Values,
-    WildcardAdditionalOptions,
+    CastKind, DataType, Distinct, Expr, GroupByExpr, GroupByWithModifier, Ident, Join, JoinConstraint, JoinOperator,
+    LimitClause, NamedWindowExpr, ObjectName, ObjectNamePart, OrderBy, OrderByKind, Query, Select, SelectFlavor,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins, Value,
+    Values, WildcardAdditionalOptions,
 };
 
 use crate::bind::{Clause, Col, Columns, Keys, Level, Sources, Tree};
@@ -22,9 +22,11 @@ use crate::catalog::{Catalog, Entry, NamePart, Relation, WrittenName};
 use crate::dialect::Dialect;
 use crate::error::LineageError;
 use crate::model::{
-    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role, SourceRef,
+    Flow, FunctionUse, Lineage, Origin, OutputColumn, Reference, RelationId, RelationKind, RelationUse, Role,
+    SourceRef, TypeUse,
 };
 use crate::statement::{Analysis, is_default};
+use crate::types;
 
 /// Maximum query-nesting depth before failing with [`LineageError::DepthLimit`].
 const MAX_DEPTH: usize = 64;
@@ -50,6 +52,8 @@ pub(crate) struct Ctx<'c> {
     relations: BTreeSet<RelationUse>,
     /// Functions called.
     functions: BTreeSet<FunctionUse>,
+    /// Cast target types.
+    types: BTreeSet<TypeUse>,
     /// Current query-nesting depth.
     depth: usize,
     /// Current expression-nesting depth.
@@ -70,6 +74,7 @@ impl<'c> Ctx<'c> {
             references: BTreeSet::new(),
             relations: BTreeSet::new(),
             functions: BTreeSet::new(),
+            types: BTreeSet::new(),
             depth: 0,
             expr_depth: 0,
             views: Vec::new(),
@@ -100,6 +105,20 @@ impl<'c> Ctx<'c> {
         });
     }
 
+    /// Records a type cast to in the SQL being walked.
+    ///
+    /// # Errors
+    /// Returns [`LineageError::Unsupported`] if a type name part is not an identifier.
+    pub(crate) fn cast(&mut self, data_type: &DataType) -> Result<(), LineageError> {
+        let (name, known) = types::resolve(self.dialect, data_type)?;
+        self.types.insert(TypeUse {
+            name,
+            known,
+            origin: self.origin(),
+        });
+        Ok(())
+    }
+
     /// Ends the pass: the lineage of `analysis`, unless a name was missing.
     ///
     /// # Errors
@@ -124,6 +143,7 @@ impl<'c> Ctx<'c> {
             references: self.references,
             relations: self.relations,
             functions: self.functions,
+            types: self.types,
             target: analysis.target,
             writes: analysis.writes,
             statement: analysis.kind,

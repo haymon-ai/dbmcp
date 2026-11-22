@@ -373,6 +373,27 @@ fn nested_and_subquery_functions_are_recorded() {
 }
 
 #[test]
+fn cast_types_are_recorded_and_carry_operand_sources() {
+    let lineage = pg("SELECT email::int, CAST(ssn AS tsvector), email::pg_catalog.tsquery, ssn::citext[] FROM users")
+        .expect("analyze");
+    let sources: Vec<_> = columns(&lineage).into_iter().map(|(_, sources)| sources).collect();
+    assert_eq!(
+        sources,
+        [["users.email"], ["users.ssn"], ["users.email"], ["users.ssn"]]
+    );
+    let types: Vec<_> = lineage.types.iter().map(|t| (t.name.as_str(), t.known)).collect();
+    assert_eq!(
+        types,
+        vec![
+            ("citext[]", false),
+            ("int", true),
+            ("pg_catalog.tsquery", false),
+            ("tsvector", false)
+        ]
+    );
+}
+
+#[test]
 fn repeated_function_is_recorded_once() {
     let lineage = pg("SELECT lower(email), lower(ssn) FROM users").expect("analyze");
     assert_eq!(functions(&lineage), vec![("lower", true)]);
