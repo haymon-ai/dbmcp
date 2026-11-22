@@ -357,11 +357,11 @@ mod tests {
 
     #[test]
     fn values_under_a_malformed_section_are_skipped() {
-        let inputs = Inputs::default().yaml("pii: []\n");
+        let inputs = Inputs::default().yaml("privacy: []\n");
         let yaml = inputs.yaml_path();
         assert_eq!(
             inputs.errors(),
-            [format!("{yaml}:1:6: pii: expected mapping, found sequence")]
+            [format!("{yaml}:1:10: privacy: expected mapping, found sequence")]
         );
     }
 

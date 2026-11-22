@@ -234,30 +234,24 @@
       "default": "32000"
     },
     {
-      "name": "DBMCP_PII_ENABLE",
-      "description": "Enable PII redaction of query tool output",
-      "format": "boolean",
-      "default": "false"
+      "name": "DBMCP_PRIVACY_MODE",
+      "description": "Privacy of query tool output: none, rules (column rules only), or full (rules plus detection)",
+      "default": "none",
+      "choices": ["none", "rules", "full"]
     },
     {
-      "name": "DBMCP_PII_OPERATOR",
+      "name": "DBMCP_PRIVACY_OPERATOR",
       "description": "Operator applied to detected PII spans",
       "default": "replace",
       "choices": ["replace", "mask", "redact", "hash"]
     },
     {
-      "name": "DBMCP_PII_CATEGORIES",
+      "name": "DBMCP_PRIVACY_CATEGORIES",
       "description": "Comma-separated PII categories to detect (default: all). Values: personal, financial, government, contact, network, digital-identity, crypto"
     },
     {
-      "name": "DBMCP_PII_NER_ENABLE",
-      "description": "Enable the optional ML/NER pass (person, location, organization, NRP & facility detection)",
-      "format": "boolean",
-      "default": "false"
-    },
-    {
-      "name": "DBMCP_PII_NER_MODEL",
-      "description": "Path to the NER model directory (required with DBMCP_PII_NER_ENABLE=true)",
+      "name": "DBMCP_PRIVACY_MODEL",
+      "description": "Path to the NER model directory; setting it turns the ML/NER pass on under full (person, location, organization, NRP & facility detection)",
       "format": "filepath"
     },
     {

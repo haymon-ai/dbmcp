@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::explain;
 use crate::plan::{Families, covering, covers_ruled, is_ruled};
 
-/// A planned statement, bound to the `pii.rules` it was planned under.
+/// A planned statement, bound to the `privacy.rules` it was planned under.
 ///
 /// Only [`Analyzed::plan`](crate::Analyzed::plan) builds one.
 #[derive(Debug)]

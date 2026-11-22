@@ -10,7 +10,7 @@ Each setting is resolved on its own, highest priority first:
 3. **Config files** — keys in the YAML files named by `--config-file` / `DBMCP_CONFIG_FILE`; a later file wins
 4. **Built-in defaults** — backend-aware defaults (see [Backend defaults](/features/database#backend-defaults))
 
-When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored. A YAML-only setting (`pii.rules`) has no `DBMCP_*` variable, so it comes only from config files and defaults.
+When the same setting is set in multiple places, the higher-priority source wins. An empty `DBMCP_*` value counts as unset at every layer, so it falls through to the next source; to set a setting to an empty string, use `key: ""` in the YAML file. Unknown `DBMCP_*` variables are ignored. A YAML-only setting (`privacy.rules`) has no `DBMCP_*` variable, so it comes only from config files and defaults.
 
 **Worked example.** `database.port` set in three layers:
 

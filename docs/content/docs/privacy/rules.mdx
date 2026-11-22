@@ -7,22 +7,24 @@ Global [redaction](/privacy/redaction) finds sensitive values by their pattern. 
 
 To do that, <Dbmcp /> works out which table columns feed each output column of a statement before it runs. A statement it cannot check, or one that would use a ruled column in a way that could reveal its values, is refused before it runs.
 
-Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `explainQuery` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection.
+Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `explainQuery` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection under `full`.
 
 ## Settings
 
 | YAML key | Env var | Type | Default | Description |
 |----------|---------|------|---------|-------------|
-| `pii.rules` | — (YAML only) | map | *unset* | Named column rules |
+| `privacy.rules` | — (YAML only) | map | *unset* | Named column rules |
 
-`pii.rules` exists only in config files. It requires `pii.enabled: true`; rules with redaction off stop startup with `pii.rules requires pii.enabled` (an empty `{}` is accepted). The last config file that sets `pii.rules` wins it whole: rules from different files never merge, `null` leaves an earlier file's rules in place, and `{}` clears them.
+`privacy.rules` exists only in config files. Rules apply under the `rules` and `full` [modes](/privacy#modes). Under `none` they are ignored but still validated: keys, repeats, and `database.name` problems stop startup in every mode. The last config file that sets `privacy.rules` wins it whole: rules from different files never merge, `null` leaves an earlier file's rules in place, and `{}` clears them.
+
+Under `rules`, nothing else is detected: other cells and error messages come back as the database returned them, apart from withheld errors. Refusals and withheld errors work as under `full`.
 
 ```yaml
 database:
   backend: postgres
   name: shop
-pii:
-  enabled: true
+privacy:
+  mode: rules
   rules:
     customer-email:
       columns:
@@ -49,17 +51,17 @@ With these rules, `SELECT email, ssn, credit_card FROM users` returns:
 
 ## Rule shape
 
-Each entry under `pii.rules` is one rule. The key is its name, which every error message about the rule uses; names use only `a-z`, `0-9`, `_`, and `-`.
+Each entry under `privacy.rules` is one rule. The key is its name, which every error message about the rule uses; names use only `a-z`, `0-9`, `_`, and `-`.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `columns` | yes | Non-empty list of table columns, each written `table.column`, `schema.table.column`, or `catalog.schema.table.column` ([Column keys](#column-keys)) |
 | `entity` | yes | The [data type](/privacy/data-types) of the values, such as `EMAIL_ADDRESS`, `PHONE_NUMBER`, or `PERSON` |
-| `operator` | no | `hash`, `replace`, `mask`, or `redact`; defaults to `pii.operator` |
+| `operator` | no | `hash`, `replace`, `mask`, or `redact`; defaults to `privacy.operator` |
 
 A column may appear in only one rule, and only once in it, however its key is written; a repeat stops startup and names both places.
 
-The entity only labels the values: a ruled column is rewritten whether or not its values look like that type, and no recognizer runs on it. Machine-learning entities such as `PERSON`, `LOCATION`, and `ORGANIZATION` work as labels without `pii.ner_enabled`, so a `name` column can be ruled as `PERSON` without the model.
+The entity only labels the values: a ruled column is rewritten whether or not its values look like that type, and no recognizer runs on it. Machine-learning entities such as `PERSON`, `LOCATION`, and `ORGANIZATION` work as labels without `privacy.model`, so a `name` column can be ruled as `PERSON` without the model.
 
 ### Column keys
 
@@ -96,7 +98,7 @@ Every non-null value of a ruled output column is rendered as text (JSON values i
 
 `NULL` stays `null` under every operator.
 
-`hash` uses the same key as global detection, and the token covers the entity as well as the value. So a value gets the same token in every column ruled with the same entity, and wherever global detection finds it as that entity: an e-mail address in `users.email` and in `invoices.billing_email` hashes to one token when both rules say `EMAIL_ADDRESS`, and the assistant can match rows by token without seeing the address. The same address ruled as `PERSON` elsewhere gets an unrelated token. Set [`pii.key`](/privacy/redaction#hash-key); without it, tokens change on every restart and differ across replicas.
+`hash` uses the same key as global detection, and the token covers the entity as well as the value. So a value gets the same token in every column ruled with the same entity, and wherever global detection finds it as that entity: an e-mail address in `users.email` and in `invoices.billing_email` hashes to one token when both rules say `EMAIL_ADDRESS`, and the assistant can match rows by token without seeing the address. The same address ruled as `PERSON` elsewhere gets an unrelated token. Set [`privacy.key`](/privacy/redaction#hash-key); without it, tokens change on every restart and differ across replicas.
 
 ### Derived columns
 
@@ -256,7 +258,7 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).
 - **Nullness.** `NULL` stays `null`, so the assistant learns which values are missing.
 - **`mask` length.** `mask` keeps the length of the value.
-- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`pii.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
+- **`hash` equality.** Equal tokens mean equal values, so the assistant can count how many rows share a value. Anyone holding [`privacy.key`](/privacy/redaction#hash-key) can hash a guess and compare it with a token: keep the key secret, and use `replace` or `redact` where equality itself is sensitive.
 - **Concurrent schema changes.** The catalog is read and the statement runs on one connection. On PostgreSQL both happen in one transaction; on MySQL and MariaDB the catalog is read just before the transaction opens. A view body that changed meanwhile refuses the result, but table columns are not checked again. Another session can still change a table in between. Restrict DDL on ruled tables to trusted roles.
 - **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly.
 - **MySQL GTID consistency.** With `enforce_gtid_consistency` on, writes to non-transactional tables fail inside the transaction <Dbmcp /> opens.

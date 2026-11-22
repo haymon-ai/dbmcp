@@ -1,4 +1,4 @@
-//! Column rule (`pii.rules`) enforcement on `MySQL` and `MariaDB`.
+//! Column rule (`privacy.rules`) enforcement on `MySQL` and `MariaDB`.
 //!
 //! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
 //! statement through [`MysqlHandler::enforce`]. On one pooled connection of

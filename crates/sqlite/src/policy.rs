@@ -1,4 +1,4 @@
-//! Column rule (`pii.rules`) enforcement on `SQLite`.
+//! Column rule (`privacy.rules`) enforcement on `SQLite`.
 //!
 //! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
 //! statement through [`SqliteHandler::enforce`]. On one connection, inside

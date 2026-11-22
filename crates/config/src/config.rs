@@ -1,4 +1,4 @@
-//! Top-level [`Config`] composing the transport and the database, http, pii, and ssh sections.
+//! Top-level [`Config`] composing the transport and the database, http, privacy, and ssh sections.
 
 use crate::database::{DatabaseBackend, DatabaseConfig};
 use crate::env;
@@ -13,7 +13,7 @@ use crate::transport::Transport;
 /// Composes the selected [`Transport`] with [`DatabaseConfig`] and the
 /// optional [`HttpConfig`], [`PrivacyConfig`], and [`SshConfig`] sections.
 /// HTTP config is present only when `transport` / `DBMCP_TRANSPORT` is `http`;
-/// PII config only when `pii.enabled` / `DBMCP_PII_ENABLE` is on; SSH
+/// privacy config only when `privacy.mode` / `DBMCP_PRIVACY_MODE` is not `none`; SSH
 /// config only when `ssh.host` / `DBMCP_SSH_HOST` is set. The log level is
 /// returned next to it in [`Loaded`](crate::Loaded), not part of this struct.
 #[derive(Clone, Debug)]
@@ -27,7 +27,7 @@ pub struct Config {
     /// HTTP transport settings (present only when the HTTP transport is selected).
     pub http: Option<HttpConfig>,
 
-    /// PII redaction settings (`None` = redaction off).
+    /// Privacy settings (`None` = privacy mode `none`).
     pub privacy: Option<PrivacyConfig>,
 
     /// SSH tunnel settings (`None` = connect to the database directly).
@@ -156,18 +156,17 @@ mod tests {
     }
 
     #[test]
-    fn pii_rules_run_when_present() {
+    fn privacy_rules_run_when_present() {
         let config = Config {
             privacy: Some(PrivacyConfig {
-                ner_enabled: true,
-                ner_model: None,
+                categories: Some(Vec::new()),
                 ..PrivacyConfig::default()
             }),
             ..mysql_config()
         };
-        let errors = config.validate().expect_err("ner without model must fail");
+        let errors = config.validate().expect_err("empty categories must fail");
         assert!(
-            matches!(errors[0].error, ConfigError::PrivacyNerModelMissing),
+            matches!(errors[0].error, ConfigError::EmptyList("privacy.categories")),
             "{errors:?}"
         );
     }
@@ -197,7 +196,7 @@ mod tests {
         };
         let debug = format!("{config:?}");
         assert!(
-            debug.contains("privacy: Some(PrivacyConfig { operator: Mask"),
+            debug.contains("privacy: Some(PrivacyConfig { mode: Full, operator: Mask"),
             "expected privacy section in debug output: {debug}"
         );
     }

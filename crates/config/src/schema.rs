@@ -32,7 +32,7 @@ pub(crate) const SCHEMA: &str = include_str!("../assets/dbmcp.schema.json");
 
 /// Keywords that check a setting's value; [`Kind`](crate::env::Kind) owns these rules.
 ///
-/// `additionalProperties` is a value keyword only on a leaf (the `pii.rules`
+/// `additionalProperties` is a value keyword only on a leaf (the `privacy.rules`
 /// map); on a section it is structure, and sections are never stripped.
 const VALUE_KEYWORDS: [&str; 8] = [
     "type",
@@ -317,8 +317,8 @@ pub(crate) mod tests {
     #[test]
     fn sections_are_strict_and_nullable() {
         let document = document();
-        for section in
-            std::iter::once(&document).chain(["database", "http", "pii", "ssh"].map(|key| &document["properties"][key]))
+        for section in std::iter::once(&document)
+            .chain(["database", "http", "privacy", "ssh"].map(|key| &document["properties"][key]))
         {
             assert_eq!(section["additionalProperties"], false);
             assert_eq!(types(section), ["object", "null"]);
@@ -409,7 +409,7 @@ pub(crate) mod tests {
                 "f.yaml:2:3: database.hots: unknown field; expected one of backend, host, port, user, password, \
                  name, charset, ssl, ssl_ca, ssl_cert, ssl_key, ssl_verify_cert, read_only, max_pool_size, \
                  connection_timeout, query_timeout, max_query_timeout, page_size, max_cell_chars, max_response_chars",
-                "f.yaml:3:1: extra: unknown field; expected one of transport, log_level, database, http, pii, ssh",
+                "f.yaml:3:1: extra: unknown field; expected one of transport, log_level, database, http, privacy, ssh",
             ]
         );
     }
@@ -418,9 +418,9 @@ pub(crate) mod tests {
     fn root_and_sections_must_be_mappings_or_null() {
         assert_eq!(check("- a\n"), ["f.yaml:1:1: <root>: expected mapping, found sequence"]);
         assert_eq!(
-            check("pii: []\nssh: 1.5\n"),
+            check("privacy: []\nssh: 1.5\n"),
             [
-                "f.yaml:1:6: pii: expected mapping, found sequence",
+                "f.yaml:1:10: privacy: expected mapping, found sequence",
                 "f.yaml:2:6: ssh: expected mapping, found float",
             ]
         );
@@ -443,8 +443,8 @@ pub(crate) mod tests {
     #[test]
     fn setting_values_are_not_checked() {
         assert!(check("transport: 1\ndatabase:\n  port: -5\n  host: [a]\n").is_empty());
-        assert!(check("pii:\n  rules: [1]\n").is_empty());
-        assert!(check("pii:\n  rules: {Bad: 1}\n").is_empty());
+        assert!(check("privacy:\n  rules: [1]\n").is_empty());
+        assert!(check("privacy:\n  rules: {Bad: 1}\n").is_empty());
     }
 
     #[test]
@@ -456,7 +456,7 @@ pub(crate) mod tests {
         let index = compiler.compile(URL, &mut schemas).expect("compiles");
         let valid = |rules: serde_json::Value| {
             schemas
-                .validate(&serde_json::json!({ "pii": { "rules": rules } }), index)
+                .validate(&serde_json::json!({ "privacy": { "rules": rules } }), index)
                 .is_ok()
         };
         let rule = |columns: serde_json::Value| serde_json::json!({ "columns": columns, "entity": "URL" });

@@ -4695,7 +4695,7 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
     assert!(response.next_cursor.is_some());
 }
 
-// Column rules (`pii.rules`)
+// Column rules (`privacy.rules`)
 
 fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, operator: PrivacyOperator) -> ColumnRule {
     ColumnRule {

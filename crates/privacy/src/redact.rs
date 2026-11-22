@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use dbmcp_config::{PrivacyCategory, PrivacyOperator};
+use dbmcp_config::{PrivacyCategory, PrivacyMode, PrivacyOperator};
 use secrecy::ExposeSecret;
 use serde_json::Value;
 
@@ -56,7 +56,7 @@ pub enum RedactorInitError {
     #[error("NER engine initialisation failed: {0}")]
     Ner(String),
     /// The OS random source failed while drawing the fallback `hash` key.
-    #[error("failed to generate a random pii key: {0}")]
+    #[error("failed to generate a random privacy key: {0}")]
     Rng(getrandom::Error),
 }
 
@@ -101,7 +101,8 @@ struct LeafSlot<'a> {
 /// Holds an [`Arc<Analyzer>`] so handlers stay cheap to clone.
 #[derive(Debug, Clone)]
 pub struct Redactor {
-    analyzer: Arc<Analyzer>,
+    /// Global detection; `None` under `rules` mode, where only ruled columns change.
+    analyzer: Option<Arc<Analyzer>>,
     /// The operator global detection applies to every span.
     global: PrivacyOperator,
     /// The keyed `hash` operator, shared by global detection and column rules.
@@ -123,18 +124,18 @@ impl Redactor {
     /// Builds a `Replace` redactor over `analyzer`.
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self::new(analyzer, PrivacyOperator::Replace, Operator::hash(TEST_KEY))
+        Self::new(Some(analyzer), PrivacyOperator::Replace, Operator::hash(TEST_KEY))
     }
 
     /// Builds a redactor.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
-    fn new(analyzer: Analyzer, global: PrivacyOperator, hash: Operator) -> Self {
+    fn new(analyzer: Option<Analyzer>, global: PrivacyOperator, hash: Operator) -> Self {
         let settings = crate::context::ContextSettings::default();
         let min_score = settings.min_score_with_context;
         Self {
-            analyzer: Arc::new(analyzer),
+            analyzer: analyzer.map(Arc::new),
             global,
             hash,
             opts: AnalyzeOptions {
@@ -156,8 +157,9 @@ impl Redactor {
 
     /// Resolve a [`dbmcp_config::PrivacyConfig`] to an optional [`Redactor`].
     ///
-    /// Returns `None` when `cfg` is `None` (redaction off). Otherwise, the
-    /// redactor runs the context-aware confidence boost over every leaf and
+    /// Returns `None` when `cfg` is `None` (mode `none`). Under `rules` it
+    /// builds no analyzer: ruled columns are rewritten, global cells and error
+    /// text pass through. Under `full`, the redactor runs the context-aware confidence boost over every leaf and
     /// drops candidates whose post-boost score falls below the
     /// `min_score_with_context` floor — so weak-pattern recognizers (CVV,
     /// AWS secret, bank account, …) surface only when a nearby keyword
@@ -170,8 +172,8 @@ impl Redactor {
     ///
     /// # Errors
     ///
-    /// Returns [`RedactorInitError::Ner`] when the optional NER engine is
-    /// enabled but fails to load, and [`RedactorInitError::Rng`] when the
+    /// Returns [`RedactorInitError::Ner`] when `full` sets a model that fails
+    /// to load, and [`RedactorInitError::Rng`] when the
     /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
     /// is fail-closed and never degrades to regex-only when NER was requested.
     pub fn from_config(cfg: Option<&dbmcp_config::PrivacyConfig>) -> Result<Option<Self>, RedactorInitError> {
@@ -179,8 +181,14 @@ impl Redactor {
             return Ok(None);
         };
         let hash = keyed_hash(cfg)?;
-        let mut analyzer = crate::Analyzer::from_config(cfg);
-        attach_ner(&mut analyzer, cfg)?;
+        let analyzer = match cfg.mode {
+            PrivacyMode::Full => {
+                let mut analyzer = crate::Analyzer::from_config(cfg);
+                attach_ner(&mut analyzer, cfg)?;
+                Some(analyzer)
+            }
+            PrivacyMode::Rules | PrivacyMode::None => None,
+        };
         Ok(Some(Self::new(analyzer, cfg.operator, hash)))
     }
 
@@ -200,7 +208,9 @@ impl Redactor {
     /// a blocking thread.
     #[must_use]
     pub fn uses_ner(&self) -> bool {
-        self.analyzer.ner_engine().is_some()
+        self.analyzer
+            .as_ref()
+            .is_some_and(|analyzer| analyzer.ner_engine().is_some())
     }
 
     /// Walks every reachable string leaf in `rows` through the analyzer pipeline.
@@ -235,13 +245,16 @@ impl Redactor {
     ///
     /// See [`Self::apply`].
     pub(crate) fn walk(&self, roots: Vec<Frame<'_>>, stats: &mut RedactionStats) -> Result<(), RedactionError> {
+        let Some(analyzer) = self.analyzer.as_deref() else {
+            return Ok(());
+        };
         let operator = self.operator(self.global);
         let mut infer_err: Option<String> = None;
         let result = catch_unwind(AssertUnwindSafe(|| {
             // When NER is attached, defer inference: collect every leaf during the
             // walk and run one batched forward pass afterwards, instead of one pass
             // per leaf. Without NER, anonymize inline (regex-only).
-            let ner_engine = self.analyzer.ner_engine();
+            let ner_engine = analyzer.ner_engine();
             let mut slots: Vec<LeafSlot<'_>> = Vec::new();
 
             // Shared key-path stack. Each `Frame::KeyedChild` carries the tokens
@@ -269,7 +282,7 @@ impl Redactor {
                 match v {
                     Value::String(s) => {
                         stats.string_leaves_scanned += 1;
-                        let regex = self.analyzer.analyze_with_context(s, &path, &self.opts);
+                        let regex = analyzer.analyze_with_context(s, &path, &self.opts);
                         if ner_engine.is_some() {
                             // Move the leaf's text out as batch input (no clone),
                             // leaving the leaf empty; the merge pass restores it
@@ -351,7 +364,8 @@ impl Redactor {
 
     /// Redacts a single free-text string, such as a tool error message.
     ///
-    /// Runs only the regex recognizers, with no key-path context. The NER pass
+    /// Runs only the regex recognizers, with no key-path context; under
+    /// `rules` mode (no analyzer) the text comes back unchanged. The NER pass
     /// is skipped: without column context it rewrites table, column, and
     /// schema identifiers the caller needs to correct a failing query. Emits
     /// one `pii.redacted_text` event when at least one span was rewritten.
@@ -361,11 +375,14 @@ impl Redactor {
     /// Returns [`RedactionError::Internal`] when the analyzer pipeline panics;
     /// the caller must not fall back to the unredacted text (fail-closed).
     pub fn redact_text(&self, text: &str) -> Result<String, RedactionError> {
+        let Some(analyzer) = self.analyzer.as_deref() else {
+            return Ok(text.to_owned());
+        };
         let mut stats = RedactionStats::default();
         let mut out = text.to_owned();
         let operator = self.operator(self.global);
         catch_unwind(AssertUnwindSafe(|| {
-            let results = self.analyzer.analyze_with_context(&out, &[], &self.opts);
+            let results = analyzer.analyze_with_context(&out, &[], &self.opts);
             redact_spans(
                 &mut out,
                 results,
@@ -444,21 +461,17 @@ pub(crate) fn log_redactions(stats: &RedactionStats, row_count: Option<usize>) {
     }
 }
 
-/// Loads the NER engine and attaches it, failing closed on any load error.
+/// Loads the NER engine when a model is set, failing closed on any load error.
 fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PrivacyConfig) -> Result<(), RedactorInitError> {
-    if !cfg.ner_enabled {
+    let Some(model) = cfg.model.as_ref() else {
         return Ok(());
-    }
+    };
     // NER respects the category filter via each entity's category. When the
     // category subset selects none of the NER entities, skip loading entirely.
     let allowed = allowed_ner_entities(cfg);
     if allowed.is_empty() {
         return Ok(());
     }
-    let Some(model) = cfg.ner_model.as_ref() else {
-        // `PrivacyConfig::validate` rejects this, but stay defensive and fail-closed.
-        return Err(RedactorInitError::Ner("model path missing".to_owned()));
-    };
     let threshold = crate::Score::from_static(dbmcp_config::PrivacyConfig::DEFAULT_NER_THRESHOLD);
     let mut engine =
         crate::ner::NerEngine::load(model, threshold).map_err(|e| RedactorInitError::Ner(e.to_string()))?;
@@ -522,7 +535,7 @@ fn redact_spans(
     *s = anon.text;
 }
 
-/// Builds the keyed `hash` operator from `pii.key`, or a random per-process key.
+/// Builds the keyed `hash` operator from `privacy.key`, or a random per-process key.
 fn keyed_hash(cfg: &dbmcp_config::PrivacyConfig) -> Result<Operator, RedactorInitError> {
     if let Some(key) = &cfg.key {
         return Ok(Operator::hash(key.expose_secret().as_bytes()));
@@ -531,7 +544,7 @@ fn keyed_hash(cfg: &dbmcp_config::PrivacyConfig) -> Result<Operator, RedactorIni
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
     if cfg.operator == PrivacyOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash) {
         tracing::warn!(
-            "pii.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
+            "privacy.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
         );
     }
     Ok(Operator::hash(&key))
@@ -811,7 +824,7 @@ mod tests {
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
         let r = Redactor::new(
-            Analyzer::with_defaults(),
+            Some(Analyzer::with_defaults()),
             PrivacyOperator::Redact,
             Operator::hash(TEST_KEY),
         );
@@ -826,7 +839,7 @@ mod tests {
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
         let r = Redactor::new(
-            Analyzer::with_defaults(),
+            Some(Analyzer::with_defaults()),
             PrivacyOperator::Mask,
             Operator::hash(TEST_KEY),
         );
@@ -840,7 +853,7 @@ mod tests {
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
         let r = Redactor::new(
-            Analyzer::with_defaults(),
+            Some(Analyzer::with_defaults()),
             PrivacyOperator::Hash,
             Operator::hash(KEY.as_bytes()),
         );
@@ -1214,8 +1227,7 @@ mod tests {
     #[test]
     fn from_config_bad_model_path_fails_closed() {
         let cfg = dbmcp_config::PrivacyConfig {
-            ner_enabled: true,
-            ner_model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
+            model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
             ..dbmcp_config::PrivacyConfig::default()
         };
         let err = Redactor::from_config(Some(&cfg)).expect_err("unreadable model must fail closed");
@@ -1223,12 +1235,44 @@ mod tests {
     }
 
     #[test]
-    fn ner_allowance_unset_categories_allows_all() {
-        let cfg = dbmcp_config::PrivacyConfig {
-            ner_enabled: true,
+    fn full_without_a_model_runs_no_ner() {
+        assert!(!build(&dbmcp_config::PrivacyConfig::default()).uses_ner());
+    }
+
+    /// A `rules`-mode config with no rules.
+    fn rules_config() -> dbmcp_config::PrivacyConfig {
+        dbmcp_config::PrivacyConfig {
+            mode: dbmcp_config::PrivacyMode::Rules,
             ..dbmcp_config::PrivacyConfig::default()
+        }
+    }
+
+    #[test]
+    fn rules_mode_never_loads_a_model() {
+        let cfg = dbmcp_config::PrivacyConfig {
+            model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
+            ..rules_config()
         };
-        let allowed = allowed_ner_entities(&cfg);
+        assert!(!build(&cfg).uses_ner());
+    }
+
+    #[test]
+    fn rules_mode_leaves_error_text_unchanged() {
+        let message = "Duplicate entry 'jane@doe.com' for key 'email'";
+        let redactor = Some(build(&rules_config()));
+        assert_eq!(redactor.redact_message(message), message);
+    }
+
+    #[tokio::test]
+    async fn rules_mode_leaves_rows_unchanged() {
+        let redactor = Some(build(&rules_config()));
+        let out = redactor.redact_rows(vec![email_row()]).await.expect("passes through");
+        assert_eq!(out, [email_row()]);
+    }
+
+    #[test]
+    fn ner_allowance_unset_categories_allows_all() {
+        let allowed = allowed_ner_entities(&dbmcp_config::PrivacyConfig::default());
         assert_eq!(allowed.len(), 5, "unset categories must allow every NER entity");
         for entity in [
             Entity::Person,
@@ -1292,8 +1336,7 @@ mod tests {
             return;
         };
         let cfg = dbmcp_config::PrivacyConfig {
-            ner_enabled: true,
-            ner_model: Some(dir),
+            model: Some(dir),
             ..dbmcp_config::PrivacyConfig::default()
         };
         let r = Redactor::from_config(Some(&cfg))

@@ -45,6 +45,6 @@ pub use loader::{LoadError, Loaded, load};
 pub use log::LogLevel;
 pub use options::{LoadOptions, home_dir};
 pub use origin::AllowedOrigins;
-pub use privacy::{ColumnRule, PrivacyCategory, PrivacyConfig, PrivacyOperator};
+pub use privacy::{ColumnRule, PrivacyCategory, PrivacyConfig, PrivacyMode, PrivacyOperator};
 pub use ssh::{SshConfig, StrictHostKeyChecking};
 pub use transport::Transport;

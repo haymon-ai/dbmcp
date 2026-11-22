@@ -1,30 +1,25 @@
 ---
 title: Redaction
-description: Turn on PII redaction, choose the operator, and narrow detection to categories
+description: Choose the operator, hash key, and categories that `full` mode uses
 ---
 
-Turn PII redaction on and choose how detected values are rewritten. For what the feature covers and how it works, see the [Overview](/privacy).
+Choose how detected values are rewritten. For what the feature covers, how it works, and the `privacy.mode` setting, see the [Overview](/privacy).
 
 ## Settings
 
 | YAML key | Env var | Type | Default | Description |
 |----------|---------|------|---------|-------------|
-| `pii.enabled` | `DBMCP_PII_ENABLE` | boolean | `false` | Enable PII redaction of query tool output |
-| `pii.operator` | `DBMCP_PII_OPERATOR` | enum | `hash` | Operator applied to detected PII spans |
-| `pii.key` | `DBMCP_PII_KEY` | string | *unset (random per process)* | HMAC key for the `hash` operator, at least 32 bytes; ignored by the other operators |
-| `pii.categories` | `DBMCP_PII_CATEGORIES` | list | *unset (all built-ins)* | Category subset for the analyzer registry |
-| `pii.ner_enabled` | `DBMCP_PII_NER_ENABLE` | boolean | `false` | Enable the optional ML/NER pass (person, location, organization, NRP & facility detection) |
-| `pii.ner_model` | `DBMCP_PII_NER_MODEL` | path | *unset* | Path to the NER model directory (required with `pii.ner_enabled`) |
+| `privacy.operator` | `DBMCP_PRIVACY_OPERATOR` | enum | `hash` | Operator applied to detected PII spans; the fallback for rules without their own |
+| `privacy.key` | `DBMCP_PRIVACY_KEY` | string | *unset (random per process)* | HMAC key for the `hash` operator, at least 32 bytes; ignored by the other operators, but checked whenever set |
+| `privacy.categories` | `DBMCP_PRIVACY_CATEGORIES` | list | *unset (all built-ins)* | Category subset for detection |
 
-The other `pii` settings are ignored unless `pii.enabled` is true. Column rules (`pii.rules`, YAML only) have their own page: [Rules](/privacy/rules).
-
-> **Default**: redaction is off. Setting `DBMCP_PII_ENABLE=true` (or `pii.enabled: true` in the config file) is the only way to activate the redactor — `DBMCP_PII_OPERATOR`, `DBMCP_PII_KEY`, `DBMCP_PII_CATEGORIES`, and the `DBMCP_PII_NER_*` settings alone have no effect.
+These settings apply under `full` only and are ignored otherwise; under `rules`, `privacy.operator` is still the fallback for [column rules](/privacy/rules) without their own `operator`, and `privacy.key` keys their `hash` tokens. A set `privacy.key` that is blank or shorter than 32 bytes stops startup in every mode. Column rules (`privacy.rules`, YAML only) have their own page: [Rules](/privacy/rules); the machine-learning model (`privacy.model`) has its own page too: [Machine Learning](/privacy/machine-learning).
 
 ## How spans are rewritten
 
 The configured operator decides how each detected span is replaced:
 
-- `hash` (default) — keyed hash token per value, e.g. `<EMAIL_ADDRESS_3f9a1c07b2d4e855>`: the type plus the first 16 hex digits of HMAC-SHA-256 under `pii.key`.
+- `hash` (default) — keyed hash token per value, e.g. `<EMAIL_ADDRESS_3f9a1c07b2d4e855>`: the type plus the first 16 hex digits of HMAC-SHA-256 under `privacy.key`.
   - Equal tokens mean equal stored text; different tokens don't prove different values.
   - Tokens are one-way: they can't be decoded or used in a `WHERE` clause to find the original row.
 - `replace` — entity-aware placeholder. For example, `jane.doe@example.com` becomes `<EMAIL_ADDRESS>`. Plan for this when downstream code parses query output: a column that previously held a plain email now holds the placeholder string for matching rows.
@@ -41,7 +36,7 @@ When two detections overlap, no part of either is left in clear text:
 
 ## Hash key
 
-The `hash` operator is keyed so its tokens work as pseudonyms: without the key, nobody can hash a guess such as a known email address and compare it with a token to learn the original value. Set `pii.key` / `DBMCP_PII_KEY` to a secret of at least 32 bytes. The value is used as given (its UTF-8 bytes); generate one with:
+The `hash` operator is keyed so its tokens work as pseudonyms: without the key, nobody can hash a guess such as a known email address and compare it with a token to learn the original value. Set `privacy.key` / `DBMCP_PRIVACY_KEY` to a secret of at least 32 bytes. The value is used as given (its UTF-8 bytes); generate one with:
 
 ```bash
 openssl rand -hex 32
@@ -53,7 +48,7 @@ openssl rand -hex 32
 
 ## Categories
 
-`pii.categories` / `DBMCP_PII_CATEGORIES` accepts a list of kebab-case category names (a YAML sequence, or comma-separated in the env var). Leaving it unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
+`privacy.categories` / `DBMCP_PRIVACY_CATEGORIES` accepts a list of kebab-case category names (a YAML sequence, or comma-separated in the env var). Leaving it unset enables every built-in recogniser; passing a subset narrows the analyzer registry to recognisers tagged with at least one of the selected categories.
 
 - `personal` — `DATE_OF_BIRTH`, `EMAIL_ADDRESS`
 - `financial` — `BANK_ACCOUNT_UK`, `BANK_ACCOUNT_US`, `CREDIT_CARD`, `CVV`, `IBAN_CODE`, `ROUTING_NUMBER_US`, `SORT_CODE_UK`
@@ -75,4 +70,4 @@ Redaction walks every string leaf in `json` and `jsonb` columns (and any other c
 
 JSON object **keys** are never inspected or modified — only values are redacted. A row like `{"jane.doe@example.com": "value"}` returns with the key intact. If you need key redaction, please open an issue; today's contract is values-only.
 
-Exception: MariaDB and SQLite JSON is text, so it is scanned like any string, **keys included**, and a rewrite can leave invalid JSON. Context comes from the column name, not the key path. Use [`pii.rules`](/privacy/rules) for such columns.
+Exception: MariaDB and SQLite JSON is text, so it is scanned like any string, **keys included**, and a rewrite can leave invalid JSON. Context comes from the column name, not the key path. Use [`privacy.rules`](/privacy/rules) for such columns.

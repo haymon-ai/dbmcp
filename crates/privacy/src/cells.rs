@@ -299,6 +299,21 @@ mod tests {
     const MASKED: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
 
     #[test]
+    fn rules_mode_leaves_global_cells_raw_and_rewrites_ruled_ones() {
+        let config = PrivacyConfig {
+            mode: dbmcp_config::PrivacyMode::Rules,
+            ..PrivacyConfig::default()
+        };
+        let redactor = Redactor::from_config(Some(&config)).expect("builds").expect("rules");
+        let values = redact(
+            &redactor,
+            vec![MASKED, Position::Global],
+            vec![json!("123-45-6789"), json!(EMAIL)],
+        );
+        assert_eq!(values, [json!("***********"), json!(EMAIL)]);
+    }
+
+    #[test]
     fn push_keeps_the_first_row_names_and_later_values() {
         let mut cells = Cells::default();
         cells.push(vec![("a".into(), json!(1)), ("b".into(), json!(2))]);

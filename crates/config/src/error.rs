@@ -62,24 +62,16 @@ pub enum ConfigError {
     )]
     InvalidAllowedOrigin(String),
 
-    /// PII hash key was supplied but is empty or whitespace.
-    #[error("pii.key must not be empty when set")]
+    /// Privacy hash key was supplied but is empty or whitespace.
+    #[error("privacy.key must not be empty when set")]
     EmptyPrivacyKey,
 
-    /// PII hash key is shorter than the minimum length, in bytes.
-    #[error("pii.key must be at least 32 bytes, got {0}")]
+    /// Privacy hash key is shorter than the minimum length, in bytes.
+    #[error("privacy.key must be at least 32 bytes, got {0}")]
     PrivacyKeyTooShort(usize),
 
-    /// NER was enabled without a model path.
-    #[error("pii.ner_model (model directory) is required when pii.ner_enabled is set")]
-    PrivacyNerModelMissing,
-
-    /// `pii.rules` is set while PII redaction is off.
-    #[error("pii.rules requires pii.enabled")]
-    PrivacyRulesWithoutPrivacy,
-
     /// A rule's catalog segment does not fit the backend.
-    #[error("pii.rules: {rule}: columns: {items}: catalog segment must be {expected} on {backend}")]
+    #[error("privacy.rules: {rule}: columns: {items}: catalog segment must be {expected} on {backend}")]
     PrivacyRuleCatalog {
         /// The rule's name.
         rule: String,
@@ -92,7 +84,7 @@ pub enum ConfigError {
     },
 
     /// A shortened rule key needs `database.name` to fill its database.
-    #[error("pii.rules: {rule}: columns: {items}: a key without its database requires database.name on {backend}")]
+    #[error("privacy.rules: {rule}: columns: {items}: a key without its database requires database.name on {backend}")]
     PrivacyRuleNeedsDatabase {
         /// The rule's name.
         rule: String,
@@ -103,7 +95,7 @@ pub enum ConfigError {
     },
 
     /// A rule lists the same column twice.
-    #[error("pii.rules: {rule}: columns: item {item} repeats item {first}")]
+    #[error("privacy.rules: {rule}: columns: item {item} repeats item {first}")]
     PrivacyRuleRepeat {
         /// The rule's name.
         rule: String,
@@ -114,7 +106,7 @@ pub enum ConfigError {
     },
 
     /// A rule lists a column an earlier rule lists too.
-    #[error("pii.rules: {rule}: columns: item {item} is also in rule {other}")]
+    #[error("privacy.rules: {rule}: columns: item {item} is also in rule {other}")]
     PrivacyRuleShared {
         /// The rule's name.
         rule: String,

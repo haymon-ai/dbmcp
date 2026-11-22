@@ -45,13 +45,12 @@ The `master` URL tracks the latest schema; replace `master` with a release tag s
 | [`database.max_cell_chars`](/features/pagination) | `DBMCP_DB_MAX_CELL_CHARS` | `4096` |
 | [`database.max_response_chars`](/features/pagination) | `DBMCP_DB_MAX_RESPONSE_CHARS` | `32000` |
 | [`log_level`](#logging) | `DBMCP_LOG_LEVEL` | `info` |
-| [`pii.enabled`](/privacy/redaction) | `DBMCP_PII_ENABLE` | `false` |
-| [`pii.operator`](/privacy/redaction) | `DBMCP_PII_OPERATOR` | `hash` |
-| [`pii.key`](/privacy/redaction#hash-key) | `DBMCP_PII_KEY` | *unset (random per process)* |
-| [`pii.categories`](/privacy/redaction) | `DBMCP_PII_CATEGORIES` | *unset (all built-ins)* |
-| [`pii.ner_enabled`](/privacy/machine-learning) | `DBMCP_PII_NER_ENABLE` | `false` |
-| [`pii.ner_model`](/privacy/machine-learning) | `DBMCP_PII_NER_MODEL` | *unset* |
-| [`pii.rules`](/privacy/rules) | — (YAML only) | *unset* |
+| [`privacy.mode`](/privacy#modes) | `DBMCP_PRIVACY_MODE` | `none` |
+| [`privacy.operator`](/privacy/redaction) | `DBMCP_PRIVACY_OPERATOR` | `hash` |
+| [`privacy.key`](/privacy/redaction#hash-key) | `DBMCP_PRIVACY_KEY` | *unset (random per process)* |
+| [`privacy.categories`](/privacy/redaction) | `DBMCP_PRIVACY_CATEGORIES` | *unset (all built-ins)* |
+| [`privacy.model`](/privacy/machine-learning) | `DBMCP_PRIVACY_MODEL` | *unset (no NER)* |
+| [`privacy.rules`](/privacy/rules) | — (YAML only) | *unset* |
 | [`ssh.host`](/features/ssh-tunnel) | `DBMCP_SSH_HOST` | — |
 | [`ssh.port`](/features/ssh-tunnel) | `DBMCP_SSH_PORT` | `22` |
 | [`ssh.user`](/features/ssh-tunnel) | `DBMCP_SSH_USER` | — |
@@ -120,11 +119,11 @@ Every `DBMCP_*` environment variable name is unchanged, so each removed flag map
 | `--db-connection-timeout` | `DBMCP_DB_CONNECTION_TIMEOUT` | `database.connection_timeout` |
 | `--db-query-timeout` | `DBMCP_DB_QUERY_TIMEOUT` | `database.query_timeout` |
 | `--db-page-size` | `DBMCP_DB_PAGE_SIZE` | `database.page_size` |
-| `--pii` | `DBMCP_PII_ENABLE` | `pii.enabled` |
-| `--pii-operator` | `DBMCP_PII_OPERATOR` | `pii.operator` |
-| `--pii-categories` | `DBMCP_PII_CATEGORIES` | `pii.categories` |
-| `--pii-ner` | `DBMCP_PII_NER_ENABLE` | `pii.ner_enabled` |
-| `--pii-ner-model` | `DBMCP_PII_NER_MODEL` | `pii.ner_model` |
+| `--pii` | `DBMCP_PRIVACY_MODE=full` | `privacy.mode: full` |
+| `--pii-operator` | `DBMCP_PRIVACY_OPERATOR` | `privacy.operator` |
+| `--pii-categories` | `DBMCP_PRIVACY_CATEGORIES` | `privacy.categories` |
+| `--pii-ner` | — (none needed: setting the model turns NER on) | — |
+| `--pii-ner-model` | `DBMCP_PRIVACY_MODEL` | `privacy.model` |
 | `--ssh-host` | `DBMCP_SSH_HOST` | `ssh.host` |
 | `--ssh-port` | `DBMCP_SSH_PORT` | `ssh.port` |
 | `--ssh-user` | `DBMCP_SSH_USER` | `ssh.user` |
@@ -138,7 +137,7 @@ Every `DBMCP_*` environment variable name is unchanged, so each removed flag map
 
 Other behaviour changes to check while migrating:
 
-- **Booleans are stricter.** Boolean env vars used to accept `yes`/`no` and `on`/`off` in any case. They now accept only `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, and `True`/`False`; anything else fails startup. A bare boolean flag such as `--pii` becomes `DBMCP_PII_ENABLE=true`.
+- **Booleans are stricter.** Boolean env vars used to accept `yes`/`no` and `on`/`off` in any case. They now accept only `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE`, and `True`/`False`; anything else fails startup. A bare boolean flag such as `--db-ssl` becomes `DBMCP_DB_SSL=true`; `--pii` becomes `DBMCP_PRIVACY_MODE=full`.
 - **Empty values mean unset.** An empty `DBMCP_*` value counts as unset and falls through to the next source. In particular, `--allowed-origins ""` used to disable `Origin` validation; that is now only possible with `allowed_origins: []` under `http` in the config file.
 - **Lists** keep the comma-separated env format; in the config file, write them as YAML sequences.
 
@@ -174,7 +173,7 @@ After — the same settings as environment variables:
         "DBMCP_DB_HOST": "localhost",
         "DBMCP_DB_USER": "postgres",
         "DBMCP_DB_NAME": "myapp",
-        "DBMCP_PII_ENABLE": "true",
+        "DBMCP_PRIVACY_MODE": "full",
         "DBMCP_LOG_LEVEL": "debug"
       }
     }

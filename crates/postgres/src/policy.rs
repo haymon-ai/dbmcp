@@ -1,4 +1,4 @@
-//! Column rule (`pii.rules`) enforcement on `PostgreSQL`.
+//! Column rule (`privacy.rules`) enforcement on `PostgreSQL`.
 //!
 //! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
 //! statement through [`PostgresHandler::enforce`]. On one pooled connection

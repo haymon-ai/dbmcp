@@ -5,11 +5,11 @@ description: Keep personal and sensitive values in your data out of what the AI 
 
 <Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
 
-The recording runs with the optional [Machine Learning](/privacy/machine-learning) model enabled, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/privacy/data-types).
+The recording runs in `full` mode with the optional [Machine Learning](/privacy/machine-learning) model set, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/privacy/data-types).
 
 Query results often contain personal or sensitive data (often called PII, personally identifiable information): email addresses, phone numbers, IBANs, API keys, names. <Dbmcp /> can find these values in tool output and rewrite them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
 
-The feature is **opt-in and off by default**. Nothing is rewritten until you turn it on.
+The feature is **opt-in and off by default** (privacy mode `none`). Nothing is rewritten until you choose a [mode](#modes).
 
 ## How it works
 
@@ -21,25 +21,37 @@ For columns you know hold sensitive data, [column rules](/privacy/rules) go furt
 
 ## What gets filtered
 
+This section describes the `full` mode. The `rules` mode filters only [ruled columns](/privacy/rules), plus its refusals and withheld errors.
+
 Redaction applies to the **rows the query tools return** — `readQuery` results, `writeQuery` rows (for example from `RETURNING`), and `explainQuery` output — and to **tool error messages** from every tool. Error messages run through the regex recognizers only; the optional NER pass is skipped so table, column, and schema names in database errors stay intact. With [column rules](/privacy/rules), statements that could reveal ruled values are refused, and database errors from statements touching a ruled table are replaced by a generic message unless their error code never carries a value. Logs, successful schema-discovery responses (`listTables`, `listViews`, etc.), and tool arguments are **not** affected.
 
-## Turn it on
+## Modes
+
+| YAML key | Environment variable | Type | Default | Description |
+|---|---|---|---|---|
+| `privacy.mode` | `DBMCP_PRIVACY_MODE` | enum | `none` | Which protection the query tools apply: `none`, `rules`, or `full` |
+
+- `none`: nothing is rewritten or refused. Rows and error messages come back as the database returned them.
+- `rules`: only [column rules](/privacy/rules) apply. Ruled columns are rewritten and unsafe statements refused; nothing else is detected.
+- `full`: column rules plus detection on every string value and error message, as described above. Setting [`privacy.model`](/privacy/machine-learning) adds the machine-learning pass.
+
+The default is `none`. Any other value stops startup with the list of choices.
 
 ```yaml
-pii:
-  enabled: true
+privacy:
+  mode: full
   operator: mask
 ```
 
-Or set `DBMCP_PII_ENABLE=true` (and optionally `DBMCP_PII_OPERATOR=mask`). See [Redaction](/privacy/redaction) for every setting.
+Or set `DBMCP_PRIVACY_MODE=full` (and optionally `DBMCP_PRIVACY_OPERATOR=mask`). See [Redaction](/privacy/redaction) for the operator, key, and categories.
 
 ## Limits
 
-Treat PII redaction as a layer that reduces what an enabled assistant sees in result rows; it is not a blanket guarantee that no sensitive string ever leaves the server. Pair it with database-level controls (least-privilege roles, column masking views) for sensitive datasets.
+Treat privacy modes as a layer that reduces what the assistant sees in result rows; it is not a blanket guarantee that no sensitive string ever leaves the server. Pair it with database-level controls (least-privilege roles, column masking views) for sensitive datasets.
 
 ## In this section
 
-- [Redaction](/privacy/redaction): settings, operators, categories, and JSON columns.
+- [Redaction](/privacy/redaction): operators, the hash key, categories, and JSON columns under `full`.
 - [Rules](/privacy/rules): rewrite every value of named table columns, and what gets refused.
-- [Machine Learning](/privacy/machine-learning): optional machine-learning model for names of people, places, and organizations.
+- [Machine Learning](/privacy/machine-learning): `privacy.model`, an optional machine-learning model for names of people, places, and organizations.
 - [Data types](/privacy/data-types): every kind of data the built-in recognizers find.

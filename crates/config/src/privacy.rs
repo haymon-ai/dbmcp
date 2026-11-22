@@ -1,11 +1,40 @@
-//! PII redaction settings, operator enum, and column rules.
+//! Privacy settings: mode, operator, categories, and column rules.
 
 use std::path::PathBuf;
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
+
+/// What privacy protection the query tools apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivacyMode {
+    /// No privacy section: rows and error messages pass through unchanged.
+    None,
+    /// Column rules only: ruled columns are rewritten, nothing else is detected.
+    Rules,
+    /// Column rules plus global detection on every cell and error message.
+    Full,
+}
+
+impl PrivacyMode {
+    /// The mode an unset `privacy.mode` resolves to.
+    pub const DEFAULT: Self = Self::None;
+
+    /// Accepted setting values, in the order error messages list them.
+    pub(crate) const CHOICES: &[(&str, Self)] = &[("none", Self::None), ("rules", Self::Rules), ("full", Self::Full)];
+}
+
+impl std::fmt::Display for PrivacyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "none"),
+            Self::Rules => write!(f, "rules"),
+            Self::Full => write!(f, "full"),
+        }
+    }
+}
 
 /// Supported PII redaction operators.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +45,7 @@ pub enum PrivacyOperator {
     Mask,
     /// Remove each detected span (replace with empty string).
     Redact,
-    /// Keyed hash token per value (HMAC-SHA-256 under `pii.key`) (default).
+    /// Keyed hash token per value (HMAC-SHA-256 under `privacy.key`) (default).
     #[default]
     Hash,
 }
@@ -42,7 +71,7 @@ impl std::fmt::Display for PrivacyOperator {
     }
 }
 
-/// PII categories selectable via the `pii.categories` setting.
+/// PII categories selectable via the `privacy.categories` setting.
 ///
 /// Mirror enum of `dbmcp_privacy::Category`; the binary layer converts. The
 /// wire format (kebab-case) lives in `dbmcp-config`.
@@ -92,7 +121,7 @@ impl std::fmt::Display for PrivacyCategory {
     }
 }
 
-/// One ruled column, flattened from a named `pii.rules` entry.
+/// One ruled column, flattened from a named `privacy.rules` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnRule {
     /// The rule's name, for messages only.
@@ -103,7 +132,7 @@ pub struct ColumnRule {
     pub key: [String; 4],
     /// The entity the column holds, one of [`ColumnRule::ENTITIES`].
     pub entity: &'static str,
-    /// The operator: the rule's own, else `pii.operator`.
+    /// The operator: the rule's own, else `privacy.operator`.
     pub operator: PrivacyOperator,
 }
 
@@ -176,58 +205,63 @@ impl ColumnRule {
     }
 }
 
-/// PII redaction settings for query tool responses.
+/// Privacy settings for query tool responses.
 ///
-/// Present in [`crate::Config`] only when redaction is enabled.
-#[derive(Clone, Debug, Default)]
+/// Present in [`crate::Config`] only when [`Self::mode`] is not [`PrivacyMode::None`].
+#[derive(Clone, Debug)]
 pub struct PrivacyConfig {
-    /// Which built-in operator rewrites detected spans.
+    /// [`PrivacyMode::Rules`] or [`PrivacyMode::Full`]; never [`PrivacyMode::None`].
+    pub mode: PrivacyMode,
+    /// Which built-in operator rewrites detected spans; the rules' fallback.
     pub operator: PrivacyOperator,
     /// HMAC key for the `hash` operator, at least 32 bytes; never logged.
     ///
     /// Set only when [`Self::operator`] or a rule's operator is [`PrivacyOperator::Hash`].
     pub key: Option<SecretString>,
-    /// Optional explicit category set; routes the analyzer through
-    /// `dbmcp_privacy::Analyzer::builder().categories(...)`.
-    pub categories: Option<Vec<PrivacyCategory>>,
-    /// Whether the optional ML/NER pass (person, location, organization, NRP, facility) runs.
+    /// Optional explicit category set for global detection (`full` only).
     ///
-    /// Requires a model path; ignored otherwise. Off by default.
-    pub ner_enabled: bool,
-    /// Filesystem path to the NER model directory; required when
-    /// [`Self::ner_enabled`] is set.
-    pub ner_model: Option<PathBuf>,
-    /// Column rules, in file order, one per listed column (YAML-only `pii.rules`).
+    /// Routes the analyzer through `dbmcp_privacy::Analyzer::builder().categories(...)`.
+    pub categories: Option<Vec<PrivacyCategory>>,
+    /// NER model directory; when set, `full` runs the ML/NER pass.
+    ///
+    /// Ignored under [`PrivacyMode::Rules`].
+    pub model: Option<PathBuf>,
+    /// Column rules, in file order, one per listed column (YAML-only `privacy.rules`).
     pub rules: Vec<ColumnRule>,
 }
 
+impl Default for PrivacyConfig {
+    /// A `full` section with the default operator and nothing else set.
+    fn default() -> Self {
+        Self {
+            mode: PrivacyMode::Full,
+            operator: Self::DEFAULT_OPERATOR,
+            key: None,
+            categories: None,
+            model: None,
+            rules: Vec::new(),
+        }
+    }
+}
+
 impl PrivacyConfig {
-    /// Default PII operator when no override is supplied.
+    /// Default privacy operator when no override is supplied.
     pub const DEFAULT_OPERATOR: PrivacyOperator = PrivacyOperator::Hash;
-    /// Default ML/NER pass state (off — opt-in only).
-    pub const DEFAULT_NER_ENABLED: bool = false;
     /// NER confidence floor applied to every detected span.
     pub const DEFAULT_NER_THRESHOLD: f32 = 0.5;
-    /// Minimum `pii.key` length, in bytes.
+    /// Minimum `privacy.key` length, in bytes.
     pub const MIN_KEY_BYTES: usize = 32;
 
     /// Validates this configuration.
     ///
+    /// The key is checked by the loader, in every mode, so not here.
+    ///
     /// # Errors
     ///
-    /// Returns one [`Diagnostic`] per problem: `key` is blank or shorter than
-    /// [`Self::MIN_KEY_BYTES`], `categories` is empty or repeats an entry, or
-    /// `ner_enabled` is set without a `ner_model` path.
+    /// Returns one [`Diagnostic`] per problem: `categories` is empty or
+    /// repeats an entry.
     pub(crate) fn validate(&self) -> Result<(), Vec<Diagnostic>> {
         let mut errors = Vec::new();
-        if let Some(key) = &self.key {
-            let key = key.expose_secret();
-            if key.trim().is_empty() {
-                errors.push(Diagnostic::new(ConfigError::EmptyPrivacyKey).involving(&[env::PRIVACY_KEY]));
-            } else if key.len() < Self::MIN_KEY_BYTES {
-                errors.push(Diagnostic::new(ConfigError::PrivacyKeyTooShort(key.len())).involving(&[env::PRIVACY_KEY]));
-            }
-        }
         if let Some(categories) = &self.categories {
             if categories.is_empty() {
                 errors.push(
@@ -236,13 +270,6 @@ impl PrivacyConfig {
                 );
             }
             errors.extend(duplicates(env::PRIVACY_CATEGORIES, categories));
-        }
-        if self.ner_enabled && self.ner_model.is_none() {
-            errors.push(
-                Diagnostic::new(ConfigError::PrivacyNerModelMissing)
-                    .involving(&[env::PRIVACY_NER_ENABLE])
-                    .missing(&[env::PRIVACY_NER_MODEL]),
-            );
         }
         into_result(errors)
     }
@@ -272,33 +299,17 @@ mod tests {
     }
 
     #[test]
-    fn privacy_config_default_ner_disabled() {
-        assert!(!PrivacyConfig::default().ner_enabled);
+    fn privacy_config_default_is_full_without_a_model() {
+        let privacy = PrivacyConfig::default();
+        assert_eq!(privacy.mode, PrivacyMode::Full);
+        assert!(privacy.model.is_none());
     }
 
     #[test]
-    fn ner_enabled_without_model_errors() {
-        let cfg = PrivacyConfig {
-            ner_enabled: true,
-            ..PrivacyConfig::default()
-        };
-        let errors = cfg.validate().expect_err("ner without model must error");
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(&e.error, ConfigError::PrivacyNerModelMissing)),
-            "expected PrivacyNerModelMissing in {errors:?}"
-        );
-    }
-
-    #[test]
-    fn ner_enabled_with_model_validates_ok() {
-        let cfg = PrivacyConfig {
-            ner_enabled: true,
-            ner_model: Some(PathBuf::from("/models/ner")),
-            ..PrivacyConfig::default()
-        };
-        cfg.validate().expect("ner with model path must validate");
+    fn privacy_mode_display_matches_its_choices() {
+        for (name, mode) in PrivacyMode::CHOICES {
+            assert_eq!(&mode.to_string(), name);
+        }
     }
 
     #[test]
