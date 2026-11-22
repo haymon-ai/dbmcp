@@ -764,6 +764,7 @@ fn flowed(sources: Vec<SourceRef>, flow: Flow) -> Lineage {
 
 const HASHED_EMAIL: Position = Position::Action(PiiOperator::Hash, Entity::EmailAddress);
 const REPLACED_EMAIL: Position = Position::Action(PiiOperator::Replace, Entity::EmailAddress);
+const PLACEHOLDER_EMAIL: Position = Position::Placeholder(Entity::EmailAddress);
 
 #[test]
 fn bare_hash_output_keeps_hash() {
@@ -785,17 +786,33 @@ fn bare_union_of_same_hash_pair_keeps_hash() {
 }
 
 #[test]
-fn derived_hash_output_becomes_replace() {
+fn derived_ruled_output_reads_as_the_placeholder_under_every_operator() {
+    let config = config(vec![
+        rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", PiiOperator::Mask, "PHONE_NUMBER"),
+        rule("shop.public.users.ssn", PiiOperator::Redact, "US_SSN"),
+        rule("shop.public.users.card", PiiOperator::Replace, "CREDIT_CARD"),
+    ]);
+    let cases = [
+        ("email", Entity::EmailAddress),
+        ("phone", Entity::PhoneNumber),
+        ("ssn", Entity::UsSsn),
+        ("card", Entity::CreditCard),
+    ];
+    for (column, entity) in cases {
+        assert_eq!(
+            only(&flowed(vec![col("users", column)], Flow::Derived), &config),
+            Position::Placeholder(entity),
+            "{column}"
+        );
+    }
+}
+
+#[test]
+fn derived_output_with_an_unruled_source_reads_as_the_placeholder() {
     let config = config(hashed_emails());
-    assert_eq!(
-        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
-        REPLACED_EMAIL
-    );
-    let lineage = flowed(
-        vec![col("users", "email"), col("invoices", "billing_email")],
-        Flow::Derived,
-    );
-    assert_eq!(only(&lineage, &config), REPLACED_EMAIL);
+    let lineage = flowed(vec![col("users", "name"), col("users", "email")], Flow::Derived);
+    assert_eq!(only(&lineage, &config), PLACEHOLDER_EMAIL);
 }
 
 #[test]
@@ -833,29 +850,16 @@ fn derived_hash_of_different_entities_conflicts() {
 }
 
 #[test]
-fn derived_hash_with_mask_conflicts() {
+fn derived_same_entity_under_different_operators_reads_as_the_placeholder() {
     let config = config(vec![
         rule("shop.public.users.email", PiiOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.users.phone", PiiOperator::Mask, "EMAIL_ADDRESS"),
+        rule("shop.public.invoices.billing_email", PiiOperator::Mask, "EMAIL_ADDRESS"),
     ]);
-    let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
-    assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
-}
-
-#[test]
-fn derived_mask_and_redact_outputs_are_unchanged() {
-    let config = config(vec![
-        ssn("shop.public.users.ssn"),
-        rule("shop.public.users.email", PiiOperator::Redact, "EMAIL_ADDRESS"),
-    ]);
-    assert_eq!(
-        only(&flowed(vec![col("users", "ssn")], Flow::Derived), &config),
-        MASKED_SSN
+    let lineage = flowed(
+        vec![col("users", "email"), col("invoices", "billing_email")],
+        Flow::Derived,
     );
-    assert_eq!(
-        only(&flowed(vec![col("users", "email")], Flow::Derived), &config),
-        Position::Action(PiiOperator::Redact, Entity::EmailAddress)
-    );
+    assert_eq!(only(&lineage, &config), PLACEHOLDER_EMAIL);
 }
 
 #[test]
@@ -881,7 +885,7 @@ fn tables(tables: &[(&str, &[&str])]) -> Catalog {
 }
 
 #[test]
-fn analyzed_outputs_hash_only_when_bare() {
+fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
     let catalog = tables(&[
         ("users", &["id", "email", "name"]),
         ("invoices", &["id", "user_id", "billing_email"]),
@@ -902,19 +906,19 @@ fn analyzed_outputs_hash_only_when_bare() {
             HASHED_EMAIL,
         ),
         ("SELECT email FROM users UNION SELECT name FROM users", REPLACED_EMAIL),
-        ("SELECT email FROM users UNION SELECT 'a@b.c'", REPLACED_EMAIL),
+        ("SELECT email FROM users UNION SELECT 'a@b.c'", PLACEHOLDER_EMAIL),
         (
             "SELECT CASE WHEN email IS NULL THEN 'x' ELSE 'x' END FROM users",
-            REPLACED_EMAIL,
+            PLACEHOLDER_EMAIL,
         ),
-        ("SELECT lower(email) FROM users", REPLACED_EMAIL),
-        ("SELECT min(email) FROM users", REPLACED_EMAIL),
-        ("SELECT count(DISTINCT email) FROM users", REPLACED_EMAIL),
-        ("SELECT CAST(email AS text) FROM users", REPLACED_EMAIL),
-        ("SELECT email COLLATE \"C\" FROM users", REPLACED_EMAIL),
+        ("SELECT lower(email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT min(email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT count(DISTINCT email) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT CAST(email AS text) FROM users", PLACEHOLDER_EMAIL),
+        ("SELECT email COLLATE \"C\" FROM users", PLACEHOLDER_EMAIL),
         (
             "SELECT concat(u.email, i.billing_email) FROM users u, invoices i",
-            REPLACED_EMAIL,
+            PLACEHOLDER_EMAIL,
         ),
     ];
     for (sql, expected) in cases {

@@ -2818,7 +2818,7 @@ async fn column_rules_hash_the_same_value_to_the_same_token_across_tables() {
 }
 
 #[tokio::test]
-async fn column_rules_replace_hash_on_values_a_query_computes() {
+async fn column_rules_read_values_a_query_computes_as_the_placeholder() {
     let handler = handler_with_rules(100);
     let stored = ruled_read(&handler, "SELECT email FROM users WHERE id = 1")
         .await
@@ -2837,13 +2837,37 @@ async fn column_rules_replace_hash_on_values_a_query_computes() {
 }
 
 #[tokio::test]
-async fn column_rules_replace_hash_on_min_and_max() {
+async fn column_rules_read_min_and_max_as_the_placeholder() {
     let handler = handler_with_rules(100);
     let rows = ruled_read(&handler, "SELECT MIN(email) AS lo, MAX(email) AS hi FROM users")
         .await
         .expect("aggregates");
     assert_eq!(rows[0]["lo"], "<EMAIL_ADDRESS>", "{}", rows[0]);
     assert_eq!(rows[0]["hi"], "<EMAIL_ADDRESS>", "{}", rows[0]);
+}
+
+#[tokio::test]
+async fn column_rules_read_select_list_conditions_as_the_placeholder() {
+    let handler = handler_with_rules(100);
+    for (expression, placeholder) in [
+        ("iif(email LIKE '%@example.com', NULL, 1)", "<EMAIL_ADDRESS>"),
+        ("iif(ssn LIKE '078%', NULL, 1)", "<US_SSN>"),
+        ("iif(credit_card LIKE '4%', NULL, 1)", "<CREDIT_CARD>"),
+        ("CASE WHEN phone LIKE '+1%' THEN 'yes' ELSE 'n' END", "<PHONE_NUMBER>"),
+        ("iif(LENGTH(phone) > 12, 'aaaaaaaaaa', 'a')", "<PHONE_NUMBER>"),
+        (
+            "CASE WHEN email LIKE 'a%' THEN 'x@example.com' ELSE 'y@example.com' END",
+            "<EMAIL_ADDRESS>",
+        ),
+        ("substr(email, 1, 1) = 'a'", "<EMAIL_ADDRESS>"),
+    ] {
+        let query = format!("SELECT {expression} AS p FROM users");
+        let rows = ruled_read(&handler, &query).await.expect(&query);
+        assert!(!rows.is_empty(), "{query}");
+        for row in &rows {
+            assert_eq!(row["p"], placeholder, "{query}: {row}");
+        }
+    }
 }
 
 #[tokio::test]

@@ -601,11 +601,14 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Famil
 /// Combines the rules of `sources` reaching a value by `flow`; `None` when two pairs differ.
 ///
 /// Ruled sources decide the position; unruled ones add nothing. No ruled
-/// source means global detection. A `hash` pair survives only on a
-/// [`Flow::Bare`] value whose every source is covered by that same pair;
+/// source means global detection. A value not [`Flow::Bare`] over a ruled
+/// source is the entity's placeholder, `NULL` included, whatever the
+/// operators, and its ruled sources must share the entity: a condition in
+/// the select list would otherwise answer a refused `WHERE` through
+/// `null`, distinct tokens, or `mask` length. A `hash` pair survives only
+/// on a bare value whose every source is covered by that same pair;
 /// otherwise each `hash` pair turns into `replace` before merging, so a
-/// computed value never gets the token of a value its query chose, nor of
-/// the row an aggregate picked.
+/// set operation never gets the token of a value its query chose.
 fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PiiConfig, families: &Families) -> Option<Position> {
     let pairs: Vec<Vec<(PiiOperator, &str)>> = sources
         .iter()
@@ -616,6 +619,15 @@ fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PiiConfig, famili
         })
         .collect();
     let first = pairs.iter().flatten().next().copied();
+    if flow != Flow::Bare
+        && let Some((_, entity)) = first
+    {
+        if !pairs.iter().flatten().all(|&(_, other)| other == entity) {
+            return None;
+        }
+        let entity = Entity::from_str(entity).expect("ColumnRule::ENTITIES mirrors Entity");
+        return Some(Position::Placeholder(entity));
+    }
     let hashed = flow == Flow::Bare
         && first.is_some_and(|first| first.0 == PiiOperator::Hash)
         && pairs
