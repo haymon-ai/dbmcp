@@ -11,7 +11,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Origin, RelationId, RelationKind};
+use crate::model::{Origin, RelationId, RelationKind, SourceRef};
 
 /// One part of a relation name as written in SQL.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -150,10 +150,19 @@ pub struct Relation {
     ///
     /// Analysis ignores it; it carries catalog knowledge to the caller's planner.
     pub family: Family,
+    /// Whether it or a `PostgreSQL` descendant has user triggers or non-`SELECT` rules.
+    ///
+    /// Analysis ignores it, like `cascades`.
+    pub triggers: bool,
+    /// Referential actions that change rows of other tables, transitively.
+    pub cascades: Vec<Cascade>,
 }
 
 impl Relation {
-    /// Creates a relation without a view body or inheritance tree.
+    /// Creates a relation without a view body, inheritance tree, or cascades.
+    ///
+    /// It counts as having triggers (fail closed) until
+    /// [`Relation::with_triggers`] says otherwise.
     #[must_use]
     pub fn new(id: RelationId, kind: RelationKind, columns: Vec<CatalogColumn>) -> Self {
         Self {
@@ -162,6 +171,8 @@ impl Relation {
             columns,
             view_sql: None,
             family: Family::default(),
+            triggers: true,
+            cascades: Vec::new(),
         }
     }
 
@@ -178,6 +189,48 @@ impl Relation {
         self.family = family;
         self
     }
+
+    /// Sets whether the relation has a user trigger or a non-`SELECT` rule.
+    #[must_use]
+    pub fn with_triggers(mut self, triggers: bool) -> Self {
+        self.triggers = triggers;
+        self
+    }
+
+    /// Sets the referential actions that change rows of other tables.
+    #[must_use]
+    pub fn with_cascades(mut self, cascades: Vec<Cascade>) -> Self {
+        self.cascades = cascades;
+        self
+    }
+}
+
+/// One referential action edge from a parent column to a child column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cascade {
+    /// The referenced column.
+    pub parent: SourceRef,
+    /// The referencing column the action writes, or whose rows it removes.
+    pub child: SourceRef,
+    /// What the action writes into the child.
+    pub action: CascadeAction,
+    /// Whether a `DELETE` of the parent fires it (otherwise an `UPDATE` of `parent` does).
+    pub on_delete: bool,
+    /// Whether the child relation has a user trigger or a non-`SELECT` rule.
+    pub triggers: bool,
+}
+
+/// What a referential action writes into the child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CascadeAction {
+    /// `CASCADE` on update: copies the parent's new value.
+    Copy,
+    /// `SET NULL`.
+    Null,
+    /// `SET DEFAULT`: the child column's default.
+    Default,
+    /// `CASCADE` on delete: removes child rows.
+    Delete,
 }
 
 /// A relation's inheritance tree, as relation identities only.

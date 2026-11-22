@@ -7,8 +7,8 @@ use dbmcp_config::{ColumnRule, PiiConfig, PiiOperator};
 use dbmcp_pii::Entity;
 use dbmcp_pii::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
-    CatalogColumn, Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn, RelationId, Role,
-    SourceRef, StatementKind,
+    Cascade, CascadeAction, CatalogColumn, Dialect, ExplainForm, Family, Flow, Lineage, Member, Origin, OutputColumn,
+    RelationId, Role, SourceRef, StatementKind,
 };
 
 use crate::deny;
@@ -28,8 +28,10 @@ use crate::rejection::Rejection;
 /// one, a ruled column used outside the output, conflicting rules on one
 /// output column, a shadowed bare create target, or a write copying ruled
 /// values into a column not ruled the same way or not nameable by a rule,
-/// a write choosing or letting the server fill a `hash`-ruled column's value,
-/// or an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.
+/// a write choosing or letting the server fill a `hash`-ruled column's value
+/// (a cascade's child included), a write to a relation with triggers or
+/// rules while `hash` rules exist, or an `UPDATE` or `MERGE` through a
+/// partitioned table ruled unevenly.
 ///
 /// # Panics
 ///
@@ -53,10 +55,14 @@ pub(crate) struct Names {
 }
 
 /// What a write can make the server put into a relation's columns.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Facts {
     /// The relation's columns with their default, generated, and on-update facts.
     pub(crate) columns: Vec<CatalogColumn>,
+    /// Whether the relation has a user trigger or a non-`SELECT` rule.
+    pub(crate) triggers: bool,
+    /// Referential actions that change rows of other tables, transitively.
+    pub(crate) cascades: Vec<Cascade>,
 }
 
 /// Reports whether `lineage` touches a relation with a ruled column.
@@ -146,13 +152,16 @@ fn gate(lineage: &Lineage, dialect: Dialect, config: &PiiConfig, names: &Names) 
     Ok(Plan { columns })
 }
 
-/// Gates each written column, then the `hash`-ruled columns the server fills itself.
+/// Gates each written column, the `hash`-ruled columns the server fills, then cascades and triggers.
 ///
 /// A ruled value must land in a column every landing member reads back
 /// under the same pair. A `hash`-ruled column takes only same-hashed bare
 /// copies, `NULL`, or `DEFAULT` without a default, and no write may let the
 /// server fill one (an omitted column's default, a generated or on-update
-/// column): its token would sign a value the statement chose.
+/// column, a fired cascade's `SET DEFAULT` or copy from a parent hashed
+/// otherwise): its token would sign a value the statement chose. While
+/// `hash` rules exist, no write may fire a trigger or rule, on the target
+/// or on a fired cascade's child: its body may fill one too.
 fn writes(
     lineage: &Lineage,
     statement: &StatementKind,
@@ -257,7 +266,146 @@ fn writes(
             return Err(computed(&column.name));
         }
     }
+    if !matches!(statement, StatementKind::Delete | StatementKind::Truncate) && !fills
+        || !config.rules.iter().any(|rule| rule.operator == PiiOperator::Hash)
+    {
+        return Ok(());
+    }
+    let members: BTreeSet<&RelationId> = landing().map(|(member, _)| member).collect();
+    cascades_and_triggers(lineage, statement, target, &members, config, names)
+}
+
+/// Rejects writes whose cascades or triggers may fill a `hash`-ruled column.
+///
+/// A fired `SET DEFAULT`, or a copy from a parent not hashed under the
+/// child's pair, fills the child with a value the statement may have
+/// steered. A cascade that changes a child column also recomputes the
+/// child's generated and on-update columns, whose facts are unknown, so it
+/// refuses while any other column of the child is `hash`-ruled. Triggers of
+/// the target, or of a fired cascade's child, may write anything; a
+/// `TRUNCATE` fires its target's.
+fn cascades_and_triggers(
+    lineage: &Lineage,
+    statement: &StatementKind,
+    target: &RelationId,
+    members: &BTreeSet<&RelationId>,
+    config: &PiiConfig,
+    names: &Names,
+) -> Result<(), Rejection> {
+    // A target the analysis did not resolve has triggers.
+    let (triggers, cascades) = names
+        .facts
+        .get(target)
+        .map_or((true, &[][..]), |facts| (facts.triggers, facts.cascades.as_slice()));
+    let partitioned = names.families.get(target).is_some_and(|family| family.partitioned);
+    let fired = fired(lineage, statement, partitioned, members, cascades);
+    for edge in &fired {
+        if edge.action != CascadeAction::Delete
+            && let Some(other) = config.rules.iter().find(|rule| {
+                rule.operator == PiiOperator::Hash
+                    && rule_on(rule, &edge.child.relation)
+                    && rule.key[3] != ColumnRule::fold(&edge.child.column)
+            })
+        {
+            return Err(Rejection::Computed {
+                column: column_name(&SourceRef::new(edge.child.relation.clone(), &other.key[3])),
+            });
+        }
+        let Some(child) =
+            rule(config, &edge.child.relation, &edge.child.column).filter(|rule| rule.operator == PiiOperator::Hash)
+        else {
+            continue;
+        };
+        let refused = match edge.action {
+            // The write rule limits the parent's new value to copies hashed like it.
+            CascadeAction::Copy => {
+                let mut parent =
+                    covering(config, &names.families, &edge.parent.relation, &edge.parent.column).peekable();
+                parent.peek().is_none() || parent.any(|rule| pair(rule) != pair(child))
+            }
+            CascadeAction::Default => true,
+            CascadeAction::Null | CascadeAction::Delete => false,
+        };
+        if refused {
+            return Err(Rejection::Computed {
+                column: column_name(&edge.child),
+            });
+        }
+    }
+    if triggers {
+        return Err(Rejection::Trigger {
+            relation: relation_name(target),
+        });
+    }
+    if let Some(edge) = fired.iter().find(|edge| edge.triggers) {
+        return Err(Rejection::Trigger {
+            relation: relation_name(&edge.child.relation),
+        });
+    }
     Ok(())
+}
+
+/// Returns the cascade edges a write through `members` fires, transitively.
+///
+/// An upsert updates and a `REPLACE` deletes, so every `INSERT` fires both
+/// kinds; so does every `MERGE`, and an `UPDATE` through a `partitioned`
+/// table, which may move rows by deleting them (`PostgreSQL` before 15). An
+/// update edge fires when the statement writes its parent column, a delete
+/// edge on any row removal. Below a fired edge, one that changes a child
+/// column fires that column's update edges, and one that removes child rows
+/// fires every delete edge of the child. Names compare case-folded, which
+/// may over-match (fail closed).
+fn fired<'a>(
+    lineage: &Lineage,
+    statement: &StatementKind,
+    partitioned: bool,
+    members: &BTreeSet<&RelationId>,
+    cascades: &'a [Cascade],
+) -> Vec<&'a Cascade> {
+    let updates = matches!(
+        statement,
+        StatementKind::Update | StatementKind::Merge | StatementKind::Insert
+    );
+    let deletes = matches!(
+        statement,
+        StatementKind::Delete | StatementKind::Merge | StatementKind::Insert
+    ) || (partitioned && *statement == StatementKind::Update);
+    let same = |a: &str, b: &str| ColumnRule::fold(a) == ColumnRule::fold(b);
+    let relation = |a: &RelationId, b: &RelationId| {
+        same(&a.catalog, &b.catalog) && same(&a.schema, &b.schema) && same(&a.name, &b.name)
+    };
+    let mut fired: Vec<&Cascade> = cascades
+        .iter()
+        .filter(|edge| {
+            members.iter().any(|member| relation(member, &edge.parent.relation))
+                && if edge.on_delete {
+                    deletes
+                } else {
+                    updates
+                        && lineage
+                            .writes
+                            .iter()
+                            .any(|write| same(&write.name, &edge.parent.column))
+                }
+        })
+        .collect();
+    let mut next = 0;
+    while let Some(&edge) = fired.get(next) {
+        next += 1;
+        for below in cascades {
+            let follows = relation(&below.parent.relation, &edge.child.relation)
+                && match edge.action {
+                    CascadeAction::Delete => below.on_delete,
+                    CascadeAction::Copy | CascadeAction::Null | CascadeAction::Default => {
+                        !below.on_delete && same(&below.parent.column, &edge.child.column)
+                    }
+                };
+            if follows && !fired.contains(&below) {
+                fired.push(below);
+            }
+        }
+    }
+    fired
 }
 
 /// Rejects an `UPDATE` or `MERGE` through a partitioned table ruled unevenly.

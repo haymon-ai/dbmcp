@@ -62,7 +62,9 @@ mod statement;
 mod tests;
 
 pub use crate::analyze::analyze;
-pub use crate::catalog::{Catalog, CatalogColumn, Entry, Family, Lexical, Member, NamePart, Relation, WrittenName};
+pub use crate::catalog::{
+    Cascade, CascadeAction, Catalog, CatalogColumn, Entry, Family, Lexical, Member, NamePart, Relation, WrittenName,
+};
 pub use crate::dialect::Dialect;
 pub use crate::error::LineageError;
 pub use crate::explain::ExplainForm;

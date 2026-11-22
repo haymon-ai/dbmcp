@@ -502,6 +502,48 @@ CREATE TABLE policy_hashed_generated (
     email TEXT GENERATED ALWAYS AS (name || '@example.com') STORED
 );
 
+-- `ON UPDATE CASCADE` copies `policy_cascade_parent.k` (unruled) into the
+-- hashed `policy_cascade_child.k`; updating `policy_cascade_parent.j` fills
+-- the hashed `policy_cascade_default.k` with its default (`ON UPDATE SET
+-- DEFAULT`); deleting a parent row deletes rows of `policy_hashed_trigger`,
+-- which has a trigger.
+CREATE TABLE policy_cascade_parent (
+    k TEXT PRIMARY KEY,
+    j TEXT UNIQUE
+);
+
+INSERT INTO policy_cascade_parent (k, j) VALUES ('alice@example.com', 'a'), ('x@example.com', 'x@example.com');
+
+CREATE TABLE policy_cascade_child (
+    id INT PRIMARY KEY,
+    k TEXT REFERENCES policy_cascade_parent (k) ON UPDATE CASCADE
+);
+
+INSERT INTO policy_cascade_child (id, k) VALUES (1, 'alice@example.com');
+
+CREATE TABLE policy_cascade_default (
+    id INT PRIMARY KEY,
+    k TEXT DEFAULT 'x@example.com' REFERENCES policy_cascade_parent (j) ON UPDATE SET DEFAULT
+);
+
+INSERT INTO policy_cascade_default (id, k) VALUES (1, 'a');
+
+-- A hashed `email` on a table with a trigger, below `policy_cascade_parent`.
+CREATE TABLE policy_hashed_trigger (
+    id INT PRIMARY KEY,
+    email TEXT,
+    k TEXT REFERENCES policy_cascade_parent (k) ON DELETE CASCADE
+);
+
+CREATE FUNCTION policy_hashed_trigger_fill() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER policy_hashed_trigger_fill
+    BEFORE INSERT ON policy_hashed_trigger
+    FOR EACH ROW EXECUTE FUNCTION policy_hashed_trigger_fill();
+
 -- `policy_deferred` fails every insert at COMMIT with a message quoting the e-mail.
 CREATE TABLE policy_deferred (
     id SERIAL PRIMARY KEY,

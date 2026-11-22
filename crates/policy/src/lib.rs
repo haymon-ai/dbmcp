@@ -35,8 +35,12 @@
 //! 11. A `hash`-ruled column written by a statement takes only same-hashed
 //!     bare copies, `NULL`, or `DEFAULT` when it has no default; a write that
 //!     lets the server fill one (an omitted column's default, a generated or
-//!     on-update column) rejects.
-//! 12. An `UPDATE` or `MERGE` through a partitioned table rejects while its
+//!     on-update column) rejects, and so does a fired cascade that sets a
+//!     `hash`-ruled child column to its default or copies into it from a
+//!     parent not hashed under the same pair.
+//! 12. While any `hash` rule exists, a write to a relation with triggers or
+//!     rules rejects, and so does one firing a cascade into such a table.
+//! 13. An `UPDATE` or `MERGE` through a partitioned table rejects while its
 //!     leaf partitions read a ruled column under different pairs: a row
 //!     moved between them would be read back under other rules.
 //!
@@ -63,8 +67,8 @@ mod relation;
 mod tests;
 
 pub use dbmcp_sql_lineage::{
-    CatalogColumn, Entry, Family, Flow, Member, NamePart, Origin, Relation, RelationId, RelationKind, StatementKind,
-    WrittenName,
+    Cascade, CascadeAction, CatalogColumn, Entry, Family, Flow, Member, NamePart, Origin, Relation, RelationId,
+    RelationKind, SourceRef, StatementKind, WrittenName,
 };
 
 pub use self::analysis::{Analysis, Analyzed, Step};

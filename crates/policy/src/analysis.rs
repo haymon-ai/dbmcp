@@ -127,6 +127,8 @@ impl<'a> Analysis<'a> {
                     relation.id.clone(),
                     Facts {
                         columns: relation.columns.clone(),
+                        triggers: relation.triggers,
+                        cascades: mem::take(&mut relation.cascades),
                     },
                 );
             }
@@ -214,7 +216,7 @@ mod tests {
     use dbmcp_config::{ColumnRule, PiiOperator};
     use std::collections::BTreeSet;
 
-    use dbmcp_sql_lineage::{CatalogColumn, Family, Member, Relation, RelationKind};
+    use dbmcp_sql_lineage::{Cascade, CascadeAction, CatalogColumn, Family, Member, Relation, RelationKind, SourceRef};
 
     use super::*;
     use crate::{LineageClass, Unfit};
@@ -588,6 +590,74 @@ mod tests {
         );
         assert_eq!(planned.check_first(&names, [(0, parent, Some("a".into()))]), Ok(()));
         assert_eq!(planned.withheld(Some("23505")), Some("23505"));
+    }
+
+    /// A config hashing `shop.public.<table>.a` as `EMAIL_ADDRESS`.
+    fn hashed(table: &str) -> PiiConfig {
+        let mut config = ruled();
+        config.rules[0].key[2] = table.into();
+        config.rules[0].operator = PiiOperator::Hash;
+        config.rules[0].entity = "EMAIL_ADDRESS";
+        config
+    }
+
+    /// Answers every name like [`table`], with fact-free columns and `relation` applied.
+    fn described(name: &WrittenName, relation: fn(Relation) -> Relation) -> Entry {
+        let Entry::Resolved(mut resolved) = table(name) else {
+            unreachable!("table resolves");
+        };
+        for column in &mut resolved.columns {
+            *column = column.clone().with_facts(false, false, false);
+        }
+        Entry::Resolved(relation(resolved))
+    }
+
+    #[test]
+    fn fail_closed_relations_refuse_writes_while_hash_rules_exist() {
+        let config = hashed("t");
+        let sql = "UPDATE t SET b = 1";
+        let plan = |relation: fn(Relation) -> Relation| {
+            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+                described(name, relation)
+            })
+            .plan(&config)
+            .map(|_| ())
+        };
+        assert_eq!(
+            plan(|relation| relation),
+            Err(Rejection::Trigger {
+                relation: "public.t".into()
+            })
+        );
+        assert_eq!(plan(|relation| relation.with_triggers(false)), Ok(()));
+    }
+
+    #[test]
+    fn resolved_cascades_reach_the_plan() {
+        let config = hashed("c");
+        let plan = |sql| {
+            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+                described(name, |relation| {
+                    let cascade = Cascade {
+                        parent: SourceRef::new(relation.id.clone(), "b"),
+                        child: SourceRef::new(RelationId::new("shop", "public", "c"), "a"),
+                        action: CascadeAction::Default,
+                        on_delete: false,
+                        triggers: false,
+                    };
+                    relation.with_triggers(false).with_cascades(vec![cascade])
+                })
+            })
+            .plan(&config)
+            .map(|_| ())
+        };
+        assert_eq!(
+            plan("UPDATE t SET b = 1"),
+            Err(Rejection::Computed {
+                column: "public.c.a".into()
+            })
+        );
+        assert_eq!(plan("UPDATE t SET a = 1"), Ok(()));
     }
 
     #[test]

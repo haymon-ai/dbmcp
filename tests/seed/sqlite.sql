@@ -163,6 +163,45 @@ CREATE TABLE IF NOT EXISTS policy_hashed_generated (
     email TEXT GENERATED ALWAYS AS (name || '@example.com')
 );
 
+-- `ON UPDATE CASCADE` copies `policy_cascade_parent.k` (unruled) into the
+-- hashed `policy_cascade_child.k`; updating `policy_cascade_parent.j` fills
+-- the hashed `policy_cascade_default.k` with its default (`ON UPDATE SET
+-- DEFAULT`); deleting a parent row deletes rows of `policy_hashed_trigger`,
+-- which has a trigger.
+CREATE TABLE IF NOT EXISTS policy_cascade_parent (
+    k TEXT PRIMARY KEY,
+    j TEXT UNIQUE
+);
+
+INSERT INTO policy_cascade_parent (k, j) VALUES ('alice@example.com', 'a'), ('x@example.com', 'x@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_cascade_child (
+    id INTEGER PRIMARY KEY,
+    k TEXT REFERENCES policy_cascade_parent (k) ON UPDATE CASCADE
+);
+
+INSERT INTO policy_cascade_child (id, k) VALUES (1, 'alice@example.com');
+
+CREATE TABLE IF NOT EXISTS policy_cascade_default (
+    id INTEGER PRIMARY KEY,
+    k TEXT DEFAULT 'x@example.com' REFERENCES policy_cascade_parent (j) ON UPDATE SET DEFAULT
+);
+
+INSERT INTO policy_cascade_default (id, k) VALUES (1, 'a');
+
+-- A hashed `email` on a table with a trigger, below `policy_cascade_parent`.
+CREATE TABLE IF NOT EXISTS policy_hashed_trigger (
+    id INTEGER PRIMARY KEY,
+    email TEXT,
+    k TEXT REFERENCES policy_cascade_parent (k) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS policy_hashed_trigger_fill
+    AFTER INSERT ON policy_hashed_trigger
+BEGIN
+    SELECT 1;
+END;
+
 -- Triggers
 
 CREATE TRIGGER IF NOT EXISTS users_before_insert

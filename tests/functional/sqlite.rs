@@ -2726,7 +2726,7 @@ fn column_rule(table: &str, column: &str, entity: &'static str, operator: PiiOpe
 }
 
 /// A handler whose rules hash e-mails (`users`, `orders`, the `policy_hashed*`
-/// tables), mask phones, redact SSNs, and replace card numbers.
+/// tables, the `policy_cascade_*` children's `k`), mask phones, redact SSNs, and replace card numbers.
 fn handler_with_rules(page_size: u16) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
@@ -2747,6 +2747,9 @@ fn handler_with_rules(page_size: u16) -> SqliteHandler {
                 column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
                 column_rule("policy_hashed_default", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
                 column_rule("policy_hashed_generated", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_cascade_default", "k", "EMAIL_ADDRESS", PiiOperator::Hash),
+                column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PiiOperator::Hash),
             ],
             ..PiiConfig::default()
         }),
@@ -3086,6 +3089,52 @@ async fn column_rules_refuse_writes_the_database_fills_into_hashed_columns() {
         );
         assert_eq!(count_id(&handler, table, 900).await, 0, "{query}");
     }
+}
+
+/// Counts the rows of `policy_cascade_parent` whose `k` is `k`.
+async fn count_parent(handler: &SqliteHandler, k: &str) -> Value {
+    let query = format!("SELECT count(*) AS n FROM policy_cascade_parent WHERE k = '{k}'");
+    ruled_read(handler, &query).await.expect(&query)[0]["n"].clone()
+}
+
+#[tokio::test]
+async fn column_rules_refuse_writes_cascades_or_triggers_could_steer_into_hashed_columns() {
+    let handler = handler_with_rules(100);
+    let child = stored_k(&handler, "policy_cascade_child").await;
+    let default = stored_k(&handler, "policy_cascade_default").await;
+    for (query, refusal) in [
+        (
+            "UPDATE policy_cascade_parent SET k = 'y@example.com' WHERE k = 'alice@example.com'",
+            r#"column "main.policy_cascade_child.k" is hashed and filled by the database, so this write is refused"#,
+        ),
+        (
+            "UPDATE policy_cascade_parent SET j = 'b' WHERE j = 'a'",
+            r#"column "main.policy_cascade_default.k" is hashed and filled by the database, so this write is refused"#,
+        ),
+        (
+            "DELETE FROM policy_cascade_parent WHERE k = 'alice@example.com'",
+            r#"relation "main.policy_hashed_trigger" has triggers or rules, which may fill hashed columns, so writes to it are refused"#,
+        ),
+        (
+            "INSERT INTO policy_hashed_trigger (id, email) VALUES (900, NULL)",
+            r#"relation "main.policy_hashed_trigger" has triggers or rules, which may fill hashed columns, so writes to it are refused"#,
+        ),
+    ] {
+        let error = ruled_write(&handler, query).await.expect_err(query);
+        assert!(error.message.contains(refusal), "{query}: {}", error.message);
+    }
+    assert_eq!(count_parent(&handler, "alice@example.com").await, 1);
+    assert_eq!(stored_k(&handler, "policy_cascade_child").await, child);
+    assert_eq!(stored_k(&handler, "policy_cascade_default").await, default);
+    assert_eq!(count_id(&handler, "policy_hashed_trigger", 900).await, 0);
+}
+
+/// The token `SELECT k FROM <table> WHERE id = 1` reads.
+async fn stored_k(handler: &SqliteHandler, table: &str) -> Value {
+    let query = format!("SELECT k FROM {table} WHERE id = 1");
+    let token = ruled_read(handler, &query).await.expect(&query)[0]["k"].clone();
+    assert!(is_email_token(&token), "{token}");
+    token
 }
 
 #[tokio::test]

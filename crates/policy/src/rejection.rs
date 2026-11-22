@@ -116,6 +116,18 @@ pub enum Rejection {
         column: String,
     },
 
+    /// A write to a relation with triggers or rules while `hash` rules exist.
+    ///
+    /// The target's own, or those of a table a fired cascade changes: their
+    /// bodies may fill a `hash`-ruled column with a value the statement steered.
+    #[error(
+        "column policy: relation {relation:?} has triggers or rules, which may fill hashed columns, so writes to it are refused"
+    )]
+    Trigger {
+        /// The relation with the trigger or rule, as `schema.name`.
+        relation: String,
+    },
+
     /// A created column carrying ruled values under a name no rule can match.
     ///
     /// Names only the position: the column's name is expression text.
@@ -167,6 +179,7 @@ impl Rejection {
             Self::Laundering { .. } | Self::Unnamed { .. } => "laundering",
             Self::Chosen { .. } => "chosen",
             Self::Computed { .. } => "computed",
+            Self::Trigger { .. } => "trigger",
             Self::RowMovement { .. } => "row-movement",
             Self::ShadowedTarget { .. } => "target",
         }

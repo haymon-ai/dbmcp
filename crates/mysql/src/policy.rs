@@ -10,7 +10,8 @@
 //!    escapes as the server does,
 //! 2. analyzes the statement's lineage, resolving the names it reports
 //!    missing in `information_schema` (`TABLES`, `COLUMNS` with `INVISIBLE`
-//!    columns hidden from `*`, `VIEWS` bodies) for at most
+//!    columns hidden from `*`, `VIEWS` bodies, `TRIGGERS`, and referential
+//!    actions from `REFERENTIAL_CONSTRAINTS` and `KEY_COLUMN_USAGE`) for at most
 //!    [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds,
 //! 3. plans it with [`Analyzed::plan`]; a rejection runs nothing,
 //! 4. refuses a write that reads a view but cannot roll back, and on
@@ -35,8 +36,8 @@ use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PiiConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId, RelationKind,
-    RelationRef, StatementKind, Step, Unfit, WrittenName,
+    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Origin, Planned, Rejection, Relation, RelationId,
+    RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
 };
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_sql::{Connection as _, SqlError};
@@ -96,14 +97,56 @@ const TABLES_FOLDED: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME
 const COLUMNS_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(COLUMN_NAME AS CHAR), CAST(EXTRA AS CHAR), CAST(ORDINAL_POSITION AS SIGNED), \
      CAST(NULL AS CHAR), CAST(COLUMN_DEFAULT AS CHAR), \
-     CAST(COALESCE(GENERATION_EXPRESSION, '') <> '' AS SIGNED) \
+     CAST(COALESCE(GENERATION_EXPRESSION, '') <> '' AS SIGNED), CAST(0 AS SIGNED) \
      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
 
 /// One view's body, bound with its exact schema and name, shaped like [`COLUMNS_BRANCH`].
 const VIEW_BRANCH: &str = "(SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), \
      CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
-     CAST(VIEW_DEFINITION AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED) \
+     CAST(VIEW_DEFINITION AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(0 AS SIGNED) \
      FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?)";
+
+/// One relation's triggers, a row each, bound and shaped like [`COLUMNS_BRANCH`].
+///
+/// Without the `TRIGGER` privilege on the table the view lists none.
+const TRIGGERS_BRANCH: &str = "(SELECT CAST(EVENT_OBJECT_SCHEMA AS CHAR), CAST(EVENT_OBJECT_TABLE AS CHAR), \
+     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), \
+     CAST(NULL AS CHAR), CAST(NULL AS CHAR), CAST(0 AS SIGNED), CAST(1 AS SIGNED) \
+     FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ?)";
+
+/// Walks the referential actions below the tables of [`ROOT`] branches.
+///
+/// Per edge: its root's schema and name as bound, the parent's schema,
+/// table, and column, the child's, the rule (`CASCADE`, `SET NULL`, `SET
+/// DEFAULT`; `InnoDB` rejects the last, read anyway), and whether a parent
+/// `DELETE` fires it. Below an edge that changes a child column come that
+/// column's update edges, below one that deletes child rows every delete
+/// edge of the child. `UNION` ends the walk on cycles. Names compare in the
+/// connection collation, which may over-match (fail closed).
+const CASCADES_HEAD: &str = "WITH RECURSIVE \
+     edge (ps, pt, pc, cs, ct, cc, rule, deletes) AS (SELECT CAST(k.REFERENCED_TABLE_SCHEMA AS CHAR), \
+           CAST(k.REFERENCED_TABLE_NAME AS CHAR), CAST(k.REFERENCED_COLUMN_NAME AS CHAR), \
+           CAST(k.TABLE_SCHEMA AS CHAR), CAST(k.TABLE_NAME AS CHAR), CAST(k.COLUMN_NAME AS CHAR), \
+           CAST(CASE d.deletes WHEN 1 THEN r.DELETE_RULE ELSE r.UPDATE_RULE END AS CHAR), d.deletes \
+         FROM information_schema.REFERENTIAL_CONSTRAINTS AS r \
+         JOIN information_schema.KEY_COLUMN_USAGE AS k ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA \
+           AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND k.TABLE_NAME = r.TABLE_NAME \
+         JOIN (SELECT 0 AS deletes UNION ALL SELECT 1) AS d \
+         WHERE k.REFERENCED_COLUMN_NAME IS NOT NULL), \
+     live AS (SELECT * FROM edge WHERE rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
+     roots (rs, rt) AS (";
+
+/// One root table of [`CASCADES_HEAD`], bound with its exact schema and name.
+const ROOT: &str = "SELECT CAST(? AS CHAR), CAST(? AS CHAR)";
+
+/// Closes [`CASCADES_HEAD`] after its [`ROOT`] branches.
+const CASCADES_TAIL: &str = "), \
+     walk (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) AS ( \
+       SELECT roots.rs, roots.rt, live.* FROM roots JOIN live ON live.ps = roots.rs AND live.pt = roots.rt \
+       UNION SELECT w.rs, w.rt, e.* FROM walk AS w JOIN live AS e ON e.ps = w.cs AND e.pt = w.ct \
+         AND CASE WHEN w.rule = 'CASCADE' AND w.deletes = 1 THEN e.deletes = 1 \
+           ELSE e.deletes = 0 AND e.pc = w.cc END) \
+     SELECT rs, rt, ps, pt, pc, cs, ct, cc, rule, CAST(deletes AS SIGNED) FROM walk";
 
 /// Orders the detail rows by relation, then column position.
 const DETAILS_ORDER: &str = " ORDER BY 1, 2, 5";
@@ -317,7 +360,7 @@ struct Lookup {
 /// One row of [`TABLES_EXACT`] / [`TABLES_FOLDED`].
 type Table = (String, String, String, Option<String>);
 
-/// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] union.
+/// One row of the [`COLUMNS_BRANCH`] / [`VIEW_BRANCH`] / [`TRIGGERS_BRANCH`] union.
 type Detail = (
     String,
     String,
@@ -326,6 +369,21 @@ type Detail = (
     i64,
     Option<String>,
     Option<String>,
+    i64,
+    i64,
+);
+
+/// One edge of the [`CASCADES_HEAD`] walk.
+type Edge = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
     i64,
 );
 
@@ -340,6 +398,10 @@ struct Found {
     body: Option<String>,
     /// Columns in ordinal order.
     columns: Vec<FoundColumn>,
+    /// Whether `TRIGGERS` lists a trigger on it.
+    triggers: bool,
+    /// The referential actions below it, for a table.
+    cascades: Vec<Cascade>,
 }
 
 /// A column found in `information_schema.COLUMNS`.
@@ -691,8 +753,8 @@ async fn fetch(
         let mut branches = Vec::new();
         let mut keys = Vec::new();
         for (key, relation) in &found {
-            branches.push(COLUMNS_BRANCH);
-            keys.push(key);
+            branches.extend([COLUMNS_BRANCH, TRIGGERS_BRANCH]);
+            keys.extend([key, key]);
             if relation.kind == "VIEW" {
                 branches.push(VIEW_BRANCH);
                 keys.push(key);
@@ -703,10 +765,12 @@ async fn fetch(
         for (schema, name) in keys {
             details = details.bind(schema.as_str()).bind(name.as_str());
         }
-        for (schema, name, column, extra, _, body, default, generated) in details.fetch_all(&mut *conn).await? {
+        for (schema, name, column, extra, _, body, default, generated, trigger) in details.fetch_all(&mut *conn).await?
+        {
             let Some(relation) = found.get_mut(&(schema, name)) else {
                 continue;
             };
+            relation.triggers |= trigger != 0;
             if let Some(column) = column {
                 relation.columns.push(FoundColumn {
                     name: column,
@@ -719,6 +783,7 @@ async fn fetch(
                 relation.body = body;
             }
         }
+        cascades(conn, &mut found).await?;
     }
 
     let mut unresolved = Vec::new();
@@ -745,6 +810,52 @@ async fn fetch(
     }
     entries.extend(vacant(conn, probe, unresolved).await?);
     Ok(entries)
+}
+
+/// Reads the referential actions below every table of `found`, in one walk.
+///
+/// `MySQL` and `MariaDB` fire no triggers on cascaded changes.
+async fn cascades(
+    conn: &mut sqlx::MySqlConnection,
+    found: &mut BTreeMap<(String, String), Found>,
+) -> Result<(), sqlx::Error> {
+    let roots: Vec<_> = found
+        .iter()
+        .filter(|(_, relation)| matches!(relation.kind.as_str(), "BASE TABLE" | "SYSTEM VERSIONED"))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let sql = format!(
+        "{CASCADES_HEAD}{}{CASCADES_TAIL}",
+        vec![ROOT; roots.len()].join(" UNION ALL ")
+    );
+    let mut query = sqlx::query_as::<_, Edge>(AssertSqlSafe(sql));
+    for (schema, name) in &roots {
+        query = query.bind(schema.as_str()).bind(name.as_str());
+    }
+    let column =
+        |schema: &str, name: &str, column: String| SourceRef::new(RelationId::new(CATALOG, schema, name), column);
+    for (rs, rt, ps, pt, pc, cs, ct, cc, rule, deletes) in query.fetch_all(&mut *conn).await? {
+        let Some(relation) = found.get_mut(&(rs, rt)) else {
+            continue;
+        };
+        let on_delete = deletes != 0;
+        relation.cascades.push(Cascade {
+            parent: column(&ps, &pt, pc),
+            child: column(&cs, &ct, cc),
+            action: match rule.to_ascii_uppercase().as_str() {
+                "CASCADE" if on_delete => CascadeAction::Delete,
+                "CASCADE" => CascadeAction::Copy,
+                "SET NULL" => CascadeAction::Null,
+                _ => CascadeAction::Default,
+            },
+            on_delete,
+            triggers: false,
+        });
+    }
+    Ok(())
 }
 
 /// Builds the catalog entry of one relation found in `information_schema`.
@@ -777,7 +888,9 @@ fn entry(schema: &str, name: &str, found: &Found) -> Entry {
             catalog.with_facts(default, column.generated, on_update)
         })
         .collect();
-    let relation = Relation::new(RelationId::new(CATALOG, schema, name), kind, columns);
+    let relation = Relation::new(RelationId::new(CATALOG, schema, name), kind, columns)
+        .with_triggers(found.triggers)
+        .with_cascades(found.cascades.clone());
     if kind != RelationKind::View {
         return Entry::Resolved(relation);
     }
@@ -940,7 +1053,27 @@ mod tests {
                 column("id", "auto_increment", false, false),
                 column("secret", "INVISIBLE", false, false),
             ],
+            ..Found::default()
         }
+    }
+
+    #[test]
+    fn entries_carry_the_triggers_and_cascades_found() {
+        let cascade = Cascade {
+            parent: SourceRef::new(RelationId::new(CATALOG, "app", "r"), "id"),
+            child: SourceRef::new(RelationId::new(CATALOG, "app", "c"), "rid"),
+            action: CascadeAction::Copy,
+            on_delete: false,
+            triggers: false,
+        };
+        let plain = resolved("app", &found("BASE TABLE", None)).expect("table");
+        assert!(!plain.triggers && plain.cascades.is_empty(), "{plain:?}");
+        let mut table = found("BASE TABLE", None);
+        table.triggers = true;
+        table.cascades = vec![cascade.clone()];
+        let relation = resolved("app", &table).expect("table");
+        assert!(relation.triggers);
+        assert_eq!(relation.cascades, [cascade]);
     }
 
     fn column(name: &str, extra: &str, default: bool, generated: bool) -> FoundColumn {
