@@ -9,8 +9,8 @@ repository.workspace = true
 
 [dependencies]
 dbmcp-config = { workspace = true }
-dbmcp-privacy = { workspace = true }
 dbmcp-policy = { workspace = true }
+dbmcp-privacy = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
 dbmcp-truncate = { workspace = true }
