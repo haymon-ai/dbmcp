@@ -34,7 +34,7 @@ fn fold(dialect: Dialect, ident: &Ident) -> String {
     }
 }
 
-/// Resolves a called function name to its recorded name, whether it is known, and whether it returns a set.
+/// Resolves a called function to its recorded name, known flag, and set-returning flag.
 ///
 /// Known when the dialect lists the unqualified (or, on `PostgreSQL`,
 /// `pg_catalog.`-qualified) name. Matching is by name only, so a same-named

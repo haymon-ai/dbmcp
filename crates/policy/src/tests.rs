@@ -96,6 +96,11 @@ fn pg(lineage: &Lineage, config: &PiiConfig) -> Result<Plan, Rejection> {
     plan_on(lineage, Dialect::Postgres, config)
 }
 
+/// Analyzes `sql` on `PostgreSQL` against `catalog` and plans it.
+fn pg_sql(sql: &str, catalog: &Catalog, config: &PiiConfig) -> Result<Plan, Rejection> {
+    pg(&analyze(sql, Dialect::Postgres, catalog).expect(sql), config)
+}
+
 /// Plans `lineage` on `PostgreSQL` under `names`.
 fn pg_with(lineage: &Lineage, config: &PiiConfig, names: &Names) -> Result<Plan, Rejection> {
     plan(lineage, Dialect::Postgres, config, names)
@@ -745,7 +750,7 @@ fn same_rule_pair_combines() {
     );
 }
 
-// Flow: `hash` only on bare outputs.
+// Flow: `hash` only on bare outputs; derived outputs read as the placeholder.
 
 /// The `hash` rule on `users.email` and `invoices.billing_email`, `EMAIL_ADDRESS`.
 fn hashed_emails() -> Vec<ColumnRule> {
@@ -925,8 +930,7 @@ fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
         ),
     ];
     for (sql, expected) in cases {
-        let lineage = analyze(sql, Dialect::Postgres, &catalog).expect(sql);
-        let positions = positions(pg(&lineage, &config).expect(sql));
+        let positions = positions(pg_sql(sql, &catalog, &config).expect(sql));
         assert_eq!(positions, [expected], "{sql}");
     }
 }
@@ -935,7 +939,7 @@ fn analyzed_outputs_hash_only_when_bare_and_read_derived_as_the_placeholder() {
 fn row_count_uses_of_ruled_columns_reject() {
     let catalog = tables(&[("users", &["id", "email", "ssn", "name"])]);
     let config = config(vec![ssn("shop.public.users.ssn")]);
-    let plan = |sql: &str| pg(&analyze(sql, Dialect::Postgres, &catalog).expect(sql), &config);
+    let plan = |sql: &str| pg_sql(sql, &catalog, &config);
     for (sql, role) in [
         ("SELECT DISTINCT ssn FROM users", "DISTINCT or a set operation"),
         (
@@ -1197,7 +1201,7 @@ fn unnamed_created_columns_ask_for_an_alias_only_when_bare() {
         Entry::Vacant(table("copy")),
     );
     let config = config(vec![ssn("shop.public.users.ssn"), ssn("shop.public.copy.ssn")]);
-    let plan = |sql: &str| pg(&analyze(sql, Dialect::Postgres, &catalog).expect(sql), &config);
+    let plan = |sql: &str| pg_sql(sql, &catalog, &config);
 
     assert_eq!(
         plan("CREATE TABLE copy AS SELECT (ssn) FROM users"),
@@ -1294,14 +1298,12 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
                 .map(|key| rule(&format!("shop.public.{key}"), operator, "PHONE_NUMBER"))
                 .to_vec(),
         );
-        let lineage = analyze(derived, Dialect::Postgres, &catalog).expect(derived);
         assert_eq!(
-            pg(&lineage, &config),
+            pg_sql(derived, &catalog, &config),
             Err(Rejection::Laundering { column: column.into() }),
             "{derived}"
         );
-        let lineage = analyze(bare, Dialect::Postgres, &catalog).expect(bare);
-        assert!(pg(&lineage, &config).is_ok(), "{bare}");
+        assert!(pg_sql(bare, &catalog, &config).is_ok(), "{bare}");
     }
 }
 

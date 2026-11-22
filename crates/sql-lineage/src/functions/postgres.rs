@@ -295,8 +295,6 @@ pub(super) const NAMES: &[&str] = &[
 ];
 
 /// The `PostgreSQL` built-in set-returning functions, lowercase.
-///
-/// Each call can turn one row into many, so the row count reveals its arguments.
 pub(super) const SET_RETURNING: &[&str] = &[
     "generate_series",
     "generate_subscripts",

@@ -185,8 +185,12 @@ impl Redactor {
             for row in rows {
                 for ((value, name), action) in row.iter_mut().zip(columns).zip(&actions) {
                     let entity = match action {
-                        Action::Whole(operator, entity) if rewrite_whole(value, operator, *entity) => *entity,
-                        Action::Whole(..) => continue,
+                        Action::Whole(operator, entity) => {
+                            if !rewrite_whole(value, operator, *entity) {
+                                continue;
+                            }
+                            *entity
+                        }
                         Action::Placeholder(entity) => {
                             *value = Value::String(entity.placeholder().to_owned());
                             *entity

@@ -338,10 +338,10 @@ impl Ctx<'_> {
         }
         let (name, known, rows) = functions::resolve(self.dialect, name)?;
         self.call(name, known);
-        // A set-returning call's row count reveals its arguments, so they are references too.
-        let outer = acc;
+        // Collect a set-returning call's arguments apart, so they can be referenced alone.
         let mut own = Sources::new();
-        let acc = &mut own;
+        let outer = acc;
+        let acc = if rows { &mut own } else { &mut *outer };
         match args {
             FunctionArguments::None => {}
             FunctionArguments::Subquery(query) => self.subquery(query, level, acc)?,
@@ -383,9 +383,9 @@ impl Ctx<'_> {
         }
         self.opt(filter.as_deref(), level, clause, acc)?;
         if rows {
-            self.refer(own.clone(), Role::Generator);
+            outer.extend(own.iter().cloned());
+            self.refer(own, Role::Generator);
         }
-        outer.extend(own);
         match over {
             None | Some(WindowType::NamedWindow(_)) => Ok(()),
             Some(WindowType::WindowSpec(spec)) => self.window(spec, level, clause),

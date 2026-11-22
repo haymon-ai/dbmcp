@@ -222,22 +222,23 @@ fn writes(
         };
         // Literals and unruled columns carry no ruled values.
         let source = combine(&write.sources, write.flow, config, &names.families).ok_or_else(laundering)?;
-        // A computed ruled value never lands under a rule, so an alias would not help.
-        if matches!(source, Position::Placeholder(_)) {
-            return Err(laundering());
-        }
-        if source != Position::Global {
-            if !write.named {
+        match source {
+            Position::Global => {}
+            // A computed ruled value is laundering into any target, aliased or not.
+            Position::Placeholder(_) => return Err(laundering()),
+            Position::Action(..) if !write.named => {
                 return Err(Rejection::Unnamed {
                     relation: relation_name(target),
                     position,
                 });
             }
             // Every member a row can land in must read back under the source's rule.
-            if !landing().all(|(member, ancestors)| {
-                merge(direct(config, member, ancestors.iter(), &write.name).map(pair)) == Some(source)
-            }) {
-                return Err(laundering());
+            Position::Action(..) => {
+                if !landing().all(|(member, ancestors)| {
+                    merge(direct(config, member, ancestors.iter(), &write.name).map(pair)) == Some(source)
+                }) {
+                    return Err(laundering());
+                }
             }
         }
         // The landing check proved a `hash` source equal to every member's pair.
@@ -613,17 +614,13 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PiiConfig, families: &Famil
         .find(|id| covers_ruled(config, families, id))
 }
 
-/// Combines the rules of `sources` reaching a value by `flow`; `None` when two pairs differ.
+/// Combines the rules of `sources` reaching a value by `flow`; `None` on a conflict.
 ///
-/// Ruled sources decide the position; unruled ones add nothing. No ruled
-/// source means global detection. A value not [`Flow::Bare`] over a ruled
-/// source is the entity's placeholder, `NULL` included, whatever the
-/// operators, and its ruled sources must share the entity: a condition in
-/// the select list would otherwise answer a refused `WHERE` through
-/// `null`, distinct tokens, or `mask` length. A `hash` pair survives only
-/// on a bare value whose every source is covered by that same pair;
-/// otherwise each `hash` pair turns into `replace` before merging, so a
-/// set operation never gets the token of a value its query chose.
+/// Unruled sources add nothing; no ruled source means global detection.
+/// A non-[`Flow::Bare`] value over ruled sources is their shared entity's
+/// placeholder, so a select-list condition cannot answer through `null`,
+/// tokens, or `mask` length. A bare value keeps `hash` only when every
+/// source is hashed under that pair; otherwise `hash` becomes `replace`.
 fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PiiConfig, families: &Families) -> Option<Position> {
     let pairs: Vec<Vec<(PiiOperator, &str)>> = sources
         .iter()
@@ -643,8 +640,7 @@ fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PiiConfig, famili
         let entity = Entity::from_str(entity).expect("ColumnRule::ENTITIES mirrors Entity");
         return Some(Position::Placeholder(entity));
     }
-    let hashed = flow == Flow::Bare
-        && first.is_some_and(|first| first.0 == PiiOperator::Hash)
+    let hashed = first.is_some_and(|first| first.0 == PiiOperator::Hash)
         && pairs
             .iter()
             .all(|covered| !covered.is_empty() && covered.iter().all(|&p| Some(p) == first));

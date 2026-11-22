@@ -5718,10 +5718,11 @@ async fn column_rules_refuse_derived_copies_into_hashed_columns() {
     assert_eq!(count_id(&handler, "policy_hashed_copy", 900).await, 0);
 }
 
-/// Reads `SELECT id, <column> FROM <table> ORDER BY id`.
+/// The values of `<table>.<column>`, ordered by `id`.
 async fn masked_rows(handler: &MysqlHandler, table: &str, column: &str) -> Vec<Value> {
-    let query = format!("SELECT id, {column} FROM {table} ORDER BY id");
-    ruled_read(handler, &query).await.expect(&query)
+    let query = format!("SELECT {column} FROM {table} ORDER BY id");
+    let rows = ruled_read(handler, &query).await.expect(&query);
+    rows.into_iter().map(|row| row[column].clone()).collect()
 }
 
 #[tokio::test]
@@ -5751,17 +5752,10 @@ async fn column_rules_refuse_derived_writes_into_same_ruled_columns() {
             .rows_affected,
         2
     );
-    let copied: Vec<Value> = masked_rows(&handler, "policy_masked_copy", "phone")
-        .await
-        .into_iter()
-        .map(|row| row["phone"].clone())
-        .collect();
-    let stored: Vec<Value> = masked_rows(&handler, "policy_masked", "phone")
-        .await
-        .into_iter()
-        .map(|row| row["phone"].clone())
-        .collect();
-    assert_eq!(copied, stored);
+    assert_eq!(
+        masked_rows(&handler, "policy_masked_copy", "phone").await,
+        masked_rows(&handler, "policy_masked", "phone").await
+    );
     let query = "DELETE FROM policy_masked_copy WHERE id > 900";
     assert_eq!(
         handler
