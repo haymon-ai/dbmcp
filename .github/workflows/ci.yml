@@ -71,7 +71,7 @@ jobs:
       - run: cargo doc --workspace --no-deps
 
   archive:
-    name: Build Tests
+    name: Build Nextest Archive
     runs-on: ubuntu-24.04
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
