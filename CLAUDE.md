@@ -11,17 +11,17 @@ DBMCP_DB_BACKEND=mysql DBMCP_DB_USER=root cargo run          # stdio transport
 DBMCP_TRANSPORT=http DBMCP_DB_BACKEND=mysql cargo run         # HTTP on 127.0.0.1:9001
 cargo run -- --config-file dbmcp.yaml --env-file .env         # YAML config + env file
 
-cargo test                          # all tests
-cargo test --workspace --lib --bins # unit tests only
-cargo test <name>             # single test
-cargo test -- --nocapture     # with stdout
+cargo nextest run --workspace # unit + DB-free integration tests
+cargo nextest run <name>      # single test
+cargo nextest run --no-capture # with stdout
+cargo test --doc --workspace  # doc tests (nextest cannot run them)
 
 cargo clippy --workspace --tests -- -D warnings   # lint (warnings = errors)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # docs (broken links = errors)
 cargo fmt --check             # check formatting
 cargo fmt                     # apply formatting
 
-./tests/run.sh                # integration tests (Docker required)
+./tests/run.sh                # integration tests (Docker + cargo-nextest required)
 ./tests/run.sh --filter mysql # filter by backend
 ```
 
@@ -98,8 +98,9 @@ ALWAYS run before considering any task complete:
 cargo fmt                           # format
 cargo clippy --workspace --tests -- -D warnings         # lint
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps  # rustdoc links
-cargo test --workspace --lib --bins # unit tests
-./tests/run.sh                # integration tests (Docker required)
+cargo nextest run --workspace       # unit tests
+cargo test --doc --workspace  # doc tests
+./tests/run.sh                # integration tests (Docker + cargo-nextest required)
 ```
 
 ALWAYS verify for new/modified code:

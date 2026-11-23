@@ -13,6 +13,6 @@
 ---
 
 - [ ] Linked to an issue (if applicable)
-- [ ] Tests pass (`cargo test`)
+- [ ] Tests pass (`cargo nextest run --workspace`)
 - [ ] Lints pass (`cargo clippy --workspace --tests -- -D warnings`)
 - [ ] Formatted (`cargo fmt --check`)

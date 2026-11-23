@@ -103,6 +103,14 @@ check_docker() {
     fi
 }
 
+check_nextest() {
+    if ! cargo nextest --version &>/dev/null; then
+        echo "ERROR: cargo-nextest is not installed."
+        echo "Install it: https://nexte.st/docs/installation/pre-built-binaries/"
+        exit 2
+    fi
+}
+
 wait_for_ready() {
     local service="$1"
     local db_type="$2"
@@ -201,14 +209,14 @@ run_entry() {
         fi
         echo " OK"
 
-        echo "  Running cargo test..."
+        echo "  Running cargo nextest..."
         for bin in $test_bins; do
             test_output=$(
                 DB_PATH="$db_path" \
                 MCP_READ_ONLY=false \
-                cargo test --test "$bin" -- --test-threads=1 2>&1
+                cargo nextest run --workspace --no-fail-fast --ignore-default-filter -E "binary_id(dbmcp::$bin)" 2>&1
             ) || test_exit=$?
-            echo "$test_output" | grep -E "^(test |test result:)" || true
+            echo "$test_output" | grep -E "^ *(PASS|FAIL|SIG[A-Z]+|ABORT|TIMEOUT|LEAK|Summary) " || true
             local count
             count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
             test_count=$((test_count + count))
@@ -236,7 +244,7 @@ run_entry() {
             OVERALL_EXIT=1; return
         fi
 
-        echo "  Running cargo test..."
+        echo "  Running cargo nextest..."
         for bin in $test_bins; do
             if [ "$bin" = "functional_ssh" ]; then
                 if ! ensure_sshd; then
@@ -259,21 +267,21 @@ run_entry() {
                     DBMCP_SSH_STRICT_HOST_KEY_CHECKING=no \
                     SSHD_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q sshd)" \
                     ${tls_env[@]+"${tls_env[@]}"} \
-                    cargo test --test "$bin" -- --test-threads=1 2>&1
+                    cargo nextest run --workspace --no-fail-fast --ignore-default-filter -E "binary_id(dbmcp::$bin)" 2>&1
                 ) || test_exit=$?
                 rm -f "$tls_ca"
             elif [ "$bin" = "policy_${db_type}" ]; then
                 test_output=$(
                     DBMCP_DB_BACKEND="$backend" DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
-                    cargo test -p "dbmcp-${db_type}" --lib -- --ignored --test-threads=1 2>&1
+                    cargo nextest run --workspace --no-fail-fast -E "package(dbmcp-${db_type}) & kind(lib)" --run-ignored only 2>&1
                 ) || test_exit=$?
             else
                 test_output=$(
                     DBMCP_DB_BACKEND="$backend" DBMCP_DB_HOST=127.0.0.1 DBMCP_DB_PORT="$host_port" \
-                    cargo test --test "$bin" -- --test-threads=1 2>&1
+                    cargo nextest run --workspace --no-fail-fast --ignore-default-filter -E "binary_id(dbmcp::$bin)" 2>&1
                 ) || test_exit=$?
             fi
-            echo "$test_output" | grep -E "^(test |test result:)" || true
+            echo "$test_output" | grep -E "^ *(PASS|FAIL|SIG[A-Z]+|ABORT|TIMEOUT|LEAK|Summary) " || true
             local count
             count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
             test_count=$((test_count + count))
@@ -347,11 +355,12 @@ case "$TEST_TYPE" in
 esac
 
 check_docker
+check_nextest
 
 echo "Database Functional Test Suite (type: ${TEST_TYPE})"
 echo "=============================================="
 echo "Building project..."
-cargo test --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
+cargo nextest run --workspace --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
 
 for entry in "${MATRIX[@]}"; do
     IFS=':' read -r service db_type container_port <<< "$entry"

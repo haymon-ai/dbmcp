@@ -1206,309 +1206,314 @@ mod tests {
         );
     }
 
-    /// Connects to the seeded `app` database that `./tests/run.sh` starts.
-    async fn seeded() -> sqlx::PgConnection {
-        let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port = std::env::var("DBMCP_DB_PORT")
-            .ok()
-            .and_then(|port| port.parse().ok())
-            .unwrap_or(5432);
-        let options = sqlx::postgres::PgConnectOptions::new()
-            .host(&host)
-            .port(port)
-            .username("postgres")
-            .database("app");
-        <sqlx::PgConnection as sqlx::Connection>::connect_with(&options)
-            .await
-            .expect("connect to the seeded database")
-    }
+    /// Tests against the seeded database; `#[ignore]`d outside `./tests/run.sh` and CI.
+    mod db {
+        use super::*;
 
-    /// Fetches the family of `public.<name>` from the seeded database.
-    async fn seeded_relation(conn: &mut sqlx::PgConnection, name: &str) -> Relation {
-        let probe = probe(Some("public"));
-        let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
-        let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
-        match entries.into_iter().next() {
-            Some((_, Entry::Resolved(relation))) => relation,
-            other => panic!("{name}: {other:?}"),
+        /// Connects to the seeded `app` database that `./tests/run.sh` starts.
+        async fn seeded() -> sqlx::PgConnection {
+            let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+            let port = std::env::var("DBMCP_DB_PORT")
+                .ok()
+                .and_then(|port| port.parse().ok())
+                .unwrap_or(5432);
+            let options = sqlx::postgres::PgConnectOptions::new()
+                .host(&host)
+                .port(port)
+                .username("postgres")
+                .database("app");
+            <sqlx::PgConnection as sqlx::Connection>::connect_with(&options)
+                .await
+                .expect("connect to the seeded database")
         }
-    }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn resolve_reads_inheritance_and_partition_trees() {
-        let mut conn = seeded().await;
-        assert_eq!(
-            seeded_relation(&mut conn, "ptab").await.family,
-            Family {
-                partitioned: true,
-                ancestors: BTreeSet::new(),
-                descendants: vec![member("ptab_1", false, &["ptab"]), member("ptab_2", false, &["ptab"])],
+        /// Fetches the family of `public.<name>` from the seeded database.
+        async fn seeded_relation(conn: &mut sqlx::PgConnection, name: &str) -> Relation {
+            let probe = probe(Some("public"));
+            let names = vec![(WrittenName::query(vec![NamePart::bare(name)]), reference(None, name))];
+            let entries = fetch(conn, &probe, names, &mut Owners::new()).await.expect("fetch");
+            match entries.into_iter().next() {
+                Some((_, Entry::Resolved(relation))) => relation,
+                other => panic!("{name}: {other:?}"),
             }
-        );
-        assert_eq!(
-            seeded_relation(&mut conn, "ptab_2").await.family,
-            Family {
-                partitioned: false,
-                ancestors: ids(&["ptab"]),
-                descendants: Vec::new(),
-            }
-        );
-        let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
-        assert_eq!(
-            seeded_relation(&mut conn, "inh_parent").await.family,
-            Family {
-                partitioned: false,
-                ancestors: BTreeSet::new(),
-                descendants: vec![
-                    member("inh_child", false, &["inh_parent", "inh_other"]),
-                    grandchild.clone()
-                ],
-            }
-        );
-        assert_eq!(
-            seeded_relation(&mut conn, "inh_child").await.family,
-            Family {
-                partitioned: false,
-                ancestors: ids(&["inh_parent", "inh_other"]),
-                descendants: vec![grandchild],
-            }
-        );
-        assert_eq!(seeded_relation(&mut conn, "users").await.family, Family::default());
-    }
+        }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn resolve_reads_column_facts_over_every_landing_member() {
-        let mut conn = seeded().await;
-        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
-        sqlx::raw_sql(SqlStr::from_static(
-            "CREATE DOMAIN facts_email AS text DEFAULT 'd@example.com'; \
-             CREATE TABLE facts_plain (id int GENERATED ALWAYS AS IDENTITY, a text, \
-               b text DEFAULT 'x', c facts_email, d text GENERATED ALWAYS AS (a) STORED); \
-             CREATE TABLE facts_p (id int, email text) PARTITION BY LIST (id); \
-             CREATE TABLE facts_p1 PARTITION OF facts_p (email DEFAULT 'p@example.com') FOR VALUES IN (1)",
-        ))
-        .execute(&mut *tx)
-        .await
-        .expect("setup");
-        let mut facts = Vec::new();
-        for name in ["facts_plain", "facts_p"] {
-            facts.extend(
-                seeded_relation(&mut tx, name)
-                    .await
-                    .columns
-                    .into_iter()
-                    .filter(|column| column.star_visible)
-                    .map(|column| (column.name, column.default, column.generated, column.on_update)),
+        #[tokio::test]
+        #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+        async fn resolve_reads_inheritance_and_partition_trees() {
+            let mut conn = seeded().await;
+            assert_eq!(
+                seeded_relation(&mut conn, "ptab").await.family,
+                Family {
+                    partitioned: true,
+                    ancestors: BTreeSet::new(),
+                    descendants: vec![member("ptab_1", false, &["ptab"]), member("ptab_2", false, &["ptab"])],
+                }
+            );
+            assert_eq!(
+                seeded_relation(&mut conn, "ptab_2").await.family,
+                Family {
+                    partitioned: false,
+                    ancestors: ids(&["ptab"]),
+                    descendants: Vec::new(),
+                }
+            );
+            let grandchild = member("inh_grandchild", false, &["inh_child", "inh_parent", "inh_other"]);
+            assert_eq!(
+                seeded_relation(&mut conn, "inh_parent").await.family,
+                Family {
+                    partitioned: false,
+                    ancestors: BTreeSet::new(),
+                    descendants: vec![
+                        member("inh_child", false, &["inh_parent", "inh_other"]),
+                        grandchild.clone()
+                    ],
+                }
+            );
+            assert_eq!(
+                seeded_relation(&mut conn, "inh_child").await.family,
+                Family {
+                    partitioned: false,
+                    ancestors: ids(&["inh_parent", "inh_other"]),
+                    descendants: vec![grandchild],
+                }
+            );
+            assert_eq!(seeded_relation(&mut conn, "users").await.family, Family::default());
+        }
+
+        #[tokio::test]
+        #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+        async fn resolve_reads_column_facts_over_every_landing_member() {
+            let mut conn = seeded().await;
+            let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+            sqlx::raw_sql(SqlStr::from_static(
+                "CREATE DOMAIN facts_email AS text DEFAULT 'd@example.com'; \
+                 CREATE TABLE facts_plain (id int GENERATED ALWAYS AS IDENTITY, a text, \
+                   b text DEFAULT 'x', c facts_email, d text GENERATED ALWAYS AS (a) STORED); \
+                 CREATE TABLE facts_p (id int, email text) PARTITION BY LIST (id); \
+                 CREATE TABLE facts_p1 PARTITION OF facts_p (email DEFAULT 'p@example.com') FOR VALUES IN (1)",
+            ))
+            .execute(&mut *tx)
+            .await
+            .expect("setup");
+            let mut facts = Vec::new();
+            for name in ["facts_plain", "facts_p"] {
+                facts.extend(
+                    seeded_relation(&mut tx, name)
+                        .await
+                        .columns
+                        .into_iter()
+                        .filter(|column| column.star_visible)
+                        .map(|column| (column.name, column.default, column.generated, column.on_update)),
+                );
+            }
+            tx.rollback().await.expect("rollback");
+            let fact = |name: &str, default, generated| (name.to_owned(), default, generated, false);
+            assert_eq!(
+                facts,
+                [
+                    fact("id", true, false),
+                    fact("a", false, false),
+                    fact("b", true, false),
+                    fact("c", true, false),
+                    fact("d", true, true),
+                    fact("id", false, false),
+                    fact("email", true, false),
+                ]
             );
         }
-        tx.rollback().await.expect("rollback");
-        let fact = |name: &str, default, generated| (name.to_owned(), default, generated, false);
-        assert_eq!(
-            facts,
-            [
-                fact("id", true, false),
-                fact("a", false, false),
-                fact("b", true, false),
-                fact("c", true, false),
-                fact("d", true, true),
-                fact("id", false, false),
-                fact("email", true, false),
-            ]
-        );
-    }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn resolve_reads_triggers_rules_and_the_cascades_below_every_landing_member() {
-        let mut conn = seeded().await;
-        let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
-        sqlx::raw_sql(SqlStr::from_static(
-            "CREATE FUNCTION fk_noop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; \
-             CREATE TABLE fk_p (a int, b int, UNIQUE (a, b)) PARTITION BY LIST (a); \
-             CREATE TABLE fk_p1 PARTITION OF fk_p FOR VALUES IN (1); \
-             CREATE TABLE fk_c (id int UNIQUE, x int, y int, \
-               FOREIGN KEY (y, x) REFERENCES fk_p (a, b) ON UPDATE CASCADE ON DELETE SET NULL); \
-             CREATE TABLE fk_g (z int REFERENCES fk_c (id) ON DELETE CASCADE, \
-               w int REFERENCES fk_c (id) ON UPDATE SET DEFAULT ON DELETE RESTRICT); \
-             CREATE TRIGGER fk_g_noop BEFORE INSERT ON fk_g FOR EACH ROW EXECUTE FUNCTION fk_noop(); \
-             ALTER TABLE fk_g DISABLE TRIGGER fk_g_noop; \
-             CREATE TABLE fk_r (id int); \
-             CREATE RULE fk_r_none AS ON DELETE TO fk_r DO INSTEAD NOTHING; \
-             CREATE TABLE fk_t (id int); \
-             CREATE TRIGGER fk_t_noop BEFORE INSERT ON fk_p1 FOR EACH ROW EXECUTE FUNCTION fk_noop()",
-        ))
-        .execute(&mut *tx)
-        .await
-        .expect("setup");
-        let mut relations = Vec::new();
-        for name in ["fk_p", "fk_c", "fk_r", "fk_t", "user_emails"] {
-            relations.push(seeded_relation(&mut tx, name).await);
+        #[tokio::test]
+        #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+        async fn resolve_reads_triggers_rules_and_the_cascades_below_every_landing_member() {
+            let mut conn = seeded().await;
+            let mut tx = sqlx::Connection::begin(&mut conn).await.expect("begin");
+            sqlx::raw_sql(SqlStr::from_static(
+                "CREATE FUNCTION fk_noop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; \
+                 CREATE TABLE fk_p (a int, b int, UNIQUE (a, b)) PARTITION BY LIST (a); \
+                 CREATE TABLE fk_p1 PARTITION OF fk_p FOR VALUES IN (1); \
+                 CREATE TABLE fk_c (id int UNIQUE, x int, y int, \
+                   FOREIGN KEY (y, x) REFERENCES fk_p (a, b) ON UPDATE CASCADE ON DELETE SET NULL); \
+                 CREATE TABLE fk_g (z int REFERENCES fk_c (id) ON DELETE CASCADE, \
+                   w int REFERENCES fk_c (id) ON UPDATE SET DEFAULT ON DELETE RESTRICT); \
+                 CREATE TRIGGER fk_g_noop BEFORE INSERT ON fk_g FOR EACH ROW EXECUTE FUNCTION fk_noop(); \
+                 ALTER TABLE fk_g DISABLE TRIGGER fk_g_noop; \
+                 CREATE TABLE fk_r (id int); \
+                 CREATE RULE fk_r_none AS ON DELETE TO fk_r DO INSTEAD NOTHING; \
+                 CREATE TABLE fk_t (id int); \
+                 CREATE TRIGGER fk_t_noop BEFORE INSERT ON fk_p1 FOR EACH ROW EXECUTE FUNCTION fk_noop()",
+            ))
+            .execute(&mut *tx)
+            .await
+            .expect("setup");
+            let mut relations = Vec::new();
+            for name in ["fk_p", "fk_c", "fk_r", "fk_t", "user_emails"] {
+                relations.push(seeded_relation(&mut tx, name).await);
+            }
+            tx.rollback().await.expect("rollback");
+            let triggers: Vec<_> = relations.iter().map(|relation| relation.triggers).collect();
+            // A partition's trigger, a rule, none, and a view's `SELECT` rule only.
+            assert_eq!(triggers, [true, false, true, false, false]);
+            let edges = |relation: &Relation| {
+                let mut edges: Vec<_> = relation
+                    .cascades
+                    .iter()
+                    .map(|edge| {
+                        format!(
+                            "{}.{} -> {}.{} {:?} delete={} triggers={}",
+                            edge.parent.relation.name,
+                            edge.parent.column,
+                            edge.child.relation.name,
+                            edge.child.column,
+                            edge.action,
+                            edge.on_delete,
+                            edge.triggers
+                        )
+                    })
+                    .collect();
+                edges.sort();
+                edges
+            };
+            // `fk_p1` carries a clone of the constraint, so its edges come too.
+            // The walk takes every edge of the reached `fk_c`, though no write
+            // through `fk_p` fires them (`fk_c.id` never changes, no `fk_c` row
+            // is removed).
+            assert_eq!(
+                edges(&relations[0]),
+                [
+                    "fk_c.id -> fk_g.w Default delete=false triggers=true",
+                    "fk_c.id -> fk_g.z Delete delete=true triggers=true",
+                    "fk_p.a -> fk_c.y Copy delete=false triggers=false",
+                    "fk_p.a -> fk_c.y Null delete=true triggers=false",
+                    "fk_p.b -> fk_c.x Copy delete=false triggers=false",
+                    "fk_p.b -> fk_c.x Null delete=true triggers=false",
+                    "fk_p1.a -> fk_c.y Copy delete=false triggers=false",
+                    "fk_p1.a -> fk_c.y Null delete=true triggers=false",
+                    "fk_p1.b -> fk_c.x Copy delete=false triggers=false",
+                    "fk_p1.b -> fk_c.x Null delete=true triggers=false",
+                ]
+            );
+            assert_eq!(
+                edges(&relations[1]),
+                [
+                    "fk_c.id -> fk_g.w Default delete=false triggers=true",
+                    "fk_c.id -> fk_g.z Delete delete=true triggers=true",
+                ]
+            );
         }
-        tx.rollback().await.expect("rollback");
-        let triggers: Vec<_> = relations.iter().map(|relation| relation.triggers).collect();
-        // A partition's trigger, a rule, none, and a view's `SELECT` rule only.
-        assert_eq!(triggers, [true, false, true, false, false]);
-        let edges = |relation: &Relation| {
-            let mut edges: Vec<_> = relation
-                .cascades
-                .iter()
-                .map(|edge| {
-                    format!(
-                        "{}.{} -> {}.{} {:?} delete={} triggers={}",
-                        edge.parent.relation.name,
-                        edge.parent.column,
-                        edge.child.relation.name,
-                        edge.child.column,
-                        edge.action,
-                        edge.on_delete,
-                        edge.triggers
-                    )
-                })
-                .collect();
-            edges.sort();
-            edges
-        };
-        // `fk_p1` carries a clone of the constraint, so its edges come too.
-        // The walk takes every edge of the reached `fk_c`, though no write
-        // through `fk_p` fires them (`fk_c.id` never changes, no `fk_c` row
-        // is removed).
-        assert_eq!(
-            edges(&relations[0]),
-            [
-                "fk_c.id -> fk_g.w Default delete=false triggers=true",
-                "fk_c.id -> fk_g.z Delete delete=true triggers=true",
-                "fk_p.a -> fk_c.y Copy delete=false triggers=false",
-                "fk_p.a -> fk_c.y Null delete=true triggers=false",
-                "fk_p.b -> fk_c.x Copy delete=false triggers=false",
-                "fk_p.b -> fk_c.x Null delete=true triggers=false",
-                "fk_p1.a -> fk_c.y Copy delete=false triggers=false",
-                "fk_p1.a -> fk_c.y Null delete=true triggers=false",
-                "fk_p1.b -> fk_c.x Copy delete=false triggers=false",
-                "fk_p1.b -> fk_c.x Null delete=true triggers=false",
-            ]
-        );
-        assert_eq!(
-            edges(&relations[1]),
-            [
-                "fk_c.id -> fk_g.w Default delete=false triggers=true",
-                "fk_c.id -> fk_g.z Delete delete=true triggers=true",
-            ]
-        );
-    }
 
-    /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.
-    ///
-    /// Returns whether every tree the plan read is unchanged as far as rules go.
-    async fn unchanged_across(
-        conn: &mut sqlx::PgConnection,
-        other: &mut sqlx::PgConnection,
-        config: &PrivacyConfig,
-        sql: &str,
-        change: &'static str,
-    ) -> bool {
-        let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static("START TRANSACTION READ ONLY"))
-            .await
-            .expect("begin");
-        let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
-        let mut planned = analyzed.plan(config).expect("plan");
-        sqlx::raw_sql(SqlStr::from_static(change))
-            .execute(&mut *other)
-            .await
-            .expect("change");
-        execute(&mut tx, sql, &mut planned, &owners, &mut |_| {})
-            .await
-            .expect("execute");
-        let unchanged = families_unchanged(&mut tx, &owners, &planned).await.expect("re-read");
-        tx.rollback().await.expect("rollback");
-        unchanged
-    }
+        /// Plans `sql` on `conn`, runs `change` on `other`, then executes and re-reads the trees.
+        ///
+        /// Returns whether every tree the plan read is unchanged as far as rules go.
+        async fn unchanged_across(
+            conn: &mut sqlx::PgConnection,
+            other: &mut sqlx::PgConnection,
+            config: &PrivacyConfig,
+            sql: &str,
+            change: &'static str,
+        ) -> bool {
+            let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static("START TRANSACTION READ ONLY"))
+                .await
+                .expect("begin");
+            let (analyzed, owners) = resolve(&mut tx, sql).await.expect("resolve");
+            let mut planned = analyzed.plan(config).expect("plan");
+            sqlx::raw_sql(SqlStr::from_static(change))
+                .execute(&mut *other)
+                .await
+                .expect("change");
+            execute(&mut tx, sql, &mut planned, &owners, &mut |_| {})
+                .await
+                .expect("execute");
+            let unchanged = families_unchanged(&mut tx, &owners, &planned).await.expect("re-read");
+            tx.rollback().await.expect("rollback");
+            unchanged
+        }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn ruled_relations_joining_a_tree_after_planning_are_caught() {
-        let mut conn = seeded().await;
-        let mut other = seeded().await;
-        let reset = "DROP TABLE IF EXISTS drift_p, drift_p1, drift_p2, drift_p3, drift_solo, drift_kid CASCADE";
-        sqlx::raw_sql(SqlStr::from_static(reset))
+        #[tokio::test]
+        #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+        async fn ruled_relations_joining_a_tree_after_planning_are_caught() {
+            let mut conn = seeded().await;
+            let mut other = seeded().await;
+            let reset = "DROP TABLE IF EXISTS drift_p, drift_p1, drift_p2, drift_p3, drift_solo, drift_kid CASCADE";
+            sqlx::raw_sql(SqlStr::from_static(reset))
+                .execute(&mut other)
+                .await
+                .expect("reset");
+            sqlx::raw_sql(SqlStr::from_static(
+                "CREATE TABLE drift_p (id int, email text) PARTITION BY RANGE (id); \
+                 CREATE TABLE drift_p1 PARTITION OF drift_p FOR VALUES FROM (0) TO (10); \
+                 CREATE TABLE drift_p2 (id int, email text); \
+                 CREATE TABLE drift_p3 (id int, email text); \
+                 CREATE TABLE drift_solo (id int, email text); \
+                 CREATE TABLE drift_kid (id int, email text); \
+                 INSERT INTO drift_p VALUES (1, 'one@example.com'); \
+                 INSERT INTO drift_p2 VALUES (11, 'two@example.com'); \
+                 INSERT INTO drift_p3 VALUES (21, 'three@example.com'); \
+                 INSERT INTO drift_kid VALUES (31, 'kid@example.com')",
+            ))
             .execute(&mut other)
             .await
-            .expect("reset");
-        sqlx::raw_sql(SqlStr::from_static(
-            "CREATE TABLE drift_p (id int, email text) PARTITION BY RANGE (id); \
-             CREATE TABLE drift_p1 PARTITION OF drift_p FOR VALUES FROM (0) TO (10); \
-             CREATE TABLE drift_p2 (id int, email text); \
-             CREATE TABLE drift_p3 (id int, email text); \
-             CREATE TABLE drift_solo (id int, email text); \
-             CREATE TABLE drift_kid (id int, email text); \
-             INSERT INTO drift_p VALUES (1, 'one@example.com'); \
-             INSERT INTO drift_p2 VALUES (11, 'two@example.com'); \
-             INSERT INTO drift_p3 VALUES (21, 'three@example.com'); \
-             INSERT INTO drift_kid VALUES (31, 'kid@example.com')",
-        ))
-        .execute(&mut other)
-        .await
-        .expect("setup");
-        let rule = |table: &str| dbmcp_config::ColumnRule {
-            name: table.into(),
-            item: 0,
-            key: ["app", "public", table, "email"].map(String::from),
-            entity: "EMAIL_ADDRESS",
-            operator: dbmcp_config::PrivacyOperator::Hash,
-        };
-        let config = PrivacyConfig {
-            rules: vec![rule("drift_p2"), rule("drift_kid")],
-            ..PrivacyConfig::default()
-        };
-        let read = "SELECT id, email FROM drift_p";
+            .expect("setup");
+            let rule = |table: &str| dbmcp_config::ColumnRule {
+                name: table.into(),
+                item: 0,
+                key: ["app", "public", table, "email"].map(String::from),
+                entity: "EMAIL_ADDRESS",
+                operator: dbmcp_config::PrivacyOperator::Hash,
+            };
+            let config = PrivacyConfig {
+                rules: vec![rule("drift_p2"), rule("drift_kid")],
+                ..PrivacyConfig::default()
+            };
+            let read = "SELECT id, email FROM drift_p";
 
-        let unruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p3 FOR VALUES FROM (20) TO (30)";
-        assert!(
-            unchanged_across(&mut conn, &mut other, &config, read, unruled).await,
-            "unruled attach"
-        );
-        let ruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p2 FOR VALUES FROM (10) TO (20)";
-        assert!(
-            !unchanged_across(&mut conn, &mut other, &config, read, ruled).await,
-            "ruled attach"
-        );
-        let detach = "ALTER TABLE drift_p DETACH PARTITION drift_p2";
-        assert!(
-            unchanged_across(&mut conn, &mut other, &config, read, detach).await,
-            "detach"
-        );
-        let inherit = "ALTER TABLE drift_kid INHERIT drift_solo";
-        let solo = "SELECT id, email FROM drift_solo";
-        assert!(
-            !unchanged_across(&mut conn, &mut other, &config, solo, inherit).await,
-            "ruled inherit"
-        );
+            let unruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p3 FOR VALUES FROM (20) TO (30)";
+            assert!(
+                unchanged_across(&mut conn, &mut other, &config, read, unruled).await,
+                "unruled attach"
+            );
+            let ruled = "ALTER TABLE drift_p ATTACH PARTITION drift_p2 FOR VALUES FROM (10) TO (20)";
+            assert!(
+                !unchanged_across(&mut conn, &mut other, &config, read, ruled).await,
+                "ruled attach"
+            );
+            let detach = "ALTER TABLE drift_p DETACH PARTITION drift_p2";
+            assert!(
+                unchanged_across(&mut conn, &mut other, &config, read, detach).await,
+                "detach"
+            );
+            let inherit = "ALTER TABLE drift_kid INHERIT drift_solo";
+            let solo = "SELECT id, email FROM drift_solo";
+            assert!(
+                !unchanged_across(&mut conn, &mut other, &config, solo, inherit).await,
+                "ruled inherit"
+            );
 
-        sqlx::raw_sql(SqlStr::from_static(reset))
-            .execute(&mut other)
-            .await
-            .expect("cleanup");
-    }
+            sqlx::raw_sql(SqlStr::from_static(reset))
+                .execute(&mut other)
+                .await
+                .expect("cleanup");
+        }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
-    async fn origins_translate_oids_and_attribute_numbers() {
-        let mut conn = seeded().await;
-        let sql = "SELECT name, email, 1 FROM users";
-        let (_, owners) = resolve(&mut conn, sql).await.expect("resolve");
-        let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
-        let users = RelationId::new("app", "public", "users");
-        assert_eq!(
-            origins(row.columns(), &owners).expect("described"),
-            [
-                (0, users.clone(), Some("name".to_owned())),
-                (1, users, Some("email".to_owned())),
-            ]
-        );
-        assert!(matches!(
-            origins(row.columns(), &Owners::new()),
-            Err(Stop::Unresolved(0))
-        ));
+        #[tokio::test]
+        #[ignore = "needs the seeded PostgreSQL container: ./tests/run.sh --filter postgres"]
+        async fn origins_translate_oids_and_attribute_numbers() {
+            let mut conn = seeded().await;
+            let sql = "SELECT name, email, 1 FROM users";
+            let (_, owners) = resolve(&mut conn, sql).await.expect("resolve");
+            let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
+            let users = RelationId::new("app", "public", "users");
+            assert_eq!(
+                origins(row.columns(), &owners).expect("described"),
+                [
+                    (0, users.clone(), Some("name".to_owned())),
+                    (1, users, Some("email".to_owned())),
+                ]
+            );
+            assert!(matches!(
+                origins(row.columns(), &Owners::new()),
+                Err(Stop::Unresolved(0))
+            ));
+        }
     }
 }

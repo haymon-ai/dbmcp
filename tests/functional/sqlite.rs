@@ -23,7 +23,7 @@ use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
@@ -2218,7 +2218,10 @@ async fn hash_operator_error_token_matches_row_token() {
 
 /// Returns a `dbmcp` command pointed at the `SQLite` fixture through env vars.
 fn sqlite_command() -> tokio::process::Command {
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = tokio::process::Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     command
         .env("DBMCP_DB_BACKEND", "sqlite")
         .env("DBMCP_DB_NAME", std::env::var("DB_PATH").expect("DB_PATH must be set"));
@@ -2317,14 +2320,20 @@ async fn test_config_file_and_env_file_set_settings() {
     )
     .expect("write env file");
 
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = tokio::process::Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     command.arg("--env-file").arg(&env_file);
     assert!(
         exposes_write_query_with(command).await,
         "the env file must name the config file and feed its ${{}} values"
     );
 
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = tokio::process::Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     command
         .arg("--env-file")
         .arg(&env_file)
@@ -2371,7 +2380,10 @@ async fn test_later_config_file_wins_and_resolves_paths_against_itself() {
     let local = local_dir.join("local.yaml");
     std::fs::write(&local, "database:\n  name: copy.db\n").expect("write local config");
 
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = tokio::process::Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     // Inherited DBMCP_* values would beat the config files under test.
     for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("DBMCP_")) {
         command.env_remove(name);
@@ -2412,7 +2424,9 @@ async fn test_missing_config_file_fails_startup() {
 #[tokio::test]
 async fn test_help_lists_only_file_flags_and_hides_secrets() {
     const SECRET: &str = "hunter2-help-secret";
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"))
+    let binary = std::env::var("CARGO_BIN_EXE_dbmcp")
+        .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time");
+    let output = tokio::process::Command::new(binary)
         .arg("--help")
         .env("DBMCP_DB_PASSWORD", SECRET)
         .env("DBMCP_SSH_PASSWORD", SECRET)
@@ -2433,7 +2447,10 @@ async fn test_help_lists_only_file_flags_and_hides_secrets() {
 
 #[tokio::test]
 async fn test_version_reports_binary_name_and_version() {
-    let binary = Path::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let binary = PathBuf::from(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     let name = binary.file_stem().and_then(|stem| stem.to_str()).expect("binary name");
     let expected = format!("{name} {}\n", env!("CARGO_PKG_VERSION"));
     let output = tokio::process::Command::new(binary)

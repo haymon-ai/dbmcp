@@ -11,6 +11,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  NEXTEST_VERSION: 0.9.152
+  NEXTEST_PROFILE: ci
+  INSTA_WORKSPACE_ROOT: ${{ github.workspace }}
 
 jobs:
   commits:
@@ -67,7 +70,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --workspace --no-deps
 
-  test:
+  archive:
+    name: Build Nextest Archive
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - run: cargo nextest archive --workspace --tests --archive-file "$RUNNER_TEMP/nextest.tar.zst"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}/nextest.tar.zst
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  doctests:
+    name: Doc Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --doc --workspace
+
+  unit:
     name: Unit Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -78,7 +112,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --lib --bins
+        with:
+          # A restored ~/.cargo/bin breaks cargo subcommands on macOS runners (Swatinem/rust-cache#341).
+          cache-bin: ${{ runner.os != 'macOS' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - run: cargo nextest run --workspace
 
   helm:
     name: Helm chart
@@ -133,7 +173,10 @@ jobs:
   mariadb:
     name: MariaDB
     runs-on: ubuntu-24.04
+    needs: archive
     timeout-minutes: 15
+    env:
+      RUSTUP_AUTO_INSTALL: "0"
     services:
       mariadb:
         image: mariadb:12
@@ -163,23 +206,28 @@ jobs:
           --health-retries=60
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
       - name: Seed database
         run: docker exec -i ${{ job.services.mariadb.id }} mariadb -u root < tests/seed/mysql.sql
       - name: Approval tests
-        run: cargo test --test approval_mysql -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::approval_mysql)'
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
       - name: Functional tests
-        run: cargo test --test functional_mysql -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_mysql)'
         env:
           DBMCP_DB_BACKEND: mariadb
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
       - name: Policy tests
-        run: cargo test -p dbmcp-mysql --lib -- --ignored --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" -E 'package(dbmcp-mysql) & kind(lib)' --run-ignored only
         env:
           DBMCP_DB_BACKEND: mariadb
           DBMCP_DB_HOST: 127.0.0.1
@@ -187,7 +235,7 @@ jobs:
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
-        run: cargo test --test functional_ssh -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_ssh)'
         env:
           DBMCP_DB_BACKEND: mysql
           DBMCP_DB_HOST: mariadb
@@ -202,7 +250,10 @@ jobs:
   mysql:
     name: MySQL
     runs-on: ubuntu-24.04
+    needs: archive
     timeout-minutes: 15
+    env:
+      RUSTUP_AUTO_INSTALL: "0"
     services:
       mysql:
         image: mysql:9
@@ -232,22 +283,27 @@ jobs:
           --health-retries=60
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
       - name: Seed database
         run: docker exec -i ${{ job.services.mysql.id }} mysql -u root < tests/seed/mysql.sql
       - name: Approval tests
-        run: cargo test --test approval_mysql -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::approval_mysql)'
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
       - name: Functional tests
-        run: cargo test --test functional_mysql -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_mysql)'
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
       - name: Policy tests
-        run: cargo test -p dbmcp-mysql --lib -- --ignored --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" -E 'package(dbmcp-mysql) & kind(lib)' --run-ignored only
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 3306
@@ -256,7 +312,7 @@ jobs:
       - name: Export MySQL CA certificate
         run: docker exec ${{ job.services.mysql.id }} cat /var/lib/mysql/ca.pem > "$RUNNER_TEMP/mysql_ca.pem"
       - name: SSH tunnel tests
-        run: cargo test --test functional_ssh -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_ssh)'
         env:
           TLS_TEST_CA: ${{ runner.temp }}/mysql_ca.pem
           DBMCP_DB_BACKEND: mysql
@@ -272,7 +328,10 @@ jobs:
   postgres:
     name: PostgreSQL
     runs-on: ubuntu-24.04
+    needs: archive
     timeout-minutes: 15
+    env:
+      RUSTUP_AUTO_INSTALL: "0"
     services:
       postgres:
         image: postgres:18-alpine
@@ -302,29 +361,34 @@ jobs:
           --health-retries=60
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
       - name: Seed database
         run: docker exec -i ${{ job.services.postgres.id }} psql -U postgres < tests/seed/postgres.sql
       - name: Approval tests
-        run: cargo test --test approval_postgres -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::approval_postgres)'
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 5432
       - name: Functional tests
-        run: cargo test --test functional_postgres -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_postgres)'
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 5432
       - name: Policy tests
-        run: cargo test -p dbmcp-postgres --lib -- --ignored --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" -E 'package(dbmcp-postgres) & kind(lib)' --run-ignored only
         env:
           DBMCP_DB_HOST: 127.0.0.1
           DBMCP_DB_PORT: 5432
       - name: Authorize SSH test keys
         run: docker exec -i ${{ job.services.sshd.id }} sh -c 'cat >> /config/.ssh/authorized_keys' < tests/ssh/authorized_keys
       - name: SSH tunnel tests
-        run: cargo test --test functional_ssh -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_ssh)'
         env:
           DBMCP_DB_BACKEND: postgres
           DBMCP_DB_HOST: postgres
@@ -339,18 +403,26 @@ jobs:
   sqlite:
     name: SQLite
     runs-on: ubuntu-24.04
+    needs: archive
     timeout-minutes: 15
+    env:
+      RUSTUP_AUTO_INSTALL: "0"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
       - name: Seed database
         run: sqlite3 /tmp/app.db < tests/seed/sqlite.sql
       - name: Approval tests
-        run: cargo test --test approval_sqlite -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::approval_sqlite)'
         env:
           DB_PATH: /tmp/app.db
       - name: Functional tests
-        run: cargo test --test functional_sqlite -- --test-threads=1
+        run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_sqlite)'
         env:
           DB_PATH: /tmp/app.db
