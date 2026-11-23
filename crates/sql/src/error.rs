@@ -69,6 +69,12 @@ pub enum SqlError {
     /// Table not found in database.
     #[error("Table not found: {0}")]
     TableNotFound(String),
+
+    /// Column rules stopped the statement, or its rows could not be redacted.
+    ///
+    /// The message names no value.
+    #[error("{0}")]
+    ColumnPolicy(String),
 }
 
 impl From<SqlError> for ErrorData {

@@ -28,18 +28,18 @@
 //! classes, `COMMIT` included, are replaced by a generic message.
 
 use std::collections::{BTreeSet, HashMap};
-use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Origin, Planned, Rejection,
-    Relation, RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
+    Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Member,
+    Origin, Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, StatementKind, Step, WrittenName,
+    admit, settle,
 };
-use dbmcp_sql::{Connection as _, SqlError};
+use dbmcp_sql::Connection as _;
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
-use sqlx::postgres::{PgColumn, PgQueryResult, PgRow};
+use sqlx::postgres::{PgColumn, PgRow};
 use sqlx::{Column as _, FromRow as _, Row as _, SqlStr};
 
 use crate::PostgresHandler;
@@ -204,32 +204,12 @@ const VIEWS_SQL: &str = "SELECT pg_get_viewdef(v.oid::oid) \
 /// their tables, ruled columns included, so they stay absent.
 const SYSTEM_SCHEMAS: &[&str] = &["pg_catalog", "information_schema"];
 
-/// Whether the statement may write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Access {
-    /// Runs in a read-only transaction and rolls back.
-    Read,
-    /// Commits; refused in read-only mode.
-    Write,
-}
-
-/// Redacted rows and write counts of a statement run under the column rules.
-#[derive(Debug)]
-pub(crate) struct Enforced {
-    pub(crate) rows: Vec<Value>,
-    pub(crate) rows_affected: u64,
-    pub(crate) last_insert_id: Option<u64>,
-}
-
 /// Why a statement returned no rows under the column rules.
+type Stop = dbmcp_policy::Stop<Refusal>;
+
+/// The refusals only `PostgreSQL` enforcement makes.
 #[derive(Debug, thiserror::Error)]
-enum Stop {
-    /// The planner refused the statement; nothing ran.
-    #[error(transparent)]
-    Rejected(#[from] Rejection),
-    /// The result does not fit the plan; nothing was committed.
-    #[error(transparent)]
-    Unfit(#[from] Unfit),
+enum Refusal {
     /// A result column came from a relation the catalog reads did not describe.
     #[error("column policy: result column {0} comes from a relation the policy did not resolve")]
     Unresolved(usize),
@@ -239,24 +219,6 @@ enum Stop {
     /// A ruled relation joined an inheritance tree the statement read; nothing was committed.
     #[error("column policy: an inheritance tree changed while the statement ran")]
     FamilyChanged,
-    /// The statement failed with an error that may echo a ruled value.
-    #[error("query failed (SQLSTATE {0}): error detail withheld under column policy")]
-    Withheld(String),
-    /// Any other database error, reported as without column rules.
-    #[error(transparent)]
-    Sql(#[from] sqlx::Error),
-}
-
-struct Run<'c> {
-    planned: Planned<'c>,
-    names: Vec<String>,
-    rows_affected: u64,
-    last_insert_id: Option<u64>,
-}
-
-struct Executed {
-    names: Vec<String>,
-    results: Vec<PgQueryResult>,
 }
 
 /// Session state that decides how names resolve.
@@ -345,40 +307,14 @@ impl PostgresHandler {
         database: Option<&str>,
         window: &mut Window,
     ) -> Result<Enforced, ErrorData> {
-        let Some(redactor) = &self.redactor else {
-            return Err(ErrorData::internal_error(
-                "column policy: column rules need PII redaction enabled",
-                None,
-            ));
-        };
-        if access == Access::Write && self.connection.read_only() {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-        let run = self
+        let admitted = admit(self.redactor.as_ref(), access, self.connection.read_only())?;
+        let ran = self
             .connection
             .with_connection(sql, database, timeout_secs, async |conn| {
-                match run(conn, policy, sql, access, &mut |row| window.push(row)).await {
-                    Err(Stop::Sql(error)) => Err(error),
-                    other => Ok(other),
-                }
+                Stop::split(run(conn, policy, sql, access, &mut |row| window.push(row)).await)
             })
-            .await?
-            .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows = mem::take(&mut window.items).into_iter().map(values).collect();
-        let rows = run.planned.redact(redactor, run.names, rows).await?;
-        Ok(Enforced {
-            rows,
-            rows_affected: run.rows_affected,
-            last_insert_id: run.last_insert_id,
-        })
-    }
-}
-
-/// Unwraps a window row, which `execute` always pushes as an array.
-fn values(row: Value) -> Vec<Value> {
-    match row {
-        Value::Array(values) => values,
-        other => vec![other],
+            .await;
+        Ok(admitted.finish(ran, window).await?)
     }
 }
 
@@ -401,35 +337,18 @@ async fn run<'c>(
         tx.rollback().await?;
         return autocommit(conn, sql, planned, &owners, sink).await;
     }
-    let executed = match execute(&mut tx, sql, &mut planned, &owners, sink).await {
-        Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-        Err(stop) => {
-            tx.rollback().await?;
-            return Err(stop);
+    let executed = async {
+        let executed = execute(&mut tx, sql, &mut planned, &owners, sink).await?;
+        if !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
+            return Err(Stop::Refused(Refusal::ViewChanged));
         }
-    };
-    if !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
-        tx.rollback().await?;
-        return Err(Stop::ViewChanged);
+        if !families_unchanged(&mut tx, &owners, &planned).await? {
+            return Err(Stop::Refused(Refusal::FamilyChanged));
+        }
+        Ok(executed)
     }
-    if !families_unchanged(&mut tx, &owners, &planned).await? {
-        tx.rollback().await?;
-        return Err(Stop::FamilyChanged);
-    }
-    // Deferred constraints fail at `COMMIT`, with messages as revealing.
-    let finished = match access {
-        Access::Read => tx.rollback().await,
-        Access::Write => tx.commit().await,
-    };
-    finished.map_err(|error| failed(&planned, error))?;
-    let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
-    Ok(Run {
-        planned,
-        names: executed.names,
-        rows_affected,
-        last_insert_id,
-    })
+    .await;
+    settle(Some(tx), access, planned, echoing, executed).await
 }
 
 /// Runs a planned `CREATE INDEX` outside a transaction block; it returns no rows.
@@ -440,18 +359,8 @@ async fn autocommit<'c>(
     owners: &Owners,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let executed = match execute(conn, sql, &mut planned, owners, sink).await {
-        Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-        Err(stop) => return Err(stop),
-    };
-    let (rows_affected, last_insert_id) = PostgresConnection::counts(sql, &executed.results);
-    Ok(Run {
-        planned,
-        names: executed.names,
-        rows_affected,
-        last_insert_id,
-    })
+    let executed = execute(conn, sql, &mut planned, owners, sink).await;
+    settle::<sqlx::Postgres, _>(None, Access::Write, planned, echoing, executed).await
 }
 
 /// Reports whether every view body planned from is still the current one.
@@ -517,8 +426,12 @@ async fn execute(
         planned.check_first(names, origins(row.columns(), owners)?)?;
         Ok::<_, Stop>(())
     };
-    let (names, results) = PostgresConnection::execute_checked(conn, sql, first, sink).await?;
-    Ok(Executed { names, results })
+    let (names, rows_affected, last_insert_id) = PostgresConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed {
+        names,
+        rows_affected,
+        last_insert_id,
+    })
 }
 
 /// Translates each result column's OID and attribute number into its origin.
@@ -527,7 +440,7 @@ async fn execute(
 ///
 /// # Errors
 ///
-/// Returns [`Stop::Unresolved`] for an origin the catalog reads did not describe.
+/// Returns [`Refusal::Unresolved`] for an origin the catalog reads did not describe.
 fn origins(columns: &[PgColumn], owners: &Owners) -> Result<Vec<(usize, RelationId, Option<String>)>, Stop> {
     let mut origins = Vec::new();
     for column in columns {
@@ -536,12 +449,12 @@ fn origins(columns: &[PgColumn], owners: &Owners) -> Result<Vec<(usize, Relation
             continue;
         };
         let Some(owner) = owners.get(&oid.0) else {
-            return Err(Stop::Unresolved(position));
+            return Err(Stop::Refused(Refusal::Unresolved(position)));
         };
         let name = match column.relation_attribute_no() {
             Some(number) => match owner.columns.get(&number) {
                 Some(name) => Some(name.clone()),
-                None => return Err(Stop::Unresolved(position)),
+                None => return Err(Stop::Refused(Refusal::Unresolved(position))),
             },
             None => None,
         };
@@ -833,14 +746,7 @@ fn view_query(body: &str) -> String {
     body.strip_suffix(';').unwrap_or(body).trim().to_owned()
 }
 
-/// Withholds `error` when it may echo a value and the plan withholds.
-fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
-    planned
-        .withheld(echoing(&error))
-        .map_or(Stop::Sql(error), Stop::Withheld)
-}
-
-/// Returns the `SQLSTATE` of a database error that may echo a value.
+/// Labels the `SQLSTATE` of a database error that may echo a value.
 ///
 /// Timeouts and non-database errors return `None`.
 fn echoing(error: &sqlx::Error) -> Option<String> {
@@ -848,7 +754,7 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
         return None;
     }
     let code = error.as_database_error()?.code()?;
-    (!value_free(&code)).then(|| code.into_owned())
+    (!value_free(&code)).then(|| format!("SQLSTATE {code}"))
 }
 
 /// Whether messages of the `SQLSTATE` `code` never carry a value.
@@ -1512,7 +1418,7 @@ mod tests {
             );
             assert!(matches!(
                 origins(row.columns(), &Owners::new()),
-                Err(Stop::Unresolved(0))
+                Err(Stop::Refused(Refusal::Unresolved(0)))
             ));
         }
     }

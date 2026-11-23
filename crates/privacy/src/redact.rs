@@ -40,12 +40,6 @@ pub enum RedactionError {
     Shape(#[from] crate::cells::ShapeError),
 }
 
-impl From<RedactionError> for rmcp::model::ErrorData {
-    fn from(e: RedactionError) -> Self {
-        Self::internal_error(e.to_string(), None)
-    }
-}
-
 /// Error returned by [`Redactor::from_config`] when initialisation fails.
 ///
 /// Surfacing this aborts server startup — the redactor is fail-closed: it

@@ -64,6 +64,7 @@
 mod analysis;
 mod catalog;
 mod deny;
+mod enforce;
 mod explain;
 mod plan;
 mod planned;
@@ -76,6 +77,7 @@ pub use dbmcp_sql_lineage::{NamePart, Origin, RelationId, RelationKind, SourceRe
 
 pub use self::analysis::{Analysis, Analyzed, Step};
 pub use self::catalog::{Cascade, CascadeAction, CatalogColumn, Entry, Family, Member, Relation};
+pub use self::enforce::{Access, Admitted, Enforced, Executed, Run, Stop, admit, settle};
 pub use self::planned::{Planned, Unfit};
 pub use self::rejection::{CATALOG_ROUNDS, LineageClass, Rejection};
 pub use self::relation::RelationRef;

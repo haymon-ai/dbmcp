@@ -32,21 +32,21 @@
 //! `COMMIT` included, are replaced by a generic message.
 
 use std::collections::BTreeMap;
-use std::mem;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
-    RelationId, RelationKind, RelationRef, SourceRef, StatementKind, Step, Unfit, WrittenName,
+    Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Origin,
+    Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, StatementKind, Step, WrittenName, admit,
+    settle,
 };
+use dbmcp_sql::Connection as _;
 use dbmcp_sql::validation::validate_single_statement;
-use dbmcp_sql::{Connection as _, SqlError};
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
-use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlQueryResult, MySqlRow};
+use sqlx::mysql::{MySqlColumn, MySqlDatabaseError, MySqlRow};
 use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 use tracing::warn;
 
@@ -177,32 +177,12 @@ const TRANSACTIONAL_ENGINE: &str = "InnoDB";
 /// the first matching row).
 const VALUE_FREE_ERRORS: &[u16] = &[1054, 1146, 1064, 1142, 1143, 1305, 1451, 1452, 1048, 3819, 4025, 1060];
 
-/// Whether the statement may write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Access {
-    /// Runs in a read-only transaction and rolls back.
-    Read,
-    /// Commits; refused in read-only mode.
-    Write,
-}
-
-/// Redacted rows and write counts of a statement run under the column rules.
-#[derive(Debug)]
-pub(crate) struct Enforced {
-    pub(crate) rows: Vec<Value>,
-    pub(crate) rows_affected: u64,
-    pub(crate) last_insert_id: Option<u64>,
-}
-
 /// Why a statement returned no rows under the column rules.
+type Stop = dbmcp_policy::Stop<Refusal>;
+
+/// The refusals only `MySQL` and `MariaDB` enforcement makes.
 #[derive(Debug, thiserror::Error)]
-enum Stop {
-    /// The planner refused the statement; nothing ran.
-    #[error(transparent)]
-    Rejected(#[from] Rejection),
-    /// The result does not fit the plan; the transaction rolls back.
-    #[error(transparent)]
-    Unfit(#[from] Unfit),
+enum Refusal {
     /// The server is not the configured backend; nothing ran.
     #[error("column policy: {0}")]
     BackendMismatch(BackendMismatch),
@@ -215,24 +195,6 @@ enum Stop {
     /// A view body changed between planning and execution; the transaction rolls back.
     #[error("column policy: a view changed while the statement ran")]
     ViewChanged,
-    /// The statement failed with an error that may echo a ruled value.
-    #[error("query failed (error {number}, SQLSTATE {state}): error detail withheld under column policy")]
-    Withheld { number: u16, state: String },
-    /// Any other database error, reported as without column rules.
-    #[error(transparent)]
-    Sql(#[from] sqlx::Error),
-}
-
-struct Run<'c> {
-    planned: Planned<'c>,
-    names: Vec<String>,
-    rows_affected: u64,
-    last_insert_id: Option<u64>,
-}
-
-struct Executed {
-    names: Vec<String>,
-    results: Vec<MySqlQueryResult>,
 }
 
 /// Session state that decides how names resolve.
@@ -254,17 +216,17 @@ impl Probe {
     ///
     /// # Errors
     ///
-    /// [`Stop::BackendMismatch`] when the server is not the configured
+    /// [`Refusal::BackendMismatch`] when the server is not the configured
     /// `backend`, [`Stop::Sql`] when the probe query fails.
     async fn read(conn: &mut sqlx::MySqlConnection, backend: DatabaseBackend) -> Result<Self, Stop> {
         let (database, lower_case, sql_mode, charset, version): (Option<String>, i64, String, String, String) =
             sqlx::query_as(PROBE_SQL).fetch_one(conn).await?;
         let server = flavour::of(&version);
         if server != backend {
-            return Err(Stop::BackendMismatch(BackendMismatch {
+            return Err(Stop::Refused(Refusal::BackendMismatch(BackendMismatch {
                 configured: backend,
                 server,
-            }));
+            })));
         }
         Ok(Self {
             database,
@@ -462,41 +424,15 @@ impl MysqlHandler {
         // sqlx always lets `MySQL` run several statements, and the parser
         // expands executable comments the server may skip.
         validate_single_statement(sql, &MySqlDialect {})?;
-        let Some(redactor) = &self.redactor else {
-            return Err(ErrorData::internal_error(
-                "column policy: column rules need PII redaction enabled",
-                None,
-            ));
-        };
-        if access == Access::Write && self.connection.read_only() {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
+        let admitted = admit(self.redactor.as_ref(), access, self.connection.read_only())?;
         let backend = self.config.backend;
-        let run = self
+        let ran = self
             .connection
             .with_connection(sql, database, timeout_secs, async |conn| {
-                match run(conn, policy, backend, sql, access, &mut |row| window.push(row)).await {
-                    Err(Stop::Sql(error)) => Err(error),
-                    other => Ok(other),
-                }
+                Stop::split(run(conn, policy, backend, sql, access, &mut |row| window.push(row)).await)
             })
-            .await?
-            .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows = mem::take(&mut window.items).into_iter().map(values).collect();
-        let rows = run.planned.redact(redactor, run.names, rows).await?;
-        Ok(Enforced {
-            rows,
-            rows_affected: run.rows_affected,
-            last_insert_id: run.last_insert_id,
-        })
-    }
-}
-
-/// Unwraps a window row, which `execute` always pushes as an array.
-fn values(row: Value) -> Vec<Value> {
-    match row {
-        Value::Array(values) => values,
-        other => vec![other],
+            .await;
+        Ok(admitted.finish(ran, window).await?)
     }
 }
 
@@ -516,7 +452,7 @@ async fn run<'c>(
     let (analyzed, probe, owners) = resolve(&mut *conn, backend, sql).await?;
     let mut planned = analyzed.plan(config)?;
     if !rolls_back(analyzed.statement(), analyzed.target(), &owners) {
-        return Err(Stop::Unrollable);
+        return Err(Stop::Refused(Refusal::Unrollable));
     }
     // The prune reads only format version 1 plans.
     let pins = backend == DatabaseBackend::Mysql && planned.prunes();
@@ -525,31 +461,18 @@ async fn run<'c>(
     }
     let ran = async {
         let mut tx = sqlx::Connection::begin_with(&mut *conn, SqlStr::from_static(begin)).await?;
-        let executed = match execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await {
-            Ok(executed) => executed,
-            Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-            Err(stop) => {
-                tx.rollback().await?;
-                return Err(stop);
+        let executed = async {
+            let executed = execute(&mut tx, sql, &mut planned, &probe, &owners, sink).await?;
+            // A statement that commits implicitly cannot be undone, and moves no rows.
+            if !commits_implicitly(analyzed.statement())
+                && !views_unchanged(&mut tx, &owners, analyzed.target()).await?
+            {
+                return Err(Stop::Refused(Refusal::ViewChanged));
             }
-        };
-        // A statement that commits implicitly cannot be undone, and moves no rows.
-        if !commits_implicitly(analyzed.statement()) && !views_unchanged(&mut tx, &owners, analyzed.target()).await? {
-            tx.rollback().await?;
-            return Err(Stop::ViewChanged);
+            Ok(executed)
         }
-        let finished = match access {
-            Access::Read => tx.rollback().await,
-            Access::Write => tx.commit().await,
-        };
-        finished.map_err(|error| failed(&planned, error))?;
-        let (rows_affected, last_insert_id) = MysqlConnection::counts(sql, &executed.results);
-        Ok(Run {
-            planned,
-            names: executed.names,
-            rows_affected,
-            last_insert_id,
-        })
+        .await;
+        settle(Some(tx), access, planned, echoing, executed).await
     }
     .await;
     if pins && let Err(error) = explain_format(&mut *conn, "SET SESSION explain_json_format_version = DEFAULT").await {
@@ -641,8 +564,12 @@ async fn execute(
             .check_first(names, origins(row.columns(), probe, owners))
             .map_err(Stop::from)
     };
-    let (names, results) = MysqlConnection::execute_checked(conn, sql, first, sink).await?;
-    Ok(Executed { names, results })
+    let (names, rows_affected, last_insert_id) = MysqlConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed {
+        names,
+        rows_affected,
+        last_insert_id,
+    })
 }
 
 /// Translates the origin the server reports for each result column.
@@ -957,23 +884,17 @@ fn unknown_variable(error: &sqlx::Error) -> bool {
         .is_some_and(|error| error.number() == 1193)
 }
 
-/// Withholds `error` when it may echo a value and the plan withholds.
-fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
-    planned
-        .withheld(echoing(&error))
-        .map_or(Stop::Sql(error), |(number, state)| Stop::Withheld { number, state })
-}
-
-/// Returns the error number and `SQLSTATE` of an error that may echo a value.
+/// Labels the error number and `SQLSTATE` of an error that may echo a value.
 ///
 /// Timeouts and non-database errors return `None`.
-fn echoing(error: &sqlx::Error) -> Option<(u16, String)> {
+fn echoing(error: &sqlx::Error) -> Option<String> {
     if MysqlConnection::is_timeout(error) {
         return None;
     }
     let error = error.as_database_error()?.try_downcast_ref::<MySqlDatabaseError>()?;
     let number = error.number();
-    (!VALUE_FREE_ERRORS.contains(&number)).then(|| (number, error.code().unwrap_or("HY000").to_owned()))
+    (!VALUE_FREE_ERRORS.contains(&number))
+        .then(|| format!("error {number}, SQLSTATE {}", error.code().unwrap_or("HY000")))
 }
 
 #[cfg(test)]
@@ -1307,7 +1228,7 @@ mod tests {
                 .err()
                 .expect("mismatch refuses");
             assert!(
-                matches!(stop, Stop::BackendMismatch(BackendMismatch { configured: c, server: s }) if c == configured && s == server),
+                matches!(stop, Stop::Refused(Refusal::BackendMismatch(BackendMismatch { configured: c, server: s })) if c == configured && s == server),
                 "{stop:?}"
             );
         }

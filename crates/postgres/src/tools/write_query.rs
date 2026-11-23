@@ -6,7 +6,7 @@ use dbmcp_server::types::{QueryRequest, WriteQueryResponse};
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
-use crate::policy::Access;
+use dbmcp_policy::Access;
 
 const NAME: &str = "writeQuery";
 const TITLE: &str = "Write Query";
@@ -125,7 +125,11 @@ impl PostgresHandler {
                 .connection
                 .execute_json(query.as_str(), database, |row| window.push(row))
                 .await?;
-            let rows = self.redactor.redact_rows(window.items).await?;
+            let rows = self
+                .redactor
+                .redact_rows(window.items)
+                .await
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
             (rows, rows_affected, last_insert_id)
         };
         let fitted = fit(rows, caps);

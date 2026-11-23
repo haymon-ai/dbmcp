@@ -12,7 +12,7 @@ use dbmcp_sql::validation::validate_read;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
-use crate::policy::Access;
+use dbmcp_policy::Access;
 
 const NAME: &str = "readQuery";
 const TITLE: &str = "Read Query";
@@ -178,7 +178,10 @@ impl MysqlHandler {
             self.connection
                 .read_json(&*sql, database, timeout, |row| window.push(row))
                 .await?;
-            self.redactor.redact_rows(window.items).await?
+            self.redactor
+                .redact_rows(window.items)
+                .await
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?
         };
         let fitted = fit(rows, caps);
         // A paged `SELECT` resumes past its last row; other statements count the rest.
