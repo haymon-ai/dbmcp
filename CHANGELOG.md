@@ -2,6 +2,67 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.20.0](https://github.com/haymon-ai/dbmcp/compare/b4c48ee3f88b2cc27905877bbe0b0ba353bd6b39..v0.20.0) - 2026-11-23
+
+#### 💥 Breaking Changes
+- (**privacy**) the pii section is now privacy, and DBMCP_PII_* env vars are now DBMCP_PRIVACY_*. A YAML pii: section fails as an unknown field, and a set DBMCP_PII_* variable stops startup naming its replacement. pii.enabled and pii.ner_enabled are replaced by privacy.mode (none | rules | full), which now defaults to full: set privacy.mode: none (DBMCP_PRIVACY_MODE=none) to turn redaction off. NER runs under full when privacy.model is set. Without privacy.key, hash tokens use a random per-process key. The crate dbmcp-pii is renamed dbmcp-privacy. Redaction cost (regex, full): ~0.75 s per 1000-row x 10-column page, ~0.5 s per 64 KiB text cell. - ([41ed1af](https://github.com/haymon-ai/dbmcp/commit/41ed1af3782ac218feb94be3a45896951b74b256))
+- (**sql-lineage**) readQuery rejects SHOW WARNINGS, SHOW ERRORS and SHOW COUNT(*) WARNINGS/ERRORS. - ([c0025e6](https://github.com/haymon-ai/dbmcp/commit/c0025e68163e227a7d924d9e0efd1b58caad58c7))
+#### 🚀 Features
+- (**mysql**) return MySQL 9 VECTOR values as number arrays (#377) - ([dbf0a6c](https://github.com/haymon-ai/dbmcp/commit/dbf0a6c5cf2564d6fc0298fc35431c518062d566)) - [@athopen](https://github.com/athopen)
+- (**mysql**) enforce pii.rules column rules (#347) - ([58bec58](https://github.com/haymon-ai/dbmcp/commit/58bec5814529664186950db9229c5e2c3d26c440)) - [@athopen](https://github.com/athopen)
+- (**pii**) accept shorter pii.rules column keys (#401) - ([5dc9acf](https://github.com/haymon-ai/dbmcp/commit/5dc9acf253c0791997f6330c081306d30e1501e2)) - [@athopen](https://github.com/athopen)
+- (**pii**) redact ruled columns by position (#344) - ([cc2be20](https://github.com/haymon-ai/dbmcp/commit/cc2be209a6290d36b2efb5b220e2278870c985cd)) - [@athopen](https://github.com/athopen)
+- (**pii**) plan column rules from lineage (#343) - ([69b13ba](https://github.com/haymon-ai/dbmcp/commit/69b13ba5ffe3cc2f5485c86573cdda0362ac99fb)) - [@athopen](https://github.com/athopen)
+- (**policy**) prune explainQuery plans of ruled relations (#371) - ([1c68560](https://github.com/haymon-ai/dbmcp/commit/1c68560b14719e3d34f901bdeab5f5fa9cfc2890)) - [@athopen](https://github.com/athopen)
+- (**postgres**) enforce pii.rules column rules (#346) - ([afc64b8](https://github.com/haymon-ai/dbmcp/commit/afc64b8a977beda27599dd4d6ae9cf90b581251d)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**privacy**) privacy on by default with privacy.mode (#416) - ([41ed1af](https://github.com/haymon-ai/dbmcp/commit/41ed1af3782ac218feb94be3a45896951b74b256)) - [@athopen](https://github.com/athopen)
+- (**server**) add per-call explainQuery timeout (#394) - ([88e0dc0](https://github.com/haymon-ai/dbmcp/commit/88e0dc0b7c62599504a87e0b771538583df1030c)) - [@athopen](https://github.com/athopen)
+- (**sql-lineage**) expand view bodies (#340) - ([f692c25](https://github.com/haymon-ai/dbmcp/commit/f692c253026bc299fdcf7e0d0f3be2e8c9e8406a)) - [@athopen](https://github.com/athopen)
+- (**sql-lineage**) bind PostgreSQL whole-row references (#339) - ([033e0f2](https://github.com/haymon-ai/dbmcp/commit/033e0f2d9ace1446a34a12c730e219fed6ca50b5)) - [@athopen](https://github.com/athopen)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**sql-lineage**) mark built-in functions as known (#337) - ([c0025e6](https://github.com/haymon-ai/dbmcp/commit/c0025e68163e227a7d924d9e0efd1b58caad58c7)) - [@athopen](https://github.com/athopen)
+- (**sql-lineage**) resolve columns against a catalog (#335) - ([817347b](https://github.com/haymon-ai/dbmcp/commit/817347b5f2d6afaef6e406a252add56674f7f7c5)) - [@athopen](https://github.com/athopen)
+- (**sqlite**) enforce pii.rules column rules (#345) - ([b0ab848](https://github.com/haymon-ai/dbmcp/commit/b0ab848b3353e55e87618c7c1fae110311333840)) - [@athopen](https://github.com/athopen)
+- (**sqlx-json**) read rows as ordered entries (#334) - ([46f0e4d](https://github.com/haymon-ai/dbmcp/commit/46f0e4d4f84abe60c2969dbf5746f3e3baa4e559)) - [@athopen](https://github.com/athopen)
+- keep source key order in tool output (#356) - ([3f5b7b3](https://github.com/haymon-ai/dbmcp/commit/3f5b7b320b759edb158b478605fb1a138cea9530)) - [@athopen](https://github.com/athopen)
+#### 🐛 Bug Fixes
+- (**deps**) bump url to 2.5.9 for RUSTSEC-2026-0592 (#417) - ([c3896df](https://github.com/haymon-ai/dbmcp/commit/c3896df88fb0082d742491d425336c887b73f014)) - [@athopen](https://github.com/athopen)
+- (**mysql**) run explainQuery analyze as ANALYZE FORMAT=JSON on MariaDB (#395) - ([c71b304](https://github.com/haymon-ai/dbmcp/commit/c71b304273b60ed7af37209b8a4c2934a99c7493)) - [@athopen](https://github.com/athopen)
+- (**pii**) refuse index and optimizer hints while column rules exist (#420) - ([fcafcde](https://github.com/haymon-ai/dbmcp/commit/fcafcded5a442c35f0a510510bd86224882f054b)) - [@athopen](https://github.com/athopen)
+- (**pii**) hash column rules under a key global detection never uses (#418) - ([9b4303c](https://github.com/haymon-ai/dbmcp/commit/9b4303cbb03cb485f65ce93dd374090dd2cd84fa)) - [@athopen](https://github.com/athopen)
+- (**pii**) stop select-list conditions on ruled columns from restoring the WHERE oracle (#412) - ([9b83240](https://github.com/haymon-ai/dbmcp/commit/9b83240bab3415013eee883744fabe5da7a2bd46)) - [@athopen](https://github.com/athopen)
+- (**pii**) withhold MySQL out-of-range and too-long errors (#413) - ([c7fc0da](https://github.com/haymon-ai/dbmcp/commit/c7fc0da2723b53ae7beeda6f192fac66d64d5087)) - [@athopen](https://github.com/athopen)
+- (**pii**) withhold PostgreSQL class-54 errors and refuse unknown cast types (#410) - ([68af0a8](https://github.com/haymon-ai/dbmcp/commit/68af0a8be9fc4f63fc6b088d030cdc5819c9ff46)) - [@athopen](https://github.com/athopen)
+- (**pii**) refuse hash tokens of chosen, computed, or server-filled values (#404) - ([d522094](https://github.com/haymon-ai/dbmcp/commit/d5220944c31c5ab10de7fe30a956572260f4ef9e)) - [@athopen](https://github.com/athopen)
+- (**pii**) skip NER spans that are listed codes or namespaced identifiers (#399) - ([d68031d](https://github.com/haymon-ai/dbmcp/commit/d68031d51058d71d6c6c348a91dc75e1e3f0fee0)) - [@athopen](https://github.com/athopen)
+- (**pii**) label postcodes in generic columns as POSTCODE, not POSTCODE_DE (#397) - ([3333181](https://github.com/haymon-ai/dbmcp/commit/3333181da7fbefecce99d4e2db75f62d06a66a18)) - [@athopen](https://github.com/athopen)
+- (**pii**) require context for checksum IDs that business numbers share (#396) - ([40bb18f](https://github.com/haymon-ai/dbmcp/commit/40bb18ff0c394c2edb92ac2747c0aa98ead9e93a)) - [@athopen](https://github.com/athopen)
+- (**pii**) trim overlapping detections instead of dropping them (#378) - ([a0738a5](https://github.com/haymon-ai/dbmcp/commit/a0738a5c033c81137da278549aa23a067c975756)) - [@athopen](https://github.com/athopen)
+- (**policy**) apply pii.rules across PostgreSQL inheritance and partitions (#385) - ([4f8c32f](https://github.com/haymon-ai/dbmcp/commit/4f8c32f7d5ae48753ea37cc03eebc2c217b37d89)) - [@athopen](https://github.com/athopen)
+- (**policy**) deny relations by written name before the catalog fetch (#369) - ([9d25f1f](https://github.com/haymon-ai/dbmcp/commit/9d25f1f98944093e968e7c02356f46890002906f)) - [@athopen](https://github.com/athopen)
+- (**policy**) allowlist MySQL and MariaDB SHOW forms under rules (#357) - ([8f08ccb](https://github.com/haymon-ai/dbmcp/commit/8f08ccbec60e626aa1eb6eff32fa3f77f4cf3171)) - [@athopen](https://github.com/athopen)
+- (**sql**) reject MySQL comments the server reads differently from the parser (#415) - ([26039df](https://github.com/haymon-ai/dbmcp/commit/26039df022d1d8a15c1cefb91fb828260ccde724)) - [@athopen](https://github.com/athopen)
+- (**sql**) reject executable comments on MySQL/MariaDB (#338) - ([6e6d853](https://github.com/haymon-ai/dbmcp/commit/6e6d853eb75dabf449fe2d9efe1e26650379b86c)) - [@athopen](https://github.com/athopen)
+- (**sql-lineage**) match each server's star order over USING and NATURAL joins (#411) - ([588eb36](https://github.com/haymon-ai/dbmcp/commit/588eb36a820b13bd1110ea5690d96037207d5eee)) - [@athopen](https://github.com/athopen)
+- (**sqlite**) filter COMMIT errors through value-free allowlist (#349) - ([32eb6e3](https://github.com/haymon-ai/dbmcp/commit/32eb6e36f325b347dc3fd3fd46b7af604470d8e7)) - [@athopen](https://github.com/athopen)
+- refuse statements when database.backend mismatches the MySQL-family server (#370) - ([de754c1](https://github.com/haymon-ai/dbmcp/commit/de754c1f919c915d100954284a79c84aa88f6ccb)) - [@athopen](https://github.com/athopen)
+- classify SHOW into a closed enum and refuse SHOW filters (#359) - ([2519a5e](https://github.com/haymon-ai/dbmcp/commit/2519a5ea3ce16de68e83a1e2098a7524ec9be16a)) - [@athopen](https://github.com/athopen)
+#### 📚 Documentation
+- (**mysql**) document MariaDB JSON columns returned as strings (#403) - ([ea768d6](https://github.com/haymon-ai/dbmcp/commit/ea768d6f228ab82919fd85be6830d31896cf397b)) - [@athopen](https://github.com/athopen)
+- (**privacy**) document plan-chosen row order as a rank oracle (#421) - ([536e2a3](https://github.com/haymon-ai/dbmcp/commit/536e2a323e4b9efffc01a609eaa2024bf52ffb2f)) - [@athopen](https://github.com/athopen)
+- (**privacy**) document column rules (#348) - ([4607f52](https://github.com/haymon-ai/dbmcp/commit/4607f52227dcbf3d2b80f16f5ddd76272537b766)) - [@athopen](https://github.com/athopen)
+- (**sql**) remove stale InvalidIdentifier error docs (#390) - ([e333015](https://github.com/haymon-ai/dbmcp/commit/e3330154ed1b9cc202cc8dfb2f3cdacc4747ec9d)) - [@athopen](https://github.com/athopen)
+- fix broken rustdoc intra-doc links (#393) - ([092f000](https://github.com/haymon-ai/dbmcp/commit/092f00052b7ea99e5ec1bbdda0ea1442e929b408)) - [@athopen](https://github.com/athopen)
+- clarify explainQuery analyze behavior (#384) - ([b724548](https://github.com/haymon-ai/dbmcp/commit/b724548d779ab6dbf43cc0852e93a47262aaddd2)) - avaldivieso-meraki, Arian Valdivieso, athopen
+#### 🚜 Refactoring
+- (**policy**) decide error withholding in Planned (#355) - ([81d2a03](https://github.com/haymon-ai/dbmcp/commit/81d2a03c27b3bd85f329f1143d207ae610b81de8)) - [@athopen](https://github.com/athopen)
+- (**policy**) own the result-side protocol in Planned (#354) - ([002b544](https://github.com/haymon-ai/dbmcp/commit/002b5441f617a960649f6a1b0bdefec4c6436cb4)) - [@athopen](https://github.com/athopen)
+- (**policy**) plan shadowed create targets in the planner (#353) - ([cc27aed](https://github.com/haymon-ai/dbmcp/commit/cc27aed8c97172c9a23d174067d904a3ae91393b)) - [@athopen](https://github.com/athopen)
+- (**policy**) move column-rules planner into dbmcp-policy (#352) - ([45b34ec](https://github.com/haymon-ai/dbmcp/commit/45b34ecdb8c5d49807889733ce65c57388c804ff)) - [@athopen](https://github.com/athopen)
+- (**server**) drop method_not_found overrides now that rmcp 3.11 answers -32601 (#376) - ([88cf2e4](https://github.com/haymon-ai/dbmcp/commit/88cf2e41cba84b352cdce7d74b416bfe0e5c377f)) - [@athopen](https://github.com/athopen)
+- extract truncate into dbmcp-truncate crate (#360) - ([4f2ba58](https://github.com/haymon-ai/dbmcp/commit/4f2ba587fb7893ceb12bc68b6d67dd3da9cd26e3)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.19.0](https://github.com/haymon-ai/dbmcp/compare/fb98def0fae51b8984215fac50cf7e7746bac488..v0.19.0) - 2026-11-16
 
 #### ⚠ BREAKING CHANGES
