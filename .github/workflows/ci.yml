@@ -169,7 +169,6 @@ jobs:
       # Postgres starts in the background while the image builds.
       - name: Start Postgres
         run: |
-          # Newest Supported PostgreSQL; bumped by hand with the version lists (Dependabot can't see it).
           kubectl create deployment postgres --image=postgres:19-alpine --port=5432
           kubectl set env deployment/postgres POSTGRES_PASSWORD=postgres
           kubectl expose deployment postgres --port=5432
