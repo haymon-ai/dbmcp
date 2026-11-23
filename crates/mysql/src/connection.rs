@@ -11,6 +11,7 @@ use std::time::Duration;
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
+use dbmcp_sql::support::{self, Line, Variant};
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::AssertSqlSafe;
@@ -29,6 +30,8 @@ pub(crate) struct MysqlConnection {
     pools: Cache<String, MySqlPool>,
     /// Set once a connection read the server version, shared by every pool.
     checked: Arc<AtomicBool>,
+    /// Whether `privacy.rules` exist, for the version tier warning.
+    rules: bool,
 }
 
 impl std::fmt::Debug for MysqlConnection {
@@ -44,7 +47,8 @@ impl MysqlConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig) -> Self {
+    /// `rules` tells whether `privacy.rules` exist, for the version tier warning.
+    pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
         info!(
             "MySQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -63,6 +67,7 @@ impl MysqlConnection {
             config: config.clone(),
             pools,
             checked: Arc::new(AtomicBool::new(false)),
+            rules,
         }
     }
 
@@ -120,7 +125,9 @@ impl MysqlConnection {
     /// first use. In read-only mode every new connection runs
     /// `SET SESSION TRANSACTION READ ONLY`, so the server rejects writes
     /// through any [`Connection`] method. Until `checked` is set, a new
-    /// connection also warns on a [`BackendMismatch`]; that check never fails it.
+    /// connection also reads the server version: it warns on a
+    /// [`BackendMismatch`], else when the server is outside the Supported
+    /// tier. That check never fails the connection.
     fn lazy_pool(&self, database: &str) -> MySqlPool {
         let config = &self.config;
         let checked = Arc::clone(&self.checked);
@@ -167,6 +174,7 @@ impl MysqlConnection {
         }
         let read_only = config.read_only;
         let backend = config.backend;
+        let rules = self.rules;
         pool_ops = pool_ops.after_connect(move |conn, _meta| {
             let checked = Arc::clone(&checked);
             Box::pin(async move {
@@ -175,31 +183,66 @@ impl MysqlConnection {
                         .execute(&mut *conn)
                         .await?;
                 }
-                if checked.load(Ordering::Acquire) {
-                    return Ok(());
-                }
-                let Ok(version) = sqlx::query_scalar::<_, String>("SELECT CAST(VERSION() AS CHAR)")
-                    .fetch_one(&mut *conn)
-                    .await
-                else {
-                    debug!("could not read the server version; checking again on the next connection");
-                    return Ok(());
-                };
-                let server = flavour::of(&version);
-                if !checked.swap(true, Ordering::AcqRel) && server != backend {
-                    warn!(
-                        "{}",
-                        BackendMismatch {
-                            configured: backend,
-                            server
-                        }
-                    );
-                }
+                check_version(conn, &checked, backend, rules).await;
                 Ok(())
             })
         });
 
         pool_ops.connect_lazy_with(conn_ops)
+    }
+}
+
+/// Warns once per process on a [`BackendMismatch`] or a server outside Supported.
+///
+/// Sets `checked` once a connection read `VERSION()`. A failed read leaves
+/// it unset for the next connection; a failed later probe skips the check.
+async fn check_version(conn: &mut sqlx::MySqlConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
+    if checked.load(Ordering::Acquire) {
+        return;
+    }
+    let Ok(version) = sqlx::query_scalar::<_, String>("SELECT CAST(VERSION() AS CHAR)")
+        .fetch_one(&mut *conn)
+        .await
+    else {
+        debug!("could not read the server version; checking again on the next connection");
+        return;
+    };
+    if checked.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let server = flavour::of(&version);
+    if server != backend {
+        warn!(
+            "{}",
+            BackendMismatch {
+                configured: backend,
+                server
+            }
+        );
+        return;
+    }
+    let Some(line) = Line::parse(&version) else {
+        debug!("could not parse the server version; skipping the version tier check");
+        return;
+    };
+    let variant = if version.contains("-TiDB-") {
+        Some(Variant::Tidb)
+    } else if backend == DatabaseBackend::Mysql {
+        match sqlx::raw_sql("SHOW VARIABLES LIKE 'aurora_version'")
+            .fetch_optional(&mut *conn)
+            .await
+        {
+            Ok(row) => row.map(|_| Variant::AuroraMysql),
+            Err(error) => {
+                debug!("could not probe for Aurora ({error}); skipping the version tier check");
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(warning) = support::classify(backend, line, variant).warning(rules) {
+        warn!("{warning}");
     }
 }
 
@@ -285,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_is_idle_until_first_use() {
-        let pool = MysqlConnection::new(&base_config())
+        let pool = MysqlConnection::new(&base_config(), false)
             .pool(Some("mydb"))
             .await
             .expect("pool");
@@ -294,10 +337,13 @@ mod tests {
 
     #[tokio::test]
     async fn pool_without_password() {
-        let pool = MysqlConnection::new(&DatabaseConfig {
-            password: None,
-            ..base_config()
-        })
+        let pool = MysqlConnection::new(
+            &DatabaseConfig {
+                password: None,
+                ..base_config()
+            },
+            false,
+        )
         .pool(Some("mydb"))
         .await
         .expect("pool");
@@ -306,10 +352,13 @@ mod tests {
 
     #[tokio::test]
     async fn pool_without_database_name() {
-        let pool = MysqlConnection::new(&DatabaseConfig {
-            name: None,
-            ..base_config()
-        })
+        let pool = MysqlConnection::new(
+            &DatabaseConfig {
+                name: None,
+                ..base_config()
+            },
+            false,
+        )
         .pool(None)
         .await
         .expect("pool");
@@ -318,28 +367,31 @@ mod tests {
 
     #[tokio::test]
     async fn default_db_derived_from_config() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
         assert_eq!(connection.default_database_name(), "mydb");
     }
 
     #[tokio::test]
     async fn defaults_db_to_empty_when_name_missing() {
-        let connection = MysqlConnection::new(&DatabaseConfig {
-            name: None,
-            ..base_config()
-        });
+        let connection = MysqlConnection::new(
+            &DatabaseConfig {
+                name: None,
+                ..base_config()
+            },
+            false,
+        );
         assert_eq!(connection.default_database_name(), "");
     }
 
     #[tokio::test]
     async fn none_target_returns_default_pool() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
         connection.pool(None).await.expect("None target should succeed");
     }
 
     #[tokio::test]
     async fn default_db_target_returns_default_pool() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
         connection
             .pool(Some("mydb"))
             .await
@@ -348,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn arbitrary_target_database_is_permitted() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
         connection
             .pool(Some("any_db"))
             .await
@@ -357,7 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pools() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
         connection.pool(Some("a")).await.expect("pool a");
         connection.pool(Some("b")).await.expect("pool b");
         connection.shutdown().await;
@@ -366,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_cache_respects_capacity_const() {
-        let connection = MysqlConnection::new(&base_config());
+        let connection = MysqlConnection::new(&base_config(), false);
 
         for i in 0..=POOL_CACHE_CAPACITY {
             let name = format!("db_{i}");

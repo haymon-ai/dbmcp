@@ -1148,6 +1148,7 @@ dependencies = [
 name = "dbmcp-sql"
 version = "0.20.0"
 dependencies = [
+ "dbmcp-config",
  "dbmcp-sql-lineage",
  "futures-util",
  "rmcp",
