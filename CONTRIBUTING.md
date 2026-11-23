@@ -111,19 +111,15 @@ The script handles container lifecycle, port assignment, seeding, and cleanup au
 
 ### Adding or Dropping a Database Version
 
-The [Supported versions](https://dbmcp.haymon.ai/supported-versions) are listed by hand in five places, with no sync script or test. Edit all five in one PR:
+The [Supported versions](https://dbmcp.haymon.ai/supported-versions) are listed by hand. Edit every list in one PR:
 
 1. `tests/compose.yml`: one service per version.
 2. `tests/run.sh`: the `MATRIX` entry, and the `newest` flag on the newest entry per backend.
-3. `.github/workflows/ci.yml`: the `version` list of the backend's matrix job (quote every version, such as `"26.10"`).
-4. `crates/sql/src/support.rs`: the backend's Supported lines in `dbmcp-sql`, which decide the startup warning.
-5. `.github/workflows/ci.yml`: the `helm` job's PostgreSQL image, when the newest Supported PostgreSQL changes.
-
-Also update the versions table in `docs/content/docs/supported-versions.mdx`. A `libsqlite3-sys` bump that changes the bundled SQLite line updates the SQLite entries the same way.
+3. `.github/workflows/ci.yml`: the backend job's quoted `version` list (such as `"26.10"`), and the `helm` job's PostgreSQL image when the newest PostgreSQL changes.
+4. `crates/sql/src/support.rs`: the backend's Supported lines, which decide the startup warning.
+5. `docs/content/docs/supported-versions.mdx`: the versions table. A `libsqlite3-sys` bump that changes the bundled SQLite line updates the SQLite entries the same way.
 
 For a new version, check `crates/sql-lineage/src/functions/` for its new built-in functions: a function missing there makes column rules refuse the statement.
-
-A version becomes Supported in the first release whose CI is green on it, and leaves Supported in the first release after its upstream end of life.
 
 Commit messages:
 

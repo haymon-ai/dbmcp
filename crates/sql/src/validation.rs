@@ -262,6 +262,8 @@ const DANGEROUS_FUNCTIONS: &[&str] = &[
     "lo_import",
     "lo_export",
     // Large-object writes: PostgreSQL before 16 runs them in read-only transactions.
+    // Only direct calls are seen; the read-only transaction's rollback discards calls
+    // made inside other functions.
     "lo_creat",
     "lo_create",
     "lo_from_bytea",

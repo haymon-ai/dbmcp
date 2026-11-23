@@ -15,6 +15,7 @@ use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PrivacyC
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_sql::support::Line;
 use serde_json::Value;
 
 /// Returns the backend under test from `DBMCP_DB_BACKEND` (default `Mysql`).
@@ -25,21 +26,14 @@ fn backend() -> DatabaseBackend {
     }
 }
 
-/// Reads the server's `major.minor` from `VERSION()`.
-async fn server_version() -> (u32, u32) {
+/// Reads the server's release line from `VERSION()`.
+async fn server_version() -> Line {
     let response = handler(true)
         .read_query("SELECT VERSION() AS v".into(), None, None, None)
         .await
         .expect("read VERSION()");
-    let version = response.rows[0]["v"].as_str().expect("VERSION() is text").to_owned();
-    let mut parts = version.split(['.', '-']).map(str::parse);
-    let mut next = || {
-        parts
-            .next()
-            .and_then(Result::ok)
-            .unwrap_or_else(|| panic!("unparsable VERSION(): {version}"))
-    };
-    (next(), next())
+    let version = response.rows[0]["v"].as_str().expect("VERSION() is text");
+    Line::parse(version).unwrap_or_else(|| panic!("unparsable VERSION(): {version}"))
 }
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -2068,12 +2062,12 @@ async fn test_read_query_vector_is_number_array() {
         DatabaseBackend::Mariadb => (
             "SELECT VEC_FromText('[1.5,2,3]') AS v",
             Value::from("AADAPwAAAEAAAEBA"),
-            version >= (11, 7),
+            version >= Line::new(11, 7),
         ),
         _ => (
             "SELECT STRING_TO_VECTOR('[1.5,2,3]') AS v",
             serde_json::json!([1.5, 2.0, 3.0]),
-            version >= (9, 0),
+            version >= Line::new(9, 0),
         ),
     };
 
@@ -4957,7 +4951,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
 async fn test_read_only_session_per_connection() {
     // MariaDB names the variable `tx_read_only` before 11.1.
     let variable = match backend() {
-        DatabaseBackend::Mariadb if server_version().await < (11, 1) => "tx_read_only",
+        DatabaseBackend::Mariadb if server_version().await < Line::new(11, 1) => "tx_read_only",
         _ => "transaction_read_only",
     };
     for (read_only, expected) in [(true, 1), (false, 0)] {
@@ -6155,7 +6149,7 @@ async fn column_rules_follow_renamed_columns() {
     let handler = ruled_handler(None, 100);
     let derived_list = "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)";
     // MariaDB parses a derived column list (`AS t(a, b)`) from 11.7 on.
-    let derived_lists = backend() != DatabaseBackend::Mariadb || server_version().await >= (11, 7);
+    let derived_lists = backend() != DatabaseBackend::Mariadb || server_version().await >= Line::new(11, 7);
     for query in [
         "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
         derived_list,

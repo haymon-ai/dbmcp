@@ -1,7 +1,7 @@
 //! Supported database versions and the tier of a running server.
 //!
-//! [`SUPPORTED`](supported) lists the lines CI tests per backend, edited by
-//! hand with the CI version matrix. Backends read the server version once
+//! [`supported`] lists the lines CI tests per backend, edited by hand with
+//! the CI version matrix. Backends read the server version once
 //! per process, parse it into a [`Line`], detect a fork [`Variant`], and
 //! [`classify`] it. Outside [`Tier::Supported`], [`Tier::warning`] gives the
 //! one startup warning. Nothing is refused by tier.
@@ -42,7 +42,7 @@ impl Line {
         let (major, rest) = version.split_once('.')?;
         let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
         let minor = &rest[..end];
-        if major.is_empty() || minor.is_empty() || !major.bytes().all(|b| b.is_ascii_digit()) {
+        if !major.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
         Some(Self::new(major.parse().ok()?, minor.parse().ok()?))
@@ -118,6 +118,8 @@ pub enum Variant {
     Cockroachdb,
     /// `YugabyteDB`.
     Yugabytedb,
+    /// Vitess, including `PlanetScale`.
+    Vitess,
 }
 
 impl fmt::Display for Variant {
@@ -128,8 +130,20 @@ impl fmt::Display for Variant {
             Self::Tidb => "TiDB",
             Self::Cockroachdb => "CockroachDB",
             Self::Yugabytedb => "YugabyteDB",
+            Self::Vitess => "Vitess",
         })
     }
+}
+
+/// Why an upstream server is Best effort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// The line is above every listed one.
+    Newer,
+    /// The line is unlisted below the newest: end of life or untested.
+    Untested,
+    /// The server reports a beta, release candidate, or development build.
+    PreRelease,
 }
 
 /// The support tier of a running server.
@@ -143,8 +157,8 @@ pub enum Tier {
         backend: DatabaseBackend,
         /// The server's line.
         line: Line,
-        /// Whether the line is above every listed one.
-        newer: bool,
+        /// Why the line is not Supported.
+        reason: Reason,
     },
     /// A fork or re-implementation.
     Unsupported(Variant),
@@ -162,7 +176,7 @@ impl Tier {
             Self::BestEffort {
                 backend,
                 line,
-                newer: true,
+                reason: Reason::Newer,
             } => {
                 let latest = supported(backend).last().map(ToString::to_string).unwrap_or_default();
                 format!(
@@ -173,7 +187,7 @@ impl Tier {
             Self::BestEffort {
                 backend,
                 line,
-                newer: false,
+                reason: Reason::Untested,
             } => {
                 let list = supported(backend)
                     .iter()
@@ -185,6 +199,11 @@ impl Tier {
                     name(backend)
                 )
             }
+            Self::BestEffort {
+                backend,
+                line,
+                reason: Reason::PreRelease,
+            } => format!("{} {line} is a pre-release (Best effort)", name(backend)),
         };
         if rules {
             text.push_str("; column-rule guarantees not claimed");
@@ -193,23 +212,29 @@ impl Tier {
     }
 }
 
-/// Classifies a server by its line and detected variant.
+/// Classifies a server by its line, detected variant, and pre-release flag.
 ///
 /// A variant is Unsupported whatever line it reports, since forks fake it.
+/// A pre-release is Best effort even on a listed line.
 #[must_use]
-pub fn classify(backend: DatabaseBackend, line: Line, variant: Option<Variant>) -> Tier {
+pub fn classify(backend: DatabaseBackend, line: Line, variant: Option<Variant>, pre_release: bool) -> Tier {
     if let Some(variant) = variant {
         return Tier::Unsupported(variant);
     }
-    let lines = supported(backend);
-    if lines.contains(&line) {
-        return Tier::Supported;
-    }
-    Tier::BestEffort {
-        backend,
-        line,
-        newer: lines.last().is_some_and(|latest| line > *latest),
-    }
+    let reason = if pre_release {
+        Reason::PreRelease
+    } else {
+        let lines = supported(backend);
+        if lines.contains(&line) {
+            return Tier::Supported;
+        }
+        if lines.last().is_some_and(|latest| line > *latest) {
+            Reason::Newer
+        } else {
+            Reason::Untested
+        }
+    };
+    Tier::BestEffort { backend, line, reason }
 }
 
 /// Returns the product name of `backend`.
@@ -258,57 +283,94 @@ mod tests {
     #[test]
     fn variant_is_unsupported_even_on_a_listed_line() {
         assert_eq!(
-            classify(Mysql, Line::new(8, 4), Some(Variant::AuroraMysql)),
+            classify(Mysql, Line::new(8, 4), Some(Variant::AuroraMysql), false),
             Tier::Unsupported(Variant::AuroraMysql)
         );
         assert_eq!(
-            classify(Postgres, Line::major(16), Some(Variant::Cockroachdb)),
+            classify(Postgres, Line::major(16), Some(Variant::Cockroachdb), false),
             Tier::Unsupported(Variant::Cockroachdb)
         );
     }
 
     #[test]
     fn listed_lines_are_supported() {
-        assert_eq!(classify(Postgres, Line::major(15), None), Tier::Supported);
-        assert_eq!(classify(Mysql, Line::new(26, 10), None), Tier::Supported);
-        assert_eq!(classify(Mariadb, Line::new(10, 11), None), Tier::Supported);
-        assert_eq!(classify(Sqlite, Line::new(3, 54), None), Tier::Supported);
+        assert_eq!(classify(Postgres, Line::major(15), None, false), Tier::Supported);
+        assert_eq!(classify(Mysql, Line::new(26, 10), None, false), Tier::Supported);
+        assert_eq!(classify(Mariadb, Line::new(10, 11), None, false), Tier::Supported);
+        assert_eq!(classify(Sqlite, Line::new(3, 54), None, false), Tier::Supported);
     }
 
     #[test]
     fn line_above_the_list_is_newer() {
         assert_eq!(
-            classify(Mysql, Line::new(27, 4), None),
+            classify(Mysql, Line::new(27, 4), None, false),
             Tier::BestEffort {
                 backend: Mysql,
                 line: Line::new(27, 4),
-                newer: true
+                reason: Reason::Newer
             }
         );
         assert!(matches!(
-            classify(Postgres, Line::major(20), None),
-            Tier::BestEffort { newer: true, .. }
+            classify(Postgres, Line::major(20), None, false),
+            Tier::BestEffort {
+                reason: Reason::Newer,
+                ..
+            }
         ));
     }
 
     #[test]
     fn unlisted_line_below_the_top_is_untested() {
         assert_eq!(
-            classify(Mysql, Line::new(9, 5), None),
+            classify(Mysql, Line::new(9, 5), None, false),
             Tier::BestEffort {
                 backend: Mysql,
                 line: Line::new(9, 5),
-                newer: false
+                reason: Reason::Untested
             }
         );
         assert!(matches!(
-            classify(Mysql, Line::new(8, 0), None),
-            Tier::BestEffort { newer: false, .. }
+            classify(Mysql, Line::new(8, 0), None, false),
+            Tier::BestEffort {
+                reason: Reason::Untested,
+                ..
+            }
         ));
         assert!(matches!(
-            classify(Postgres, Line::major(14), None),
-            Tier::BestEffort { newer: false, .. }
+            classify(Postgres, Line::major(14), None, false),
+            Tier::BestEffort {
+                reason: Reason::Untested,
+                ..
+            }
         ));
+    }
+
+    #[test]
+    fn pre_release_is_best_effort_even_on_a_listed_line() {
+        assert_eq!(
+            classify(Postgres, Line::major(19), None, true),
+            Tier::BestEffort {
+                backend: Postgres,
+                line: Line::major(19),
+                reason: Reason::PreRelease
+            }
+        );
+        assert_eq!(
+            classify(Postgres, Line::major(20), Some(Variant::Cockroachdb), true),
+            Tier::Unsupported(Variant::Cockroachdb)
+        );
+        assert_eq!(
+            classify(Postgres, Line::major(20), None, true).warning(true),
+            Some("PostgreSQL 20 is a pre-release (Best effort); column-rule guarantees not claimed".into())
+        );
+    }
+
+    #[test]
+    fn vitess_is_an_unsupported_fork() {
+        assert_eq!(
+            classify(Mysql, Line::new(8, 4), Some(Variant::Vitess), false).warning(false),
+            Some("server is Vitess, an Unsupported fork".into())
+        );
     }
 
     #[test]
@@ -320,21 +382,21 @@ mod tests {
     #[test]
     fn warnings_name_the_tier() {
         assert_eq!(
-            classify(Mysql, Line::new(8, 4), Some(Variant::AuroraMysql)).warning(false),
+            classify(Mysql, Line::new(8, 4), Some(Variant::AuroraMysql), false).warning(false),
             Some("server is Aurora MySQL, an Unsupported fork".into())
         );
         assert_eq!(
-            classify(Mysql, Line::new(27, 4), None).warning(false),
+            classify(Mysql, Line::new(27, 4), None, false).warning(false),
             Some("MySQL 27.4 is newer than the versions tested (Best effort); latest tested is 26.10".into())
         );
         assert_eq!(
-            classify(Mysql, Line::new(9, 5), None).warning(false),
+            classify(Mysql, Line::new(9, 5), None, false).warning(false),
             Some(
                 "MySQL 9.5 is not Supported (Best effort: end of life or untested); Supported: 8.4, 9.7, 26.10".into()
             )
         );
         assert_eq!(
-            classify(Postgres, Line::major(14), None).warning(false),
+            classify(Postgres, Line::major(14), None, false).warning(false),
             Some(
                 "PostgreSQL 14 is not Supported (Best effort: end of life or untested); Supported: 15, 16, 17, 18, 19"
                     .into()
@@ -345,11 +407,11 @@ mod tests {
     #[test]
     fn rules_add_the_suffix() {
         assert_eq!(
-            classify(Postgres, Line::major(16), Some(Variant::Yugabytedb)).warning(true),
+            classify(Postgres, Line::major(16), Some(Variant::Yugabytedb), false).warning(true),
             Some("server is YugabyteDB, an Unsupported fork; column-rule guarantees not claimed".into())
         );
         assert_eq!(
-            classify(Mariadb, Line::new(10, 6), None).warning(true),
+            classify(Mariadb, Line::new(10, 6), None, false).warning(true),
             Some(
                 "MariaDB 10.6 is not Supported (Best effort: end of life or untested); \
                  Supported: 10.11, 11.4, 11.8, 12.3, 13.0; column-rule guarantees not claimed"

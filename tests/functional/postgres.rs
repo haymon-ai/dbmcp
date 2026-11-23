@@ -5587,10 +5587,7 @@ async fn column_rules_refuse_every_statement_when_strings_lex_differently() {
             "{}",
             error.message
         );
-        eprintln!(
-            "skipped: PostgreSQL 19+ rejects standard_conforming_strings = off ({}), so strings cannot lex differently",
-            error.message
-        );
+        eprintln!("skipped: PostgreSQL 19+ has no standard_conforming_strings = off");
         return;
     }
     let handler = ruled_handler(Some("policy_lexical"), 100, standard_rules());

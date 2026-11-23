@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::support::{self, Line, Variant};
@@ -16,6 +16,8 @@ use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::{debug, info, warn};
+
+use crate::version;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -44,7 +46,6 @@ impl PostgresConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    /// `rules` tells whether `privacy.rules` exist, for the version tier warning.
     pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
         info!(
             "PostgreSQL lazy connection pool created (max size: {})",
@@ -174,10 +175,9 @@ impl Connection for PostgresConnection {
 /// `PG*` environment variable influence, since our config already
 /// resolves values from CLI/env. In read-only mode every connection
 /// starts with `default_transaction_read_only = on`, so the server
-/// rejects writes through any [`Connection`] method. Until `checked` is
-/// set, a new connection also warns when the server is outside the
-/// Supported tier (`rules` adds the column-rule suffix); that check never
-/// fails the connection.
+/// rejects writes through any [`Connection`] method. Also warns once
+/// when the server is outside Supported; that check never fails the
+/// connection.
 fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<AtomicBool>, rules: bool) -> PgPool {
     let mut conn_ops = PgConnectOptions::new_without_pgpass()
         .host(&config.host)
@@ -224,42 +224,60 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<Atomic
     pool_ops = pool_ops.after_connect(move |conn: &mut sqlx::PgConnection, _meta| {
         let checked = Arc::clone(&checked);
         Box::pin(async move {
-            if checked.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            let Some(num) = conn.server_version_num() else {
-                debug!("could not read the server version; checking again on the next connection");
-                return Ok(());
-            };
-            if checked.swap(true, Ordering::AcqRel) {
-                return Ok(());
-            }
-            let Ok((version, aurora)) = sqlx::query_as::<_, (String, bool)>(
-                "SELECT version(), to_regproc('pg_catalog.aurora_version') IS NOT NULL",
-            )
-            .fetch_one(&mut *conn)
-            .await
-            else {
-                debug!("could not read the server variant; skipping the version tier check");
-                return Ok(());
-            };
-            let variant = if version.contains("CockroachDB") {
-                Some(Variant::Cockroachdb)
-            } else if version.contains("-YB-") {
-                Some(Variant::Yugabytedb)
-            } else if aurora {
-                Some(Variant::AuroraPostgres)
-            } else {
-                None
-            };
-            if let Some(warning) = support::classify(backend, Line::from_version_num(num), variant).warning(rules) {
-                warn!("{warning}");
-            }
+            check_version(conn, &checked, backend, rules).await;
             Ok(())
         })
     });
 
     pool_ops.connect_lazy_with(conn_ops)
+}
+
+/// Warns once per process when the server is outside Supported.
+///
+/// Sets `checked` only once every read succeeded, so a failed read or probe
+/// leaves the check to the next connection.
+async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
+    if checked.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(num) = conn.server_version_num() else {
+        debug!("could not read the server version; checking again on the next connection");
+        return;
+    };
+    let Ok(text) = sqlx::query_scalar::<_, String>("SELECT pg_catalog.version()")
+        .fetch_one(&mut *conn)
+        .await
+    else {
+        debug!("could not read the server version text; checking again on the next connection");
+        return;
+    };
+    let variant = match version::variant(&text) {
+        Some(variant) => Some(variant),
+        None => {
+            match sqlx::query_scalar::<_, bool>("SELECT pg_catalog.to_regproc('pg_catalog.aurora_version') IS NOT NULL")
+                .fetch_one(&mut *conn)
+                .await
+            {
+                Ok(aurora) => aurora.then_some(Variant::AuroraPostgres),
+                Err(error) => {
+                    debug!("could not probe for Aurora ({error}); checking again on the next connection");
+                    return;
+                }
+            }
+        }
+    };
+    if checked.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let tier = support::classify(
+        backend,
+        Line::from_version_num(num),
+        variant,
+        version::pre_release(&text),
+    );
+    if let Some(warning) = tier.warning(rules) {
+        warn!("{warning}");
+    }
 }
 
 /// Quotes `value` as a `PostgreSQL` identifier (ANSI double-quote style).
@@ -271,7 +289,6 @@ pub(crate) fn quote_ident(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {

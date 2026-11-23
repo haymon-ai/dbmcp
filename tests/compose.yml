@@ -1,133 +1,82 @@
+x-mariadb: &mariadb
+    volumes:
+        - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+    ports:
+        - "127.0.0.1::3306"
+    environment:
+        MARIADB_ROOT_HOST: '%'
+        MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+
+x-mysql: &mysql
+    volumes:
+        - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+    ports:
+        - "127.0.0.1::3306"
+    environment:
+        MYSQL_ROOT_HOST: '%'
+        MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+
+x-postgres: &postgres
+    volumes:
+        - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+    ports:
+        - "127.0.0.1::5432"
+    environment:
+        POSTGRES_USER: postgres
+        POSTGRES_HOST_AUTH_METHOD: trust
+
 services:
     mariadb_10_11:
+        <<: *mariadb
         image: mariadb:10.11
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MARIADB_ROOT_HOST: '%'
-            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
     mariadb_11_4:
+        <<: *mariadb
         image: mariadb:11.4
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MARIADB_ROOT_HOST: '%'
-            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
     mariadb_11_8:
+        <<: *mariadb
         image: mariadb:11.8
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MARIADB_ROOT_HOST: '%'
-            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
     mariadb_12_3:
+        <<: *mariadb
         image: mariadb:12.3
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MARIADB_ROOT_HOST: '%'
-            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
     mariadb_13_0:
+        <<: *mariadb
         image: mariadb:13.0
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MARIADB_ROOT_HOST: '%'
-            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
     mysql_8_4:
+        <<: *mysql
         image: mysql:8.4
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MYSQL_ROOT_HOST: '%'
-            MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
 
     mysql_9_7:
+        <<: *mysql
         image: mysql:9.7
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MYSQL_ROOT_HOST: '%'
-            MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
 
     mysql_26_10:
+        <<: *mysql
         image: mysql:26.10
-        volumes:
-            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::3306"
-        environment:
-            MYSQL_ROOT_HOST: '%'
-            MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
 
     postgres_15:
+        <<: *postgres
         image: postgres:15-alpine
-        volumes:
-            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::5432"
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_HOST_AUTH_METHOD: trust
 
     postgres_16:
+        <<: *postgres
         image: postgres:16-alpine
-        volumes:
-            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::5432"
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_HOST_AUTH_METHOD: trust
 
     postgres_17:
+        <<: *postgres
         image: postgres:17-alpine
-        volumes:
-            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::5432"
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_HOST_AUTH_METHOD: trust
 
     postgres_18:
+        <<: *postgres
         image: postgres:18-alpine
-        volumes:
-            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::5432"
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_HOST_AUTH_METHOD: trust
 
     postgres_19:
+        <<: *postgres
         image: postgres:19-alpine
-        volumes:
-            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
-        ports:
-            - "127.0.0.1::5432"
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_HOST_AUTH_METHOD: trust
 
     # SSH bastion for functional_ssh. Tests reach databases by service name,
     # which only resolves inside the compose network, i.e. through sshd.

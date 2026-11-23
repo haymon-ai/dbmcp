@@ -8,5 +8,6 @@ mod handler;
 mod policy;
 mod tools;
 pub mod types;
+mod version;
 
 pub use handler::PostgresHandler;

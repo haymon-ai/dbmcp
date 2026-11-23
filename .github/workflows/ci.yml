@@ -203,7 +203,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Quoted: unquoted YAML reads 26.10 as 26.1 and 13.0 as 13.
+        # Quoted: unquoted YAML reads 13.0 as 13.
         version: ["10.11", "11.4", "11.8", "12.3", "13.0"]
     env:
       RUSTUP_AUTO_INSTALL: "0"
@@ -285,7 +285,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Quoted: unquoted YAML reads 26.10 as 26.1 and 13.0 as 13.
+        # Quoted: unquoted YAML reads 26.10 as 26.1.
         version: ["8.4", "9.7", "26.10"]
     env:
       RUSTUP_AUTO_INSTALL: "0"

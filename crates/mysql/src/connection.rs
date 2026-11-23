@@ -11,7 +11,7 @@ use std::time::Duration;
 use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
-use dbmcp_sql::support::{self, Line, Variant};
+use dbmcp_sql::support::{self, Variant};
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::AssertSqlSafe;
@@ -47,7 +47,6 @@ impl MysqlConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    /// `rules` tells whether `privacy.rules` exist, for the version tier warning.
     pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
         info!(
             "MySQL lazy connection pool created (max size: {})",
@@ -194,8 +193,8 @@ impl MysqlConnection {
 
 /// Warns once per process on a [`BackendMismatch`] or a server outside Supported.
 ///
-/// Sets `checked` once a connection read `VERSION()`. A failed read leaves
-/// it unset for the next connection; a failed later probe skips the check.
+/// Sets `checked` only once every read succeeded, so a failed read or probe
+/// leaves the check to the next connection.
 async fn check_version(conn: &mut sqlx::MySqlConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
     if checked.load(Ordering::Acquire) {
         return;
@@ -207,42 +206,41 @@ async fn check_version(conn: &mut sqlx::MySqlConnection, checked: &AtomicBool, b
         debug!("could not read the server version; checking again on the next connection");
         return;
     };
-    if checked.swap(true, Ordering::AcqRel) {
-        return;
-    }
     let server = flavour::of(&version);
-    if server != backend {
-        warn!(
-            "{}",
+    let message = if server != backend {
+        Some(
             BackendMismatch {
                 configured: backend,
-                server
+                server,
             }
-        );
-        return;
-    }
-    let Some(line) = Line::parse(&version) else {
-        debug!("could not parse the server version; skipping the version tier check");
-        return;
-    };
-    let variant = if version.contains("-TiDB-") {
-        Some(Variant::Tidb)
-    } else if backend == DatabaseBackend::Mysql {
-        match sqlx::raw_sql("SHOW VARIABLES LIKE 'aurora_version'")
-            .fetch_optional(&mut *conn)
-            .await
-        {
-            Ok(row) => row.map(|_| Variant::AuroraMysql),
-            Err(error) => {
-                debug!("could not probe for Aurora ({error}); skipping the version tier check");
-                return;
+            .to_string(),
+        )
+    } else if let Some(line) = flavour::line(&version, server) {
+        let variant = match flavour::variant(&version) {
+            Some(variant) => Some(variant),
+            None if backend == DatabaseBackend::Mysql => {
+                match sqlx::raw_sql("SHOW VARIABLES LIKE 'aurora_version'")
+                    .fetch_optional(&mut *conn)
+                    .await
+                {
+                    Ok(row) => row.map(|_| Variant::AuroraMysql),
+                    Err(error) => {
+                        debug!("could not probe for Aurora ({error}); checking again on the next connection");
+                        return;
+                    }
+                }
             }
-        }
+            None => None,
+        };
+        support::classify(backend, line, variant, false).warning(rules)
     } else {
+        debug!("could not parse the server version; skipping the version tier check");
         None
     };
-    if let Some(warning) = support::classify(backend, line, variant).warning(rules) {
-        warn!("{warning}");
+    if !checked.swap(true, Ordering::AcqRel)
+        && let Some(message) = message
+    {
+        warn!("{message}");
     }
 }
 

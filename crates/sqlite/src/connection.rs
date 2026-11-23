@@ -164,10 +164,8 @@ impl Connection for SqliteConnection {
 /// Opens the file read-only when `config.read_only` is set, backing the
 /// statement filter at the database: `SQLite` has no read-only transactions.
 /// Otherwise switches `query_only` off on every acquire, undoing
-/// [`fetch_read_only`](Connection::fetch_read_only). The first connection
-/// that reads `sqlite_version()` warns when the library is outside the
-/// Supported tier (`rules` adds the column-rule suffix); that check never
-/// fails the connection.
+/// [`fetch_read_only`](Connection::fetch_read_only). Also warns once when
+/// the library is outside Supported; that check never fails the connection.
 fn create_lazy_pool(config: &DatabaseConfig, rules: bool) -> SqlitePool {
     let conn_ops = SqliteConnectOptions::new()
         .filename(config.name.as_deref().unwrap_or_default())
@@ -212,7 +210,7 @@ fn create_lazy_pool(config: &DatabaseConfig, rules: bool) -> SqlitePool {
                 debug!("could not parse the SQLite version; skipping the version tier check");
                 return Ok(());
             };
-            if let Some(warning) = support::classify(backend, line, None).warning(rules) {
+            if let Some(warning) = support::classify(backend, line, None, false).warning(rules) {
                 warn!("{warning}");
             }
             Ok(())
@@ -260,6 +258,26 @@ mod tests {
             false,
         );
         assert_eq!(pool.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn bundled_sqlite_is_supported() {
+        let pool = create_lazy_pool(
+            &DatabaseConfig {
+                name: Some(":memory:".into()),
+                ..base_config()
+            },
+            false,
+        );
+        let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&pool)
+            .await
+            .expect("read sqlite_version()");
+        let line = Line::parse(&version).expect("parse sqlite_version()");
+        assert!(
+            support::supported(DatabaseBackend::Sqlite).contains(&line),
+            "bundled SQLite {version} is missing from the Supported list"
+        );
     }
 
     #[tokio::test]

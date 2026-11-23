@@ -7,9 +7,6 @@ set -euo pipefail
 # Each service in compose.yml uses random port assignment and seeds via
 # /docker-entrypoint-initdb.d/ volume mounts.
 #
-# By default only the newest version per backend runs; --all-versions runs
-# every Supported version in MATRIX.
-#
 # Usage:
 #   ./tests/run.sh                                         # Newest version per backend
 #   ./tests/run.sh --all-versions                          # Every Supported version
@@ -39,8 +36,7 @@ TEST_TYPE="${TEST_TYPE:-all}"
 #                     DBMCP_DB_BACKEND passed to the functional tests
 #   db_type         — mysql, postgres, or sqlite
 #   container_port  — internal port to resolve via `docker compose port`
-#   newest          — `newest` on the newest entry per backend (the default run),
-#                     empty otherwise
+#   newest          — `newest` marks the default-run entry per backend
 #
 # The versions are edited by hand together with compose.yml and ci.yml.
 #
@@ -90,11 +86,10 @@ Usage: ./tests/run.sh [OPTIONS]
 
 Run functional tests against database containers.
 
-Runs the newest version per backend unless --all-versions is given.
 
 Options:
   --all-versions       Run every Supported version, not just the newest
-  --filter <pattern>   Run only selected services matching pattern (substring match)
+  --filter <pattern>   Run only services matching pattern (substring match)
   --type <type>        Test type: functional, approval, or all (default: all)
   --help               Show this help message
 
@@ -390,10 +385,24 @@ echo "=============================================="
 echo "Building project..."
 cargo nextest run --workspace --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
 
+SELECTED=()
 for entry in "${MATRIX[@]}"; do
-    IFS=':' read -r service db_type container_port newest <<< "$entry"
+    IFS=':' read -r service _ _ newest <<< "$entry"
     [ "$ALL_VERSIONS" = false ] && [ "$newest" != "newest" ] && continue
     [ -n "$FILTER" ] && [[ "$service" != *"$FILTER"* ]] && continue
+    SELECTED+=("$entry")
+done
+
+# Pull every selected image at once; compose pulls in parallel.
+PULL=()
+for entry in "${SELECTED[@]}"; do
+    service="${entry%%:*}"
+    [ "$service" != sqlite ] && PULL+=("$service")
+done
+[ ${#PULL[@]} -gt 0 ] && docker compose -f "$COMPOSE_FILE" pull -q "${PULL[@]}" sshd >/dev/null 2>&1 || true
+
+for entry in "${SELECTED[@]}"; do
+    IFS=':' read -r service db_type container_port _ <<< "$entry"
     run_entry "$service" "$db_type" "$container_port"
 done
 
