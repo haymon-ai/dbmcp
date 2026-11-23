@@ -20,21 +20,21 @@
 //! replaced by a generic message.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::mem;
+use std::convert::Infallible;
 
 use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
-    Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Entry, Family, Origin, Planned, Rejection, Relation,
-    RelationId, RelationKind, RelationRef, SourceRef, Step, Unfit, WrittenName,
+    Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Origin,
+    Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, Step, WrittenName, admit, settle,
 };
-use dbmcp_sql::{Connection as _, SqlError};
+use dbmcp_sql::Connection as _;
 use dbmcp_truncate::Window;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlx::sqlite::{SqliteColumn, SqliteQueryResult, SqliteRow};
+use sqlx::sqlite::{SqliteColumn, SqliteRow};
 use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
 
 use crate::SqliteHandler;
@@ -111,51 +111,7 @@ const VALUE_FREE_CODES: &[i32] = &[275, 787, 1299, 1555, 2067, 2579, 3091];
 /// `SQLITE_ERROR` messages of the JSON functions that carry no value.
 const VALUE_FREE_JSON: &[&str] = &["malformed JSON", "JSON cannot hold BLOB values"];
 
-/// Whether the statement may write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Access {
-    /// Runs under `query_only` and rolls back.
-    Read,
-    /// Commits; refused in read-only mode.
-    Write,
-}
-
-/// Redacted rows and write counts of a statement run under the column rules.
-#[derive(Debug)]
-pub(crate) struct Enforced {
-    pub(crate) rows: Vec<Value>,
-    pub(crate) rows_affected: u64,
-    pub(crate) last_insert_id: Option<u64>,
-}
-
-/// Why a statement returned no rows under the column rules.
-#[derive(Debug, thiserror::Error)]
-enum Stop {
-    /// The planner refused the statement; nothing ran.
-    #[error(transparent)]
-    Rejected(#[from] Rejection),
-    /// The result does not fit the plan; nothing was committed.
-    #[error(transparent)]
-    Unfit(#[from] Unfit),
-    /// The statement failed with an error that may echo a ruled value.
-    #[error("query failed (SQLite code {0}): error detail withheld under column policy")]
-    Withheld(String),
-    /// Any other database error, reported as without column rules.
-    #[error(transparent)]
-    Sql(#[from] sqlx::Error),
-}
-
-struct Run<'c> {
-    planned: Planned<'c>,
-    names: Vec<String>,
-    rows_affected: u64,
-    last_insert_id: Option<u64>,
-}
-
-struct Executed {
-    names: Vec<String>,
-    results: Vec<SqliteQueryResult>,
-}
+type Stop = dbmcp_policy::Stop<Infallible>;
 
 /// A table or view the catalog lists.
 struct Listed {
@@ -185,41 +141,15 @@ impl SqliteHandler {
         timeout_secs: u64,
         window: &mut Window,
     ) -> Result<Enforced, ErrorData> {
-        let Some(redactor) = &self.redactor else {
-            return Err(ErrorData::internal_error(
-                "column policy: column rules need PII redaction enabled",
-                None,
-            ));
-        };
         let read_only = self.connection.read_only();
-        if access == Access::Write && read_only {
-            return Err(SqlError::ReadOnlyViolation.into());
-        }
-        let run = self
+        let admitted = admit(self.redactor.as_ref(), access, read_only)?;
+        let ran = self
             .connection
             .with_connection(sql, None, timeout_secs, async |conn| {
-                match run(conn, read_only, policy, sql, access, &mut |row| window.push(row)).await {
-                    Err(Stop::Sql(error)) => Err(error),
-                    other => Ok(other),
-                }
+                Stop::split(run(conn, read_only, policy, sql, access, &mut |row| window.push(row)).await)
             })
-            .await?
-            .map_err(|stop| ErrorData::internal_error(stop.to_string(), None))?;
-        let rows = mem::take(&mut window.items).into_iter().map(values).collect();
-        let rows = run.planned.redact(redactor, run.names, rows).await?;
-        Ok(Enforced {
-            rows,
-            rows_affected: run.rows_affected,
-            last_insert_id: run.last_insert_id,
-        })
-    }
-}
-
-/// Unwraps a window row, which `execute` always pushes as an array.
-fn values(row: Value) -> Vec<Value> {
-    match row {
-        Value::Array(values) => values,
-        other => vec![other],
+            .await;
+        Ok(admitted.finish(ran, window).await?)
     }
 }
 
@@ -245,27 +175,8 @@ async fn run<'c>(
     let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
-    let executed = match execute(&mut tx, sql, &mut planned, sink).await {
-        Ok(executed) => executed,
-        Err(Stop::Sql(error)) => return Err(failed(&planned, error)),
-        Err(stop) => {
-            tx.rollback().await?;
-            return Err(stop);
-        }
-    };
-    // Deferred foreign keys fail at `COMMIT`, so its error is filtered too.
-    let finished = match access {
-        Access::Read => tx.rollback().await,
-        Access::Write => tx.commit().await,
-    };
-    finished.map_err(|error| failed(&planned, error))?;
-    let (rows_affected, last_insert_id) = SqliteConnection::counts(sql, &executed.results);
-    Ok(Run {
-        planned,
-        names: executed.names,
-        rows_affected,
-        last_insert_id,
-    })
+    let executed = execute(&mut tx, sql, &mut planned, sink).await;
+    settle(Some(tx), access, planned, echoing, executed).await
 }
 
 /// Runs `sql`, feeding each row's values to `sink`.
@@ -279,8 +190,12 @@ async fn execute(
 ) -> Result<Executed, Stop> {
     let first =
         |row: &SqliteRow, names: &[String]| planned.check_first(names, origins(row.columns())).map_err(Stop::from);
-    let (names, results) = SqliteConnection::execute_checked(conn, sql, first, sink).await?;
-    Ok(Executed { names, results })
+    let (names, rows_affected, last_insert_id) = SqliteConnection::execute_checked(conn, sql, first, sink).await?;
+    Ok(Executed {
+        names,
+        rows_affected,
+        last_insert_id,
+    })
 }
 
 /// Translates each result column's base-table origin, one entry per reading.
@@ -522,14 +437,7 @@ fn view_query(create: &str) -> Option<String> {
     }
 }
 
-/// Withholds `error` when it may echo a value and the plan withholds.
-fn failed(planned: &Planned<'_>, error: sqlx::Error) -> Stop {
-    planned
-        .withheld(echoing(&error))
-        .map_or(Stop::Sql(error), Stop::Withheld)
-}
-
-/// Returns the extended code of a database error that may echo a value.
+/// Labels the extended code of a database error that may echo a value.
 ///
 /// Timeouts and non-database errors return `None`.
 fn echoing(error: &sqlx::Error) -> Option<String> {
@@ -541,14 +449,15 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
     let value_free = code.parse::<i32>().is_ok_and(|code| {
         VALUE_FREE_CODES.contains(&code) || (code == 1 && VALUE_FREE_JSON.contains(&error.message()))
     });
-    (!value_free).then(|| code.into_owned())
+    (!value_free).then(|| format!("SQLite code {code}"))
 }
 
 #[cfg(test)]
 mod tests {
     use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PrivacyOperator, Transport};
-    use dbmcp_policy::NamePart;
+    use dbmcp_policy::{NamePart, Unfit};
     use dbmcp_privacy::cells::ShapeError;
+    use dbmcp_sql::SqlError;
     use sqlx::Connection as _;
 
     use super::*;
@@ -735,7 +644,7 @@ mod tests {
     async fn value_echoing_errors_are_withheld() {
         let error = error_of("SELECT 1", "SELECT json_extract('{}', 'secret')").await;
         assert!(error.to_string().contains("secret"), "{error}");
-        assert_eq!(echoing(&error).as_deref(), Some("1"));
+        assert_eq!(echoing(&error).as_deref(), Some("SQLite code 1"));
     }
 
     #[tokio::test]
@@ -756,7 +665,7 @@ mod tests {
         let setup = "CREATE TABLE t (a); \
              CREATE TRIGGER g BEFORE INSERT ON t BEGIN SELECT RAISE(ABORT, 'no'); END";
         let error = error_of(setup, "INSERT INTO t VALUES (1)").await;
-        assert_eq!(echoing(&error).as_deref(), Some("1811"));
+        assert_eq!(echoing(&error).as_deref(), Some("SQLite code 1811"));
     }
 
     #[tokio::test]
@@ -911,8 +820,7 @@ mod tests {
             &mut |_| sunk += 1,
         )
         .await
-        .err()
-        .expect("shape refused");
+        .expect_err("shape refused");
         assert!(
             matches!(
                 stop,
@@ -943,8 +851,7 @@ mod tests {
             &mut |_| {},
         )
         .await
-        .err()
-        .expect("query_only rejects the write");
+        .expect_err("query_only rejects the write");
         assert!(error.to_string().contains("readonly"), "{error}");
     }
 

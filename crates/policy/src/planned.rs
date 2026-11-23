@@ -83,7 +83,7 @@ impl<'c> Planned<'c> {
     ///
     /// `code` is `None` for errors that cannot echo a value.
     #[must_use]
-    pub fn withheld<C>(&self, code: Option<C>) -> Option<C> {
+    pub(crate) fn withheld<C>(&self, code: Option<C>) -> Option<C> {
         code.filter(|_| self.withholds)
     }
 

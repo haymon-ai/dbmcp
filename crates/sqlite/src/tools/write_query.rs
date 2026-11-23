@@ -6,8 +6,8 @@ use dbmcp_server::types::WriteQueryResponse;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
-use crate::policy::Access;
 use crate::types::QueryRequest;
+use dbmcp_policy::Access;
 
 const NAME: &str = "writeQuery";
 const TITLE: &str = "Write Query";
@@ -83,7 +83,11 @@ impl SqliteHandler {
                 .connection
                 .execute_json(query.as_str(), None, |row| window.push(row))
                 .await?;
-            let rows = self.redactor.redact_rows(window.items).await?;
+            let rows = self
+                .redactor
+                .redact_rows(window.items)
+                .await
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
             (rows, rows_affected, last_insert_id)
         };
         let fitted = fit(rows, caps);

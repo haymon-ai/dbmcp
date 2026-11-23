@@ -247,7 +247,7 @@ where
     ///
     /// `first` sees the first row and its column names; once it passes, each
     /// row's values reach `sink` as a JSON array. Returns the column names
-    /// (empty without rows) and the per-statement results.
+    /// (empty without rows), affected rows, and the last insert id.
     ///
     /// # Errors
     ///
@@ -257,7 +257,7 @@ where
         sql: &str,
         mut first: impl FnMut(&<Self::DB as sqlx::Database>::Row, &[String]) -> Result<(), E> + Send,
         sink: &mut (impl FnMut(Value) + Send),
-    ) -> Result<(Vec<String>, Vec<<Self::DB as sqlx::Database>::QueryResult>), E> {
+    ) -> Result<(Vec<String>, u64, Option<u64>), E> {
         let query = (AssertSqlSafe(sql.to_owned()).into_sql_str(), None);
         let mut stream = conn.fetch_many(query);
         let mut names = None;
@@ -275,7 +275,8 @@ where
                 }
             }
         }
-        Ok((names.unwrap_or_default(), results))
+        let (rows_affected, last_insert_id) = Self::counts(sql, &results);
+        Ok((names.unwrap_or_default(), rows_affected, last_insert_id))
     }
 
     /// Folds per-statement results of `sql` into affected rows and the last insert id.

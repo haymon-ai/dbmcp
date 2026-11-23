@@ -7,8 +7,8 @@ use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_truncate::{Window, fit};
 
 use super::prelude::*;
-use crate::policy::Access;
 use crate::types::ExplainQueryRequest;
+use dbmcp_policy::Access;
 
 const NAME: &str = "explainQuery";
 const TITLE: &str = "Explain Query";
@@ -100,7 +100,10 @@ impl SqliteHandler {
                     window.push(row);
                 })
                 .await?;
-            self.redactor.redact_rows(window.items).await?
+            self.redactor
+                .redact_rows(window.items)
+                .await
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None))?
         };
         let fitted = fit(rows, caps);
 
