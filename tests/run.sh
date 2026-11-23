@@ -7,11 +7,16 @@ set -euo pipefail
 # Each service in compose.yml uses random port assignment and seeds via
 # /docker-entrypoint-initdb.d/ volume mounts.
 #
+# By default only the newest version per backend runs; --all-versions runs
+# every Supported version in MATRIX.
+#
 # Usage:
-#   ./tests/run.sh                     # Run full matrix
-#   ./tests/run.sh --filter mariadb    # All MariaDB services
-#   ./tests/run.sh --filter mysql_9    # Specific service
-#   ./tests/run.sh --help              # Show usage
+#   ./tests/run.sh                                         # Newest version per backend
+#   ./tests/run.sh --all-versions                          # Every Supported version
+#   ./tests/run.sh --filter mariadb                        # Newest MariaDB
+#   ./tests/run.sh --all-versions --filter mariadb         # Every MariaDB version
+#   ./tests/run.sh --all-versions --filter mariadb_10_11   # One specific service
+#   ./tests/run.sh --help                                  # Show usage
 #
 # Environment:
 #   TIMEOUT=30      Container readiness timeout in seconds (default: 30)
@@ -29,11 +34,15 @@ export COMPOSE_PROJECT_NAME
 TIMEOUT="${TIMEOUT:-30}"
 TEST_TYPE="${TEST_TYPE:-all}"
 
-# Matrix: service_name:db_type:container_port
+# Matrix: service_name:db_type:container_port:newest
 #   service_name    — matches compose.yml service; its prefix before `_` is the
 #                     DBMCP_DB_BACKEND passed to the functional tests
 #   db_type         — mysql, postgres, or sqlite
 #   container_port  — internal port to resolve via `docker compose port`
+#   newest          — `newest` on the newest entry per backend (the default run),
+#                     empty otherwise
+#
+# The versions are edited by hand together with compose.yml and ci.yml.
 #
 # Test binary names are derived by convention:
 #   functional → functional_$type (e.g. "functional_mysql", "functional_sqlite")
@@ -42,10 +51,20 @@ TEST_TYPE="${TEST_TYPE:-all}"
 #   policy     → policy_$type for mysql/postgres: the backend crate's ignored
 #                lib tests, which call private policy functions on the database
 MATRIX=(
-    "mariadb_12:mysql:3306"
-    "mysql_9:mysql:3306"
-    "postgres_18:postgres:5432"
-    "sqlite:sqlite:0"
+    "mariadb_10_11:mysql:3306:"
+    "mariadb_11_4:mysql:3306:"
+    "mariadb_11_8:mysql:3306:"
+    "mariadb_12_3:mysql:3306:"
+    "mariadb_13_0:mysql:3306:newest"
+    "mysql_8_4:mysql:3306:"
+    "mysql_9_7:mysql:3306:"
+    "mysql_26_10:mysql:3306:newest"
+    "postgres_15:postgres:5432:"
+    "postgres_16:postgres:5432:"
+    "postgres_17:postgres:5432:"
+    "postgres_18:postgres:5432:"
+    "postgres_19:postgres:5432:newest"
+    "sqlite:sqlite:0:newest"
 )
 
 declare -a RESULTS=()
@@ -71,18 +90,23 @@ Usage: ./tests/run.sh [OPTIONS]
 
 Run functional tests against database containers.
 
+Runs the newest version per backend unless --all-versions is given.
+
 Options:
-  --filter <pattern>   Run only services matching pattern (substring match)
+  --all-versions       Run every Supported version, not just the newest
+  --filter <pattern>   Run only selected services matching pattern (substring match)
   --type <type>        Test type: functional, approval, or all (default: all)
   --help               Show this help message
 
 Examples:
-  ./tests/run.sh                          # Full matrix (all test types)
-  ./tests/run.sh --filter mariadb         # All MariaDB services
-  ./tests/run.sh --filter postgres        # All PostgreSQL services
-  ./tests/run.sh --filter sqlite          # SQLite only
-  ./tests/run.sh --type functional         # Functional tests only
-  ./tests/run.sh --type approval          # Approval/snapshot tests only
+  ./tests/run.sh                                         # Newest version per backend
+  ./tests/run.sh --all-versions                          # Every Supported version
+  ./tests/run.sh --filter postgres                       # Newest PostgreSQL only
+  ./tests/run.sh --all-versions --filter postgres        # Every PostgreSQL version
+  ./tests/run.sh --all-versions --filter mariadb_10_11   # One specific service
+  ./tests/run.sh --filter sqlite                         # SQLite only
+  ./tests/run.sh --type functional                       # Functional tests only
+  ./tests/run.sh --type approval                         # Approval/snapshot tests only
 
 Environment:
   TIMEOUT=30      Container readiness timeout in seconds (default: 30)
@@ -340,8 +364,10 @@ print_summary() {
 # ---------------------------------------------------------------------------
 
 FILTER=""
+ALL_VERSIONS=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --all-versions) ALL_VERSIONS=true; shift ;;
         --filter) FILTER="$2"; shift 2 ;;
         --type) TEST_TYPE="$2"; shift 2 ;;
         --help|-h) usage; exit 0 ;;
@@ -357,19 +383,23 @@ esac
 check_docker
 check_nextest
 
-echo "Database Functional Test Suite (type: ${TEST_TYPE})"
+VERSIONS="newest"
+[ "$ALL_VERSIONS" = true ] && VERSIONS="all"
+echo "Database Functional Test Suite (type: ${TEST_TYPE}, versions: ${VERSIONS})"
 echo "=============================================="
 echo "Building project..."
 cargo nextest run --workspace --no-run 2>/dev/null || { echo "ERROR: Failed to build test binaries"; exit 2; }
 
 for entry in "${MATRIX[@]}"; do
-    IFS=':' read -r service db_type container_port <<< "$entry"
+    IFS=':' read -r service db_type container_port newest <<< "$entry"
+    [ "$ALL_VERSIONS" = false ] && [ "$newest" != "newest" ] && continue
     [ -n "$FILTER" ] && [[ "$service" != *"$FILTER"* ]] && continue
     run_entry "$service" "$db_type" "$container_port"
 done
 
 if [ ${#RESULTS[@]} -eq 0 ]; then
     echo "No matrix entries matched filter: $FILTER"
+    [ "$ALL_VERSIONS" = false ] && echo "Only the newest version per backend runs by default; add --all-versions to match older ones."
     exit 1
 fi
 

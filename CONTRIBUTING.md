@@ -88,8 +88,11 @@ cargo test --doc --workspace       # doc tests
 **Integration tests** run against real databases using Docker and need cargo-nextest. The `tests/run.sh` script manages the full matrix:
 
 ```bash
-# Run the full test matrix (MariaDB 12, MySQL 9, PostgreSQL 18, SQLite)
+# Run the newest version per backend
 ./tests/run.sh
+
+# Run every Supported version (the full matrix)
+./tests/run.sh --all-versions
 
 # Filter to a specific backend
 ./tests/run.sh --filter mariadb
@@ -115,7 +118,7 @@ CI automatically runs on every push and pull request:
 3. `cargo clippy --workspace --tests -- -D warnings` — linting
 4. `cargo nextest run --workspace` — unit tests and `crates/privacy/tests` on Linux, Windows, and macOS
 5. `cargo test --doc --workspace` — doc tests
-6. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite, run with nextest from a test archive built once with `cargo nextest archive`
+6. Integration tests against every Supported version (see `ci.yml` and Supported versions) and SQLite, run with nextest from a test archive built once with `cargo nextest archive`
 
 All checks must pass before a PR can be merged.
 

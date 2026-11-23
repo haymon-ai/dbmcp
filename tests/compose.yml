@@ -1,6 +1,6 @@
 services:
-    mariadb_12:
-        image: mariadb:12
+    mariadb_10_11:
+        image: mariadb:10.11
         volumes:
             - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
@@ -9,8 +9,48 @@ services:
             MARIADB_ROOT_HOST: '%'
             MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
 
-    mysql_9:
-        image: mysql:9
+    mariadb_11_4:
+        image: mariadb:11.4
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MARIADB_ROOT_HOST: '%'
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+
+    mariadb_11_8:
+        image: mariadb:11.8
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MARIADB_ROOT_HOST: '%'
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+
+    mariadb_12_3:
+        image: mariadb:12.3
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MARIADB_ROOT_HOST: '%'
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+
+    mariadb_13_0:
+        image: mariadb:13.0
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MARIADB_ROOT_HOST: '%'
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+
+    mysql_8_4:
+        image: mysql:8.4
         volumes:
             - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:
@@ -19,8 +59,68 @@ services:
             MYSQL_ROOT_HOST: '%'
             MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
 
+    mysql_9_7:
+        image: mysql:9.7
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+
+    mysql_26_10:
+        image: mysql:26.10
+        volumes:
+            - "./seed/mysql.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::3306"
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+
+    postgres_15:
+        image: postgres:15-alpine
+        volumes:
+            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_HOST_AUTH_METHOD: trust
+
+    postgres_16:
+        image: postgres:16-alpine
+        volumes:
+            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_HOST_AUTH_METHOD: trust
+
+    postgres_17:
+        image: postgres:17-alpine
+        volumes:
+            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_HOST_AUTH_METHOD: trust
+
     postgres_18:
         image: postgres:18-alpine
+        volumes:
+            - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - "127.0.0.1::5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_HOST_AUTH_METHOD: trust
+
+    postgres_19:
+        image: postgres:19-alpine
         volumes:
             - "./seed/postgres.sql:/docker-entrypoint-initdb.d/setup.sql:z"
         ports:

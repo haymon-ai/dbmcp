@@ -21,7 +21,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # docs (broken link
 cargo fmt --check             # check formatting
 cargo fmt                     # apply formatting
 
-./tests/run.sh                # integration tests (Docker + cargo-nextest required)
+./tests/run.sh                # integration tests, newest version per backend (Docker + cargo-nextest required)
+./tests/run.sh --all-versions # integration tests, every Supported version
 ./tests/run.sh --filter mysql # filter by backend
 ```
 
@@ -101,6 +102,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps  # rustdoc links
 cargo nextest run --workspace       # unit tests
 cargo test --doc --workspace  # doc tests
 ./tests/run.sh                # integration tests (Docker + cargo-nextest required)
+./tests/run.sh --all-versions # integration tests, every Supported version
 ```
 
 ALWAYS verify for new/modified code:

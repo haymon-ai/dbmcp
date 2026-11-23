@@ -169,7 +169,8 @@ jobs:
       # Postgres starts in the background while the image builds.
       - name: Start Postgres
         run: |
-          kubectl create deployment postgres --image=postgres:18-alpine --port=5432
+          # Newest Supported PostgreSQL; bumped by hand with the version lists (Dependabot can't see it).
+          kubectl create deployment postgres --image=postgres:19-alpine --port=5432
           kubectl set env deployment/postgres POSTGRES_PASSWORD=postgres
           kubectl expose deployment postgres --port=5432
 
@@ -196,15 +197,20 @@ jobs:
             --helm-extra-set-args "--set image.repository=dbmcp --set image.tag=ci --set image.pullPolicy=Never"
 
   mariadb:
-    name: MariaDB
+    name: MariaDB ${{ matrix.version }}
     runs-on: ubuntu-24.04
     needs: archive
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: unquoted YAML reads 26.10 as 26.1 and 13.0 as 13.
+        version: ["10.11", "11.4", "11.8", "12.3", "13.0"]
     env:
       RUSTUP_AUTO_INSTALL: "0"
     services:
       mariadb:
-        image: mariadb:12
+        image: mariadb:${{ matrix.version }}
         env:
           MARIADB_ROOT_HOST: '%'
           MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
@@ -273,15 +279,20 @@ jobs:
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   mysql:
-    name: MySQL
+    name: MySQL ${{ matrix.version }}
     runs-on: ubuntu-24.04
     needs: archive
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: unquoted YAML reads 26.10 as 26.1 and 13.0 as 13.
+        version: ["8.4", "9.7", "26.10"]
     env:
       RUSTUP_AUTO_INSTALL: "0"
     services:
       mysql:
-        image: mysql:9
+        image: mysql:${{ matrix.version }}
         env:
           MYSQL_ROOT_HOST: '%'
           MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -351,15 +362,19 @@ jobs:
           SSHD_CONTAINER: ${{ job.services.sshd.id }}
 
   postgres:
-    name: PostgreSQL
+    name: PostgreSQL ${{ matrix.version }}
     runs-on: ubuntu-24.04
     needs: archive
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["15", "16", "17", "18", "19"]
     env:
       RUSTUP_AUTO_INSTALL: "0"
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:${{ matrix.version }}-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
@@ -451,3 +466,17 @@ jobs:
         run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst" --ignore-default-filter -E 'binary_id(dbmcp::functional_sqlite)'
         env:
           DB_PATH: /tmp/app.db
+
+  # The only required integration check: the version matrices change without
+  # touching branch protection.
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-24.04
+    needs: [mariadb, mysql, postgres, sqlite]
+    if: always()
+    steps:
+      - name: Check results
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "An integration job failed or was cancelled."
+          exit 1
