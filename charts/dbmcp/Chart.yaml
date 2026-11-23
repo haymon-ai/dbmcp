@@ -1,6 +1,6 @@
 apiVersion: v2
 name: dbmcp
-description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite
+description: "The privacy first MCP server for SQL databases."
 type: application
 version: 0.20.0
 appVersion: "0.20.0"
@@ -11,6 +11,9 @@ sources:
   - https://github.com/haymon-ai/dbmcp
 keywords:
   - mcp
+  - privacy
+  - sensitive-data
+  - pii
   - database
   - mysql
   - mariadb

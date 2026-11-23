@@ -22,7 +22,7 @@ FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384def
 ARG TARGETARCH
 
 LABEL org.opencontainers.image.title="dbmcp" \
-      org.opencontainers.image.description="Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention" \
+      org.opencontainers.image.description="The privacy first MCP server for SQL databases." \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/haymon-ai/dbmcp" \
       io.modelcontextprotocol.server.name="ai.haymon/dbmcp"

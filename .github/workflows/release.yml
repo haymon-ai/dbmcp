@@ -136,7 +136,7 @@ jobs:
           labels: |
             io.modelcontextprotocol.server.name=ai.haymon/dbmcp
             org.opencontainers.image.title=dbmcp
-            org.opencontainers.image.description=Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite
+            org.opencontainers.image.description=The privacy first MCP server for SQL databases.
             org.opencontainers.image.licenses=MIT
 
       - uses: actions/download-artifact@v8

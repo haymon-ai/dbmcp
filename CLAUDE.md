@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-A single-binary MCP (Model Context Protocol) server for MySQL, MariaDB, PostgreSQL, and SQLite. Built in Rust with zero runtime dependencies.
+The privacy first MCP server for SQL databases. Supports MySQL, MariaDB, PostgreSQL, and SQLite.
 
 ## Build & Test Commands
 

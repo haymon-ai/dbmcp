@@ -5,7 +5,7 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-Command-line interface for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite.
+Command-line interface for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases.
 
 This crate is an internal component of `dbmcp` and is not intended for direct use. Install the server with `cargo install dbmcp` instead.
 

@@ -6,7 +6,7 @@ description.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
-keywords = ["mcp", "database", "mysql", "postgresql", "sqlite"]
+keywords = ["mcp", "privacy", "mysql", "postgresql", "sqlite"]
 categories = ["database", "command-line-utilities"]
 
 [workspace]
@@ -15,7 +15,7 @@ members = [".", "crates/*"]
 [workspace.package]
 version = "0.20.0"
 edition = "2024"
-description = "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite"
+description = "The privacy first MCP server for SQL databases."
 homepage = "https://dbmcp.haymon.ai"
 license = "MIT"
 repository = "https://github.com/haymon-ai/dbmcp"

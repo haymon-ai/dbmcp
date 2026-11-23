@@ -20,7 +20,7 @@ Every setting is listed at https://dbmcp.haymon.ai/configuration";
 
 /// Top-level CLI arguments parsed by clap.
 #[derive(Debug, Parser)]
-#[command(about = "Database MCP Server", after_help = AFTER_HELP)]
+#[command(about = "The privacy first MCP server for SQL databases.", after_help = AFTER_HELP)]
 pub(crate) struct Arguments {
     /// Path to a YAML config file; repeat to layer several, later wins [env: DBMCP_CONFIG_FILE]
     #[allow(clippy::doc_markdown, reason = "doc comment is the verbatim --help text")]

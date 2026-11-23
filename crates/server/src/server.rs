@@ -24,7 +24,7 @@ const NAME: &str = "dbmcp";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Human-readable title for the MCP server.
-const TITLE: &str = "Database MCP Server";
+const TITLE: &str = "dbmcp";
 
 /// Website URL, derived from the workspace `Cargo.toml` at compile time.
 const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");

@@ -9,7 +9,7 @@ Choose how detected values are rewritten. For what the feature covers, how it wo
 
 | YAML key | Env var | Type | Default | Description |
 |----------|---------|------|---------|-------------|
-| `privacy.operator` | `DBMCP_PRIVACY_OPERATOR` | enum | `hash` | Operator applied to detected PII spans; the fallback for rules without their own |
+| `privacy.operator` | `DBMCP_PRIVACY_OPERATOR` | enum | `hash` | Operator applied to detected sensitive spans; the fallback for rules without their own |
 | `privacy.key` | `DBMCP_PRIVACY_KEY` | string | *unset (random per process)* | HMAC key for the `hash` operator, at least 32 bytes; ignored by the other operators, but checked whenever set |
 | `privacy.categories` | `DBMCP_PRIVACY_CATEGORIES` | list | *unset (all built-ins)* | Category subset for detection |
 
@@ -67,7 +67,7 @@ See [Data types](/privacy/data-types) for every entity type and [Machine Learnin
 
 ## Nested JSON values
 
-Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A PII string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (key names, array indexes, container ordering) are preserved.
+Redaction walks every string leaf in `json` and `jsonb` columns (and any other column the backend hands the server as a structured `serde_json::Value::Object` or `Value::Array`). A sensitive string redacts identically whether it arrives as a plain `text` column, a JSON literal cast to `text`, or a leaf nested inside a `jsonb` value at any depth. Non-string scalars (numbers, booleans, `null`) and the JSON shape (key names, array indexes, container ordering) are preserved.
 
 JSON object **keys** are never inspected or modified — only values are redacted. A row like `{"jane.doe@example.com": "value"}` returns with the key intact. If you need key redaction, please open an issue; today's contract is values-only.
 

@@ -5,7 +5,7 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-SQLite backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP server that lets your AI assistant talk to SQL databases.
+SQLite backend for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases.
 
 ## What you get
 
@@ -14,7 +14,7 @@ SQLite backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP se
 - File or `:memory:` — point it at a path or run entirely in RAM
 - Read-only by default — write tools hidden unless explicitly disabled
 - Parameterised queries everywhere — user values never touch SQL strings
-- Optional PII redaction on every `readQuery` payload
+- Sensitive-data redaction on by default for the output and errors of `readQuery`, `writeQuery`, and `explainQuery`
 - Zero server — perfect for local AI tools, demos, and CI
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

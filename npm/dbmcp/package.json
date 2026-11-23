@@ -1,14 +1,14 @@
 {
   "name": "@haymon-ai/dbmcp",
   "version": "0.0.0",
-  "description": "Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite with PII redaction and write-prevention",
+  "description": "The privacy first MCP server for SQL databases.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/haymon-ai/dbmcp.git"
   },
   "homepage": "https://dbmcp.haymon.ai",
-  "keywords": ["mcp", "mcp-server", "mysql", "mariadb", "postgres", "sqlite"],
+  "keywords": ["mcp", "mcp-server", "privacy", "sensitive-data", "pii", "redaction", "data-masking", "dlp", "gdpr", "mysql", "mariadb", "postgres", "sqlite"],
   "mcpName": "ai.haymon/dbmcp",
   "bin": {
     "dbmcp": "bin/dbmcp.js"

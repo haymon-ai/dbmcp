@@ -28,11 +28,11 @@ export const metadata: Metadata = {
     template: `%s | ${appName}`,
   },
   description:
-    "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite. Zero runtime dependencies, read-only by default.",
+    "The privacy first MCP server for SQL databases.",
   openGraph: {
     title: homeTitle,
     description:
-      "A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite. Zero runtime dependencies, read-only by default.",
+      "The privacy first MCP server for SQL databases.",
     url: siteUrl,
     siteName: appName,
     type: "website",
