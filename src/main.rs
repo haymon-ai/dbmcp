@@ -1,4 +1,4 @@
-//! Database MCP Server entry point.
+//! dbmcp entry point: the privacy first MCP server for SQL databases.
 //!
 //! Installs mimalloc as the global allocator, starts the Tokio runtime, and
 //! delegates to [`dbmcp_cli::run`].

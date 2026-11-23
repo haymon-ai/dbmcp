@@ -5,7 +5,7 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-PostgreSQL backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MCP server that lets your AI assistant talk to SQL databases.
+PostgreSQL backend for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases.
 
 ## What you get
 
@@ -14,6 +14,6 @@ PostgreSQL backend for [dbmcp](https://dbmcp.haymon.ai) — the single-binary MC
 - Per-database connection pool cache (`moka`) — cheap per-call `database` switches
 - Read-only by default — write tools hidden unless explicitly disabled
 - Parameterised queries everywhere — user values never touch SQL strings
-- Optional PII redaction on every `readQuery` payload; walks JSON/JSONB recursively
+- Sensitive-data redaction on by default for the output and errors of `readQuery`, `writeQuery`, and `explainQuery`; walks JSON/JSONB recursively
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

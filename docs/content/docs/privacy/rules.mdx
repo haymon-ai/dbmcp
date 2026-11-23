@@ -3,7 +3,7 @@ title: Rules
 description: Rewrite every value of named table columns, whatever the query does with them
 ---
 
-Global [redaction](/privacy/redaction) finds sensitive values by their pattern. Column rules work from the other direction: you name the table columns that hold sensitive data, and <Dbmcp /> rewrites **every** value that comes from them, whether or not it looks like PII. A rule covers the column wherever a query reads it: selected directly, through `*`, a view, a CTE, a subquery, or an expression such as `lower(email)`.
+Global [redaction](/privacy/redaction) finds sensitive values by their pattern. Column rules work from the other direction: you name the table columns that hold sensitive data, and <Dbmcp /> rewrites **every** value that comes from them, whether or not it looks sensitive. A rule covers the column wherever a query reads it: selected directly, through `*`, a view, a CTE, a subquery, or an expression such as `lower(email)`.
 
 To do that, <Dbmcp /> works out which table columns feed each output column of a statement before it runs. A statement it cannot check, or one that would use a ruled column in a way that could reveal its values, is refused before it runs.
 
@@ -296,7 +296,7 @@ Policy refusals, timeouts, and connection errors are returned as they are. Other
 Column rules narrow what the assistant can learn, but some channels stay open. Plan for them:
 
 - **Rules that match nothing.** A key with a typo or the wrong segments (see [Column keys](#column-keys)) silently has no effect.
-- **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds personal data.
+- **Unlisted columns.** Columns without a rule rely on global detection, which catches patterns such as e-mail addresses and IBANs but not names or street addresses (those need [Machine Learning](/privacy/machine-learning)). Rule every column that holds sensitive data.
 - **Timing.** How long a query runs can depend on ruled values. Response times are not padded.
 - **Errors as an oracle.** Whether a statement fails can depend on a value: `SELECT CASE WHEN ssn LIKE '1%' THEN 1/0 END FROM users` fails exactly when the condition holds, and `SELECT 1/(ascii(ssn) - 49) FROM users` fails exactly when `ssn` starts with `1`, with no condition at all. Withholding the message does not hide that an error happened. A `LIMIT` on an unruled column turns this into a row locator: the statement fails only when the matching row is among the first rows, so a search over the limit finds the row.
 - **Plan estimates.** Pruned plans keep row and cost estimates, which derive from statistics of ruled columns; see [Plans of ruled tables](#plans-of-ruled-tables).

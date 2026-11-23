@@ -35,7 +35,7 @@ export async function GET(
   const isIntro = page.slugs.length === 0;
   const title = isIntro ? homeHeading : page.data.title;
   const description = isIntro
-    ? "A single binary with zero runtime dependencies, read-only by default"
+    ? "Works with MySQL, MariaDB, PostgreSQL, and SQLite"
     : page.data.description;
   return new ImageResponse(
     <div

@@ -25,7 +25,7 @@ use crate::tools::{
 };
 
 /// Backend-specific description for `PostgreSQL`.
-const DESCRIPTION: &str = "Database MCP Server for PostgreSQL";
+const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
 
 /// Backend-specific instructions for `PostgreSQL` in read-write mode.
 const INSTRUCTIONS: &str = include_str!("../assets/instructions/default.md");

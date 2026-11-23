@@ -23,7 +23,7 @@ use crate::tools::{
 };
 
 /// Backend-specific description for MySQL/MariaDB.
-const DESCRIPTION: &str = "Database MCP Server for MySQL and MariaDB";
+const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
 
 /// Backend-specific instructions for MySQL/MariaDB in read-write mode.
 const INSTRUCTIONS: &str = include_str!("../assets/instructions/default.md");

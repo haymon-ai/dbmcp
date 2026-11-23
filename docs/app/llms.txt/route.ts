@@ -27,7 +27,7 @@ export async function GET() {
   const intro = source.getPage([]);
   const head = [
     `# ${appName}`,
-    `> ${(intro?.data.description ?? "").replace(/\.$/, "")}. Gives AI assistants access to SQL databases over the Model Context Protocol, read-only by default.`,
+    `> ${intro?.data.description ?? ""}`,
     `All pages in one file: ${siteUrl}${basePath}/llms-full.txt`,
     "## Introduction",
     intro

@@ -1,11 +1,11 @@
 ---
 title: Introduction
-description: A single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite
+description: The privacy first MCP server for SQL databases.
 ---
 
-<Demo />
+<Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
 
-<Dbmcp /> is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that gives AI assistants safe, read-only access to your databases. Built in Rust as a single binary with zero runtime dependencies, it works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
+<Dbmcp /> is the privacy first [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for SQL databases. Out of the box, <Dbmcp /> redacts e-mail addresses, phone numbers, bank and card numbers, national IDs, API keys, and other pattern-detected values inside the server, so the AI client never sees them. An optional local [model](/privacy/machine-learning) adds names and places, and [column rules](/privacy/rules) cover any column you name. Redaction is on by default, and access is read-only by default. It works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
 
 ## Quick Install
 
@@ -36,15 +36,19 @@ For more installation options, see [Installation](/installation).
 
 ## Key Features
 
-- **Single binary** — no runtime dependencies, no language runtimes to install
-- **Read-only by default** — write operations are blocked unless explicitly enabled
+- **Redaction on by default** — sensitive data in query results is replaced before the AI client sees it; keyed tokens keep equal values equal, so the assistant can still count, group, and join ([details](/privacy))
+- **Finds what you did not label** — 47 built-in [data types](/privacy/data-types), from contact details and national IDs to bank numbers, API keys, and VAT numbers, plus an optional local [model](/privacy/machine-learning) for names, places, and company names
+- **Column rules that follow the data** — every value of a named column is rewritten however a query reaches it, and statements that cannot be proven safe are refused ([details](/privacy/rules), [residual risks](/privacy/rules#residual-risks))
+- **Fewer side doors** — errors that would echo ruled values are withheld, results are fenced as untrusted data to make prompt injection harder, and write operations are blocked unless explicitly enabled
 - **Stdio and HTTP transport** — works as a local stdio server or a remote HTTP server with CORS preflight and server-side Origin/Host allowlists
-- **Multi-database support** — connect to MySQL, MariaDB, PostgreSQL, or SQLite with a single binary
 - **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/features/ssh-tunnel))
-- **Data privacy** — on-by-default redaction of personal and sensitive values in query tool output ([details](/privacy))
 
 ## How It Works
 
-<Dbmcp /> exposes your database schema and data through the MCP protocol. AI assistants can discover tables, inspect schemas, and run read-only SQL queries to answer questions about your data — all without the risk of accidental modifications.
+1. **Query.** The AI assistant discovers tables, inspects schemas, and runs SQL through <Dbmcp />'s MCP tools, read-only unless you enable writes.
+2. **Redact.** <Dbmcp /> finds sensitive values in the results and error messages and replaces them with tokens such as `<EMAIL_ADDRESS_4e1f0dd69c51e84c>`. Ruled columns are rewritten whole, and statements that could reveal them another way are refused.
+3. **Return.** The assistant gets the redacted result: it can still count, group, and join without seeing the redacted values. Your database is never modified by redaction.
+
+See [Data Privacy](/privacy) for what is detected and its [limits](/privacy#limits).
 
 See the [Installation](/installation) guide to get started.

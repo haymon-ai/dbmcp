@@ -19,7 +19,7 @@ use crate::tools::{
 };
 
 /// Backend-specific description for `SQLite`.
-const DESCRIPTION: &str = "Database MCP Server for SQLite";
+const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
 
 /// Backend-specific instructions for `SQLite` in read-write mode.
 const INSTRUCTIONS: &str = include_str!("../assets/instructions/default.md");

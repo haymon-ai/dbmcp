@@ -1,22 +1,29 @@
-# Database MCP
+# dbmcp
 
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/haymon-ai/dbmcp)](https://github.com/haymon-ai/dbmcp/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-dbmcp.haymon.ai-black)](https://dbmcp.haymon.ai/)
 
-A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases. Connect your AI assistant to MySQL/MariaDB, PostgreSQL, or SQLite with zero runtime dependencies.
+The privacy first [MCP](https://modelcontextprotocol.io/) server for SQL databases.
+
+Out of the box, dbmcp redacts e-mail addresses, phone numbers, bank and card numbers, national IDs, API keys, and other pattern-detected values inside the server, so the AI client never sees them. Add a local model for names and places, and column rules for any column you name, such as salaries or margins.
+
+Works with MySQL, MariaDB, PostgreSQL, and SQLite.
 
 **[Website](https://dbmcp.haymon.ai)** · **[Releases](https://github.com/haymon-ai/dbmcp/releases)**
 
-![demo](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/docs/public/demo.gif)
+![demo](https://raw.githubusercontent.com/haymon-ai/dbmcp/master/docs/public/privacy.gif)
 
 ## Features ✨
 
-- **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary, tested in CI against every [Supported version](https://dbmcp.haymon.ai/supported-versions)
+- **Redaction on by default** — sensitive data in query results is replaced before the AI client sees it: keyed tokens such as `<EMAIL_ADDRESS_4e1f0dd69c51e84c>` keep equal values equal, so the assistant can still count, group, and join. See [Data Privacy](https://dbmcp.haymon.ai/privacy)
+- **Finds what you did not label** — 47 built-in data types: contact details, national IDs, bank and card numbers, API keys and private keys, VAT and tax numbers, with checksum validation. An optional local model adds names, places, and company names. Detection runs inside dbmcp, with no outside service
+- **Column rules that follow the data** — name a column once and every value from it is rewritten, however a query reaches it: aliases, expressions, views, CTEs, joins, unions. Statements dbmcp cannot prove safe are refused before they run. See [Rules](https://dbmcp.haymon.ai/privacy/rules) and its [residual risks](https://dbmcp.haymon.ai/privacy/rules#residual-risks)
+- **Fewer side doors** — database errors that would echo ruled values are withheld, results are fenced as untrusted data to make prompt injection harder, and the server is read-only unless you turn writes on
 - **MCP tools** — schema discovery (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`), data access (`readQuery`, `writeQuery`), DDL (`createDatabase`, `dropDatabase`, `dropTable`), and `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`). See [MCP Tools](#mcp-tools) for per-backend availability.
-- **Single binary** — ~7 MB, no Python/Node/Docker needed
-- **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
+- **Databases** — MySQL, MariaDB, PostgreSQL, and SQLite, tested in CI against every [Supported version](https://dbmcp.haymon.ai/supported-versions)
+- **Transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Layered config** — `DBMCP_*` environment variables, an env file, and an optional YAML config file with `${}` interpolation, with sensible defaults per backend
 - **SSH tunnel** — reach MySQL/MariaDB/PostgreSQL through an SSH bastion with an embedded client: password or key auth, `known_hosts` verification, automatic reconnect
 
@@ -304,7 +311,7 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 - **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport. Defends against browser DNS rebinding — not a substitute for authentication
 - **SSL/TLS** — configured via individual `DBMCP_DB_SSL_*` variables
 - **SSH host-key verification** — the SSH tunnel checks the server key against `known_hosts` (`yes` by default); SSH passwords and passphrases are never logged
-- **PII redaction** *(on by default)* — in privacy mode `full`, query tool output passes through a regex-based redactor that rewrites detected PII spans across **47 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, postcodes of any country plus UK/German ones), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Mode: `DBMCP_PRIVACY_MODE` (`privacy.mode`) — `none`, `rules` (column rules only), or `full` (default). Operator: `DBMCP_PRIVACY_OPERATOR` (`privacy.operator`) — one of `hash` (default, keyed tokens like `<EMAIL_ADDRESS_…>`; key via `DBMCP_PRIVACY_KEY` (`privacy.key`)), `replace` (entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop). Optional subset via `DBMCP_PRIVACY_CATEGORIES` (`privacy.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: rows returned by `readQuery`, `writeQuery`, and `explainQuery`, plus tool error messages (regex recognizers only). Column rules (`privacy.rules`, YAML only, under `rules` and `full`) rewrite every value of named table columns, traced through views, CTEs, and expressions, and refuse statements that could reveal them otherwise (see [Rules](https://dbmcp.haymon.ai/privacy/rules)). See [Data Privacy](https://dbmcp.haymon.ai/privacy) for the full surface.
+- **Sensitive-data redaction** *(on by default)* — in privacy mode `full`, query tool output passes through a regex-based redactor that rewrites detected sensitive spans across **47 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, postcodes of any country plus UK/German ones), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Mode: `DBMCP_PRIVACY_MODE` (`privacy.mode`) — `none`, `rules` (column rules only), or `full` (default). Operator: `DBMCP_PRIVACY_OPERATOR` (`privacy.operator`) — one of `hash` (default, keyed tokens like `<EMAIL_ADDRESS_…>`; key via `DBMCP_PRIVACY_KEY` (`privacy.key`)), `replace` (entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop). Optional subset via `DBMCP_PRIVACY_CATEGORIES` (`privacy.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: rows returned by `readQuery`, `writeQuery`, and `explainQuery`, plus tool error messages (regex recognizers only). Column rules (`privacy.rules`, YAML only, under `rules` and `full`) rewrite every value of named table columns, traced through views, CTEs, and expressions, and refuse statements that could reveal them otherwise (see [Rules](https://dbmcp.haymon.ai/privacy/rules)). See [Data Privacy](https://dbmcp.haymon.ai/privacy) for the full surface.
 - **ML/NER redaction** *(opt-in at runtime, off by default)* — adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection that regex cannot catch, turned on under `full` by setting a user-supplied model directory in `DBMCP_PRIVACY_MODEL` (`privacy.model`). Which entities are produced depends on the model's labels (CoNLL models give person/location/organization; OntoNotes-class models add NRP and facility). Inference uses **ONNX Runtime** (model directory holds `config.json`, `tokenizer.json`, `model.onnx`; recommended: the MIT-licensed [`optimum/bert-base-NER`](https://huggingface.co/optimum/bert-base-NER), an ONNX export of `dslim/bert-base-NER`; an int8-quantized export runs about 3.5× faster). Fail-closed: a model that cannot load aborts startup and an inference error fails the request — never a silent fallback. Respects `privacy.categories`. Model-agnostic: multilingual models such as `Davlan/bert-base-multilingual-cased-ner-hrl` work once exported to ONNX.
 - **Credential redaction** — database password is never shown in logs or debug output
 
@@ -348,7 +355,7 @@ This is a Cargo workspace with the following crates:
 | `dbmcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |
 | `dbmcp-postgres` | `crates/postgres/` | PostgreSQL backend handler and operations |
 | `dbmcp-sqlite` | `crates/sqlite/` | SQLite backend handler and operations |
-| `dbmcp-privacy` | `crates/privacy/` | PII detection and anonymisation of query output |
+| `dbmcp-privacy` | `crates/privacy/` | Sensitive-data detection and anonymisation of query output |
 | `dbmcp-sql-lineage` | `crates/sql-lineage/` | Column-level SQL lineage extraction |
 | `dbmcp-ssh` | `crates/ssh/` | SSH tunnel for database connections |
 | `sqlx-json` | `crates/sqlx-json/` | Type-safe row-to-JSON conversion for sqlx (`RowExt` trait) |
@@ -357,7 +364,7 @@ This is a Cargo workspace with the following crates:
 
 ```bash
 cargo build              # Development build
-cargo build --release    # Release build (~7 MB)
+cargo build --release    # Release build
 cargo nextest run --workspace  # Run unit tests
 cargo clippy --workspace --tests -- -D warnings  # Lint
 cargo fmt                # Format

@@ -1,6 +1,6 @@
 # dbmcp Helm chart
 
-Runs [dbmcp](https://github.com/haymon-ai/dbmcp), a single-binary MCP server for MySQL, MariaDB, PostgreSQL, and SQLite, on Kubernetes over Streamable HTTP.
+Runs [dbmcp](https://github.com/haymon-ai/dbmcp), the privacy first MCP server for SQL databases, on Kubernetes over Streamable HTTP.
 
 ```bash
 helm install dbmcp oci://ghcr.io/haymon-ai/charts/dbmcp --values values.yaml

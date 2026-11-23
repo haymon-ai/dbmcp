@@ -1,13 +1,13 @@
 ---
 title: Data Privacy
-description: Keep personal and sensitive values in your data out of what the AI assistant sees
+description: Keep sensitive data, personal and business, out of what the AI assistant sees
 ---
 
 <Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
 
 The recording runs in `full` mode with the optional [Machine Learning](/privacy/machine-learning) model set, which is what turns names into `<PERSON>`; the built-in recognizers alone catch emails, phone numbers, IBANs, and the other [data types](/privacy/data-types).
 
-Query results often contain personal or sensitive data (often called PII, personally identifiable information): email addresses, phone numbers, IBANs, API keys, names. <Dbmcp /> can find these values in tool output and rewrite them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
+Query results often contain sensitive data: personal data (often called PII, personally identifiable information) such as email addresses, phone numbers, and names, and business data such as IBANs, API keys, and VAT numbers. <Dbmcp /> finds these values (names with the optional [model](/privacy/machine-learning)) in tool output and rewrites them before the response reaches the AI assistant, so the assistant can still work with the shape of your data without seeing the sensitive values themselves.
 
 The feature is **on by default** (privacy mode `full`). Set the [mode](#modes) to `rules` or `none` to narrow or turn it off.
 
@@ -23,7 +23,7 @@ Peer database servers and redaction tools ship with redaction off. <Dbmcp /> del
 2. **Rewrite.** Each detected span is replaced by the configured operator: a keyed hash token such as `<EMAIL_ADDRESS_3f9a1c07b2d4e855>` (`hash`, the default), a plain placeholder such as `<EMAIL_ADDRESS>` (`replace`), `*` masking (`mask`), or removal (`redact`).
 3. **Return.** The rewritten result goes to the assistant. Your database is never modified.
 
-For columns you know hold sensitive data, [column rules](/privacy/rules) go further: every value of a named table column is rewritten, whatever it looks like and however the query reads it, and statements that could reveal those values in other ways are refused.
+For columns you know hold sensitive data, such as salaries, margins, or customer e-mails, [column rules](/privacy/rules) go further: every value of a named table column is rewritten, whatever it looks like and however the query reads it, and statements that could reveal those values in other ways are refused.
 
 ## What gets filtered
 

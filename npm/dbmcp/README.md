@@ -1,6 +1,6 @@
 # @haymon-ai/dbmcp
 
-Database MCP server for MySQL, MariaDB, PostgreSQL & SQLite, as a single native binary.
+The privacy first MCP server for SQL databases. Works with MySQL, MariaDB, PostgreSQL, and SQLite.
 
 This package is a thin launcher: npm installs the prebuilt binary for your platform as an optional dependency (`@haymon-ai/dbmcp-<os>-<arch>`), and `dbmcp` runs it.
 
