@@ -5,6 +5,8 @@ description: Add dbmcp to Claude, Codex, VS Code, Cursor, and other MCP clients
 
 Every MCP client keeps its server list in a different file under a different key. Each client below has its own page with a ready-to-paste entry.
 
+Claude Code and Codex can also install dbmcp as a plugin, which adds the server with its `setup` and `privacy` skills: see [Claude Code](/clients/claude-code#plugin-recommended) and [Codex](/clients/codex#plugin-recommended).
+
 Each example has two tabs: **bin** runs the `dbmcp` binary from your `PATH` (see [Installation](/installation)), and **npx** runs `npx -y @haymon-ai/dbmcp`, which needs [Node.js](https://nodejs.org/) 18 or newer and no separate install (see [npm](/installation/package-managers#npm)). To run the Docker image instead, see [Docker or installed binary](#docker-or-installed-binary).
 
 The examples connect to MySQL with `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`. Replace the values with your own; every setting is listed in [Configuration](/configuration). An empty `DBMCP_*` value counts as unset, so a blank value falls back to the default.
