@@ -119,7 +119,7 @@ The [Supported versions](https://dbmcp.haymon.ai/supported-versions) are listed 
 4. `crates/sql/src/support.rs`: the backend's Supported lines in `dbmcp-sql`, which decide the startup warning.
 5. `.github/workflows/ci.yml`: the `helm` job's PostgreSQL image, when the newest Supported PostgreSQL changes.
 
-Also update the versions table and the "Last checked" date in `docs/content/docs/supported-versions.mdx`. A `libsqlite3-sys` bump that changes the bundled SQLite line updates the SQLite entries the same way.
+Also update the versions table in `docs/content/docs/supported-versions.mdx`. A `libsqlite3-sys` bump that changes the bundled SQLite line updates the SQLite entries the same way.
 
 For a new version, check `crates/sql-lineage/src/functions/` for its new built-in functions: a function missing there makes column rules refuse the statement.
 
