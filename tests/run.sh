@@ -242,8 +242,8 @@ run_entry() {
             ) || test_exit=$?
             echo "$test_output" | grep -E "^ *(PASS|FAIL|SIG[A-Z]+|ABORT|TIMEOUT|LEAK|Summary) " || true
             local count
-            count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
-            test_count=$((test_count + count))
+            count=$(echo "$test_output" | grep -oP '^ *Summary .* \K\d+(?= passed)' | tail -n 1 || true)
+            test_count=$((test_count + ${count:-0}))
         done
 
         rm -f "$db_path"
@@ -307,8 +307,8 @@ run_entry() {
             fi
             echo "$test_output" | grep -E "^ *(PASS|FAIL|SIG[A-Z]+|ABORT|TIMEOUT|LEAK|Summary) " || true
             local count
-            count=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
-            test_count=$((test_count + count))
+            count=$(echo "$test_output" | grep -oP '^ *Summary .* \K\d+(?= passed)' | tail -n 1 || true)
+            test_count=$((test_count + ${count:-0}))
         done
 
         echo -n "  Stopping container..."
