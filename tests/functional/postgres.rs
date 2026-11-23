@@ -16,6 +16,20 @@ use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDataba
 use indexmap::IndexMap;
 use serde_json::Value;
 
+/// Reads the server's `server_version_num`, for example `180001`.
+async fn server_version_num() -> i64 {
+    let response = handler(true)
+        .read_query(
+            "SELECT current_setting('server_version_num')::int AS v".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("read server_version_num");
+    response.rows[0]["v"].as_i64().expect("server_version_num is a number")
+}
+
 fn base_db_config(read_only: bool) -> DatabaseConfig {
     DatabaseConfig {
         backend: DatabaseBackend::Postgres,
@@ -5563,6 +5577,22 @@ async fn column_rules_bind_bare_names_through_the_search_path() {
 
 #[tokio::test]
 async fn column_rules_refuse_every_statement_when_strings_lex_differently() {
+    if server_version_num().await >= 190_000 {
+        let error = handler(false)
+            .write_query("SET standard_conforming_strings = off".into(), None)
+            .await
+            .expect_err("PostgreSQL 19 removed standard_conforming_strings = off");
+        assert!(
+            error.message.contains("non-standard string literals"),
+            "{}",
+            error.message
+        );
+        eprintln!(
+            "skipped: PostgreSQL 19+ rejects standard_conforming_strings = off ({}), so strings cannot lex differently",
+            error.message
+        );
+        return;
+    }
     let handler = ruled_handler(Some("policy_lexical"), 100, standard_rules());
     let refusal = ruled_refusal(&handler, "SELECT note FROM audit").await;
     assert!(refusal.contains("column policy"), "{refusal}");
