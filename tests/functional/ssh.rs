@@ -35,7 +35,8 @@ const RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Returns the path of a fixture key in `crates/ssh/testdata`.
 fn key(name: &str) -> String {
-    format!("{}/crates/ssh/testdata/{name}", env!("CARGO_MANIFEST_DIR"))
+    let root = std::env::var("CARGO_MANIFEST_DIR").expect("cargo test and nextest set CARGO_MANIFEST_DIR at run time");
+    format!("{root}/crates/ssh/testdata/{name}")
 }
 
 /// Builds `dbmcp` with the inherited database and SSH environment.
@@ -44,7 +45,10 @@ fn command() -> tokio::process::Command {
         std::env::var_os("DBMCP_SSH_HOST").is_some(),
         "DBMCP_SSH_HOST must be set (run via ./tests/run.sh)"
     );
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = tokio::process::Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     command.env("DBMCP_DB_NAME", "app");
     command
 }
@@ -412,7 +416,8 @@ async fn tls_database_with_wrong_ca_fails_through_ssh_tunnel() {
     if tls_test_ca().is_none() {
         return;
     }
-    let wrong = format!("{}/tests/tls/wrong_ca.pem", env!("CARGO_MANIFEST_DIR"));
+    let root = std::env::var("CARGO_MANIFEST_DIR").expect("cargo test and nextest set CARGO_MANIFEST_DIR at run time");
+    let wrong = format!("{root}/tests/tls/wrong_ca.pem");
     let text = query_error_text(tls_command(&wrong)).await;
     assert!(text.contains("invalid peer certificate"), "{text}");
 }

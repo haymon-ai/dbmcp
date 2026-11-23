@@ -78,13 +78,14 @@ Adding or updating dependencies requires discussion. If your change needs a new 
 
 ### Running Tests
 
-**Unit tests**:
+**Unit tests** run with [cargo-nextest](https://nexte.st/docs/installation/pre-built-binaries/) (config: `.config/nextest.toml`), together with the integration tests that need no database (`crates/privacy/tests`). nextest cannot run doc tests, so those stay on `cargo test`:
 
 ```bash
-cargo test --workspace --lib --bins
+cargo nextest run --workspace
+cargo test --doc --workspace       # doc tests
 ```
 
-**Integration tests** run against real databases using Docker. The `tests/run.sh` script manages the full matrix:
+**Integration tests** run against real databases using Docker and need cargo-nextest. The `tests/run.sh` script manages the full matrix:
 
 ```bash
 # Run the full test matrix (MariaDB 12, MySQL 9, PostgreSQL 18, SQLite)
@@ -112,8 +113,9 @@ CI automatically runs on every push and pull request:
 1. Commit message validation — conventional commit format ([cocogitto](https://github.com/cocogitto/cocogitto))
 2. `cargo fmt --check` — formatting
 3. `cargo clippy --workspace --tests -- -D warnings` — linting
-4. `cargo test --workspace --lib --bins` — unit tests on Linux and Windows
-5. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite
+4. `cargo nextest run --workspace` — unit tests and `crates/privacy/tests` on Linux, Windows, and macOS
+5. `cargo test --doc --workspace` — doc tests
+6. Integration tests against MariaDB 12, MySQL 9, PostgreSQL 18, and SQLite, run with nextest from a test archive built once with `cargo nextest archive`
 
 All checks must pass before a PR can be merged.
 

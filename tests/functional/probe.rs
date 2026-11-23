@@ -23,7 +23,10 @@ pub fn free_port() -> u16 {
 /// Returns a `dbmcp` command for `backend` with the test user and the `app` database.
 #[allow(dead_code, reason = "used by the networked backends only")]
 pub fn backend_command(backend: &str, default_user: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_dbmcp"));
+    let mut command = Command::new(
+        std::env::var("CARGO_BIN_EXE_dbmcp")
+            .expect("cargo test (1.94+) and nextest set CARGO_BIN_EXE_dbmcp at run time"),
+    );
     command
         .env("DBMCP_DB_BACKEND", backend)
         .env(

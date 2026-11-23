@@ -311,10 +311,10 @@ Returns the execution plan for a SQL query. Supports an optional `analyze` param
 ## Testing 🧪
 
 ```bash
-# Unit tests
-cargo test --workspace --lib --bins
+# Unit tests (requires cargo-nextest)
+cargo nextest run --workspace
 
-# Integration tests (requires Docker)
+# Integration tests (requires Docker and cargo-nextest)
 ./tests/run.sh
 
 # Filter by engine
@@ -358,7 +358,7 @@ This is a Cargo workspace with the following crates:
 ```bash
 cargo build              # Development build
 cargo build --release    # Release build (~7 MB)
-cargo test               # Run tests
+cargo nextest run --workspace  # Run unit tests
 cargo clippy --workspace --tests -- -D warnings  # Lint
 cargo fmt                # Format
 cargo doc --no-deps      # Build documentation

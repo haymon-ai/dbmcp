@@ -1251,60 +1251,65 @@ mod tests {
         assert_eq!(numbers.len(), VALUE_FREE_ERRORS.len(), "duplicate error");
     }
 
-    /// Connects to the seeded `app` database that `./tests/run.sh` starts.
-    async fn seeded() -> sqlx::MySqlConnection {
-        let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port = std::env::var("DBMCP_DB_PORT")
-            .ok()
-            .and_then(|port| port.parse().ok())
-            .unwrap_or(3306);
-        let options = sqlx::mysql::MySqlConnectOptions::new()
-            .host(&host)
-            .port(port)
-            .username("root")
-            .database("app");
-        <sqlx::MySqlConnection as sqlx::Connection>::connect_with(&options)
-            .await
-            .expect("connect to the seeded database")
-    }
+    /// Tests against the seeded database; `#[ignore]`d outside `./tests/run.sh` and CI.
+    mod db {
+        use super::*;
 
-    #[tokio::test]
-    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
-    async fn origins_translate_described_columns() {
-        let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
-            Ok("mariadb") => DatabaseBackend::Mariadb,
-            _ => DatabaseBackend::Mysql,
-        };
-        let mut conn = seeded().await;
-        let sql = "SELECT name, email, 1 FROM users";
-        let (_, probe, owners) = resolve(&mut conn, backend, sql).await.expect("resolve");
-        let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
-        let users = RelationId::new(CATALOG, "app", "users");
-        assert_eq!(
-            origins(row.columns(), &probe, &owners),
-            [
-                (0, users.clone(), Some("name".to_owned())),
-                (1, users, Some("email".to_owned())),
-            ]
-        );
-        assert_eq!(origins(row.columns(), &probe, &[]), []);
-    }
+        /// Connects to the seeded `app` database that `./tests/run.sh` starts.
+        async fn seeded() -> sqlx::MySqlConnection {
+            let host = std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+            let port = std::env::var("DBMCP_DB_PORT")
+                .ok()
+                .and_then(|port| port.parse().ok())
+                .unwrap_or(3306);
+            let options = sqlx::mysql::MySqlConnectOptions::new()
+                .host(&host)
+                .port(port)
+                .username("root")
+                .database("app");
+            <sqlx::MySqlConnection as sqlx::Connection>::connect_with(&options)
+                .await
+                .expect("connect to the seeded database")
+        }
 
-    #[tokio::test]
-    #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
-    async fn opposite_backend_refuses_the_probe() {
-        let (configured, server) = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
-            Ok("mariadb") => (DatabaseBackend::Mysql, DatabaseBackend::Mariadb),
-            _ => (DatabaseBackend::Mariadb, DatabaseBackend::Mysql),
-        };
-        let mut conn = seeded().await;
-        let stop = Probe::read(&mut conn, configured)
-            .await
-            .err()
-            .expect("mismatch refuses");
-        assert!(
-            matches!(stop, Stop::BackendMismatch(BackendMismatch { configured: c, server: s }) if c == configured && s == server),
-            "{stop:?}"
-        );
+        #[tokio::test]
+        #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+        async fn origins_translate_described_columns() {
+            let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+                Ok("mariadb") => DatabaseBackend::Mariadb,
+                _ => DatabaseBackend::Mysql,
+            };
+            let mut conn = seeded().await;
+            let sql = "SELECT name, email, 1 FROM users";
+            let (_, probe, owners) = resolve(&mut conn, backend, sql).await.expect("resolve");
+            let row = sqlx::query(sql).fetch_one(&mut conn).await.expect("row");
+            let users = RelationId::new(CATALOG, "app", "users");
+            assert_eq!(
+                origins(row.columns(), &probe, &owners),
+                [
+                    (0, users.clone(), Some("name".to_owned())),
+                    (1, users, Some("email".to_owned())),
+                ]
+            );
+            assert_eq!(origins(row.columns(), &probe, &[]), []);
+        }
+
+        #[tokio::test]
+        #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
+        async fn opposite_backend_refuses_the_probe() {
+            let (configured, server) = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
+                Ok("mariadb") => (DatabaseBackend::Mysql, DatabaseBackend::Mariadb),
+                _ => (DatabaseBackend::Mariadb, DatabaseBackend::Mysql),
+            };
+            let mut conn = seeded().await;
+            let stop = Probe::read(&mut conn, configured)
+                .await
+                .err()
+                .expect("mismatch refuses");
+            assert!(
+                matches!(stop, Stop::BackendMismatch(BackendMismatch { configured: c, server: s }) if c == configured && s == server),
+                "{stop:?}"
+            );
+        }
     }
 }
