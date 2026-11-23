@@ -9,6 +9,10 @@ To do that, <Dbmcp /> works out which table columns feed each output column of a
 
 Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `explainQuery` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection under `full`.
 
+<Callout type="warn">
+The guarantees on this page hold only on [Supported versions](/supported-versions). On other versions rules still apply and every statement is still checked, but the server's catalog facts may differ from what <Dbmcp /> was tested against. <Dbmcp /> logs a warning once it reads the server version.
+</Callout>
+
 ## Settings
 
 | YAML key | Env var | Type | Default | Description |

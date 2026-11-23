@@ -1,0 +1,59 @@
+---
+title: Supported versions
+description: Which database versions dbmcp tests, and what happens on the others
+---
+
+## Tiers
+
+| Tier | Covers | Promise |
+|------|--------|---------|
+| **Supported** | Versions in the rule below that have green CI | Tested in CI on every pull request, bugs fixed, [column-rule](/privacy/rules) guarantees claimed |
+| **Best effort** | End-of-life versions; upstream versions not yet Supported (pre-releases, new releases whose CI isn't green yet); Amazon RDS, Google Cloud SQL, and Azure Database Flexible Server when running a Supported version | Issues accepted, not tested, column-rule guarantees not claimed |
+| **Unsupported** | Forks and re-implementations, such as Aurora, TiDB, Vitess/PlanetScale, CockroachDB, YugabyteDB | No promise: catalogs and behaviour differ |
+
+## Rule
+
+- **PostgreSQL**: every major version the PostgreSQL project supports.
+- **MySQL**: every LTS release in Premier Support (not Extended Support), plus the current Innovation release.
+- **MariaDB**: every LTS release with community support, plus the current rolling release.
+- **SQLite**: the version bundled into the binary.
+
+A version becomes Supported in the first <Dbmcp /> release whose CI is green on it. It leaves Supported in the first release after its upstream end of life.
+
+## Versions
+
+| Backend | Supported | Best effort |
+|---------|-----------|-------------|
+| PostgreSQL | 15, 16, 17, 18, 19 | 14 and older (end of life); betas and release candidates |
+| MySQL | 8.4, 9.7, 26.10 (Innovation) | 8.0 and older (end of life); earlier Innovation releases; previews |
+| MariaDB | 10.11, 11.4, 11.8, 12.3, 13.0 (rolling) | 10.6 and older (end of life); earlier short-term and rolling releases; previews |
+| SQLite | 3.54.1 (bundled) | — |
+
+## Other versions
+
+<Dbmcp /> never refuses a server because of its version. Outside Supported, it logs one `WARN` line per process, in every [privacy mode](/privacy#modes), from the first database connection that reads the server version. While [column rules](/privacy/rules) exist, the line adds that column-rule guarantees are not claimed. A Supported server logs nothing.
+
+Example messages:
+
+| Server | Logged |
+|--------|--------|
+| A detected fork | `server is Aurora MySQL, an Unsupported fork` |
+| Newer than tested | `MySQL 27.4 is newer than the versions tested (Best effort); latest tested is 26.10` |
+| End of life or untested | `PostgreSQL 14 is not Supported (Best effort: end of life or untested); Supported: 15, 16, 17, 18, 19` |
+| A pre-release | `PostgreSQL 20 is a pre-release (Best effort)` |
+| Any of the above, with column rules | The same text, ending in `; column-rule guarantees not claimed` |
+| Supported | Nothing |
+
+### What is detected
+
+| Backend | Read from | Forks detected | Pre-releases detected |
+|---------|-----------|----------------|-----------------------|
+| PostgreSQL | `server_version_num` and `version()` | CockroachDB and YugabyteDB from `version()`; Aurora PostgreSQL from its `aurora_version` function | Betas, release candidates, and development builds (`19beta1`, `19rc1`, `20devel`) |
+| MySQL | `VERSION()` | TiDB (`-TiDB-`) and Vitess (`-Vitess`) from `VERSION()`; Aurora MySQL from its `aurora_version` variable | No: previews report a plain version, so their line decides |
+| MariaDB | `VERSION()`, skipping a leading `5.5.5-` | TiDB and Vitess, as on MySQL | No, as on MySQL |
+| SQLite | `sqlite_version()` | — | — |
+
+- Managed services report the upstream version, so they get no warning of their own.
+- A fork that reports neither marker is classified by the version it reports.
+- When a read or probe fails, the next connection tries again; a version that can't be parsed skips the check.
+- On MySQL and MariaDB, a server that doesn't match `database.backend` logs only the [mismatch warning](/features/database#backend-defaults).

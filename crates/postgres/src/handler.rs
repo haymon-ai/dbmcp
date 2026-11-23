@@ -109,11 +109,12 @@ impl PostgresHandler {
     /// Returns the [`dbmcp_privacy::RedactorInitError`] from
     /// [`dbmcp_privacy::Redactor::from_config`] (fail-closed startup).
     pub fn new(config: &Config) -> Result<Self, dbmcp_privacy::RedactorInitError> {
+        let policy = config.privacy.clone().filter(|privacy| !privacy.rules.is_empty());
         Ok(Self {
             config: config.database.clone(),
-            connection: PostgresConnection::new(&config.database),
+            connection: PostgresConnection::new(&config.database, policy.is_some()),
             redactor: Redactor::from_config(config.privacy.as_ref())?,
-            policy: config.privacy.clone().filter(|privacy| !privacy.rules.is_empty()),
+            policy,
             tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, config.database.name.is_some()),
         })
     }

@@ -4,15 +4,20 @@
 //! Hides every backend pool concern from [`PostgresHandler`](crate::PostgresHandler),
 //! which composes one [`PostgresConnection`] as a field.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
+use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
+use dbmcp_sql::support::{self, Line, Variant};
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
-use tracing::info;
+use tracing::{debug, info, warn};
+
+use crate::version;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -22,6 +27,10 @@ pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 pub(crate) struct PostgresConnection {
     config: DatabaseConfig,
     pools: Cache<String, PgPool>,
+    /// Set once a connection read the server version, shared by every pool.
+    checked: Arc<AtomicBool>,
+    /// Whether `privacy.rules` exist, for the version tier warning.
+    rules: bool,
 }
 
 impl std::fmt::Debug for PostgresConnection {
@@ -37,7 +46,7 @@ impl PostgresConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig) -> Self {
+    pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
         info!(
             "PostgreSQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -55,6 +64,8 @@ impl PostgresConnection {
         Self {
             config: config.clone(),
             pools,
+            checked: Arc::new(AtomicBool::new(false)),
+            rules,
         }
     }
 
@@ -103,7 +114,9 @@ impl PostgresConnection {
 
         let pool = self
             .pools
-            .get_with(database.to_owned(), async { create_lazy_pool(&self.config, database) })
+            .get_with(database.to_owned(), async {
+                create_lazy_pool(&self.config, database, Arc::clone(&self.checked), self.rules)
+            })
             .await;
 
         Ok(pool)
@@ -162,8 +175,10 @@ impl Connection for PostgresConnection {
 /// `PG*` environment variable influence, since our config already
 /// resolves values from CLI/env. In read-only mode every connection
 /// starts with `default_transaction_read_only = on`, so the server
-/// rejects writes through any [`Connection`] method.
-fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
+/// rejects writes through any [`Connection`] method. Also warns once
+/// when the server is outside Supported; that check never fails the
+/// connection.
+fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<AtomicBool>, rules: bool) -> PgPool {
     let mut conn_ops = PgConnectOptions::new_without_pgpass()
         .host(&config.host)
         .port(config.port)
@@ -205,8 +220,64 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str) -> PgPool {
     if let Some(timeout) = config.connection_timeout {
         pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
     }
+    let backend = config.backend;
+    pool_ops = pool_ops.after_connect(move |conn: &mut sqlx::PgConnection, _meta| {
+        let checked = Arc::clone(&checked);
+        Box::pin(async move {
+            check_version(conn, &checked, backend, rules).await;
+            Ok(())
+        })
+    });
 
     pool_ops.connect_lazy_with(conn_ops)
+}
+
+/// Warns once per process when the server is outside Supported.
+///
+/// Sets `checked` only once every read succeeded, so a failed read or probe
+/// leaves the check to the next connection.
+async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
+    if checked.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(num) = conn.server_version_num() else {
+        debug!("could not read the server version; checking again on the next connection");
+        return;
+    };
+    let Ok(text) = sqlx::query_scalar::<_, String>("SELECT pg_catalog.version()")
+        .fetch_one(&mut *conn)
+        .await
+    else {
+        debug!("could not read the server version text; checking again on the next connection");
+        return;
+    };
+    let variant = match version::variant(&text) {
+        Some(variant) => Some(variant),
+        None => {
+            match sqlx::query_scalar::<_, bool>("SELECT pg_catalog.to_regproc('pg_catalog.aurora_version') IS NOT NULL")
+                .fetch_one(&mut *conn)
+                .await
+            {
+                Ok(aurora) => aurora.then_some(Variant::AuroraPostgres),
+                Err(error) => {
+                    debug!("could not probe for Aurora ({error}); checking again on the next connection");
+                    return;
+                }
+            }
+        }
+    };
+    if checked.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let tier = support::classify(
+        backend,
+        Line::from_version_num(num),
+        variant,
+        version::pre_release(&text),
+    );
+    if let Some(warning) = tier.warning(rules) {
+        warn!("{warning}");
+    }
 }
 
 /// Quotes `value` as a `PostgreSQL` identifier (ANSI double-quote style).
@@ -218,7 +289,6 @@ pub(crate) fn quote_ident(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     fn base_config() -> DatabaseConfig {
         DatabaseConfig {
@@ -234,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_lazy_pool_returns_idle_pool() {
-        let pool = create_lazy_pool(&base_config(), "mydb");
+        let pool = create_lazy_pool(&base_config(), "mydb", Arc::default(), false);
         assert_eq!(pool.size(), 0, "pool should be lazy (no connections yet)");
     }
 
@@ -246,6 +316,8 @@ mod tests {
                 ..base_config()
             },
             "mydb",
+            Arc::default(),
+            false,
         );
         assert_eq!(pool.size(), 0);
     }
@@ -258,34 +330,39 @@ mod tests {
                 ..base_config()
             },
             "",
+            Arc::default(),
+            false,
         );
         assert_eq!(pool.size(), 0);
     }
 
     #[tokio::test]
     async fn default_database_name_derived_from_config() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), false);
         assert_eq!(connection.default_database_name(), "mydb");
     }
 
     #[tokio::test]
     async fn defaults_db_to_username_when_name_missing() {
-        let connection = PostgresConnection::new(&DatabaseConfig {
-            name: None,
-            ..base_config()
-        });
+        let connection = PostgresConnection::new(
+            &DatabaseConfig {
+                name: None,
+                ..base_config()
+            },
+            false,
+        );
         assert_eq!(connection.default_database_name(), "pgadmin");
     }
 
     #[tokio::test]
     async fn none_target_returns_default_pool() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), false);
         connection.pool(None).await.expect("None target should succeed");
     }
 
     #[tokio::test]
     async fn arbitrary_target_database_is_permitted() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), false);
         connection
             .pool(Some("any_db"))
             .await
@@ -294,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_noop_and_idempotent_on_lazy_pools() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), false);
         connection.pool(Some("a")).await.expect("pool a");
         connection.pool(Some("b")).await.expect("pool b");
         connection.shutdown().await;
@@ -303,7 +380,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_cache_respects_capacity_const() {
-        let connection = PostgresConnection::new(&base_config());
+        let connection = PostgresConnection::new(&base_config(), false);
 
         // Insert one more pool than the cap; moka should evict the
         // oldest so the cached count stays at or below POOL_CACHE_CAPACITY.

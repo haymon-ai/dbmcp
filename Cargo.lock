@@ -991,6 +991,7 @@ dependencies = [
  "dbmcp-mysql",
  "dbmcp-postgres",
  "dbmcp-server",
+ "dbmcp-sql",
  "dbmcp-sqlite",
  "indexmap",
  "insta",
@@ -1148,6 +1149,7 @@ dependencies = [
 name = "dbmcp-sql"
 version = "0.20.0"
 dependencies = [
+ "dbmcp-config",
  "dbmcp-sql-lineage",
  "futures-util",
  "rmcp",

@@ -15,6 +15,7 @@ use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PrivacyC
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_sql::support::Line;
 use serde_json::Value;
 
 /// Returns the backend under test from `DBMCP_DB_BACKEND` (default `Mysql`).
@@ -23,6 +24,16 @@ fn backend() -> DatabaseBackend {
         Ok("mariadb") => DatabaseBackend::Mariadb,
         _ => DatabaseBackend::Mysql,
     }
+}
+
+/// Reads the server's release line from `VERSION()`.
+async fn server_version() -> Line {
+    let response = handler(true)
+        .read_query("SELECT VERSION() AS v".into(), None, None, None)
+        .await
+        .expect("read VERSION()");
+    let version = response.rows[0]["v"].as_str().expect("VERSION() is text");
+    Line::parse(version).unwrap_or_else(|| panic!("unparsable VERSION(): {version}"))
 }
 
 fn base_db_config(read_only: bool) -> DatabaseConfig {
@@ -2045,19 +2056,31 @@ async fn test_read_query_blob_is_base64_varbinary_is_text() {
 async fn test_read_query_vector_is_number_array() {
     // MySQL 9 tags VECTOR on the wire (0xf2): a JSON array of numbers.
     // MariaDB sends VECTOR as plain VARBINARY, so it stays base64.
-    let (sql, expected) = match backend() {
-        DatabaseBackend::Mariadb => ("SELECT VEC_FromText('[1.5,2,3]') AS v", Value::from("AADAPwAAAEAAAEBA")),
+    // VECTOR arrived in MySQL 9.0 and MariaDB 11.7.
+    let version = server_version().await;
+    let (sql, expected, vector) = match backend() {
+        DatabaseBackend::Mariadb => (
+            "SELECT VEC_FromText('[1.5,2,3]') AS v",
+            Value::from("AADAPwAAAEAAAEBA"),
+            version >= Line::new(11, 7),
+        ),
         _ => (
             "SELECT STRING_TO_VECTOR('[1.5,2,3]') AS v",
             serde_json::json!([1.5, 2.0, 3.0]),
+            version >= Line::new(9, 0),
         ),
     };
 
-    let response = handler(true)
+    let result = handler(true)
         .read_query(sql.into(), Some("app".into()), None, None)
-        .await
-        .expect("VECTOR SELECT should succeed");
+        .await;
 
+    if !vector {
+        let error = result.expect_err("no VECTOR functions before MySQL 9.0 / MariaDB 11.7");
+        assert!(error.message.contains("1305"), "{}", error.message);
+        return;
+    }
+    let response = result.expect("VECTOR SELECT should succeed");
     assert_eq!(response.rows[0]["v"], expected);
 }
 
@@ -4926,18 +4949,23 @@ async fn test_read_only_rejects_side_effecting_functions() {
 
 #[tokio::test]
 async fn test_read_only_session_per_connection() {
+    // MariaDB names the variable `tx_read_only` before 11.1.
+    let variable = match backend() {
+        DatabaseBackend::Mariadb if server_version().await < Line::new(11, 1) => "tx_read_only",
+        _ => "transaction_read_only",
+    };
     for (read_only, expected) in [(true, 1), (false, 0)] {
         let handler = handler(read_only);
         for database in ["app", "analytics"] {
             let rows = handler
                 .read_query(
-                    "SELECT CAST(@@SESSION.transaction_read_only AS SIGNED) AS ro".into(),
+                    format!("SELECT CAST(@@SESSION.{variable} AS SIGNED) AS ro"),
                     Some(database.into()),
                     None,
                     None,
                 )
                 .await
-                .expect("read transaction_read_only");
+                .unwrap_or_else(|e| panic!("read {variable}: {e:?}"));
             assert_eq!(
                 rows.rows[0]["ro"], expected,
                 "session read-only on {database} (read_only={read_only})"
@@ -6119,11 +6147,20 @@ async fn column_rules_refuse_variables() {
 #[tokio::test]
 async fn column_rules_follow_renamed_columns() {
     let handler = ruled_handler(None, 100);
+    let derived_list = "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)";
+    // MariaDB parses a derived column list (`AS t(a, b)`) from 11.7 on.
+    let derived_lists = backend() != DatabaseBackend::Mariadb || server_version().await >= Line::new(11, 7);
     for query in [
         "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
-        "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)",
+        derived_list,
         "SELECT d.a, d.b FROM (SELECT email AS a, name AS b FROM users WHERE id = 1) AS d",
     ] {
+        if query == derived_list && !derived_lists {
+            let refusal = ruled_refusal(&handler, query).await;
+            assert!(refusal.contains("1064"), "{refusal}");
+            assert!(!refusal.contains("alice@example.com"), "{refusal}");
+            continue;
+        }
         let rows = ruled_read(&handler, query).await.expect(query);
         assert!(is_email_token(&rows[0]["a"]), "{query}: {}", rows[0]);
         assert_eq!(rows[0]["b"], "Alice Johnson", "{query}");

@@ -5,6 +5,7 @@
     "...installation",
     "kubernetes",
     "installation/from-source",
+    "supported-versions",
     "---Clients---",
     "...clients",
     "---Configuration---",

@@ -261,6 +261,17 @@ const DANGEROUS_FUNCTIONS: &[&str] = &[
     "pg_stat_file",
     "lo_import",
     "lo_export",
+    // Large-object writes: PostgreSQL before 16 runs them in read-only transactions.
+    // Only direct calls are seen; the read-only transaction's rollback discards calls
+    // made inside other functions.
+    "lo_creat",
+    "lo_create",
+    "lo_from_bytea",
+    "lo_put",
+    "lowrite",
+    "lo_truncate",
+    "lo_truncate64",
+    "lo_unlink",
     "setval",
     // SQLite (CLI / extension functions)
     "readfile",
@@ -999,6 +1010,15 @@ mod tests {
             "SELECT pg_stat_file('/etc/passwd')",
             "SELECT lo_import('/etc/passwd')",
             "SELECT lo_export(1, '/tmp/x')",
+            "SELECT lo_creat(-1)",
+            "SELECT lo_create(0)",
+            "SELECT lo_from_bytea(0, 'x'::bytea)",
+            "SELECT pg_catalog.lo_from_bytea(0, 'x'::bytea)",
+            "SELECT lo_put(1, 0, 'x'::bytea)",
+            "SELECT lowrite(lo_open(1, 131072), 'x'::bytea)",
+            "SELECT lo_truncate(lo_open(1, 131072), 0)",
+            "SELECT lo_truncate64(lo_open(1, 131072), 0)",
+            "SELECT lo_unlink(1)",
             "SELECT setval('s', 1)",
             "SELECT dblink_connect('host=attacker.example')",
             "SELECT * FROM dblink('host=x', 'SELECT 1') AS t(a int)",

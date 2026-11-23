@@ -10,7 +10,7 @@
 //!
 //! The reconnect test restarts sshd inside the container named by
 //! `SSHD_CONTAINER` with `docker exec … pkill sshd`. The DB TLS tests run only when `TLS_TEST_CA` names
-//! the database's CA certificate (`mysql:9` generates one on first boot) and
+//! the database's CA certificate (the `mysql` image generates one on first boot) and
 //! are skipped otherwise.
 //!
 //! ```bash

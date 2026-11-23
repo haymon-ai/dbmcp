@@ -656,7 +656,12 @@ DO $$ BEGIN
     END IF;
 END $$;
 ALTER ROLE policy_shadow SET search_path = shadow, public;
-ALTER ROLE policy_lexical SET standard_conforming_strings = off;
+-- PostgreSQL 19 removed `standard_conforming_strings = off`.
+DO $$ BEGIN
+    IF current_setting('server_version_num')::int < 190000 THEN
+        ALTER ROLE policy_lexical SET standard_conforming_strings = off;
+    END IF;
+END $$;
 ALTER ROLE policy_temp SET search_path = pg_temp, public;
 GRANT USAGE ON SCHEMA shadow TO policy_shadow, policy_lexical, policy_temp;
 GRANT SELECT ON ALL TABLES IN SCHEMA public, shadow TO policy_shadow, policy_lexical, policy_temp;

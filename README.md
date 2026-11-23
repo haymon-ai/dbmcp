@@ -13,7 +13,7 @@ A single-binary [MCP](https://modelcontextprotocol.io/) server for SQL databases
 
 ## Features ✨
 
-- **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary
+- **Multi-database** — MySQL/MariaDB, PostgreSQL, and SQLite from one binary, tested in CI against every [Supported version](https://dbmcp.haymon.ai/supported-versions)
 - **MCP tools** — schema discovery (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`), data access (`readQuery`, `writeQuery`), DDL (`createDatabase`, `dropDatabase`, `dropTable`), and `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`). See [MCP Tools](#mcp-tools) for per-backend availability.
 - **Single binary** — ~7 MB, no Python/Node/Docker needed
 - **Multiple transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
