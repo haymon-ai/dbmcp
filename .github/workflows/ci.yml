@@ -70,6 +70,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --workspace --no-deps
 
+  doctests:
+    name: Doc Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --doc --workspace
+
   archive:
     name: Build Nextest Archive
     runs-on: ubuntu-24.04
@@ -92,29 +101,45 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  doctests:
-    name: Doc Tests
+  unit-linux:
+    name: Unit Tests (ubuntu-24.04)
+    needs: archive
     runs-on: ubuntu-24.04
+    env:
+      RUSTUP_AUTO_INSTALL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
+      - run: cargo-nextest nextest run --archive-file "$RUNNER_TEMP/nextest.tar.zst"
+
+  unit-windows:
+    name: Unit Tests (windows-2025)
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --doc --workspace
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+      - run: cargo nextest run --workspace
 
-  unit:
-    name: Unit Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+  unit-macos:
+    name: Unit Tests (macos-15)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           # A restored ~/.cargo/bin breaks cargo subcommands on macOS runners (Swatinem/rust-cache#341).
-          cache-bin: ${{ runner.os != 'macOS' }}
+          cache-bin: false
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
