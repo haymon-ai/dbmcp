@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp@0.20.0"],
+      "env_vars": [
+        "DBMCP_CONFIG_FILE",
+        "DBMCP_ENV_FILE",
+        "DBMCP_DB_BACKEND",
+        "DBMCP_DB_HOST",
+        "DBMCP_DB_PORT",
+        "DBMCP_DB_USER",
+        "DBMCP_DB_PASSWORD",
+        "DBMCP_DB_NAME"
+      ],
+      "startup_timeout_sec": 120
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "dbmcp",
+  "version": "0.20.0",
+  "description": "The privacy first MCP server for SQL databases.",
+  "author": {
+    "name": "Haymon AI",
+    "url": "https://github.com/haymon-ai"
+  },
+  "homepage": "https://dbmcp.haymon.ai",
+  "repository": "https://github.com/haymon-ai/dbmcp",
+  "license": "MIT",
+  "keywords": ["mcp", "database", "sql", "privacy", "mysql", "mariadb", "postgresql", "sqlite"],
+  "userConfig": {
+    "config_file": {
+      "type": "file",
+      "title": "Config file (full config)",
+      "description": "Absolute path to a `dbmcp.yaml`, such as the one the setup skill writes under `~/.claude/plugins/data/dbmcp-haymon-ai/`. Leave the quick-connect fields except Password blank when you use one: they override the same settings in the file.",
+      "default": ""
+    },
+    "env_file": {
+      "type": "file",
+      "title": "Env file (full config)",
+      "description": "Optional absolute path to a `.env` file holding `DBMCP_*` values and secrets beyond the password, such as an SSH key passphrase or `privacy.key`.",
+      "default": ""
+    },
+    "backend": {
+      "type": "string",
+      "title": "Backend (quick connect)",
+      "description": "`mysql`, `mariadb`, `postgres`, or `sqlite`. Blank = `mysql`.",
+      "default": ""
+    },
+    "host": {
+      "type": "string",
+      "title": "Host (quick connect)",
+      "description": "Database host. Blank = `localhost`.",
+      "default": ""
+    },
+    "port": {
+      "type": "string",
+      "title": "Port (quick connect)",
+      "description": "Blank = backend default (3306 or 5432).",
+      "default": ""
+    },
+    "user": {
+      "type": "string",
+      "title": "User (quick connect)",
+      "description": "Database user. Use a least-privilege account.",
+      "default": ""
+    },
+    "password": {
+      "type": "string",
+      "title": "Password (quick connect)",
+      "description": "Stored in the macOS Keychain, otherwise in `~/.claude/.credentials.json`.",
+      "sensitive": true,
+      "default": ""
+    },
+    "database": {
+      "type": "string",
+      "title": "Database (quick connect)",
+      "description": "Database name, or the absolute file path for SQLite. Blank on MySQL/PostgreSQL = all databases visible.",
+      "default": ""
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "npx",
+      "args": ["-y", "@haymon-ai/dbmcp@0.20.0"],
+      "env": {
+        "DBMCP_CONFIG_FILE": "${user_config.config_file}",
+        "DBMCP_ENV_FILE": "${user_config.env_file}",
+        "DBMCP_DB_BACKEND": "${user_config.backend}",
+        "DBMCP_DB_HOST": "${user_config.host}",
+        "DBMCP_DB_PORT": "${user_config.port}",
+        "DBMCP_DB_USER": "${user_config.user}",
+        "DBMCP_DB_PASSWORD": "${user_config.password}",
+        "DBMCP_DB_NAME": "${user_config.database}"
+      }
+    }
+  }
+}

@@ -1,7 +1,47 @@
 ---
 title: Claude Code
-description: Add dbmcp to Claude Code with claude mcp add, or share it with your team in .mcp.json
+description: Install the dbmcp plugin for Claude Code, or add the server by hand with claude mcp add or .mcp.json
 ---
+
+## Plugin (recommended)
+
+The dbmcp plugin adds the server together with the `setup` and `privacy` skills. Add the marketplace and install the plugin:
+
+```text
+/plugin marketplace add haymon-ai/marketplace
+/plugin install dbmcp@haymon-ai
+```
+
+Requires Claude Code 2.1.119 or later (tested on 2.1.330) and [Node.js](https://nodejs.org/) 18 or later: the plugin runs `npx -y @haymon-ai/dbmcp` at the plugin's own version.
+
+On install, Claude Code asks for the connection settings. Every field is optional; fill in one of two routes:
+
+- **Quick connect**: Backend, Host, Port, User, Password, and Database (for SQLite, the absolute path of the database file). A blank field falls back to its default: backend `mysql`, host `localhost`, the backend's default port. The password is stored in the macOS Keychain, otherwise in `~/.claude/.credentials.json`.
+- **Full config**: Config file, the absolute path to a [`dbmcp.yaml`](/configuration/config-files), plus an optional Env file: an [env file](/configuration/env-files) holding `DBMCP_*` values and secrets beyond the password, such as an SSH key passphrase or `privacy.key`. Keep the password in the Password field. The `setup` skill writes both files to the plugin's data folder, `~/.claude/plugins/data/dbmcp-haymon-ai/`, which survives plugin updates and is deleted on uninstall unless you pass `--keep-data`. To layer several config files, set `DBMCP_CONFIG_FILE=/abs/a.yaml,/abs/b.yaml` in the env file.
+
+<Callout type="warn">
+Quick-connect fields reach dbmcp as `DBMCP_*` environment variables, which [take precedence](/configuration/precedence) over the same settings in your config file. Leave them blank, except Password, when you use a config file.
+</Callout>
+
+Change the values later with `/plugin configure`. The plugin sets no safety option: the server stays [read-only](/security/read-only) and redacts [sensitive data](/privacy) unless your own config says otherwise.
+
+### Slow first start
+
+The first start downloads about 16 MB once; it may time out on slow links. If `/mcp` shows dbmcp as failed, download it in a terminal, then pick **Reconnect** for dbmcp in `/mcp`:
+
+```bash
+npx -y @haymon-ai/dbmcp@<version> --version
+```
+
+Replace `<version>` with the dbmcp version `/plugin` lists: npx caches the download under the exact package spec, so it has to match the plugin's. Reconnect instead of restarting Claude Code, which keeps a failed plugin server's failure for 15 minutes.
+
+On a slow link, raise the startup timeout instead:
+
+```bash
+MCP_TIMEOUT=120000 claude
+```
+
+## Manual setup
 
 Add the server with `claude mcp add`. Options go before the server name, and the launch command follows `--`:
 

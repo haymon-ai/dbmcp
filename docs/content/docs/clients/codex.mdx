@@ -1,7 +1,66 @@
 ---
 title: Codex
-description: Add dbmcp to Codex in config.toml
+description: Install the dbmcp plugin for Codex, or add the server by hand in config.toml
 ---
+
+## Plugin (recommended)
+
+The dbmcp plugin adds the server together with the `setup` and `privacy` skills. Add the marketplace and install the plugin:
+
+```bash
+codex plugin marketplace add haymon-ai/marketplace
+codex plugin add dbmcp@haymon-ai
+```
+
+Requires Codex 0.122.0 or later; the post-install **Set up** button needs 0.156.0. The plugin runs `npx -y @haymon-ai/dbmcp` at the plugin's own version, which needs [Node.js](https://nodejs.org/) 18 or later.
+
+After install, pick **Set up**: the `setup` skill walks you through the connection. You can also do it by hand. `config.toml` cannot set environment variables for a plugin's server, so the plugin forwards these names from the environment Codex starts in: `DBMCP_CONFIG_FILE`, `DBMCP_ENV_FILE`, `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_PORT`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`.
+
+1. Write the connection settings to an [env file](/configuration/env-files) in the plugin's data folder, `~/.codex/plugins/data/dbmcp-haymon-ai/.env` (create the folder first; it sits under `$CODEX_HOME` if you set that). For more settings, write a [`dbmcp.yaml`](/configuration/config-files) and name it in the env file with `DBMCP_CONFIG_FILE`; keep the password in the env file. The `setup` skill writes both files there.
+
+   ```bash title="~/.codex/plugins/data/dbmcp-haymon-ai/.env"
+   DBMCP_DB_BACKEND=mysql
+   DBMCP_DB_HOST=127.0.0.1
+   DBMCP_DB_USER=root
+   DBMCP_DB_PASSWORD=secret
+   DBMCP_DB_NAME=mydb
+   ```
+
+2. Point `DBMCP_ENV_FILE` at the file from your shell's startup file. dbmcp reads the env file itself, so the password never enters Codex's environment. Use absolute paths.
+
+   ```bash tab="zsh" title="~/.zshenv"
+   export DBMCP_ENV_FILE="${CODEX_HOME:-$HOME/.codex}/plugins/data/dbmcp-haymon-ai/.env"
+   ```
+
+   ```bash tab="bash" title="~/.bashrc"
+   export DBMCP_ENV_FILE="${CODEX_HOME:-$HOME/.codex}/plugins/data/dbmcp-haymon-ai/.env"
+   ```
+
+   ```fish tab="fish" title="~/.config/fish/config.fish"
+   set -gx DBMCP_ENV_FILE "$HOME/.codex/plugins/data/dbmcp-haymon-ai/.env"
+   ```
+
+   If you set `CODEX_HOME`, use it in place of `$HOME/.codex` in the fish line.
+
+   Every dbmcp started from this shell reads the file, not only Codex's. A dbmcp you configured by hand in another client then takes its unset settings, password included, from the Codex file. Set `DBMCP_ENV_FILE` to an empty value in that client's `env` (empty counts as unset), or point it at its own file.
+
+3. Quit Codex fully and start it again. The Codex desktop app reads `~/.zshenv`, not `~/.zprofile`; if it does not see the variable, start Codex from a terminal.
+
+As a shortcut, you can export non-secret `DBMCP_DB_*` names in the startup file directly. Never put `DBMCP_DB_PASSWORD` in a shell startup file: keep it in the env file.
+
+The plugin sets no safety option: the server stays [read-only](/security/read-only) and redacts [sensitive data](/privacy) unless your own config says otherwise.
+
+### Slow first start
+
+The first start downloads about 16 MB once; Codex waits up to 120 seconds for it. If dbmcp still fails to start on a slow link, download it in a terminal, then restart Codex:
+
+```bash
+npx -y @haymon-ai/dbmcp@<version> --version
+```
+
+Replace `<version>` with the dbmcp plugin's version: npx caches the download under the exact package spec, so it has to match the plugin's.
+
+## Manual setup
 
 Add the server to `~/.codex/config.toml`, or to `.codex/config.toml` in a trusted project:
 

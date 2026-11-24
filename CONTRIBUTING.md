@@ -197,6 +197,10 @@ refactor(config): flatten nested SSL configuration struct
 test(db): add integration tests for PostgreSQL backend
 ```
 
+### Plugin Commits
+
+Changes under `plugins/dbmcp/` use the `plugin` scope; skill text or wiring that changes agent or host behaviour is `feat`/`fix`, and a renamed `userConfig` key is a breaking change.
+
 ### Breaking Changes
 
 Indicate breaking changes by adding `!` after the type/scope or by including a `BREAKING CHANGE:` footer:
@@ -219,6 +223,7 @@ Migrate to individual DB_* environment variables.
 2. Keep your PR focused on a single change. Don't mix unrelated fixes or features.
 3. Run all checks locally before pushing.
 4. Write or update tests for your changes.
+5. Renaming or removing a setting, env name, or tool: grep `plugins/dbmcp/` (skills and wiring) and update every hit.
 
 ### PR Guidelines
 
@@ -233,6 +238,7 @@ Migrate to individual DB_* environment variables.
 - PRs are squash-merged to keep the main branch history clean.
 - Address review feedback by pushing new commits (don't force-push during review).
 - Once approved, the maintainer will merge your PR.
+- PRs touching `plugins/dbmcp/` are reviewed as security code against the CLAUDE.md Security Constraints Plugin bullet.
 
 ## Versioning & Releases
 
