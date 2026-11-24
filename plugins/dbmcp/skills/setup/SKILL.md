@@ -16,7 +16,7 @@ Claude Code sets `CLAUDECODE=1`; else Codex (ask if unsure). No plugin tools: ne
 Absolute paths; if it exists, change only the asked keys, keep the rest (`privacy.*`, `ssh.*`, TLS, `read_only`); print the path.
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/master/crates/config/assets/dbmcp.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/v0.20.0/crates/config/assets/dbmcp.schema.json
 database:
   backend: postgres   # mysql | mariadb | postgres | sqlite
   host: localhost
@@ -25,7 +25,9 @@ database:
   name: shop          # omit = all databases; sqlite: absolute file path, no host/port/user
 ```
 
-SSH: `ssh: { host: bastion, user: deploy, key: ~/.ssh/id_ed25519 }` (bastion in `~/.ssh/known_hosts`; `database.host` as it sees it). TLS: `ssl: true`, `ssl_ca: /abs/ca.pem` under `database:`.
+SSH: `ssh: { host: bastion, user: deploy, key: ~/.ssh/id_ed25519 }` (bastion in `~/.ssh/known_hosts`; `database.host` as it sees it). TLS: `ssl: true`, `ssl_ca: /abs/ca.pem` (client cert: `ssl_cert`, `ssl_key`) under `database:`.
+
+Other settings: every key and its meaning is in the schema above (this release) or https://dbmcp.haymon.ai/configuration/. Add only what the user asks for; Safety still applies.
 
 Smoke test (config only; `<vars>` names the files):
 ```sh
@@ -49,6 +51,7 @@ JSON reply = OK; on `invalid settings:` fix only the keys named.
 ## Errors
 
 - Connection error: host, port, firewall, `ssh.*`, TLS.
+- Unclear failure: rerun the smoke test with `DBMCP_LOG_LEVEL=debug`; logs go to stderr.
 - Duplicate dbmcp (plugin + manual): remove the manual one.
 - Broken npx install: with the user's OK delete `~/.npm/_npx`, retry. Fallbacks: Docker `ghcr.io/haymon-ai/dbmcp`, `dbmcp` on PATH.
 
