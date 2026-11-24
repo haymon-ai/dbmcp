@@ -6,7 +6,7 @@ use crate::env;
 use crate::error::{ConfigError, Diagnostic, duplicates, into_result};
 use secrecy::ExposeSecret;
 
-/// Validates this configuration, accumulating every rule violation.
+/// Validates the `http` section.
 ///
 /// Rules enforced:
 /// - `host` MUST NOT be empty or whitespace-only after trim.

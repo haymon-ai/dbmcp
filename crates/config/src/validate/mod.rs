@@ -1,4 +1,4 @@
-//! Validation rules for each config section and the rules spanning sections.
+//! Config validation, one module per section.
 
 pub(crate) mod config;
 pub(crate) mod database;

@@ -1,6 +1,6 @@
 [package]
 name = "dbmcp-config"
-description = "Config for dbmcp"
+description = "Configuration loading for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true

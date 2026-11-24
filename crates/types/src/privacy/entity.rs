@@ -2,17 +2,13 @@
 //!
 //! Variants map 1:1 to the `SCREAMING_SNAKE` wire format used in JSON output,
 //! tracing logs, and placeholder tokens (e.g. `Entity::EmailAddress` ↔
-//! `"EMAIL_ADDRESS"` ↔ `"<EMAIL_ADDRESS>"`). Mirrors the [`super::Category`]
-//! pattern: [`Entity::ALL`] slice, [`std::fmt::Display`] and
-//! [`std::str::FromStr`] round-trip via [`Entity::as_str`].
+//! `"EMAIL_ADDRESS"` ↔ `"<EMAIL_ADDRESS>"`). [`Entity::ALL`] lists every variant;
+//! [`std::fmt::Display`] and [`std::str::FromStr`] round-trip via [`Entity::as_str`].
 
 use std::borrow::Cow;
 use std::str::FromStr;
 
-/// Built-in entity types emitted by `dbmcp_privacy` recognizers.
-///
-/// Closed and exhaustive: adding a variant is a breaking change, so the
-/// compiler flags every `match` across the workspace that must handle it.
+/// Built-in PII entity types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Entity {
     /// `EMAIL_ADDRESS` — RFC-style email recognizer.

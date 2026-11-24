@@ -368,7 +368,7 @@ This is a Cargo workspace with the following crates:
 | `dbmcp-cli` | `crates/cli/` | CLI parsing, transports, server bootstrap |
 | `dbmcp-sql` | `crates/sql/` | Shared error types, validation, and identifier utilities |
 | `dbmcp-config` | `crates/config/` | Configuration loading and validation |
-| `dbmcp-types` | `crates/types/` | Plain configuration types and privacy vocabulary shared across crates |
+| `dbmcp-types` | `crates/types/` | Shared configuration types and privacy vocabulary |
 | `dbmcp-server` | `crates/server/` | Shared MCP tool implementations and server info |
 | `dbmcp-truncate` | `crates/truncate/` | Character caps that fit JSON values into a char budget |
 | `dbmcp-mysql` | `crates/mysql/` | MySQL/MariaDB backend handler and operations |

@@ -9,11 +9,9 @@ Plain configuration types and privacy vocabulary shared across the crates of [db
 
 ## What you get
 
-- `Config` composing the transport and the database, HTTP, privacy, and SSH sections, plus the top-level `Transport` and `LogLevel`
-- One module per config section with plain names: `database::{Backend, Config}`, `http::{Config, AllowedOrigins}`, `ssh::{Config, StrictHostKeyChecking}`, `privacy::{Config, Mode, Operator, ColumnRule}`
-- The PII vocabulary: `privacy::Entity` (the built-in entity types) and `privacy::Category`
-- Each setting value spelled once, in a `const fn as_str` that `Display` reads
+- `Config`, `Transport`, `LogLevel`, and one module per config section: `database`, `http`, `ssh`, `privacy`
+- The PII vocabulary: `privacy::Entity` and `privacy::Category`
 - Secret-safe `Debug` — credentials held in `secrecy::SecretString`
-- No loader: depends only on `http`, `secrecy`, `serde`, and `thiserror`, so crates that only need the types skip the config loader's dependencies
+- No loader, so crates that only need the types skip `dbmcp-config`'s dependencies
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

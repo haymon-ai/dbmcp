@@ -9,8 +9,7 @@ use crate::{database, http, privacy, ssh};
 /// optional [`http::Config`], [`privacy::Config`], and [`ssh::Config`] sections.
 /// HTTP config is present only when `transport` / `DBMCP_TRANSPORT` is `http`;
 /// privacy config only when `privacy.mode` / `DBMCP_PRIVACY_MODE` is not `none`; SSH
-/// config only when `ssh.host` / `DBMCP_SSH_HOST` is set. The log level is
-/// returned next to it in `dbmcp_config::Loaded`, not part of this struct.
+/// config only when `ssh.host` / `DBMCP_SSH_HOST` is set.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// MCP transport the server runs on.

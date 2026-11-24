@@ -288,7 +288,6 @@ fn key(node: &Node) -> Result<Key, String> {
     Ok(key)
 }
 
-/// Parses a rule's entity name.
 fn entity(node: &Node) -> Result<Entity, String> {
     match node {
         Node::Str(text) => text

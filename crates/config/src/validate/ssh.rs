@@ -5,7 +5,7 @@ use dbmcp_types::ssh;
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 
-/// Validates this configuration, accumulating every rule violation.
+/// Validates the `ssh` section.
 ///
 /// Rules enforced:
 /// - `host` and `user` must not be empty.

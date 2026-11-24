@@ -1,4 +1,4 @@
-//! Log severity selector (top-level `log_level` setting).
+//! Log severity selector.
 
 /// Log severity levels for the MCP server.
 ///
@@ -19,7 +19,7 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// Returns the setting value naming this variant.
+    /// Returns the setting value.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

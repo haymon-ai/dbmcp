@@ -1,18 +1,14 @@
-//! Setting value names for every enum setting, owned by the loader.
+//! Accepted values per enum setting, in error-message order.
 //!
-//! Each value's spelling lives once, in its type's `as_str` in `dbmcp-types`;
-//! these crate-private tables only list which variants the loader accepts, in
-//! the order error messages show them.
+//! Spellings come from each type's `as_str`.
 
 use dbmcp_types::{LogLevel, Transport, database, privacy, ssh};
 
-/// Accepted `Transport` setting values, in the order error messages list them.
 pub(crate) const TRANSPORT: &[(&str, Transport)] = &[
     (Transport::Stdio.as_str(), Transport::Stdio),
     (Transport::Http.as_str(), Transport::Http),
 ];
 
-/// Accepted `LogLevel` setting values, in the order error messages list them.
 pub(crate) const LOG_LEVEL: &[(&str, LogLevel)] = &[
     (LogLevel::Error.as_str(), LogLevel::Error),
     (LogLevel::Warn.as_str(), LogLevel::Warn),

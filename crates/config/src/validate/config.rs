@@ -1,4 +1,4 @@
-//! Validation rules for the composed config and the rules spanning sections.
+//! Validation of the composed config.
 
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
@@ -6,8 +6,7 @@ use dbmcp_types::{Config, database};
 
 /// Validates every section and the rules spanning sections.
 ///
-/// Rules enforced, besides each present section's own rules:
-/// - an SSH tunnel is not supported with the `SQLite` backend.
+/// Also rejects an SSH tunnel with the `SQLite` backend.
 ///
 /// # Errors
 ///

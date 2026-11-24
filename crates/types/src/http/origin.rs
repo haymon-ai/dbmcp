@@ -1,9 +1,9 @@
 //! Browser `Origin` allowlist parsing and matching.
 //!
-//! `dbmcp-config` validation uses [`is_valid_origin`] to
-//! reject malformed entries; the HTTP transport's CORS layer uses
-//! [`AllowedOrigins`] to match request origins. Mirrors the private `(scheme, host, port)` matching rules rmcp applies
-//! in its Streamable HTTP Origin validator (rmcp 3.5), so the CORS preflight
+//! [`is_valid_origin`] checks an entry; the HTTP transport's CORS layer uses
+//! [`AllowedOrigins`] to match request origins. Mirrors the private
+//! `(scheme, host, port)` matching rules rmcp applies in its Streamable HTTP
+//! Origin validator (rmcp 3.5), so the CORS preflight
 //! layer and rmcp's server-side check share one interpretation of the
 //! configured `allowed_origins` list. Re-check these rules when upgrading
 //! rmcp: a port-less entry currently matches any port, but rmcp has
@@ -19,9 +19,6 @@ pub struct AllowedOrigins(Vec<Origin>);
 
 impl AllowedOrigins {
     /// Parses each entry, skipping unparseable ones like rmcp does.
-    ///
-    /// `dbmcp_config::load` rejects such
-    /// entries, so a loaded config never has any to skip.
     #[must_use]
     pub fn new(entries: &[String]) -> Self {
         Self(entries.iter().filter_map(|raw| parse_entry(raw)).collect())

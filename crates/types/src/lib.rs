@@ -1,10 +1,13 @@
-//! Plain dbmcp types shared across crates, without the config loader.
+//! Plain dbmcp configuration types and privacy vocabulary.
 //!
-//! The root holds the composed [`Config`] and the top-level settings
-//! ([`Transport`], [`LogLevel`]). Each config section lives in its own public
-//! module with plain names: [`database::Config`], [`http::Config`],
-//! [`privacy::Config`], [`ssh::Config`].
-//! Callers import the module and qualify: `privacy::Entity`, `ssh::Config`.
+//! The root holds [`Config`], [`Transport`], and [`LogLevel`]; each config
+//! section is a module ([`database`], [`http`], [`privacy`], [`ssh`]).
+//!
+//! # Security
+//!
+//! The database password, SSH password and key passphrase, and HTTP auth
+//! token are stored as [`secrecy::SecretString`], so their values never
+//! reach [`Debug`] output.
 
 mod config;
 pub mod database;

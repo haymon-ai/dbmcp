@@ -5,7 +5,7 @@
 //! that the catalog lacks; the backend looks the names up on its own
 //! connection and passes back an [`Entry`] for each. The finished
 //! [`Analyzed`] statement then plans with [`Analyzed::plan`] under the
-//! `privacy.rules` of a [`PrivacyConfig`]: one [`Position`] per output column saying
+//! `privacy.rules` of a [`privacy::Config`]: one [`Position`] per output column saying
 //! how its values are redacted, bound to those rules as a [`Planned`], which
 //! checks, withholds errors for, and redacts the result. Planning rejects the
 //! statement instead, before it runs, when any gate fails. The gates run in this order, all fail closed:
@@ -58,7 +58,7 @@
 //! touches a database. Rejection messages name only catalog identifiers,
 //! never a rule's name, entity, or operator, nor a value.
 //!
-//! [`PrivacyConfig`]: dbmcp_types::privacy::Config
+//! [`privacy::Config`]: dbmcp_types::privacy::Config
 //! [`Position`]: dbmcp_privacy::cells::Position
 
 mod analysis;

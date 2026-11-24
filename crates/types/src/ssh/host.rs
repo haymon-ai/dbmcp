@@ -12,7 +12,7 @@ pub enum StrictHostKeyChecking {
 }
 
 impl StrictHostKeyChecking {
-    /// Returns the setting value naming this variant.
+    /// Returns the setting value.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

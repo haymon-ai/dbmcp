@@ -5,7 +5,7 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-Configuration loading for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases. The types it builds live in `dbmcp-types`.
+Configuration loading for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases. Builds a `dbmcp_types::Config`.
 
 ## What you get
 

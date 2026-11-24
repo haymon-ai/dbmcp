@@ -2,13 +2,9 @@
 //!
 //! Categories partition the catalog so consumers can request a tailored
 //! recognizer subset (`Category::Financial`, `Category::Government`, …) without
-//! enumerating every entity type. Used by `dbmcp_privacy`'s `Analyzer`
-//! builder.
+//! enumerating every entity type.
 
 /// Closed set of PII categories tagging every built-in recognizer.
-///
-/// Exhaustive: adding a category (`Healthcare`, `Industries`, …) is a
-/// breaking change, so the compiler flags every `match` that must handle it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Category {
     /// Names, dates of birth, employee IDs, generic personal data.

@@ -13,7 +13,7 @@
 //! 2. Build the [`Config`] from the winners and defaults, applying
 //!    activation rules and resolving a sqlite database name from a config
 //!    or env file against that file's directory, then run
-//!    [`Config::validate`] on it.
+//!    [`validate::config`] on it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -199,7 +199,7 @@ impl Resolver<'_> {
         }
     }
 
-    /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
+    /// Resolves every setting into a [`Config`] and runs [`validate::config`].
     ///
     /// Activation rules run here: a section exists only when its trigger is
     /// set, and SSH settings without `ssh.host` are an error. `privacy.rules`

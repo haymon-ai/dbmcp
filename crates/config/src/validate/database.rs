@@ -5,7 +5,7 @@ use dbmcp_types::database;
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 
-/// Validates this configuration, accumulating every rule violation.
+/// Validates the `database` section.
 ///
 /// Rules enforced:
 /// - `backend == Sqlite` requires `name` to be `Some(non-empty)`.

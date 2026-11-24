@@ -23,7 +23,7 @@ impl Mode {
 }
 
 impl Mode {
-    /// Returns the setting value naming this variant.
+    /// Returns the setting value.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -55,7 +55,7 @@ pub enum Operator {
 }
 
 impl Operator {
-    /// Returns the setting value naming this variant.
+    /// Returns the setting value.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
