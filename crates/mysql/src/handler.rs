@@ -36,11 +36,8 @@ const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions
 
 /// Declarative tool table: `(tool, pinned, read_only)`.
 ///
-/// Per-database tools register as `Tool<true>` (no `database` field) when
-/// the config pins a db name, and as `Tool<false>` (carries a `database`
-/// field) otherwise. Cross-database tools
-/// (`listDatabases`, `createDatabase`, `dropDatabase`) are hidden in pinned
-/// mode altogether.
+/// Per-database tools register as `Tool<true>` when pinned, else `Tool<false>`.
+/// Cross-database tools are hidden when pinned.
 const TOOLS: &[ToolSpec<MysqlHandler>] = &[
     ToolSpec::tool::<ListDatabasesTool>(false, false),
     ToolSpec::tool::<ListTablesTool<true>>(true, false),

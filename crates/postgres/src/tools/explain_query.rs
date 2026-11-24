@@ -23,9 +23,6 @@ fn annotations() -> ToolAnnotations {
 }
 
 /// Marker type for the `explainQuery` MCP tool.
-///
-/// `PINNED` serves a database pinned by configuration: the input schema has
-/// no `database` field, and the pinned route drops one sent anyway.
 pub(crate) struct ExplainQueryTool<const PINNED: bool>;
 
 impl<const PINNED: bool> ToolBase for ExplainQueryTool<PINNED> {

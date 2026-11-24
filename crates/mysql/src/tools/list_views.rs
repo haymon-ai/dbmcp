@@ -19,9 +19,6 @@ fn annotations() -> ToolAnnotations {
 }
 
 /// Marker type for the `listViews` MCP tool.
-///
-/// `PINNED` serves a database pinned by configuration: the input schema has
-/// no `database` field, and the pinned route drops one sent anyway.
 pub(crate) struct ListViewsTool<const PINNED: bool>;
 
 impl<const PINNED: bool> ToolBase for ListViewsTool<PINNED> {

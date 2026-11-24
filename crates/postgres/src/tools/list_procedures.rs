@@ -19,9 +19,6 @@ fn annotations() -> ToolAnnotations {
 }
 
 /// Marker type for the `listProcedures` MCP tool.
-///
-/// `PINNED` serves a database pinned by configuration: the input schema has
-/// no `database` field, and the pinned route drops one sent anyway.
 pub(crate) struct ListProceduresTool<const PINNED: bool>;
 
 impl<const PINNED: bool> ToolBase for ListProceduresTool<PINNED> {
