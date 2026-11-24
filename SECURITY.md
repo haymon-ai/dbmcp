@@ -7,7 +7,7 @@ If you discover a security vulnerability in Database MCP, please report it respo
 ### How to Report
 
 - **Email**: [security@haymon.ai](mailto:security@haymon.ai)
-- **GitHub**: Use [Private Vulnerability Reporting](https://github.com/nicosalm/mcp/security/advisories/new) via the repository's Security tab
+- **GitHub**: Use [Private Vulnerability Reporting](https://github.com/haymon-ai/dbmcp/security/advisories/new) via the repository's Security tab
 
 ### What to Include
 
