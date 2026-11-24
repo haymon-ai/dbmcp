@@ -74,7 +74,7 @@ codex plugin add dbmcp@haymon-ai
 
 The plugin adds the dbmcp MCP server and the `setup` and `privacy` skills, and prompts for the connection settings. See [Claude Code](https://dbmcp.haymon.ai/clients/claude-code#plugin-recommended) and [Codex](https://dbmcp.haymon.ai/clients/codex#plugin-recommended).
 
-### Using `.mcp.json` (recommended)
+### Using `.mcp.json`
 
 Add a `.mcp.json` file to your project root. MCP clients read this file and configure the server automatically.
 

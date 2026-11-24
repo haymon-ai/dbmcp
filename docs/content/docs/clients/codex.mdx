@@ -42,6 +42,8 @@ After install, pick **Set up**: the `setup` skill walks you through the connecti
 
    If you set `CODEX_HOME`, use it in place of `$HOME/.codex` in the fish line.
 
+   Every dbmcp started from this shell reads the file, not only Codex's. A dbmcp you configured by hand in another client then takes its unset settings, password included, from the Codex file. Set `DBMCP_ENV_FILE` to an empty value in that client's `env` (empty counts as unset), or point it at its own file.
+
 3. Quit Codex fully and start it again. The Codex desktop app reads `~/.zshenv`, not `~/.zprofile`; if it does not see the variable, start Codex from a terminal.
 
 As a shortcut, you can export non-secret `DBMCP_DB_*` names in the startup file directly. Never put `DBMCP_DB_PASSWORD` in a shell startup file: keep it in the env file.
