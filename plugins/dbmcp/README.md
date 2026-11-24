@@ -1,6 +1,6 @@
 # dbmcp plugin
 
-Explore and query MySQL, MariaDB, PostgreSQL, and SQLite databases from Claude Code or Codex through the [dbmcp](https://dbmcp.haymon.ai) MCP server.
+[dbmcp](https://dbmcp.haymon.ai), the privacy first MCP server for SQL databases, as a Claude Code and Codex plugin. Works with MySQL, MariaDB, PostgreSQL, and SQLite.
 
 ## Install
 
@@ -23,11 +23,11 @@ Claude Code prompts for connection settings on install: fill in the quick-connec
 ## Skills
 
 - `setup`: connects dbmcp to your database and fixes a server that fails to start.
-- `privacy`: writes column rules and tunes PII redaction.
+- `privacy`: writes column rules and tunes sensitive-data redaction.
 
 ## Defaults
 
-The server is read-only and redacts PII in query results (`full` mode) unless your own config says otherwise. The plugin never changes either default.
+The server is read-only and redacts sensitive data in query results (`full` mode) unless your own config says otherwise. The plugin never changes either default.
 
 ## Requirements
 

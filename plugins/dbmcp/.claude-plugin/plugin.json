@@ -9,7 +9,7 @@
   "homepage": "https://dbmcp.haymon.ai",
   "repository": "https://github.com/haymon-ai/dbmcp",
   "license": "MIT",
-  "keywords": ["mcp", "database", "sql", "mysql", "mariadb", "postgresql", "sqlite"],
+  "keywords": ["mcp", "database", "sql", "privacy", "mysql", "mariadb", "postgresql", "sqlite"],
   "userConfig": {
     "config_file": {
       "type": "file",

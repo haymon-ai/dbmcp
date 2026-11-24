@@ -9,7 +9,7 @@
   "homepage": "https://dbmcp.haymon.ai",
   "repository": "https://github.com/haymon-ai/dbmcp",
   "license": "MIT",
-  "keywords": ["mcp", "database", "sql", "mysql", "mariadb", "postgresql", "sqlite"],
+  "keywords": ["mcp", "database", "sql", "privacy", "mysql", "mariadb", "postgresql", "sqlite"],
   "skills": "./skills/",
   "mcpServers": "./mcp.codex.json",
   "extensions": {
@@ -19,8 +19,8 @@
   },
   "interface": {
     "displayName": "dbmcp",
-    "shortDescription": "Explore and query SQL databases",
-    "longDescription": "dbmcp connects Codex to MySQL, MariaDB, PostgreSQL, and SQLite through one native MCP server. Read-only by default, with PII redaction on query results and per-column privacy rules.",
+    "shortDescription": "The privacy first MCP server for SQL databases",
+    "longDescription": "The privacy first MCP server for SQL databases. Sensitive data in query results is redacted before Codex sees it, per-column privacy rules rewrite ruled columns whole, and the server is read-only by default. Works with MySQL, MariaDB, PostgreSQL, and SQLite.",
     "developerName": "Haymon AI",
     "category": "Coding",
     "capabilities": ["Read", "Write"],

@@ -23,7 +23,7 @@ On install, Claude Code asks for the connection settings. Every field is optiona
 Quick-connect fields reach dbmcp as `DBMCP_*` environment variables, which [take precedence](/configuration/precedence) over the same settings in your config file. Leave them blank, except Password, when you use a config file.
 </Callout>
 
-Change the values later with `/plugin configure`. The plugin sets no safety option: the server stays [read-only](/security/read-only) and redacts [PII](/privacy) unless your own config says otherwise.
+Change the values later with `/plugin configure`. The plugin sets no safety option: the server stays [read-only](/security/read-only) and redacts [sensitive data](/privacy) unless your own config says otherwise.
 
 ### Slow first start
 
