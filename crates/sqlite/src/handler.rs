@@ -5,10 +5,10 @@
 //! `ServerHandler` surface and one thin delegator method that the
 //! per-tool implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig, PrivacyConfig};
 use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
+use dbmcp_types::{Config, database, privacy};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
@@ -48,11 +48,11 @@ const TOOLS: &[ToolSpec<SqliteHandler>] = &[
 /// the pool initialization logic) with the per-backend MCP tool router.
 #[derive(Clone)]
 pub struct SqliteHandler {
-    pub(crate) config: DatabaseConfig,
+    pub(crate) config: database::Config,
     pub(crate) connection: SqliteConnection,
     pub(crate) redactor: Option<Redactor>,
     /// PII settings with column rules; `None` without rules.
-    pub(crate) policy: Option<PrivacyConfig>,
+    pub(crate) policy: Option<privacy::Config>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -128,16 +128,15 @@ impl ServerHandler for SqliteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     fn handler(read_only: bool) -> SqliteHandler {
         SqliteHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
-                backend: DatabaseBackend::Sqlite,
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
+                backend: database::Backend::Sqlite,
                 name: Some(":memory:".into()),
                 read_only,
-                ..DatabaseConfig::default()
+                ..database::Config::default()
             },
             http: None,
             privacy: None,

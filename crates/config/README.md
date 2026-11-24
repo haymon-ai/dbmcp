@@ -5,15 +5,14 @@
 [![CI](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/haymon-ai/dbmcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/haymon-ai/dbmcp/blob/master/LICENSE)
 
-Typed configuration for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases.
+Configuration loading for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MCP server for SQL databases. Builds a `dbmcp_types::Config`.
 
 ## What you get
 
-- One config tree with sections for the database, HTTP, and privacy (redaction mode, operator, column rules)
+- Layered loading: process env > env files > YAML config files > defaults
 - Backend-aware defaults for port, user, host
-- Secret-safe `Debug` — credentials held in `secrecy::SecretString`
 - Multi-error validation that surfaces every misconfiguration at once
-- Kebab-case setting values for `DatabaseBackend` (`mysql`, `mariadb`, `postgres`, `sqlite`)
+- Kebab-case setting values for every enum setting (`mysql`, `mariadb`, `postgres`, `sqlite`, …)
 - `thiserror`-based error types
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

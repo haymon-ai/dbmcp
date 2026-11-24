@@ -19,7 +19,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use tokenizers::{Tokenizer, TruncationParams};
 
-use crate::entity::Entity;
+use crate::Entity;
 use crate::result::{AnalysisExplanation, Detector, RecognizerResult};
 use crate::score::Score;
 use crate::validation::ValidationOutcome;

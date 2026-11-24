@@ -4,9 +4,9 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_server::Server;
+use dbmcp_types::{Config, Transport, database};
 
 /// Creates a `MySQL`-backed [`Server`] from `DBMCP_DB_HOST` and `DBMCP_DB_PORT` environment variables.
 ///
@@ -14,8 +14,8 @@ use dbmcp_server::Server;
 fn server(read_only: bool, pinned: bool) -> Server {
     let config = Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
-            backend: DatabaseBackend::Mysql,
+        database: database::Config {
+            backend: database::Backend::Mysql,
             host: std::env::var("DBMCP_DB_HOST").expect("DBMCP_DB_HOST must be set"),
             port: std::env::var("DBMCP_DB_PORT")
                 .expect("DBMCP_DB_PORT must be set")
@@ -23,7 +23,7 @@ fn server(read_only: bool, pinned: bool) -> Server {
                 .expect("DBMCP_DB_PORT must be a valid port number"),
             name: pinned.then(|| "app".into()),
             read_only,
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         },
         http: None,
         privacy: None,

@@ -1,7 +1,8 @@
 //! `Analyzer` integration tests: behaviour (validator promotion,
 //! `AnalyzeOptions` filters, overlap rules) and the builder contract.
 
-use dbmcp_privacy::{AnalyzeOptions, Analyzer, Category, Entity, MAX_SCORE, Score};
+use dbmcp_privacy::{AnalyzeOptions, Analyzer, MAX_SCORE, Score};
+use dbmcp_types::privacy::{Category, Entity};
 
 const DEFAULT_NAMES: &[&str] = &[
     "EMAIL_ADDRESS",

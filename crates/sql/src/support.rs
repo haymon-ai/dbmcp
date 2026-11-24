@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use dbmcp_config::DatabaseBackend;
+use dbmcp_types::database;
 
 /// A release line: a `PostgreSQL` major, or a `major.minor` elsewhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,12 +96,12 @@ const SQLITE: &[Line] = &[Line::new(3, 54)];
 
 /// Returns the Supported lines for `backend`, ascending.
 #[must_use]
-pub const fn supported(backend: DatabaseBackend) -> &'static [Line] {
+pub const fn supported(backend: database::Backend) -> &'static [Line] {
     match backend {
-        DatabaseBackend::Postgres => POSTGRES,
-        DatabaseBackend::Mysql => MYSQL,
-        DatabaseBackend::Mariadb => MARIADB,
-        DatabaseBackend::Sqlite => SQLITE,
+        database::Backend::Postgres => POSTGRES,
+        database::Backend::Mysql => MYSQL,
+        database::Backend::Mariadb => MARIADB,
+        database::Backend::Sqlite => SQLITE,
     }
 }
 
@@ -154,7 +154,7 @@ pub enum Tier {
     /// An upstream line that is not listed.
     BestEffort {
         /// The configured backend.
-        backend: DatabaseBackend,
+        backend: database::Backend,
         /// The server's line.
         line: Line,
         /// Why the line is not Supported.
@@ -217,7 +217,7 @@ impl Tier {
 /// A variant is Unsupported whatever line it reports, since forks fake it.
 /// A pre-release is Best effort even on a listed line.
 #[must_use]
-pub fn classify(backend: DatabaseBackend, line: Line, variant: Option<Variant>, pre_release: bool) -> Tier {
+pub fn classify(backend: database::Backend, line: Line, variant: Option<Variant>, pre_release: bool) -> Tier {
     if let Some(variant) = variant {
         return Tier::Unsupported(variant);
     }
@@ -238,19 +238,19 @@ pub fn classify(backend: DatabaseBackend, line: Line, variant: Option<Variant>, 
 }
 
 /// Returns the product name of `backend`.
-const fn name(backend: DatabaseBackend) -> &'static str {
+const fn name(backend: database::Backend) -> &'static str {
     match backend {
-        DatabaseBackend::Postgres => "PostgreSQL",
-        DatabaseBackend::Mysql => "MySQL",
-        DatabaseBackend::Mariadb => "MariaDB",
-        DatabaseBackend::Sqlite => "SQLite",
+        database::Backend::Postgres => "PostgreSQL",
+        database::Backend::Mysql => "MySQL",
+        database::Backend::Mariadb => "MariaDB",
+        database::Backend::Sqlite => "SQLite",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use DatabaseBackend::{Mariadb, Mysql, Postgres, Sqlite};
+    use database::Backend::{Mariadb, Mysql, Postgres, Sqlite};
 
     #[test]
     fn parse_reads_the_leading_major_minor() {

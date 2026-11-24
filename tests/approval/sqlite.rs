@@ -5,9 +5,9 @@
 
 mod common;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PrivacyConfig, Transport};
 use dbmcp_server::Server;
 use dbmcp_sqlite::SqliteHandler;
+use dbmcp_types::{Config, Transport, database, privacy};
 use rmcp::RoleClient;
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ErrorCode, JsonObject, ProtocolVersion,
@@ -21,14 +21,14 @@ fn server(read_only: bool) -> Server {
 }
 
 /// Creates a `SQLite`-backed [`Server`] with the given PII configuration.
-fn server_with_privacy(read_only: bool, privacy: Option<PrivacyConfig>) -> Server {
+fn server_with_privacy(read_only: bool, privacy: Option<privacy::Config>) -> Server {
     let config = Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
-            backend: DatabaseBackend::Sqlite,
+        database: database::Config {
+            backend: database::Backend::Sqlite,
             name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
             read_only,
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         },
         http: None,
         privacy,
@@ -137,7 +137,7 @@ async fn test_call_tool_error_is_returned_in_band() {
 
 #[tokio::test]
 async fn test_call_tool_error_is_redacted_when_pii_enabled() {
-    let privacy = Some(PrivacyConfig::default());
+    let privacy = Some(privacy::Config::default());
     common::run_with_client(server_with_privacy(true, privacy), |peer| async move {
         let result = call_tool(
             &peer,

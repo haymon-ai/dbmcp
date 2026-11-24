@@ -4,7 +4,7 @@
 //! four segments (`[[catalog.]schema.]table.column`) with an entity and an
 //! optional operator. [`cast`] checks a file's value whole: names, fields,
 //! key shape, the entity, and the operator. [`resolve`] turns the winning
-//! rules into [`ColumnRule`]s once the backend is known: it fills each short
+//! rules into [`privacy::ColumnRule`]s once the backend is known: it fills each short
 //! key's leading segments, checks written catalogs, and finds repeats.
 //! Reasons are value-free: they name the rule and the item index, never a
 //! column key.
@@ -14,11 +14,12 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use serde_saphyr::{Location, Spanned};
 
-use crate::database::{DatabaseBackend, DatabaseConfig};
+use crate::choices;
 use crate::env;
 use crate::error::{ConfigError, Diagnostic, into_result};
 use crate::node::Node;
-use crate::privacy::{ColumnRule, PrivacyOperator};
+use dbmcp_types::privacy::Entity;
+use dbmcp_types::{database, privacy};
 
 /// One named rule as a config file wrote it, with folded keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,10 +28,10 @@ pub(crate) struct Rule {
     pub name: String,
     /// Each listed column's key, as written.
     pub columns: Vec<Key>,
-    /// The entity, one of [`ColumnRule::ENTITIES`].
-    pub entity: &'static str,
+    /// The entity the columns hold.
+    pub entity: Entity,
     /// The rule's operator; `None` inherits `privacy.operator`.
-    pub operator: Option<PrivacyOperator>,
+    pub operator: Option<privacy::Operator>,
 }
 
 /// A column key as written, its segments folded.
@@ -66,7 +67,7 @@ pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Res
     Ok(rules)
 }
 
-/// Resolves rules into one [`ColumnRule`] per listed column, keys filled.
+/// Resolves rules into one [`privacy::ColumnRule`] per listed column, keys filled.
 ///
 /// Segments drop from the left, as in the engine's own qualified names:
 /// `MySQL`/`MariaDB` fill catalog `def` and schema `database.name`;
@@ -80,15 +81,15 @@ pub(crate) fn cast(entries: &IndexMap<String, (Location, Spanned<Node>)>) -> Res
 /// does not fit the backend; then each column listed again.
 pub(crate) fn resolve(
     rules: &[Rule],
-    database: &DatabaseConfig,
-    operator: PrivacyOperator,
-) -> Result<Vec<ColumnRule>, Vec<Diagnostic>> {
+    database: &database::Config,
+    operator: privacy::Operator,
+) -> Result<Vec<privacy::ColumnRule>, Vec<Diagnostic>> {
     let backend = database.backend;
-    let pinned = database.name.as_deref().map(ColumnRule::fold);
+    let pinned = database.name.as_deref().map(privacy::ColumnRule::fold);
     let (catalog, schema) = match backend {
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => (Some("def".to_owned()), pinned),
-        DatabaseBackend::Sqlite => (Some("main".to_owned()), Some("main".to_owned())),
-        DatabaseBackend::Postgres => (pinned, Some("public".to_owned())),
+        database::Backend::Mysql | database::Backend::Mariadb => (Some("def".to_owned()), pinned),
+        database::Backend::Sqlite => (Some("main".to_owned()), Some("main".to_owned())),
+        database::Backend::Postgres => (pinned, Some("public".to_owned())),
     };
     let list = |items: &[usize]| {
         items
@@ -122,7 +123,7 @@ pub(crate) fn resolve(
                 incomplete.push(item);
                 continue;
             };
-            resolved.push(ColumnRule {
+            resolved.push(privacy::ColumnRule {
                 name: rule.name.clone(),
                 item,
                 key,
@@ -148,13 +149,13 @@ pub(crate) fn resolve(
                     items: list(&foreign),
                     // PostgreSQL's catalog comes from config; name the setting, not its value.
                     expected: match backend {
-                        DatabaseBackend::Postgres => "database.name".to_owned(),
+                        database::Backend::Postgres => "database.name".to_owned(),
                         _ => catalog.clone().unwrap_or_default(),
                     },
                     backend,
                 })
                 .involving(match backend {
-                    DatabaseBackend::Postgres => &[env::PRIVACY_RULES, env::DB_BACKEND, env::DB_NAME],
+                    database::Backend::Postgres => &[env::PRIVACY_RULES, env::DB_BACKEND, env::DB_NAME],
                     _ => &[env::PRIVACY_RULES, env::DB_BACKEND],
                 }),
             );
@@ -165,9 +166,9 @@ pub(crate) fn resolve(
 }
 
 /// Reports each column listed again, naming the item or rule that listed it first.
-fn repeats(columns: &[ColumnRule]) -> Vec<Diagnostic> {
+fn repeats(columns: &[privacy::ColumnRule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
-    let mut seen: HashMap<&[String; 4], &ColumnRule> = HashMap::new();
+    let mut seen: HashMap<&[String; 4], &privacy::ColumnRule> = HashMap::new();
     for column in columns {
         let Some(first) = seen.get(&column.key) else {
             seen.insert(&column.key, column);
@@ -258,9 +259,11 @@ fn key(node: &Node) -> Result<Key, String> {
     };
     let segments: Vec<&str> = text.split('.').collect();
     let key = match segments.as_slice() {
-        [table, column] => Key::Table([*table, *column].map(ColumnRule::fold)),
-        [schema, table, column] => Key::Schema([*schema, *table, *column].map(ColumnRule::fold)),
-        [catalog, schema, table, column] => Key::Full([*catalog, *schema, *table, *column].map(ColumnRule::fold)),
+        [table, column] => Key::Table([*table, *column].map(privacy::ColumnRule::fold)),
+        [schema, table, column] => Key::Schema([*schema, *table, *column].map(privacy::ColumnRule::fold)),
+        [catalog, schema, table, column] => {
+            Key::Full([*catalog, *schema, *table, *column].map(privacy::ColumnRule::fold))
+        }
         _ => {
             return Err(format!(
                 "expected 2 to 4 dot-separated segments ([[catalog.]schema.]table.column), found {}",
@@ -285,24 +288,21 @@ fn key(node: &Node) -> Result<Key, String> {
     Ok(key)
 }
 
-/// Checks a rule's entity name against [`ColumnRule::ENTITIES`].
-fn entity(node: &Node) -> Result<&'static str, String> {
+fn entity(node: &Node) -> Result<Entity, String> {
     match node {
-        Node::Str(text) => ColumnRule::ENTITIES
-            .iter()
-            .find(|name| **name == text.as_str())
-            .copied()
-            .ok_or_else(|| "unknown entity type; see the data types page".into()),
+        Node::Str(text) => text
+            .parse()
+            .map_err(|_| "unknown entity type; see the data types page".into()),
         Node::Unsupported(tag) => Err(env::unsupported_tag(tag)),
         other => Err(unexpected("string", other)),
     }
 }
 
 /// Casts a rule's operator like `privacy.operator`; `null` inherits it.
-fn operator(node: &Node) -> Result<Option<PrivacyOperator>, String> {
+fn operator(node: &Node) -> Result<Option<privacy::Operator>, String> {
     match node {
         Node::Null => Ok(None),
-        Node::Str(text) => PrivacyOperator::CHOICES
+        Node::Str(text) => choices::PRIVACY_OPERATOR
             .iter()
             .find(|(name, _)| name == text)
             .map(|&(_, operator)| Some(operator))
@@ -322,11 +322,11 @@ fn unexpected(expected: &str, found: &Node) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::tests::db_config;
+    use crate::validate::database::tests::db_config;
 
     /// Resolves `rules` of `(name, keys)` on `backend`; returns full keys or error messages.
     fn resolved(
-        backend: DatabaseBackend,
+        backend: database::Backend,
         name: Option<&str>,
         rules: &[(&str, &[&str])],
     ) -> Result<Vec<String>, Vec<String>> {
@@ -338,27 +338,27 @@ mod tests {
                     .iter()
                     .map(|text| key(&Node::Str((*text).to_owned())).expect("valid key"))
                     .collect(),
-                entity: "URL",
+                entity: Entity::Url,
                 operator: None,
             })
             .collect();
-        let database = DatabaseConfig {
+        let database = database::Config {
             name: name.map(str::to_owned),
             ..db_config(backend)
         };
-        resolve(&rules, &database, PrivacyOperator::Hash)
+        resolve(&rules, &database, privacy::Operator::Hash)
             .map(|columns| columns.iter().map(|column| column.key.join(".")).collect())
             .map_err(|errors| errors.iter().map(|error| error.error.to_string()).collect())
     }
 
     /// Resolves one `emails` rule over `keys`.
-    fn emails(backend: DatabaseBackend, name: Option<&str>, keys: &[&str]) -> Result<Vec<String>, Vec<String>> {
+    fn emails(backend: database::Backend, name: Option<&str>, keys: &[&str]) -> Result<Vec<String>, Vec<String>> {
         resolved(backend, name, &[("emails", keys)])
     }
 
     #[test]
     fn short_keys_fill_leading_segments_per_backend() {
-        use DatabaseBackend::{Mariadb, Mysql, Postgres, Sqlite};
+        use database::Backend::{Mariadb, Mysql, Postgres, Sqlite};
         let cases = [
             (Mysql, None, "Shop.Users.Email", "def.shop.users.email"),
             (Mysql, Some("Shop"), "users.email", "def.shop.users.email"),
@@ -383,13 +383,13 @@ mod tests {
     fn short_keys_without_their_database_need_database_name() {
         for (backend, keys, items) in [
             (
-                DatabaseBackend::Mysql,
+                database::Backend::Mysql,
                 &["users.email", "shop.users.email"][..],
                 "item 0",
             ),
-            (DatabaseBackend::Mariadb, &["users.email"][..], "item 0"),
+            (database::Backend::Mariadb, &["users.email"][..], "item 0"),
             (
-                DatabaseBackend::Postgres,
+                database::Backend::Postgres,
                 &["users.email", "public.users.email", "shop.public.users.email"][..],
                 "item 0, item 1",
             ),
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn full_key_catalogs_must_fit_the_backend() {
-        use DatabaseBackend::{Mariadb, Mysql, Postgres, Sqlite};
+        use database::Backend::{Mariadb, Mysql, Postgres, Sqlite};
         assert!(emails(Mysql, None, &["DEF.s.t.c"]).is_ok());
         assert_eq!(
             emails(Mariadb, None, &["def.s.t.a", "main.s.t.b", "x.s.t.c"]),
@@ -435,7 +435,7 @@ mod tests {
     fn a_column_listed_twice_is_found_after_expansion() {
         assert_eq!(
             emails(
-                DatabaseBackend::Mysql,
+                database::Backend::Mysql,
                 Some("shop"),
                 &["users.email", "def.shop.users.email", "SHOP.Users.Email"]
             ),
@@ -446,7 +446,7 @@ mod tests {
         );
         assert_eq!(
             resolved(
-                DatabaseBackend::Sqlite,
+                database::Backend::Sqlite,
                 Some("app.db"),
                 &[("emails", &["users.email"]), ("cards", &["main.main.users.email"])]
             ),

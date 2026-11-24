@@ -9,8 +9,8 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use dbmcp_config::{AllowedOrigins, HttpConfig};
 use dbmcp_server::Server;
+use dbmcp_types::http;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -35,7 +35,7 @@ use crate::server::shutdown_signal;
 ///
 /// Returns an error if TCP bind fails (port in use, permission denied)
 /// or the HTTP service fails to serve.
-pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), ErrorKind> {
+pub(crate) async fn serve(server: Server, config: &http::Config) -> Result<(), ErrorKind> {
     let cancel_token = CancellationToken::new();
     let router = build_http_router(config, server, &cancel_token);
 
@@ -69,7 +69,7 @@ pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), Err
 ///
 /// Wires the configured allowed-origins list into BOTH the rmcp
 /// server-side Origin validator and the tower-http CORS preflight layer,
-/// which match entries with the same rules via [`AllowedOrigins`]. An
+/// which match entries with the same rules via [`dbmcp_types::http::AllowedOrigins`]. An
 /// empty list disables rmcp's validator but grants no CORS access, so
 /// browsers stay blocked. When an auth token is configured, every request
 /// must pass [`require_bearer`] before it reaches the MCP service. The
@@ -77,7 +77,7 @@ pub(crate) async fn serve(server: Server, config: &HttpConfig) -> Result<(), Err
 /// rmcp's Host/Origin validation, so probes need no credentials. CORS
 /// stays outermost so browser preflights, which never carry credentials,
 /// are answered without authentication.
-fn build_http_router(http_config: &HttpConfig, server: Server, cancel_token: &CancellationToken) -> axum::Router {
+fn build_http_router(http_config: &http::Config, server: Server, cancel_token: &CancellationToken) -> axum::Router {
     let pinged = server.clone();
     let probes = probe::router(
         move || -> probe::PingFuture {
@@ -150,8 +150,8 @@ async fn require_bearer(State(auth): State<BearerAuth>, request: Request, next: 
 ///
 /// Uses the same `(scheme, host, port)` matching as rmcp, including the
 /// `:*` port wildcard, instead of tower-http's exact string matching.
-fn build_cors_layer(http_config: &HttpConfig) -> CorsLayer {
-    let origins = AllowedOrigins::new(&http_config.allowed_origins);
+fn build_cors_layer(http_config: &http::Config) -> CorsLayer {
+    let origins = http::AllowedOrigins::new(&http_config.allowed_origins);
 
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin, _| origins.allows(origin)))
@@ -169,15 +169,15 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderValue, Method, Request, request::Builder};
-    use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, Transport};
+    use dbmcp_types::{Config, Transport, database};
     use secrecy::SecretString;
     use tower::ServiceExt;
 
-    fn sqlite_memory_db_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Sqlite,
+    fn sqlite_memory_db_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Sqlite,
             name: Some(":memory:".into()),
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
@@ -188,15 +188,15 @@ mod tests {
     }
 
     fn router_with_token() -> axum::Router {
-        router_with(HttpConfig::default_allowed_origins(), Some(TEST_TOKEN.into()))
+        router_with(http::Config::default_allowed_origins(), Some(TEST_TOKEN.into()))
     }
 
     fn router_with(origins: Vec<String>, auth_token: Option<String>) -> axum::Router {
-        let http_config = HttpConfig {
-            host: HttpConfig::DEFAULT_HOST.into(),
-            port: HttpConfig::DEFAULT_PORT,
+        let http_config = http::Config {
+            host: http::Config::DEFAULT_HOST.into(),
+            port: http::Config::DEFAULT_PORT,
             allowed_origins: origins,
-            allowed_hosts: HttpConfig::default_allowed_hosts(),
+            allowed_hosts: http::Config::default_allowed_hosts(),
             auth_token: auth_token.map(SecretString::from),
             allow_unauthenticated: false,
         };
@@ -230,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn disallowed_origin_returns_403() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
+        let router = router_with_origins(http::Config::default_allowed_origins());
         let request = mcp_post("/mcp/")
             .header(header::ORIGIN, "https://evil.example")
             .body(Body::from("{}"))
@@ -242,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn disallowed_host_returns_403() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
+        let router = router_with_origins(http::Config::default_allowed_origins());
         let request = Request::builder()
             .method(Method::POST)
             .uri("/mcp/")
@@ -258,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_origin_non_utf8_returns_403() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
+        let router = router_with_origins(http::Config::default_allowed_origins());
         let mut request = mcp_post("/mcp/").body(Body::from("{}")).expect("build request");
         request.headers_mut().insert(
             header::ORIGIN,
@@ -271,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_origin_unparseable_returns_403() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
+        let router = router_with_origins(http::Config::default_allowed_origins());
         let request = mcp_post("/mcp/")
             .header(header::ORIGIN, "not a url")
             .body(Body::from("{}"))
@@ -323,7 +323,7 @@ mod tests {
         }
     }
 
-    /// Pins [`AllowedOrigins`] to rmcp's private matcher.
+    /// Pins [`dbmcp_types::http::AllowedOrigins`] to rmcp's private matcher.
     ///
     /// Every case runs through both the CORS preflight and rmcp's
     /// validator, so an rmcp upgrade that changes Origin semantics fails
@@ -365,13 +365,13 @@ mod tests {
             ("http://[::1]:5173", true),
             ("http://evil.example:5173", false),
         ] {
-            assert_origin(&HttpConfig::default_allowed_origins(), origin, allowed).await;
+            assert_origin(&http::Config::default_allowed_origins(), origin, allowed).await;
         }
     }
 
     #[tokio::test]
     async fn missing_origin_passes_validator() {
-        let router = router_with_origins(HttpConfig::default_allowed_origins());
+        let router = router_with_origins(http::Config::default_allowed_origins());
         let request = mcp_post("/mcp/").body(Body::from("{}")).expect("build request");
         let (status, _body) = send(router, request).await;
         assert_ne!(status, StatusCode::FORBIDDEN);

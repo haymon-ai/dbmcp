@@ -1,14 +1,12 @@
 //! The planner: gates a statement's lineage and plans each output column.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::str::FromStr;
 
-use dbmcp_config::{ColumnRule, PrivacyConfig, PrivacyOperator};
-use dbmcp_privacy::Entity;
 use dbmcp_privacy::cells::{Plan, PlannedColumn, Position};
 use dbmcp_sql_lineage::{
     Dialect, ExplainForm, Flow, Lineage, Origin, OutputColumn, RelationId, Role, SourceRef, StatementKind,
 };
+use dbmcp_types::privacy::{self, ColumnRule};
 
 use crate::catalog::{Cascade, CascadeAction, CatalogColumn, Family, Member};
 use crate::deny;
@@ -24,14 +22,10 @@ use crate::rejection::Rejection;
 ///
 /// Returns the first failing gate's [`Rejection`]; the crate docs list the gates in order.
 ///
-/// # Panics
-///
-/// Panics when a rule's entity is not an [`Entity`] name; the loader only
-/// accepts `ColumnRule::ENTITIES`, which a test ties to [`Entity`].
 pub(crate) fn plan(
     lineage: &Lineage,
     dialect: Dialect,
-    config: &PrivacyConfig,
+    config: &privacy::Config,
     names: &Names,
 ) -> Result<Plan, Rejection> {
     gate(lineage, dialect, config, names).map_err(Rejection::logged)
@@ -67,7 +61,7 @@ pub(crate) struct Facts {
 /// ruled when its family is. Backends use it to decide whether database
 /// errors must be sanitized.
 #[must_use]
-pub(crate) fn touches_ruled(lineage: &Lineage, config: &PrivacyConfig, families: &Families) -> bool {
+pub(crate) fn touches_ruled(lineage: &Lineage, config: &privacy::Config, families: &Families) -> bool {
     ruled_relation(lineage, config, families).is_some()
 }
 
@@ -87,7 +81,7 @@ fn built_ins(lineage: &Lineage) -> Result<(), Rejection> {
 }
 
 /// Runs every gate in order.
-fn gate(lineage: &Lineage, dialect: Dialect, config: &PrivacyConfig, names: &Names) -> Result<Plan, Rejection> {
+fn gate(lineage: &Lineage, dialect: Dialect, config: &privacy::Config, names: &Names) -> Result<Plan, Rejection> {
     built_ins(lineage)?;
     deny::lineage(dialect, lineage)?;
     let mut statement = &lineage.statement;
@@ -172,7 +166,7 @@ fn writes(
     lineage: &Lineage,
     effects: Effects,
     target: &RelationId,
-    config: &PrivacyConfig,
+    config: &privacy::Config,
     names: &Names,
 ) -> Result<(), Rejection> {
     let empty = Family::default();
@@ -183,7 +177,7 @@ fn writes(
     };
     let hashed = |column: &str| {
         landing().any(|(member, ancestors)| {
-            direct(config, member, ancestors.iter(), column).any(|rule| rule.operator == PrivacyOperator::Hash)
+            direct(config, member, ancestors.iter(), column).any(|rule| rule.operator == privacy::Operator::Hash)
         })
     };
     // A `hash`-ruled column the facts lack (no facts, or a descendant's own
@@ -195,7 +189,7 @@ fn writes(
         .unwrap_or_default();
     for rule in &config.rules {
         let name = &rule.key[3];
-        if rule.operator == PrivacyOperator::Hash
+        if rule.operator == privacy::Operator::Hash
             && hashed(name)
             && !columns.iter().any(|column| ColumnRule::fold(&column.name) == *name)
         {
@@ -258,7 +252,7 @@ fn writes(
             }
         }
         // The landing check proved a `hash` source equal to every member's pair.
-        if !hashed(&write.name) || matches!(source, Position::Action(PrivacyOperator::Hash, _)) {
+        if !hashed(&write.name) || matches!(source, Position::Action(privacy::Operator::Hash, _)) {
             continue;
         }
         match write.flow {
@@ -277,7 +271,7 @@ fn writes(
             return Err(computed(&column.name));
         }
     }
-    if !config.rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash) {
+    if !config.rules.iter().any(|rule| rule.operator == privacy::Operator::Hash) {
         return Ok(());
     }
     let members: BTreeSet<&RelationId> = landing().map(|(member, _)| member).collect();
@@ -378,7 +372,7 @@ fn cascades_and_triggers(
     effects: Effects,
     target: &RelationId,
     members: &BTreeSet<&RelationId>,
-    config: &PrivacyConfig,
+    config: &privacy::Config,
     names: &Names,
 ) -> Result<(), Rejection> {
     // A target the analysis did not resolve has triggers.
@@ -390,7 +384,7 @@ fn cascades_and_triggers(
     for edge in &fired {
         if edge.action != CascadeAction::Delete
             && let Some(other) = config.rules.iter().find(|rule| {
-                rule.operator == PrivacyOperator::Hash
+                rule.operator == privacy::Operator::Hash
                     && rule_on(rule, &edge.child.relation)
                     && rule.key[3] != ColumnRule::fold(&edge.child.column)
             })
@@ -400,7 +394,7 @@ fn cascades_and_triggers(
             });
         }
         let Some(child) = rule(config, &edge.child.relation, &edge.child.column)
-            .filter(|rule| rule.operator == PrivacyOperator::Hash)
+            .filter(|rule| rule.operator == privacy::Operator::Hash)
         else {
             continue;
         };
@@ -494,7 +488,7 @@ fn fired<'a>(
 /// another leaf, so every leaf must read each ruled column under the same
 /// pairs. Moves are decided per row at run time, so this fires even when no
 /// row would move.
-fn row_movement(lineage: &Lineage, effects: Effects, config: &PrivacyConfig, names: &Names) -> Result<(), Rejection> {
+fn row_movement(lineage: &Lineage, effects: Effects, config: &privacy::Config, names: &Names) -> Result<(), Rejection> {
     if !effects.moves {
         return Ok(());
     }
@@ -556,7 +550,7 @@ fn known_name(column: &OutputColumn) -> Option<String> {
 
 /// Returns the rule whose key is the folded `catalog.schema.table.column`.
 #[must_use]
-pub(crate) fn rule<'a>(config: &'a PrivacyConfig, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
+pub(crate) fn rule<'a>(config: &'a privacy::Config, relation: &RelationId, column: &str) -> Option<&'a ColumnRule> {
     let key = [
         ColumnRule::fold(&relation.catalog),
         ColumnRule::fold(&relation.schema),
@@ -579,7 +573,7 @@ fn reach<'f>(families: &'f Families, relation: &'f RelationId) -> impl Iterator<
 /// Rows read through a relation then follow every rule a direct read of
 /// the member they live in would.
 pub(crate) fn covering<'a>(
-    config: &'a PrivacyConfig,
+    config: &'a privacy::Config,
     families: &'a Families,
     relation: &'a RelationId,
     column: &'a str,
@@ -591,7 +585,7 @@ pub(crate) fn covering<'a>(
 ///
 /// These are the rules a direct read of `member.column` follows.
 fn direct<'a>(
-    config: &'a PrivacyConfig,
+    config: &'a privacy::Config,
     member: &'a RelationId,
     ancestors: impl Iterator<Item = &'a RelationId>,
     column: &'a str,
@@ -602,7 +596,7 @@ fn direct<'a>(
 }
 
 /// Reports whether any rule names a column of `relation`.
-pub(crate) fn is_ruled(relation: &RelationId, config: &PrivacyConfig) -> bool {
+pub(crate) fn is_ruled(relation: &RelationId, config: &privacy::Config) -> bool {
     config.rules.iter().any(|rule| rule_on(rule, relation))
 }
 
@@ -617,12 +611,12 @@ fn rule_on(rule: &ColumnRule, relation: &RelationId) -> bool {
 }
 
 /// Reports whether any rule names a column of `relation` or of its family.
-pub(crate) fn covers_ruled(config: &PrivacyConfig, families: &Families, relation: &RelationId) -> bool {
+pub(crate) fn covers_ruled(config: &privacy::Config, families: &Families, relation: &RelationId) -> bool {
     reach(families, relation).any(|relation| is_ruled(relation, config))
 }
 
 /// Returns the first touched relation whose family has a ruled column.
-fn ruled_relation<'a>(lineage: &'a Lineage, config: &PrivacyConfig, families: &Families) -> Option<&'a RelationId> {
+fn ruled_relation<'a>(lineage: &'a Lineage, config: &privacy::Config, families: &Families) -> Option<&'a RelationId> {
     lineage
         .relations
         .iter()
@@ -637,8 +631,13 @@ fn ruled_relation<'a>(lineage: &'a Lineage, config: &PrivacyConfig, families: &F
 /// placeholder, so a select-list condition cannot answer through `null`,
 /// tokens, or `mask` length. A bare value keeps `hash` only when every
 /// source is hashed under that pair; otherwise `hash` becomes `replace`.
-fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PrivacyConfig, families: &Families) -> Option<Position> {
-    let pairs: Vec<Vec<(PrivacyOperator, &str)>> = sources
+fn combine(
+    sources: &BTreeSet<SourceRef>,
+    flow: Flow,
+    config: &privacy::Config,
+    families: &Families,
+) -> Option<Position> {
+    let pairs: Vec<Vec<(privacy::Operator, privacy::Entity)>> = sources
         .iter()
         .map(|source| {
             covering(config, families, &source.relation, &source.column)
@@ -653,36 +652,34 @@ fn combine(sources: &BTreeSet<SourceRef>, flow: Flow, config: &PrivacyConfig, fa
         if !pairs.iter().flatten().all(|&(_, other)| other == entity) {
             return None;
         }
-        let entity = Entity::from_str(entity).expect("ColumnRule::ENTITIES mirrors Entity");
         return Some(Position::Placeholder(entity));
     }
-    let hashed = first.is_some_and(|first| first.0 == PrivacyOperator::Hash)
+    let hashed = first.is_some_and(|first| first.0 == privacy::Operator::Hash)
         && pairs
             .iter()
             .all(|covered| !covered.is_empty() && covered.iter().all(|&p| Some(p) == first));
     merge(pairs.into_iter().flatten().map(|(operator, entity)| match operator {
-        PrivacyOperator::Hash if !hashed => (PrivacyOperator::Replace, entity),
+        privacy::Operator::Hash if !hashed => (privacy::Operator::Replace, entity),
         operator => (operator, entity),
     }))
 }
 
 /// Returns a rule's `(operator, entity)` pair.
-fn pair(rule: &ColumnRule) -> (PrivacyOperator, &'static str) {
+fn pair(rule: &ColumnRule) -> (privacy::Operator, privacy::Entity) {
     (rule.operator, rule.entity)
 }
 
 /// Combines `(operator, entity)` pairs into one position; `None` when two pairs differ.
 ///
 /// No pair means global detection.
-fn merge<'a>(mut pairs: impl Iterator<Item = (PrivacyOperator, &'a str)>) -> Option<Position> {
+fn merge(mut pairs: impl Iterator<Item = (privacy::Operator, privacy::Entity)>) -> Option<Position> {
     let Some(first) = pairs.next() else {
         return Some(Position::Global);
     };
     if !pairs.all(|pair| pair == first) {
         return None;
     }
-    let entity = Entity::from_str(first.1).expect("ColumnRule::ENTITIES mirrors Entity");
-    Some(Position::Action(first.0, entity))
+    Some(Position::Action(first.0, first.1))
 }
 
 /// Renders a relation as `schema.name`.

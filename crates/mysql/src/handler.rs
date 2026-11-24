@@ -5,10 +5,10 @@
 //! surface and a small set of thin delegators that per-tool
 //! implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig, PrivacyConfig};
 use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
+use dbmcp_types::{Config, database, privacy};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
@@ -74,11 +74,11 @@ const TOOLS: &[ToolSpec<MysqlHandler>] = &[
 /// the pool initialization logic) with the per-backend MCP tool router.
 #[derive(Clone)]
 pub struct MysqlHandler {
-    pub(crate) config: DatabaseConfig,
+    pub(crate) config: database::Config,
     pub(crate) connection: MysqlConnection,
     pub(crate) redactor: Option<Redactor>,
     /// PII settings with column rules; `None` without rules.
-    pub(crate) policy: Option<PrivacyConfig>,
+    pub(crate) policy: Option<privacy::Config>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -158,24 +158,23 @@ impl ServerHandler for MysqlHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
-    fn base_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Mysql,
+    fn base_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Mysql,
             host: "db.example.com".into(),
             port: 3307,
             user: "admin".into(),
             password: Some("s3cret".into()),
             name: None,
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
     fn handler(read_only: bool) -> MysqlHandler {
         MysqlHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
                 read_only,
                 ..base_config()
             },
@@ -189,8 +188,8 @@ mod tests {
     /// Handler whose config pins a specific database name.
     fn pinned_handler(read_only: bool) -> MysqlHandler {
         MysqlHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
                 read_only,
                 name: Some("mydb".into()),
                 ..base_config()
@@ -206,13 +205,13 @@ mod tests {
     fn policy_exists_only_with_column_rules() {
         let with = |rules| {
             MysqlHandler::new(&Config {
-                transport: dbmcp_config::Transport::Stdio,
+                transport: dbmcp_types::Transport::Stdio,
                 database: base_config(),
                 http: None,
-                privacy: Some(PrivacyConfig {
-                    operator: dbmcp_config::PrivacyOperator::Mask,
+                privacy: Some(privacy::Config {
+                    operator: dbmcp_types::privacy::Operator::Mask,
                     rules,
-                    ..PrivacyConfig::default()
+                    ..privacy::Config::default()
                 }),
                 ssh: None,
             })
@@ -220,12 +219,12 @@ mod tests {
         };
         assert!(handler(false).policy.is_none());
         assert!(with(Vec::new()).policy.is_none());
-        let rule = dbmcp_config::ColumnRule {
+        let rule = dbmcp_types::privacy::ColumnRule {
             name: "emails".into(),
             item: 0,
             key: ["def", "app", "users", "email"].map(String::from),
-            entity: "EMAIL_ADDRESS",
-            operator: dbmcp_config::PrivacyOperator::Mask,
+            entity: dbmcp_types::privacy::Entity::EmailAddress,
+            operator: dbmcp_types::privacy::Operator::Mask,
         };
         assert!(with(vec![rule]).policy.is_some());
     }

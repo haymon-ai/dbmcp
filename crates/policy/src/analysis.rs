@@ -1,11 +1,11 @@
 //! The catalog loop: analyzes a statement, asking the caller for missing relations.
 
-use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
     Catalog, Dialect, ExplainForm, Lexical, Lineage, LineageError, Origin, RelationId, StatementKind, WrittenName,
     analyze,
 };
+use dbmcp_types::{database, privacy};
 
 use crate::catalog::Entry;
 use crate::deny;
@@ -65,12 +65,12 @@ pub struct Analyzed {
 impl<'a> Analysis<'a> {
     /// Starts analyzing `sql` as `backend` parses it.
     #[must_use]
-    pub fn new(sql: &'a str, backend: DatabaseBackend) -> Self {
+    pub fn new(sql: &'a str, backend: database::Backend) -> Self {
         let dialect = match backend {
-            DatabaseBackend::Mysql => Dialect::Mysql,
-            DatabaseBackend::Mariadb => Dialect::Mariadb,
-            DatabaseBackend::Postgres => Dialect::Postgres,
-            DatabaseBackend::Sqlite => Dialect::Sqlite,
+            database::Backend::Mysql => Dialect::Mysql,
+            database::Backend::Mariadb => Dialect::Mariadb,
+            database::Backend::Postgres => Dialect::Postgres,
+            database::Backend::Sqlite => Dialect::Sqlite,
         };
         Self {
             sql,
@@ -192,12 +192,7 @@ impl Analyzed {
     /// # Errors
     ///
     /// Returns the first failing gate's [`Rejection`], logged.
-    ///
-    /// # Panics
-    ///
-    /// Panics when a rule's entity is not an [`Entity`](dbmcp_privacy::Entity)
-    /// name; the loader only accepts `ColumnRule::ENTITIES`.
-    pub fn plan<'c>(&self, config: &'c PrivacyConfig) -> Result<Planned<'c>, Rejection> {
+    pub fn plan<'c>(&self, config: &'c privacy::Config) -> Result<Planned<'c>, Rejection> {
         let plan = plan(&self.lineage, self.dialect, config, &self.names)?;
         let statement = &self.lineage.statement;
         let touches = touches_ruled(&self.lineage, config, &self.names.families);
@@ -216,7 +211,6 @@ impl Analyzed {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PrivacyOperator};
     use std::collections::BTreeSet;
 
     use dbmcp_sql_lineage::{RelationKind, SourceRef};
@@ -258,7 +252,7 @@ mod tests {
 
     /// Analyzes `sql`, creating in `creation` and resolving names with `entry`.
     fn analyzed_with(
-        backend: DatabaseBackend,
+        backend: database::Backend,
         sql: &str,
         creation: Option<&str>,
         entry: impl Fn(&WrittenName) -> Entry,
@@ -284,32 +278,32 @@ mod tests {
     }
 
     /// Analyzes `sql` on `backend`, resolving every missing name with [`table`].
-    fn analyzed_on(backend: DatabaseBackend, sql: &str) -> Analyzed {
+    fn analyzed_on(backend: database::Backend, sql: &str) -> Analyzed {
         analyzed_with(backend, sql, Some("public"), table)
     }
 
     /// Analyzes `sql` on `PostgreSQL`.
     fn analyzed(sql: &str) -> Analyzed {
-        analyzed_on(DatabaseBackend::Postgres, sql)
+        analyzed_on(database::Backend::Postgres, sql)
     }
 
     /// A config ruling `shop.public.t.a` with `mask` as `US_SSN`.
-    fn ruled() -> PrivacyConfig {
-        PrivacyConfig {
-            rules: vec![ColumnRule {
+    fn ruled() -> privacy::Config {
+        privacy::Config {
+            rules: vec![privacy::ColumnRule {
                 name: "r".into(),
                 item: 0,
                 key: ["shop", "public", "t", "a"].map(String::from),
-                entity: "US_SSN",
-                operator: PrivacyOperator::Mask,
+                entity: dbmcp_types::privacy::Entity::UsSsn,
+                operator: privacy::Operator::Mask,
             }],
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }
     }
 
     #[test]
     fn missing_names_reject_after_the_round_cap() {
-        let mut analysis = Analysis::new("SELECT a FROM t", DatabaseBackend::Sqlite);
+        let mut analysis = Analysis::new("SELECT a FROM t", database::Backend::Sqlite);
         for _ in 0..CATALOG_ROUNDS {
             assert!(matches!(analysis.step(Vec::new()), Ok(Step::Missing(_))));
         }
@@ -319,8 +313,8 @@ mod tests {
     #[test]
     fn names_that_name_no_relation_are_absent_without_a_fetch() {
         for (backend, sql) in [
-            (DatabaseBackend::Mysql, "SELECT a FROM t"),
-            (DatabaseBackend::Sqlite, "SELECT a FROM a.b.t"),
+            (database::Backend::Mysql, "SELECT a FROM t"),
+            (database::Backend::Sqlite, "SELECT a FROM a.b.t"),
         ] {
             assert_eq!(
                 Analysis::new(sql, backend).step(Vec::new()).expect_err("unresolved"),
@@ -339,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_lexical_mismatch_rejects() {
-        let mut analysis = Analysis::new("SELECT 1", DatabaseBackend::Mysql);
+        let mut analysis = Analysis::new("SELECT 1", database::Backend::Mysql);
         analysis.mismatch("NO_BACKSLASH_ESCAPES differs");
         assert_eq!(
             analysis.step(Vec::new()).expect_err("mismatch"),
@@ -366,7 +360,7 @@ mod tests {
         let config = ruled();
         let names = ["x", "y", "z"].map(String::from);
         for sql in ["EXPLAIN SELECT b FROM u", "SHOW TABLES", "DESCRIBE u"] {
-            let mut planned = analyzed_on(DatabaseBackend::Mysql, sql).plan(&config).expect("plan");
+            let mut planned = analyzed_on(database::Backend::Mysql, sql).plan(&config).expect("plan");
             assert_eq!(planned.check_first(&names, [ruled_origin(0)]), Ok(()), "{sql}");
         }
     }
@@ -423,15 +417,15 @@ mod tests {
         let index = "CREATE INDEX i ON u (a)";
         let postgres = analyzed(index).plan(&config).expect("plan");
         assert_eq!(postgres.withheld(Some("23505")), Some("23505"));
-        let other = analyzed_on(DatabaseBackend::Sqlite, index);
+        let other = analyzed_on(database::Backend::Sqlite, index);
         assert_eq!(other.plan(&config).expect("plan").withheld(Some("23505")), None);
     }
 
     #[test]
     fn bare_query_names_feed_the_create_target_gate() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let plans = |sql, creation, entry: fn(&WrittenName) -> Entry| {
-            analyzed_with(DatabaseBackend::Postgres, sql, creation, entry)
+            analyzed_with(database::Backend::Postgres, sql, creation, entry)
                 .plan(&config)
                 .is_ok()
         };
@@ -446,7 +440,7 @@ mod tests {
     }
 
     /// The relation the first step of `sql` on `backend` denies, if any.
-    fn denied_first(backend: DatabaseBackend, sql: &str) -> Option<String> {
+    fn denied_first(backend: database::Backend, sql: &str) -> Option<String> {
         let mut analysis = Analysis::new(sql, backend);
         analysis.connected_to(Some("app".into()));
         match analysis.step(Vec::new()) {
@@ -460,38 +454,38 @@ mod tests {
     fn denied_written_names_reject_before_the_fetch() {
         let cases = [
             (
-                DatabaseBackend::Mysql,
+                database::Backend::Mysql,
                 "SELECT * FROM mysql.help_topic",
                 "mysql.help_topic",
             ),
             (
-                DatabaseBackend::Mariadb,
+                database::Backend::Mariadb,
                 "SELECT * FROM MySQL.Help_Topic",
                 "MySQL.Help_Topic",
             ),
             (
-                DatabaseBackend::Mysql,
+                database::Backend::Mysql,
                 "SELECT * FROM `mysql`.`help_topic`",
                 "mysql.help_topic",
             ),
             (
-                DatabaseBackend::Mysql,
+                database::Backend::Mysql,
                 "SELECT * FROM information_schema.innodb_locks",
                 "information_schema.innodb_locks",
             ),
-            (DatabaseBackend::Postgres, "SELECT * FROM pg_stats", "pg_stats"),
+            (database::Backend::Postgres, "SELECT * FROM pg_stats", "pg_stats"),
             (
-                DatabaseBackend::Postgres,
+                database::Backend::Postgres,
                 "SELECT * FROM pg_catalog.pg_stats",
                 "pg_catalog.pg_stats",
             ),
             (
-                DatabaseBackend::Postgres,
+                database::Backend::Postgres,
                 "SELECT * FROM \"x\ny\".pg_stats",
                 "x\ny.pg_stats",
             ),
             (
-                DatabaseBackend::Sqlite,
+                database::Backend::Sqlite,
                 "SELECT * FROM main.sqlite_stat1",
                 "main.sqlite_stat1",
             ),
@@ -503,7 +497,7 @@ mod tests {
 
     #[test]
     fn bare_mysql_names_reject_in_the_default_database() {
-        for backend in [DatabaseBackend::Mysql, DatabaseBackend::Mariadb] {
+        for backend in [database::Backend::Mysql, database::Backend::Mariadb] {
             let mut analysis = Analysis::new("SELECT * FROM help_topic", backend);
             analysis.connected_to(Some("mysql".into()));
             assert_eq!(
@@ -517,7 +511,7 @@ mod tests {
 
     #[test]
     fn bare_names_in_a_view_body_reject_in_the_view_schema() {
-        let mut analysis = Analysis::new("SELECT name FROM v", DatabaseBackend::Mysql);
+        let mut analysis = Analysis::new("SELECT name FROM v", database::Backend::Mysql);
         analysis.connected_to(Some("app".into()));
         let Ok(Step::Missing(names)) = analysis.step(Vec::new()) else {
             panic!("the view is missing first");
@@ -541,13 +535,13 @@ mod tests {
     #[test]
     fn names_the_deny_tables_cannot_match_unresolved_are_fetched() {
         for sql in ["SELECT * FROM help_topic", "SELECT * FROM app.mysql_notes"] {
-            assert_eq!(denied_first(DatabaseBackend::Mysql, sql), None, "{sql}");
+            assert_eq!(denied_first(database::Backend::Mysql, sql), None, "{sql}");
         }
     }
 
     #[test]
     fn denied_names_in_a_view_body_reject_in_the_next_round() {
-        let mut analysis = Analysis::new("SELECT host FROM v", DatabaseBackend::Mysql);
+        let mut analysis = Analysis::new("SELECT host FROM v", database::Backend::Mysql);
         analysis.connected_to(Some("app".into()));
         let Ok(Step::Missing(names)) = analysis.step(Vec::new()) else {
             panic!("the view is missing first");
@@ -590,7 +584,7 @@ mod tests {
     }
 
     /// A config ruling `shop.public.t_1.a` with `mask` as `US_SSN`.
-    fn child_ruled() -> PrivacyConfig {
+    fn child_ruled() -> privacy::Config {
         let mut config = ruled();
         config.rules[0].key[2] = "t_1".into();
         config
@@ -599,7 +593,12 @@ mod tests {
     #[test]
     fn resolved_families_reach_the_plan() {
         let config = child_ruled();
-        let analyzed = analyzed_with(DatabaseBackend::Postgres, "SELECT a, b FROM t", Some("public"), parent);
+        let analyzed = analyzed_with(
+            database::Backend::Postgres,
+            "SELECT a, b FROM t",
+            Some("public"),
+            parent,
+        );
         let mut planned = analyzed.plan(&config).expect("plan");
         let names = ["a", "b"].map(String::from);
         let parent = RelationId::new("shop", "public", "t");
@@ -616,11 +615,11 @@ mod tests {
     }
 
     /// A config hashing `shop.public.<table>.a` as `EMAIL_ADDRESS`.
-    fn hashed(table: &str) -> PrivacyConfig {
+    fn hashed(table: &str) -> privacy::Config {
         let mut config = ruled();
         config.rules[0].key[2] = table.into();
-        config.rules[0].operator = PrivacyOperator::Hash;
-        config.rules[0].entity = "EMAIL_ADDRESS";
+        config.rules[0].operator = privacy::Operator::Hash;
+        config.rules[0].entity = privacy::Entity::EmailAddress;
         config
     }
 
@@ -640,7 +639,7 @@ mod tests {
         let config = hashed("t");
         let sql = "UPDATE t SET b = 1";
         let plan = |relation: fn(Relation) -> Relation| {
-            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+            analyzed_with(database::Backend::Postgres, sql, Some("public"), |name| {
                 described(name, relation)
             })
             .plan(&config)
@@ -665,7 +664,7 @@ mod tests {
     fn resolved_cascades_reach_the_plan() {
         let config = hashed("c");
         let plan = |sql| {
-            analyzed_with(DatabaseBackend::Postgres, sql, Some("public"), |name| {
+            analyzed_with(database::Backend::Postgres, sql, Some("public"), |name| {
                 described(name, |relation| {
                     let cascade = Cascade {
                         parent: SourceRef::new(relation.id.clone(), "b"),
@@ -695,9 +694,9 @@ mod tests {
 
     #[test]
     fn backends_map_to_their_dialects() {
-        let mut analysis = Analysis::new("SELECT 1", DatabaseBackend::Mariadb);
+        let mut analysis = Analysis::new("SELECT 1", database::Backend::Mariadb);
         assert_eq!(analysis.dialect, Dialect::Mariadb);
-        analysis = Analysis::new("SELECT 1", DatabaseBackend::Mysql);
+        analysis = Analysis::new("SELECT 1", database::Backend::Mysql);
         assert_eq!(analysis.dialect, Dialect::Mysql);
     }
 }

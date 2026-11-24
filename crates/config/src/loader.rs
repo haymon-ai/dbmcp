@@ -13,25 +13,21 @@
 //! 2. Build the [`Config`] from the winners and defaults, applying
 //!    activation rules and resolving a sqlite database name from a config
 //!    or env file against that file's directory, then run
-//!    [`Config::validate`] on it.
+//!    [`validate::config`] on it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::Config;
-use crate::database::{DatabaseBackend, DatabaseConfig};
+use crate::choices;
 use crate::env::{self, Kind, SETTINGS, Setting, Value};
 use crate::error::{ConfigError, Diagnostic, duplicates};
-use crate::http::HttpConfig;
-use crate::log::LogLevel;
 use crate::options::LoadOptions;
-use crate::privacy::{ColumnRule, PrivacyCategory, PrivacyConfig, PrivacyMode, PrivacyOperator};
 use crate::rules::{self, Rule};
 use crate::settings::{self, InputError, Settings};
 use crate::source::Source;
-use crate::ssh::{SshConfig, StrictHostKeyChecking};
-use crate::transport::Transport;
+use crate::validate;
+use dbmcp_types::{Config, LogLevel, Transport, database, http, privacy, ssh};
 
 /// A successfully loaded configuration.
 #[derive(Debug)]
@@ -203,7 +199,7 @@ impl Resolver<'_> {
         }
     }
 
-    /// Resolves every setting into a [`Config`] and runs [`Config::validate`].
+    /// Resolves every setting into a [`Config`] and runs [`validate::config`].
     ///
     /// Activation rules run here: a section exists only when its trigger is
     /// set, and SSH settings without `ssh.host` are an error. `privacy.rules`
@@ -211,22 +207,22 @@ impl Resolver<'_> {
     /// too, so their errors show in every privacy mode, `none` included.
     fn build(&self) -> Result<(Config, LogLevel), Vec<Diagnostic>> {
         let transport = self
-            .enumeration(env::TRANSPORT, Transport::CHOICES)
+            .enumeration(env::TRANSPORT, choices::TRANSPORT)
             .unwrap_or(Transport::Stdio);
-        let log_level = self.enumeration(env::LOG_LEVEL, LogLevel::CHOICES).unwrap_or_default();
+        let log_level = self.enumeration(env::LOG_LEVEL, choices::LOG_LEVEL).unwrap_or_default();
         let database = self.database();
         let http = (transport == Transport::Http).then(|| self.http());
         let operator = self
-            .enumeration(env::PRIVACY_OPERATOR, PrivacyOperator::CHOICES)
-            .unwrap_or(PrivacyConfig::DEFAULT_OPERATOR);
+            .enumeration(env::PRIVACY_OPERATOR, choices::PRIVACY_OPERATOR)
+            .unwrap_or(privacy::Config::DEFAULT_OPERATOR);
         let (column_rules, rule_errors) = match rules::resolve(self.rules(), &database, operator) {
             Ok(column_rules) => (column_rules, Vec::new()),
             Err(errors) => (Vec::new(), errors),
         };
         let mode = self
-            .enumeration(env::PRIVACY_MODE, PrivacyMode::CHOICES)
-            .unwrap_or(PrivacyMode::DEFAULT);
-        let categories = self.enum_list(env::PRIVACY_CATEGORIES, PrivacyCategory::CHOICES);
+            .enumeration(env::PRIVACY_MODE, choices::PRIVACY_MODE)
+            .unwrap_or(privacy::Mode::DEFAULT);
+        let categories = self.enum_list(env::PRIVACY_CATEGORIES, choices::PRIVACY_CATEGORY);
         let mut category_errors = Vec::new();
         if let Some(list) = &categories {
             if list.is_empty() {
@@ -237,11 +233,11 @@ impl Resolver<'_> {
             }
             category_errors.extend(duplicates(env::PRIVACY_CATEGORIES, list));
         }
-        let privacy = (mode != PrivacyMode::None).then(|| self.privacy(mode, operator, categories, column_rules));
+        let privacy = (mode != privacy::Mode::None).then(|| self.privacy(mode, operator, categories, column_rules));
         let key_error = self.string(env::PRIVACY_KEY).and_then(|key| {
             if key.trim().is_empty() {
                 Some(ConfigError::EmptyPrivacyKey)
-            } else if key.len() < PrivacyConfig::MIN_KEY_BYTES {
+            } else if key.len() < privacy::Config::MIN_KEY_BYTES {
                 Some(ConfigError::PrivacyKeyTooShort(key.len()))
             } else {
                 None
@@ -262,7 +258,7 @@ impl Resolver<'_> {
             privacy,
             ssh,
         };
-        let mut diagnostics = config.validate().err().unwrap_or_default();
+        let mut diagnostics = validate::config(&config).err().unwrap_or_default();
         diagnostics.extend(category_errors);
         if missing_ssh_host {
             diagnostics.push(
@@ -281,15 +277,15 @@ impl Resolver<'_> {
         Ok((config, log_level))
     }
 
-    fn database(&self) -> DatabaseConfig {
+    fn database(&self) -> database::Config {
         let backend = self
-            .enumeration(env::DB_BACKEND, DatabaseBackend::CHOICES)
-            .unwrap_or(DatabaseConfig::DEFAULT_BACKEND);
+            .enumeration(env::DB_BACKEND, choices::DB_BACKEND)
+            .unwrap_or(database::Config::DEFAULT_BACKEND);
         let name = self
             .string(env::DB_NAME)
             .map(|name| match self.settings.source(env::DB_NAME) {
                 Some(Source::File { path, .. } | Source::EnvFile { path, .. })
-                    if backend == DatabaseBackend::Sqlite && !name.is_empty() && name != ":memory:" =>
+                    if backend == database::Backend::Sqlite && !name.is_empty() && name != ":memory:" =>
                 {
                     let dir = path.parent().unwrap_or(Path::new(""));
                     env::resolve_in_file(Path::new(&name), dir, self.home)
@@ -301,12 +297,12 @@ impl Resolver<'_> {
         let path_string = |setting| self.path(setting).map(|p| p.display().to_string());
         let query_timeout = self
             .int(env::DB_QUERY_TIMEOUT)
-            .unwrap_or(DatabaseConfig::DEFAULT_QUERY_TIMEOUT_SECS);
-        DatabaseConfig {
+            .unwrap_or(database::Config::DEFAULT_QUERY_TIMEOUT_SECS);
+        database::Config {
             backend,
             host: self
                 .string(env::DB_HOST)
-                .unwrap_or_else(|| DatabaseConfig::DEFAULT_HOST.into()),
+                .unwrap_or_else(|| database::Config::DEFAULT_HOST.into()),
             port: self.int(env::DB_PORT).unwrap_or_else(|| backend.default_port()),
             user: self
                 .string(env::DB_USER)
@@ -314,44 +310,46 @@ impl Resolver<'_> {
             password: self.string(env::DB_PASSWORD).map(Into::into),
             name,
             charset: self.string(env::DB_CHARSET),
-            ssl: self.bool(env::DB_SSL).unwrap_or(DatabaseConfig::DEFAULT_SSL),
+            ssl: self.bool(env::DB_SSL).unwrap_or(database::Config::DEFAULT_SSL),
             ssl_ca: path_string(env::DB_SSL_CA),
             ssl_cert: path_string(env::DB_SSL_CERT),
             ssl_key: path_string(env::DB_SSL_KEY),
             ssl_verify_cert: self
                 .bool(env::DB_SSL_VERIFY_CERT)
-                .unwrap_or(DatabaseConfig::DEFAULT_SSL_VERIFY_CERT),
+                .unwrap_or(database::Config::DEFAULT_SSL_VERIFY_CERT),
             read_only: self
                 .bool(env::DB_READ_ONLY)
-                .unwrap_or(DatabaseConfig::DEFAULT_READ_ONLY),
+                .unwrap_or(database::Config::DEFAULT_READ_ONLY),
             max_pool_size: self
                 .int(env::DB_MAX_POOL_SIZE)
-                .unwrap_or(DatabaseConfig::DEFAULT_MAX_POOL_SIZE),
+                .unwrap_or(database::Config::DEFAULT_MAX_POOL_SIZE),
             connection_timeout: self.int(env::DB_CONNECTION_TIMEOUT),
             query_timeout,
             max_query_timeout: self.int(env::DB_MAX_QUERY_TIMEOUT).unwrap_or(query_timeout),
-            page_size: self.int(env::DB_PAGE_SIZE).unwrap_or(DatabaseConfig::DEFAULT_PAGE_SIZE),
+            page_size: self
+                .int(env::DB_PAGE_SIZE)
+                .unwrap_or(database::Config::DEFAULT_PAGE_SIZE),
             max_cell_chars: self
                 .int(env::DB_MAX_CELL_CHARS)
-                .unwrap_or(DatabaseConfig::DEFAULT_MAX_CELL_CHARS),
+                .unwrap_or(database::Config::DEFAULT_MAX_CELL_CHARS),
             max_response_chars: self
                 .int(env::DB_MAX_RESPONSE_CHARS)
-                .unwrap_or(DatabaseConfig::DEFAULT_MAX_RESPONSE_CHARS),
+                .unwrap_or(database::Config::DEFAULT_MAX_RESPONSE_CHARS),
         }
     }
 
-    fn http(&self) -> HttpConfig {
-        HttpConfig {
+    fn http(&self) -> http::Config {
+        http::Config {
             host: self
                 .string(env::HTTP_HOST)
-                .unwrap_or_else(|| HttpConfig::DEFAULT_HOST.into()),
-            port: self.int(env::HTTP_PORT).unwrap_or(HttpConfig::DEFAULT_PORT),
+                .unwrap_or_else(|| http::Config::DEFAULT_HOST.into()),
+            port: self.int(env::HTTP_PORT).unwrap_or(http::Config::DEFAULT_PORT),
             allowed_origins: self
                 .list(env::HTTP_ALLOWED_ORIGINS)
-                .unwrap_or_else(HttpConfig::default_allowed_origins),
+                .unwrap_or_else(http::Config::default_allowed_origins),
             allowed_hosts: self
                 .list(env::HTTP_ALLOWED_HOSTS)
-                .unwrap_or_else(HttpConfig::default_allowed_hosts),
+                .unwrap_or_else(http::Config::default_allowed_hosts),
             auth_token: self.string(env::HTTP_AUTH_TOKEN).map(Into::into),
             allow_unauthenticated: self.bool(env::HTTP_ALLOW_UNAUTHENTICATED).unwrap_or(false),
         }
@@ -369,14 +367,14 @@ impl Resolver<'_> {
     /// Resolves the privacy section around its mode, operator, categories, and resolved rules.
     fn privacy(
         &self,
-        mode: PrivacyMode,
-        operator: PrivacyOperator,
-        categories: Option<Vec<PrivacyCategory>>,
-        rules: Vec<ColumnRule>,
-    ) -> PrivacyConfig {
+        mode: privacy::Mode,
+        operator: privacy::Operator,
+        categories: Option<Vec<privacy::Category>>,
+        rules: Vec<privacy::ColumnRule>,
+    ) -> privacy::Config {
         let hashing =
-            operator == PrivacyOperator::Hash || rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash);
-        PrivacyConfig {
+            operator == privacy::Operator::Hash || rules.iter().any(|rule| rule.operator == privacy::Operator::Hash);
+        privacy::Config {
             mode,
             operator,
             key: hashing.then(|| self.string(env::PRIVACY_KEY).map(Into::into)).flatten(),
@@ -386,10 +384,10 @@ impl Resolver<'_> {
         }
     }
 
-    fn ssh(&self) -> SshConfig {
-        SshConfig {
+    fn ssh(&self) -> ssh::Config {
+        ssh::Config {
             host: self.string(env::SSH_HOST).unwrap_or_default(),
-            port: self.int(env::SSH_PORT).unwrap_or(SshConfig::DEFAULT_PORT),
+            port: self.int(env::SSH_PORT).unwrap_or(ssh::Config::DEFAULT_PORT),
             user: self.string(env::SSH_USER).unwrap_or_default(),
             password: self.string(env::SSH_PASSWORD).map(Into::into),
             key: self.path(env::SSH_KEY),
@@ -398,11 +396,11 @@ impl Resolver<'_> {
                 .path(env::SSH_KNOWN_HOSTS)
                 .or_else(|| self.home.map(|home| home.join(".ssh").join("known_hosts"))),
             strict_host_key_checking: self
-                .enumeration(env::SSH_STRICT_HOST_KEY_CHECKING, StrictHostKeyChecking::CHOICES)
-                .unwrap_or(SshConfig::DEFAULT_STRICT_HOST_KEY_CHECKING),
+                .enumeration(env::SSH_STRICT_HOST_KEY_CHECKING, choices::STRICT_HOST_KEY_CHECKING)
+                .unwrap_or(ssh::Config::DEFAULT_STRICT_HOST_KEY_CHECKING),
             keepalive_interval: Duration::from_secs(
                 self.int(env::SSH_KEEPALIVE_INTERVAL)
-                    .unwrap_or(SshConfig::DEFAULT_KEEPALIVE_INTERVAL_SECS),
+                    .unwrap_or(ssh::Config::DEFAULT_KEEPALIVE_INTERVAL_SECS),
             ),
             local_port: self.int(env::SSH_LOCAL_PORT),
         }
@@ -414,13 +412,13 @@ impl Resolver<'_> {
 /// # Panics
 ///
 /// Panics when `name` is missing, which cannot happen: each setting's
-/// choices are the names in its type's `CHOICES`.
+/// choices are the names in its [`crate::choices`] table.
 fn choose<T: Copy>(choices: &[(&str, T)], name: &str) -> T {
     choices
         .iter()
         .find(|(choice, _)| *choice == name)
         .map(|&(_, value)| value)
-        .expect("setting choices are the type's CHOICES names")
+        .expect("setting choices are its choices table names")
 }
 
 #[cfg(test)]
@@ -502,13 +500,13 @@ mod tests {
         let loaded = Fixture::new().ok();
         assert_eq!(loaded.config.transport, Transport::Stdio);
         assert_eq!(loaded.log_level, LogLevel::Info);
-        assert_eq!(loaded.config.database.backend, DatabaseBackend::Mysql);
+        assert_eq!(loaded.config.database.backend, database::Backend::Mysql);
         assert_eq!(loaded.config.database.port, 3306);
         assert!(loaded.config.database.read_only);
         assert!(loaded.config.http.is_none() && loaded.config.ssh.is_none());
         assert_eq!(
             loaded.config.privacy.map(|privacy| privacy.mode),
-            Some(PrivacyMode::Full)
+            Some(privacy::Mode::Full)
         );
         assert!(loaded.warnings.is_empty());
     }
@@ -542,9 +540,9 @@ mod tests {
                 continue;
             };
             let resolved: Value = match setting.path {
-                "transport" => choice(Transport::CHOICES, &plain.config.transport),
-                "log_level" => choice(LogLevel::CHOICES, &plain.log_level),
-                "database.backend" => choice(DatabaseBackend::CHOICES, &db.backend),
+                "transport" => choice(choices::TRANSPORT, &plain.config.transport),
+                "log_level" => choice(choices::LOG_LEVEL, &plain.log_level),
+                "database.backend" => choice(choices::DB_BACKEND, &db.backend),
                 "database.host" => db.host.clone().into(),
                 "database.ssl" => db.ssl.into(),
                 "database.ssl_verify_cert" => db.ssl_verify_cert.into(),
@@ -560,16 +558,18 @@ mod tests {
                 "http.allowed_hosts" => http.allowed_hosts.clone().into(),
                 "http.allow_unauthenticated" => http.allow_unauthenticated.into(),
                 "privacy.mode" => choice(
-                    PrivacyMode::CHOICES,
+                    choices::PRIVACY_MODE,
                     &plain
                         .config
                         .privacy
                         .as_ref()
-                        .map_or(PrivacyMode::None, |privacy| privacy.mode),
+                        .map_or(privacy::Mode::None, |privacy| privacy.mode),
                 ),
-                "privacy.operator" => choice(PrivacyOperator::CHOICES, &privacy.operator),
+                "privacy.operator" => choice(choices::PRIVACY_OPERATOR, &privacy.operator),
                 "ssh.port" => ssh.port.into(),
-                "ssh.strict_host_key_checking" => choice(StrictHostKeyChecking::CHOICES, &ssh.strict_host_key_checking),
+                "ssh.strict_host_key_checking" => {
+                    choice(choices::STRICT_HOST_KEY_CHECKING, &ssh.strict_host_key_checking)
+                }
                 "ssh.keepalive_interval" => ssh.keepalive_interval.as_secs().into(),
                 other => panic!("{other} has a schema default; compare it here"),
             };
@@ -597,9 +597,9 @@ mod tests {
             .env("DBMCP_DB_HOST", "")
             .env("DBMCP_LOG_LEVEL", "debug")
             .ok();
-        assert_eq!(loaded.config.database.backend, DatabaseBackend::Postgres);
+        assert_eq!(loaded.config.database.backend, database::Backend::Postgres);
         assert_eq!(loaded.config.database.port, 5432);
-        assert_eq!(loaded.config.database.host, DatabaseConfig::DEFAULT_HOST);
+        assert_eq!(loaded.config.database.host, database::Config::DEFAULT_HOST);
         assert_eq!(loaded.log_level, LogLevel::Debug);
     }
 
@@ -683,7 +683,7 @@ mod tests {
         let db = fixture.ok().config.database;
         assert_eq!(
             (db.host.as_str(), db.user.as_str()),
-            (DatabaseConfig::DEFAULT_HOST, "a")
+            (database::Config::DEFAULT_HOST, "a")
         );
     }
 
@@ -712,7 +712,7 @@ mod tests {
         let fixture = Fixture::new()
             .env_file("a.env", "DBMCP_DB_HOST=a\n")
             .env_file("b.env", "DBMCP_DB_HOST=\n");
-        assert_eq!(fixture.ok().config.database.host, DatabaseConfig::DEFAULT_HOST);
+        assert_eq!(fixture.ok().config.database.host, database::Config::DEFAULT_HOST);
         let loaded = fixture.config("dbmcp.yaml", "database:\n  host: yaml\n").ok();
         assert_eq!(loaded.config.database.host, "yaml");
     }
@@ -1191,7 +1191,7 @@ mod tests {
         assert!(http.allowed_origins.is_empty(), "[] disables Origin validation");
         assert_eq!(
             loaded.config.privacy.expect("privacy").categories,
-            Some(vec![PrivacyCategory::Crypto, PrivacyCategory::Network])
+            Some(vec![privacy::Category::Crypto, privacy::Category::Network])
         );
     }
 
@@ -1289,7 +1289,7 @@ mod tests {
     fn privacy_defaults_to_hash_and_keeps_an_unset_key_unset() {
         let loaded = Fixture::new().config("dbmcp.yaml", "privacy:\n  mode: full\n").ok();
         let privacy = loaded.config.privacy.expect("privacy");
-        assert_eq!(privacy.operator, PrivacyOperator::Hash);
+        assert_eq!(privacy.operator, privacy::Operator::Hash);
         assert!(privacy.key.is_none());
 
         let loaded = Fixture::new()
@@ -1493,7 +1493,7 @@ mod tests {
     }
 
     /// Loads the fixture and returns its privacy section.
-    fn privacy_section(fixture: &Fixture) -> PrivacyConfig {
+    fn privacy_section(fixture: &Fixture) -> privacy::Config {
         fixture.ok().config.privacy.expect("privacy on")
     }
 
@@ -1513,11 +1513,11 @@ mod tests {
 ";
 
     /// Renders rules as `(name, item, key, entity, operator)`.
-    fn rule_rows(privacy: &PrivacyConfig) -> Vec<(String, usize, String, &'static str, PrivacyOperator)> {
+    fn rule_rows(privacy: &privacy::Config) -> Vec<(String, usize, String, &'static str, privacy::Operator)> {
         privacy
             .rules
             .iter()
-            .map(|r| (r.name.clone(), r.item, r.key.join("."), r.entity, r.operator))
+            .map(|r| (r.name.clone(), r.item, r.key.join("."), r.entity.as_str(), r.operator))
             .collect()
     }
 
@@ -1532,29 +1532,29 @@ mod tests {
                     0,
                     "def.shop.users.email".into(),
                     "EMAIL_ADDRESS",
-                    PrivacyOperator::Hash
+                    privacy::Operator::Hash
                 ),
                 (
                     "emails".into(),
                     1,
                     "def.shop.orders.email".into(),
                     "EMAIL_ADDRESS",
-                    PrivacyOperator::Hash
+                    privacy::Operator::Hash
                 ),
                 (
                     "cards".into(),
                     0,
                     "def.shop.payments.pan".into(),
                     "CREDIT_CARD",
-                    PrivacyOperator::Mask
+                    privacy::Operator::Mask
                 ),
             ]
         );
         let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", &format!("{RULES}  operator: redact\n")));
-        assert_eq!(privacy.rules[0].operator, PrivacyOperator::Redact);
+        assert_eq!(privacy.rules[0].operator, privacy::Operator::Redact);
         let inherit = RULES.replace("      operator: mask\n", "      operator: ~\n");
         let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", &inherit));
-        assert_eq!(privacy.rules[2].operator, PrivacyOperator::Hash);
+        assert_eq!(privacy.rules[2].operator, privacy::Operator::Hash);
     }
 
     #[test]
@@ -1801,7 +1801,7 @@ mod tests {
     fn rules_mode_accepts_no_rules() {
         for yaml in ["privacy:\n  mode: rules\n", "privacy:\n  mode: rules\n  rules: {}\n"] {
             let privacy = privacy_section(&Fixture::new().config("dbmcp.yaml", yaml));
-            assert_eq!(privacy.mode, PrivacyMode::Rules);
+            assert_eq!(privacy.mode, privacy::Mode::Rules);
             assert!(privacy.rules.is_empty());
         }
     }
@@ -1816,18 +1816,18 @@ mod tests {
         let empty = Fixture::new().config("dbmcp.yaml", model).env("DBMCP_PRIVACY_MODE", "");
         assert_eq!(
             privacy_section(&empty).mode,
-            PrivacyMode::Full,
+            privacy::Mode::Full,
             "empty env value falls back to the default"
         );
 
-        for (name, mode) in [("rules", PrivacyMode::Rules), ("full", PrivacyMode::Full)] {
+        for (name, mode) in [("rules", privacy::Mode::Rules), ("full", privacy::Mode::Full)] {
             let fixture = Fixture::new()
                 .config("dbmcp.yaml", model)
                 .env("DBMCP_PRIVACY_MODE", name);
             let privacy = privacy_section(&fixture);
             assert_eq!(privacy.mode, mode);
-            assert_eq!(privacy.operator, PrivacyOperator::Hash);
-            assert_eq!(privacy.categories, Some(vec![PrivacyCategory::Crypto]));
+            assert_eq!(privacy.operator, privacy::Operator::Hash);
+            assert_eq!(privacy.categories, Some(vec![privacy::Category::Crypto]));
             assert_eq!(privacy.model, Some(fixture.dir.path().join("models/ner")));
         }
     }
@@ -1835,7 +1835,7 @@ mod tests {
     #[test]
     fn unset_mode_resolves_to_full() {
         let privacy = privacy_section(&Fixture::new());
-        assert_eq!(privacy.mode, PrivacyMode::Full);
+        assert_eq!(privacy.mode, privacy::Mode::Full);
         assert!(privacy.model.is_none() && privacy.rules.is_empty());
     }
 

@@ -11,7 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
-use dbmcp_privacy::{Entity, NerEngine, RecognizerResult, Score};
+use dbmcp_privacy::{NerEngine, RecognizerResult, Score};
+use dbmcp_types::privacy::Entity;
 
 /// Returns the configured model directory, or `None` to skip the test.
 fn model_dir() -> Option<PathBuf> {

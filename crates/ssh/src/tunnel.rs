@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::{SshConfig, StrictHostKeyChecking};
+use dbmcp_types::ssh;
 use russh::client::DisconnectReason;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Preferred, client};
@@ -60,7 +60,7 @@ impl Tunnel {
     /// # Panics
     ///
     /// Panics if the blocking key-loading task panics.
-    pub async fn start(config: &SshConfig, db_host: &str, db_port: u16) -> Result<TunnelHandle, SshError> {
+    pub async fn start(config: &ssh::Config, db_host: &str, db_port: u16) -> Result<TunnelHandle, SshError> {
         if config.password.is_none() && config.key.is_none() {
             return Err(SshError::MissingCredentials);
         }
@@ -80,7 +80,7 @@ impl Tunnel {
             None => None,
         };
 
-        if config.strict_host_key_checking == StrictHostKeyChecking::No {
+        if config.strict_host_key_checking == ssh::StrictHostKeyChecking::No {
             warn!(
                 "SSH host-key verification is DISABLED (DBMCP_SSH_STRICT_HOST_KEY_CHECKING=no); \
                  the tunnel is open to man-in-the-middle attacks"
@@ -222,7 +222,7 @@ struct Inner {
     password: Option<SecretString>,
     key: Option<Arc<PrivateKey>>,
     known_hosts: Option<PathBuf>,
-    strict_host_key_checking: StrictHostKeyChecking,
+    strict_host_key_checking: ssh::StrictHostKeyChecking,
     keepalive_interval: Duration,
     db_target: String,
     db_host: String,
@@ -321,7 +321,7 @@ impl Inner {
             {
                 Ok(known_hosts) => known_hosts,
                 // Checking is off, so an unreadable file only loses `@revoked` entries.
-                Err(source) if self.strict_host_key_checking == StrictHostKeyChecking::No => {
+                Err(source) if self.strict_host_key_checking == ssh::StrictHostKeyChecking::No => {
                     warn!("ignoring unreadable known_hosts {}: {source}", path.display());
                     KnownHosts::default()
                 }
@@ -356,7 +356,7 @@ impl Inner {
             ssh_host: self.ssh_host.clone(),
             ssh_port: self.ssh_port,
             ssh_target: self.ssh_target.clone(),
-            // `SshConfig` leaves `known_hosts` unset only when checking is `no`,
+            // `ssh::Config` leaves `known_hosts` unset only when checking is `no`,
             // where an empty file accepts every key without writing.
             path: self.known_hosts.clone().unwrap_or_default(),
             mode: self.strict_host_key_checking,
@@ -564,7 +564,7 @@ struct Client {
     last_error: LastError,
     /// `known_hosts` path; empty only when checking is `no`.
     path: PathBuf,
-    mode: StrictHostKeyChecking,
+    mode: ssh::StrictHostKeyChecking,
 }
 
 impl Client {
@@ -577,7 +577,7 @@ impl Client {
     /// | changed | fail  | fail         | warn + ok |
     /// | unknown | fail  | append + ok  | ok        |
     async fn verify(&self, key: &PublicKey) -> Result<(), SshError> {
-        use StrictHostKeyChecking::{AcceptNew, No, Yes};
+        use ssh::StrictHostKeyChecking::{AcceptNew, No, Yes};
 
         let (host, path) = (&self.host, &self.path);
         let fingerprint = || known_hosts::fingerprint(key);
@@ -821,8 +821,8 @@ mod tests {
         addr
     }
 
-    fn ssh_config(ssh: SocketAddr) -> SshConfig {
-        SshConfig {
+    fn ssh_config(ssh: SocketAddr) -> ssh::Config {
+        ssh::Config {
             host: ssh.ip().to_string(),
             port: ssh.port(),
             user: USER.into(),
@@ -830,7 +830,7 @@ mod tests {
             key: None,
             key_passphrase: None,
             known_hosts: None,
-            strict_host_key_checking: StrictHostKeyChecking::No,
+            strict_host_key_checking: ssh::StrictHostKeyChecking::No,
             keepalive_interval: Duration::ZERO,
             local_port: None,
         }
@@ -908,7 +908,7 @@ mod tests {
     async fn closes_socket_when_password_is_rejected() {
         let (ssh, _server) = start_ssh_server().await;
         let echo = start_echo_server().await;
-        let config = SshConfig {
+        let config = ssh::Config {
             password: Some("wrong".into()),
             ..ssh_config(ssh)
         };
@@ -929,7 +929,7 @@ mod tests {
             .local_addr()
             .expect("addr")
             .port();
-        let config = SshConfig {
+        let config = ssh::Config {
             local_port: Some(free),
             ..ssh_config(ssh)
         };
@@ -941,7 +941,7 @@ mod tests {
     async fn bind_failure_is_an_error() {
         let (ssh, _server) = start_ssh_server().await;
         let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("bind");
-        let config = SshConfig {
+        let config = ssh::Config {
             local_port: Some(taken.local_addr().expect("addr").port()),
             ..ssh_config(ssh)
         };
@@ -969,8 +969,8 @@ mod tests {
         panic!("listener on {addr} still accepting after drop");
     }
 
-    fn key_config(ssh: SocketAddr, key: &str, passphrase: Option<&str>) -> SshConfig {
-        SshConfig {
+    fn key_config(ssh: SocketAddr, key: &str, passphrase: Option<&str>) -> ssh::Config {
+        ssh::Config {
             password: None,
             key: Some(fixture(key)),
             key_passphrase: passphrase.map(Into::into),
@@ -1001,7 +1001,7 @@ mod tests {
     async fn falls_back_to_password_when_key_is_rejected() {
         let (ssh, server) = start_ssh_server().await;
         let echo = start_echo_server().await;
-        let config = SshConfig {
+        let config = ssh::Config {
             password: Some(PASSWORD.into()),
             ..key_config(ssh, "openssh_ecdsa", None)
         };
@@ -1017,7 +1017,7 @@ mod tests {
     async fn tries_key_before_password() {
         let (ssh, server) = start_ssh_server().await;
         let echo = start_echo_server().await;
-        let config = SshConfig {
+        let config = ssh::Config {
             password: Some(PASSWORD.into()),
             ..key_config(ssh, "openssh_ed25519", None)
         };
@@ -1054,7 +1054,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_credentials_fail_startup() {
-        let config = SshConfig {
+        let config = ssh::Config {
             password: None,
             ..ssh_config(SocketAddr::from((Ipv4Addr::LOCALHOST, 22)))
         };
@@ -1063,8 +1063,8 @@ mod tests {
     }
 
     /// Returns a config verifying host keys against `known_hosts` under `mode`.
-    fn verifying_config(ssh: SocketAddr, known_hosts: &Path, mode: StrictHostKeyChecking) -> SshConfig {
-        SshConfig {
+    fn verifying_config(ssh: SocketAddr, known_hosts: &Path, mode: ssh::StrictHostKeyChecking) -> ssh::Config {
+        ssh::Config {
             known_hosts: Some(known_hosts.to_path_buf()),
             strict_host_key_checking: mode,
             ..ssh_config(ssh)
@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     /// Opens the tunnel's SSH session directly, surfacing its error.
-    async fn open_session(config: &SshConfig) -> Result<(), SshError> {
+    async fn open_session(config: &ssh::Config) -> Result<(), SshError> {
         let tunnel = Tunnel::start(config, "127.0.0.1", 5432).await.expect("tunnel starts");
         tunnel.inner.session().await.map(drop)
     }
@@ -1089,7 +1089,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("known_hosts");
 
-        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+        let err = open_session(&verifying_config(ssh, &path, ssh::StrictHostKeyChecking::Yes))
             .await
             .expect_err("unknown host");
 
@@ -1115,7 +1115,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(".ssh").join("known_hosts");
 
-        let config = verifying_config(ssh, &path, StrictHostKeyChecking::AcceptNew);
+        let config = verifying_config(ssh, &path, ssh::StrictHostKeyChecking::AcceptNew);
         let tunnel = Tunnel::start(&config, "127.0.0.1", echo.port())
             .await
             .expect("tunnel starts");
@@ -1125,7 +1125,7 @@ mod tests {
             known_hosts_line(ssh, host_key().public_key())
         );
 
-        open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+        open_session(&verifying_config(ssh, &path, ssh::StrictHostKeyChecking::Yes))
             .await
             .expect("learned key matches under yes");
         open_session(&config)
@@ -1147,7 +1147,7 @@ mod tests {
         let recorded = format!("# header\n{}", known_hosts_line(ssh, &other));
         std::fs::write(&path, &recorded).expect("seed");
 
-        for mode in [StrictHostKeyChecking::Yes, StrictHostKeyChecking::AcceptNew] {
+        for mode in [ssh::StrictHostKeyChecking::Yes, ssh::StrictHostKeyChecking::AcceptNew] {
             let err = open_session(&verifying_config(ssh, &path, mode))
                 .await
                 .expect_err("changed key");
@@ -1156,10 +1156,10 @@ mod tests {
                 "{mode}: {err:?}"
             );
         }
-        let config = SshConfig {
+        let config = ssh::Config {
             password: None,
             key: Some(fixture("openssh_ed25519")),
-            ..verifying_config(ssh, &path, StrictHostKeyChecking::No)
+            ..verifying_config(ssh, &path, ssh::StrictHostKeyChecking::No)
         };
         open_session(&config).await.expect("mode no accepts a changed key");
         assert_eq!(
@@ -1177,16 +1177,16 @@ mod tests {
         let other = load_public_key(fixture("openssh_ed25519.pub")).expect("other key");
         std::fs::write(&path, known_hosts_line(ssh, &other)).expect("seed");
 
-        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::No))
+        let err = open_session(&verifying_config(ssh, &path, ssh::StrictHostKeyChecking::No))
             .await
             .expect_err("password withheld");
         assert!(matches!(err, SshError::AuthRejected { .. }), "{err:?}");
         assert!(server.attempts().is_empty(), "{:?}", server.attempts());
 
-        let config = SshConfig {
+        let config = ssh::Config {
             password: None,
             key: Some(fixture("openssh_ed25519")),
-            ..verifying_config(ssh, &path, StrictHostKeyChecking::No)
+            ..verifying_config(ssh, &path, ssh::StrictHostKeyChecking::No)
         };
         open_session(&config).await.expect("key auth still allowed");
     }
@@ -1194,7 +1194,7 @@ mod tests {
     /// Exercises `Client::verify` for every check result and mode.
     #[tokio::test]
     async fn verify_follows_outcome_table() {
-        use StrictHostKeyChecking::{AcceptNew, No, Yes};
+        use ssh::StrictHostKeyChecking::{AcceptNew, No, Yes};
 
         let key = host_key().public_key().clone();
         let other = load_public_key(fixture("openssh_ed25519.pub")).expect("other key");
@@ -1260,9 +1260,9 @@ mod tests {
         .expect("seed");
 
         for mode in [
-            StrictHostKeyChecking::Yes,
-            StrictHostKeyChecking::AcceptNew,
-            StrictHostKeyChecking::No,
+            ssh::StrictHostKeyChecking::Yes,
+            ssh::StrictHostKeyChecking::AcceptNew,
+            ssh::StrictHostKeyChecking::No,
         ] {
             let err = open_session(&verifying_config(ssh, &path, mode))
                 .await
@@ -1283,7 +1283,7 @@ mod tests {
         let seeded = known_hosts_line(ssh, recorded.public_key());
         std::fs::write(&path, &seeded).expect("seed");
 
-        let err = open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::AcceptNew))
+        let err = open_session(&verifying_config(ssh, &path, ssh::StrictHostKeyChecking::AcceptNew))
             .await
             .expect_err("ed25519 offered for a host recorded as ecdsa");
         assert!(matches!(err, SshError::HostKeyChanged { line: 1, .. }), "{err:?}");
@@ -1301,7 +1301,7 @@ mod tests {
             let path = dir.path().join("known_hosts");
             std::fs::write(&path, known_hosts_line(ssh, recorded.public_key())).expect("seed");
 
-            open_session(&verifying_config(ssh, &path, StrictHostKeyChecking::Yes))
+            open_session(&verifying_config(ssh, &path, ssh::StrictHostKeyChecking::Yes))
                 .await
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
         }
@@ -1314,13 +1314,13 @@ mod tests {
         // A directory cannot be read as a file on any platform.
         let path = dir.path();
 
-        for mode in [StrictHostKeyChecking::Yes, StrictHostKeyChecking::AcceptNew] {
+        for mode in [ssh::StrictHostKeyChecking::Yes, ssh::StrictHostKeyChecking::AcceptNew] {
             let err = open_session(&verifying_config(ssh, path, mode))
                 .await
                 .expect_err("unreadable known_hosts");
             assert!(matches!(err, SshError::KnownHostsRead { .. }), "{mode}: {err:?}");
         }
-        open_session(&verifying_config(ssh, path, StrictHostKeyChecking::No))
+        open_session(&verifying_config(ssh, path, ssh::StrictHostKeyChecking::No))
             .await
             .expect("mode no ignores an unreadable known_hosts");
     }
@@ -1330,7 +1330,7 @@ mod tests {
         let (ssh, _server) = start_ssh_server().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("known_hosts");
-        let config = verifying_config(ssh, &path, StrictHostKeyChecking::Yes);
+        let config = verifying_config(ssh, &path, ssh::StrictHostKeyChecking::Yes);
         let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
 
         let err = tunnel.inner.connect().await.map(drop).expect_err("unknown host");
@@ -1408,7 +1408,7 @@ mod tests {
     async fn concurrent_sockets_share_one_failed_connect() {
         // A slow rejection keeps every socket queued behind the one attempt.
         let (ssh, server) = start_ssh_server_with(vec![host_key()], Duration::from_millis(500)).await;
-        let config = SshConfig {
+        let config = ssh::Config {
             password: Some("wrong".into()),
             ..ssh_config(ssh)
         };
@@ -1438,7 +1438,7 @@ mod tests {
         let (ssh, _server) = start_ssh_server().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("known_hosts");
-        let config = verifying_config(ssh, &path, StrictHostKeyChecking::Yes);
+        let config = verifying_config(ssh, &path, ssh::StrictHostKeyChecking::Yes);
         let tunnel = Tunnel::start(&config, "127.0.0.1", 5432).await.expect("tunnel starts");
         assert_eq!(tunnel.last_error().get(), None, "unset before any connect");
 
@@ -1508,7 +1508,7 @@ mod tests {
     #[tokio::test]
     async fn failed_authentication_is_not_reported_as_lost_session() {
         let (ssh, _server) = start_ssh_server().await;
-        let config = SshConfig {
+        let config = ssh::Config {
             password: Some("wrong".into()),
             ..ssh_config(ssh)
         };
@@ -1580,7 +1580,7 @@ mod tests {
             password: Some("hunter2".into()),
             key: None,
             known_hosts: None,
-            strict_host_key_checking: StrictHostKeyChecking::No,
+            strict_host_key_checking: ssh::StrictHostKeyChecking::No,
             keepalive_interval: Duration::ZERO,
             db_target: "db:5432".into(),
             db_host: "db".into(),

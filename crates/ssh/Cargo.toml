@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
-dbmcp-config = { workspace = true }
+dbmcp-types = { workspace = true }
 ring = { workspace = true }
 russh = { workspace = true }
 secrecy = { workspace = true }

@@ -993,6 +993,7 @@ dependencies = [
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-sqlite",
+ "dbmcp-types",
  "indexmap",
  "insta",
  "mimalloc",
@@ -1015,6 +1016,7 @@ dependencies = [
  "dbmcp-sql",
  "dbmcp-sqlite",
  "dbmcp-ssh",
+ "dbmcp-types",
  "rmcp",
  "secrecy",
  "sha2 0.11.1",
@@ -1033,6 +1035,7 @@ name = "dbmcp-config"
 version = "0.21.0"
 dependencies = [
  "boon",
+ "dbmcp-types",
  "http",
  "indexmap",
  "secrecy",
@@ -1047,12 +1050,12 @@ dependencies = [
 name = "dbmcp-mysql"
 version = "0.21.0"
 dependencies = [
- "dbmcp-config",
  "dbmcp-policy",
  "dbmcp-privacy",
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-truncate",
+ "dbmcp-types",
  "moka",
  "rmcp",
  "schemars",
@@ -1071,11 +1074,11 @@ dependencies = [
 name = "dbmcp-policy"
 version = "0.21.0"
 dependencies = [
- "dbmcp-config",
  "dbmcp-privacy",
  "dbmcp-sql",
  "dbmcp-sql-lineage",
  "dbmcp-truncate",
+ "dbmcp-types",
  "serde_json",
  "sqlx",
  "thiserror",
@@ -1087,12 +1090,12 @@ dependencies = [
 name = "dbmcp-postgres"
 version = "0.21.0"
 dependencies = [
- "dbmcp-config",
  "dbmcp-policy",
  "dbmcp-privacy",
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-truncate",
+ "dbmcp-types",
  "indexmap",
  "moka",
  "rmcp",
@@ -1116,7 +1119,7 @@ dependencies = [
  "bech32",
  "bs58",
  "criterion",
- "dbmcp-config",
+ "dbmcp-types",
  "fancy-regex 0.20.2",
  "getrandom 0.4.3",
  "hmac",
@@ -1151,8 +1154,8 @@ dependencies = [
 name = "dbmcp-sql"
 version = "0.21.0"
 dependencies = [
- "dbmcp-config",
  "dbmcp-sql-lineage",
+ "dbmcp-types",
  "futures-util",
  "rmcp",
  "serde_json",
@@ -1177,12 +1180,12 @@ dependencies = [
 name = "dbmcp-sqlite"
 version = "0.21.0"
 dependencies = [
- "dbmcp-config",
  "dbmcp-policy",
  "dbmcp-privacy",
  "dbmcp-server",
  "dbmcp-sql",
  "dbmcp-truncate",
+ "dbmcp-types",
  "futures-util",
  "rmcp",
  "schemars",
@@ -1201,7 +1204,7 @@ name = "dbmcp-ssh"
 version = "0.21.0"
 dependencies = [
  "base64 0.23.1",
- "dbmcp-config",
+ "dbmcp-types",
  "ring",
  "russh",
  "secrecy",
@@ -1218,6 +1221,16 @@ version = "0.21.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dbmcp-types"
+version = "0.21.0"
+dependencies = [
+ "http",
+ "secrecy",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

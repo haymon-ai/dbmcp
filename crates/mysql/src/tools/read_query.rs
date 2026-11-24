@@ -1,6 +1,5 @@
 //! MCP tool: `readQuery`.
 
-use dbmcp_config::DatabaseBackend;
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
 use dbmcp_server::truncate::{Truncation, caps};
@@ -10,6 +9,7 @@ use dbmcp_sql::StatementKind;
 use dbmcp_sql::pagination::{Page, plan};
 use dbmcp_sql::validation::validate_read;
 use dbmcp_truncate::{Window, fit};
+use dbmcp_types::database;
 
 use super::prelude::*;
 use dbmcp_policy::Access;
@@ -148,7 +148,7 @@ impl MysqlHandler {
         let kind = validate_read(
             &query,
             match self.config.backend {
-                DatabaseBackend::Mariadb => Dialect::Mariadb,
+                database::Backend::Mariadb => Dialect::Mariadb,
                 _ => Dialect::Mysql,
             },
         )?;

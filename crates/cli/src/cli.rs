@@ -4,7 +4,7 @@
 //! configuration, initialises tracing, and serves the selected transport.
 
 use clap::{CommandFactory, FromArgMatches};
-use dbmcp_config::LogLevel;
+use dbmcp_types::LogLevel;
 use tracing::warn;
 
 use crate::args::Arguments;

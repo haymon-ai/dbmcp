@@ -209,8 +209,8 @@ fn values(row: Value) -> Vec<Value> {
 mod tests {
     use std::convert::Infallible;
 
-    use dbmcp_config::PrivacyConfig;
     use dbmcp_truncate::Caps;
+    use dbmcp_types::privacy;
     use serde_json::json;
     use sqlx::{Connection as _, SqliteConnection};
 
@@ -220,7 +220,7 @@ mod tests {
 
     type TestStop = Stop<Infallible>;
 
-    fn planned(config: &PrivacyConfig, withholds: bool) -> Planned<'_> {
+    fn planned(config: &privacy::Config, withholds: bool) -> Planned<'_> {
         Planned::new(Mode::Global, config, Families::new(), withholds)
     }
 
@@ -268,7 +268,7 @@ mod tests {
             .expect("counts")
     }
 
-    fn redactor(config: &PrivacyConfig) -> Redactor {
+    fn redactor(config: &privacy::Config) -> Redactor {
         Redactor::from_config(Some(config))
             .expect("builds")
             .expect("configured")
@@ -276,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn writes_commit_and_reads_roll_back() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let mut conn = memory().await;
         for (access, kept) in [(Access::Read, 0), (Access::Write, 1)] {
             let tx = inserting(&mut conn).await;
@@ -296,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn refusals_roll_back_a_write() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let mut conn = memory().await;
         let tx = inserting(&mut conn).await;
         let unfit = Err(TestStop::Unfit(Unfit::Unplanned(0)));
@@ -309,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn database_errors_are_withheld_only_when_the_plan_withholds() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let mut conn = memory().await;
         for withholds in [true, false] {
             let tx = inserting(&mut conn).await;
@@ -331,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn commit_errors_are_withheld() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let mut conn = memory().await;
         let mut tx = conn.begin().await.expect("begin");
         sqlx::query("INSERT INTO c VALUES (1)")
@@ -352,7 +352,7 @@ mod tests {
 
     #[tokio::test]
     async fn statements_outside_a_transaction_still_withhold() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let failed = Err(TestStop::Sql(sqlx::Error::Protocol("secret".into())));
         let stop = settle::<sqlx::Sqlite, _>(None, Access::Write, planned(&config, true), echoing, failed)
             .await
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn admission_needs_a_redactor_and_a_writable_connection_for_writes() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let redactor = redactor(&config);
         let missing = admit(None, Access::Read, false).expect_err("no redactor");
         assert!(
@@ -387,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn finish_redacts_the_kept_rows_and_reports_stops() {
-        let config = PrivacyConfig::default();
+        let config = privacy::Config::default();
         let redactor = redactor(&config);
         let mut window = Window::new(0, None, Caps::default());
         window.push(json!(["plain"]));

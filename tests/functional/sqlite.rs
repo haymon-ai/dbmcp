@@ -13,24 +13,24 @@
 mod probe;
 mod rows;
 
-use dbmcp_config::{Config, DatabaseBackend, DatabaseConfig, PrivacyConfig, PrivacyOperator, Transport};
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_sqlite::types::{
     DropTableRequest, ExplainQueryRequest, ListTablesRequest, ListTriggersRequest, ListViewsRequest, QueryRequest,
     ReadQueryRequest,
 };
+use dbmcp_types::{Config, Transport, database, privacy};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-fn base_db_config(read_only: bool) -> DatabaseConfig {
-    DatabaseConfig {
-        backend: DatabaseBackend::Sqlite,
+fn base_db_config(read_only: bool) -> database::Config {
+    database::Config {
+        backend: database::Backend::Sqlite,
         name: Some(std::env::var("DB_PATH").expect("DB_PATH must be set")),
         read_only,
-        ..DatabaseConfig::default()
+        ..database::Config::default()
     }
 }
 
@@ -47,7 +47,7 @@ fn handler(read_only: bool) -> SqliteHandler {
 }
 
 fn handler_with_page_size(page_size: u16) -> SqliteHandler {
-    let config = DatabaseConfig {
+    let config = database::Config {
         page_size,
         ..base_db_config(false)
     };
@@ -186,7 +186,7 @@ async fn test_blocks_writes_in_read_only_mode() {
 
 #[tokio::test]
 async fn test_query_timeout_fast_query_succeeds() {
-    let config = DatabaseConfig {
+    let config = database::Config {
         query_timeout: 5,
         ..base_db_config(false)
     };
@@ -210,7 +210,7 @@ async fn test_query_timeout_fast_query_succeeds() {
 
 #[tokio::test]
 async fn test_read_query_timeout_argument() {
-    let config = DatabaseConfig {
+    let config = database::Config {
         query_timeout: 5,
         max_query_timeout: 10,
         ..base_db_config(false)
@@ -237,7 +237,7 @@ async fn test_read_query_timeout_argument() {
 
 #[tokio::test]
 async fn test_query_timeout_disabled_with_zero() {
-    let config = DatabaseConfig {
+    let config = database::Config {
         query_timeout: 0,
         ..base_db_config(false)
     };
@@ -261,7 +261,7 @@ async fn test_query_timeout_disabled_with_zero() {
 
 #[tokio::test]
 async fn test_query_timeout_stops_long_statement() {
-    let config = DatabaseConfig {
+    let config = database::Config {
         query_timeout: 1,
         ..base_db_config(true)
     };
@@ -2039,9 +2039,9 @@ fn handler_with_redaction(redact_privacy: bool) -> SqliteHandler {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -2051,15 +2051,15 @@ fn handler_with_redaction(redact_privacy: bool) -> SqliteHandler {
 /// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
 const PRIVACY_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
 
-fn handler_with_operator(operator: PrivacyOperator) -> SqliteHandler {
+fn handler_with_operator(operator: privacy::Operator) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             operator,
-            key: (operator == PrivacyOperator::Hash).then(|| PRIVACY_TEST_KEY.into()),
-            ..PrivacyConfig::default()
+            key: (operator == privacy::Operator::Hash).then(|| PRIVACY_TEST_KEY.into()),
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -2161,7 +2161,7 @@ async fn explain_query_redacts_when_enabled() {
 
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
-    let handler = handler_with_operator(PrivacyOperator::Mask);
+    let handler = handler_with_operator(privacy::Operator::Mask);
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
@@ -2175,7 +2175,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
-    let handler = handler_with_operator(PrivacyOperator::Redact);
+    let handler = handler_with_operator(privacy::Operator::Redact);
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS msg".into(),
         cursor: None,
@@ -2187,7 +2187,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_keyed_token() {
-    let handler = handler_with_operator(PrivacyOperator::Hash);
+    let handler = handler_with_operator(privacy::Operator::Hash);
     let select = ReadQueryRequest {
         query: "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
         cursor: None,
@@ -2204,7 +2204,7 @@ async fn read_query_hash_operator_emits_keyed_token() {
 async fn hash_operator_error_token_matches_row_token() {
     use dbmcp_server::ToolHandler;
 
-    let handler = handler_with_operator(PrivacyOperator::Hash);
+    let handler = handler_with_operator(privacy::Operator::Hash);
     let select = ReadQueryRequest {
         query: "SELECT * FROM \"jane.doe@example.com\"".into(),
         cursor: None,
@@ -2538,15 +2538,15 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
 fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_privacy: bool) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             max_cell_chars,
             max_response_chars,
             ..base_db_config(false)
         },
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -2733,12 +2733,17 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
 
 // Column rules (`privacy.rules`)
 
-fn column_rule(table: &str, column: &str, entity: &'static str, operator: PrivacyOperator) -> dbmcp_config::ColumnRule {
-    dbmcp_config::ColumnRule {
+fn column_rule(
+    table: &str,
+    column: &str,
+    entity: &'static str,
+    operator: privacy::Operator,
+) -> dbmcp_types::privacy::ColumnRule {
+    dbmcp_types::privacy::ColumnRule {
         name: format!("{table}_{column}"),
         item: 0,
         key: ["main", "main", table, column].map(String::from),
-        entity,
+        entity: entity.parse().expect("known entity"),
         operator,
     }
 }
@@ -2748,36 +2753,46 @@ fn column_rule(table: &str, column: &str, entity: &'static str, operator: Privac
 fn handler_with_rules(page_size: u16) -> SqliteHandler {
     SqliteHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             page_size,
             ..base_db_config(false)
         },
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             key: Some(PRIVACY_TEST_KEY.into()),
             rules: vec![
-                column_rule("users", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("orders", "customer_email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-                column_rule("users", "ssn", "US_SSN", PrivacyOperator::Redact),
-                column_rule("users", "credit_card", "CREDIT_CARD", PrivacyOperator::Replace),
-                column_rule("policy_hashed", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("policy_hashed_default", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
+                column_rule("users", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule("orders", "customer_email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule("users", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+                column_rule("users", "ssn", "US_SSN", privacy::Operator::Redact),
+                column_rule("users", "credit_card", "CREDIT_CARD", privacy::Operator::Replace),
+                column_rule("policy_hashed", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule(
+                    "policy_hashed_default",
+                    "email",
+                    "EMAIL_ADDRESS",
+                    privacy::Operator::Hash,
+                ),
                 column_rule(
                     "policy_hashed_generated",
                     "email",
                     "EMAIL_ADDRESS",
-                    PrivacyOperator::Hash,
+                    privacy::Operator::Hash,
                 ),
-                column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("policy_cascade_default", "k", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-                column_rule("policy_masked", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-                column_rule("policy_masked", "note", "PHONE_NUMBER", PrivacyOperator::Mask),
-                column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
+                column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule("policy_cascade_default", "k", "EMAIL_ADDRESS", privacy::Operator::Hash),
+                column_rule(
+                    "policy_hashed_trigger",
+                    "email",
+                    "EMAIL_ADDRESS",
+                    privacy::Operator::Hash,
+                ),
+                column_rule("policy_masked", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+                column_rule("policy_masked", "note", "PHONE_NUMBER", privacy::Operator::Mask),
+                column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
             ],
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -3432,15 +3447,15 @@ async fn column_rules_replace_and_drop_views() {
     std::fs::copy(std::env::var("DB_PATH").expect("DB_PATH must be set"), &copy).expect("copy fixture database");
     let handler = SqliteHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             name: Some(copy.display().to_string()),
             ..base_db_config(false)
         },
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             key: Some(PRIVACY_TEST_KEY.into()),
-            rules: vec![column_rule("users", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash)],
-            ..PrivacyConfig::default()
+            rules: vec![column_rule("users", "email", "EMAIL_ADDRESS", privacy::Operator::Hash)],
+            ..privacy::Config::default()
         }),
         ssh: None,
     })

@@ -4,7 +4,8 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use dbmcp_privacy::{AnalyzeOptions, Analyzer, Category, overlap};
+use dbmcp_privacy::{AnalyzeOptions, Analyzer, overlap};
+use dbmcp_types::privacy::Category;
 
 mod common;
 

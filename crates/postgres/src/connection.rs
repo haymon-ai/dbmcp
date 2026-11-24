@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::support::{self, Line, Variant};
+use dbmcp_types::database;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
@@ -25,7 +25,7 @@ pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 /// Owns every `PgPool` the handler uses and the logic that builds them.
 #[derive(Clone)]
 pub(crate) struct PostgresConnection {
-    config: DatabaseConfig,
+    config: database::Config,
     pools: Cache<String, PgPool>,
     /// Set once a connection read the server version, shared by every pool.
     checked: Arc<AtomicBool>,
@@ -46,7 +46,7 @@ impl PostgresConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
+    pub(crate) fn new(config: &database::Config, rules: bool) -> Self {
         info!(
             "PostgreSQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -178,7 +178,7 @@ impl Connection for PostgresConnection {
 /// rejects writes through any [`Connection`] method. Also warns once
 /// when the server is outside Supported; that check never fails the
 /// connection.
-fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<AtomicBool>, rules: bool) -> PgPool {
+fn create_lazy_pool(config: &database::Config, database: &str, checked: Arc<AtomicBool>, rules: bool) -> PgPool {
     let mut conn_ops = PgConnectOptions::new_without_pgpass()
         .host(&config.host)
         .port(config.port)
@@ -213,9 +213,9 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<Atomic
 
     let mut pool_ops = sqlx::pool::PoolOptions::new()
         .max_connections(config.max_pool_size)
-        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
-        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
-        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+        .min_connections(database::Config::DEFAULT_MIN_CONNECTIONS)
+        .idle_timeout(Duration::from_secs(database::Config::DEFAULT_IDLE_TIMEOUT_SECS))
+        .max_lifetime(Duration::from_secs(database::Config::DEFAULT_MAX_LIFETIME_SECS));
 
     if let Some(timeout) = config.connection_timeout {
         pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
@@ -236,7 +236,7 @@ fn create_lazy_pool(config: &DatabaseConfig, database: &str, checked: Arc<Atomic
 ///
 /// Sets `checked` only once every read succeeded, so a failed read or probe
 /// leaves the check to the next connection.
-async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
+async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, backend: database::Backend, rules: bool) {
     if checked.load(Ordering::Acquire) {
         return;
     }
@@ -290,15 +290,15 @@ pub(crate) fn quote_ident(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn base_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Postgres,
+    fn base_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Postgres,
             host: "pg.example.com".into(),
             port: 5433,
             user: "pgadmin".into(),
             password: Some("pgpass".into()),
             name: Some("mydb".into()),
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
@@ -311,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn create_lazy_pool_without_password() {
         let pool = create_lazy_pool(
-            &DatabaseConfig {
+            &database::Config {
                 password: None,
                 ..base_config()
             },
@@ -325,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn create_lazy_pool_without_database_name() {
         let pool = create_lazy_pool(
-            &DatabaseConfig {
+            &database::Config {
                 name: None,
                 ..base_config()
             },
@@ -345,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn defaults_db_to_username_when_name_missing() {
         let connection = PostgresConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: None,
                 ..base_config()
             },

@@ -16,7 +16,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use dbmcp_config::{ColumnRule, PrivacyOperator};
+use dbmcp_types::privacy;
 use serde_json::Value;
 
 use crate::redact::{Frame, log_redactions};
@@ -49,7 +49,7 @@ pub struct PlannedColumn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Position {
     /// Replace every non-null value whole with the operator; the entity labels it.
-    Action(PrivacyOperator, Entity),
+    Action(privacy::Operator, Entity),
     /// Replace every value, `NULL` included, with the entity's placeholder.
     Placeholder(Entity),
     /// Run global detection, as without column rules.
@@ -133,7 +133,7 @@ pub fn check_columns(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
 fn check_names(plan: &Plan, names: &[String]) -> Result<(), ShapeError> {
     for (position, (name, column)) in names.iter().zip(&plan.columns).enumerate() {
         if let Some(expected) = &column.name
-            && ColumnRule::fold(name) != *expected
+            && privacy::ColumnRule::fold(name) != *expected
         {
             return Err(ShapeError::NameMismatch { position });
         }
@@ -269,7 +269,6 @@ fn rewrite_whole(value: &mut Value, operator: &Operator, entity: Entity) -> bool
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::PrivacyConfig;
     use serde_json::json;
 
     use super::*;
@@ -311,22 +310,22 @@ mod tests {
     }
 
     /// A redactor from a config with `operator` and a fixed key.
-    fn keyed(operator: PrivacyOperator) -> Redactor {
-        let config = PrivacyConfig {
+    fn keyed(operator: privacy::Operator) -> Redactor {
+        let config = privacy::Config {
             operator,
             key: Some(KEY.to_string().into()),
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         };
         Redactor::from_config(Some(&config)).expect("builds").expect("enabled")
     }
 
-    const MASKED: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
+    const MASKED: Position = Position::Action(privacy::Operator::Mask, Entity::UsSsn);
 
     #[test]
     fn rules_mode_leaves_global_cells_raw_and_rewrites_ruled_ones() {
-        let config = PrivacyConfig {
-            mode: dbmcp_config::PrivacyMode::Rules,
-            ..PrivacyConfig::default()
+        let config = privacy::Config {
+            mode: privacy::Mode::Rules,
+            ..privacy::Config::default()
         };
         let redactor = Redactor::from_config(Some(&config)).expect("builds").expect("rules");
         let values = redact(
@@ -471,7 +470,7 @@ mod tests {
     fn action_replace_writes_the_entity_placeholder() {
         let values = redact(
             &Redactor::with_defaults(),
-            vec![Position::Action(PrivacyOperator::Replace, Entity::Person)],
+            vec![Position::Action(privacy::Operator::Replace, Entity::Person)],
             vec![json!("Jane Doe")],
         );
         assert_eq!(values, [json!("<PERSON>")]);
@@ -506,12 +505,12 @@ mod tests {
 
     #[test]
     fn a_hashing_rule_token_differs_from_global_detection_token() {
-        let redactor = keyed(PrivacyOperator::Hash);
+        let redactor = keyed(privacy::Operator::Hash);
         let values = redact(
             &redactor,
             vec![
-                Position::Action(PrivacyOperator::Hash, Entity::EmailAddress),
-                Position::Action(PrivacyOperator::Hash, Entity::EmailAddress),
+                Position::Action(privacy::Operator::Hash, Entity::EmailAddress),
+                Position::Action(privacy::Operator::Hash, Entity::EmailAddress),
                 Position::Global,
             ],
             vec![json!(EMAIL), json!(EMAIL), json!(EMAIL)],
@@ -531,10 +530,10 @@ mod tests {
 
     #[test]
     fn a_hashing_rule_under_another_global_operator_hashes() {
-        let redactor = keyed(PrivacyOperator::Mask);
+        let redactor = keyed(privacy::Operator::Mask);
         let values = redact(
             &redactor,
-            vec![Position::Action(PrivacyOperator::Hash, Entity::EmailAddress)],
+            vec![Position::Action(privacy::Operator::Hash, Entity::EmailAddress)],
             vec![json!(EMAIL)],
         );
         assert!(
@@ -547,8 +546,8 @@ mod tests {
 
     #[test]
     fn a_ruled_json_cell_hashes_its_sorted_key_text() {
-        let redactor = keyed(PrivacyOperator::Hash);
-        let hashed = Position::Action(PrivacyOperator::Hash, Entity::UsSsn);
+        let redactor = keyed(privacy::Operator::Hash);
+        let hashed = Position::Action(privacy::Operator::Hash, Entity::UsSsn);
         let values = redact(
             &redactor,
             vec![hashed, hashed, hashed],
@@ -564,7 +563,7 @@ mod tests {
 
     #[test]
     fn a_ruled_json_cell_masks_to_its_sorted_key_length() {
-        let redactor = keyed(PrivacyOperator::Mask);
+        let redactor = keyed(privacy::Operator::Mask);
         let values = redact(&redactor, vec![MASKED], vec![json!({"b": 1, "a": {"d": 2, "c": 3}})]);
         assert_eq!(values[0], json!("*".repeat(SORTED.len())));
     }
@@ -586,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_plan_matches_row_redaction_of_the_row_objects() {
-        let redactor = keyed(PrivacyOperator::Hash);
+        let redactor = keyed(privacy::Operator::Hash);
         let columns = ["contact", "ssn", "doc", "n", "contact"].map(String::from).to_vec();
         let rows = vec![
             vec![

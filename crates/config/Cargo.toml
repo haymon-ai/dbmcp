@@ -1,6 +1,6 @@
 [package]
 name = "dbmcp-config"
-description = "Config for dbmcp"
+description = "Configuration loading for dbmcp"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 boon = { workspace = true }
+dbmcp-types = { workspace = true }
 http = { workspace = true }
 indexmap = { workspace = true }
 secrecy = { workspace = true }

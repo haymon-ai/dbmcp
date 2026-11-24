@@ -19,24 +19,21 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// Accepted setting values, in the order error messages list them.
-    pub(crate) const CHOICES: &[(&str, Self)] = &[
-        ("error", Self::Error),
-        ("warn", Self::Warn),
-        ("info", Self::Info),
-        ("debug", Self::Debug),
-        ("trace", Self::Trace),
-    ];
+    /// Returns the setting value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
 }
 
 impl std::fmt::Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Error => write!(f, "error"),
-            Self::Warn => write!(f, "warn"),
-            Self::Info => write!(f, "info"),
-            Self::Debug => write!(f, "debug"),
-            Self::Trace => write!(f, "trace"),
-        }
+        f.write_str(self.as_str())
     }
 }
