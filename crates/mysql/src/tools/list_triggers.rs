@@ -18,10 +18,13 @@ fn annotations() -> ToolAnnotations {
         .open_world(false)
 }
 
-/// Marker type for the `listTriggers` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedListTriggersTool;
+/// Marker type for the `listTriggers` MCP tool.
+///
+/// `PINNED` serves a database pinned by configuration: the input schema has
+/// no `database` field, and the pinned route drops one sent anyway.
+pub(crate) struct ListTriggersTool<const PINNED: bool>;
 
-impl ToolBase for PinnedListTriggersTool {
+impl<const PINNED: bool> ToolBase for ListTriggersTool<PINNED> {
     type Parameter = ListTriggersRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
@@ -35,7 +38,14 @@ impl ToolBase for PinnedListTriggersTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn annotations() -> Option<ToolAnnotations> {
@@ -43,7 +53,7 @@ impl ToolBase for PinnedListTriggersTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -51,48 +61,7 @@ impl ToolBase for PinnedListTriggersTool {
     }
 }
 
-impl AsyncTool<MysqlHandler> for PinnedListTriggersTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_triggers(None, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
-
-/// Marker type for the `listTriggers` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedListTriggersTool;
-
-impl ToolBase for UnpinnedListTriggersTool {
-    type Parameter = ListTriggersRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-}
-
-impl AsyncTool<MysqlHandler> for UnpinnedListTriggersTool {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for ListTriggersTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .list_triggers(params.database, params.cursor, params.search, params.detailed)

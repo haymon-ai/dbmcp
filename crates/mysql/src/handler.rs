@@ -15,11 +15,8 @@ use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::MysqlConnection;
 use crate::tools::{
-    CreateDatabaseTool, DropDatabaseTool, ListDatabasesTool, PinnedDropTableTool, PinnedExplainQueryTool,
-    PinnedListFunctionsTool, PinnedListProceduresTool, PinnedListTablesTool, PinnedListTriggersTool,
-    PinnedListViewsTool, PinnedReadQueryTool, PinnedWriteQueryTool, UnpinnedDropTableTool, UnpinnedExplainQueryTool,
-    UnpinnedListFunctionsTool, UnpinnedListProceduresTool, UnpinnedListTablesTool, UnpinnedListTriggersTool,
-    UnpinnedListViewsTool, UnpinnedReadQueryTool, UnpinnedWriteQueryTool,
+    CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, ListDatabasesTool, ListFunctionsTool,
+    ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
 };
 
 /// Backend-specific description for MySQL/MariaDB.
@@ -39,33 +36,33 @@ const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions
 
 /// Declarative tool table: `(tool, pinned, read_only)`.
 ///
-/// Per-database tools expose a `Pinned*Tool` variant (no `database` field)
-/// when the config pins a db name, and an `Unpinned*Tool` variant
-/// (carries a `database` field) otherwise. Cross-database tools
+/// Per-database tools register as `Tool<true>` (no `database` field) when
+/// the config pins a db name, and as `Tool<false>` (carries a `database`
+/// field) otherwise. Cross-database tools
 /// (`listDatabases`, `createDatabase`, `dropDatabase`) are hidden in pinned
 /// mode altogether.
 const TOOLS: &[ToolSpec<MysqlHandler>] = &[
     ToolSpec::tool::<ListDatabasesTool>(false, false),
-    ToolSpec::tool::<PinnedListTablesTool>(true, false),
-    ToolSpec::tool::<UnpinnedListTablesTool>(false, false),
-    ToolSpec::tool::<PinnedListViewsTool>(true, false),
-    ToolSpec::tool::<UnpinnedListViewsTool>(false, false),
-    ToolSpec::tool::<PinnedListTriggersTool>(true, false),
-    ToolSpec::tool::<UnpinnedListTriggersTool>(false, false),
-    ToolSpec::tool::<PinnedListFunctionsTool>(true, false),
-    ToolSpec::tool::<UnpinnedListFunctionsTool>(false, false),
-    ToolSpec::tool::<PinnedListProceduresTool>(true, false),
-    ToolSpec::tool::<UnpinnedListProceduresTool>(false, false),
-    ToolSpec::tool::<PinnedReadQueryTool>(true, false),
-    ToolSpec::tool::<UnpinnedReadQueryTool>(false, false),
-    ToolSpec::tool::<PinnedExplainQueryTool>(true, false),
-    ToolSpec::tool::<UnpinnedExplainQueryTool>(false, false),
+    ToolSpec::tool::<ListTablesTool<true>>(true, false),
+    ToolSpec::tool::<ListTablesTool<false>>(false, false),
+    ToolSpec::tool::<ListViewsTool<true>>(true, false),
+    ToolSpec::tool::<ListViewsTool<false>>(false, false),
+    ToolSpec::tool::<ListTriggersTool<true>>(true, false),
+    ToolSpec::tool::<ListTriggersTool<false>>(false, false),
+    ToolSpec::tool::<ListFunctionsTool<true>>(true, false),
+    ToolSpec::tool::<ListFunctionsTool<false>>(false, false),
+    ToolSpec::tool::<ListProceduresTool<true>>(true, false),
+    ToolSpec::tool::<ListProceduresTool<false>>(false, false),
+    ToolSpec::tool::<ReadQueryTool<true>>(true, false),
+    ToolSpec::tool::<ReadQueryTool<false>>(false, false),
+    ToolSpec::tool::<ExplainQueryTool<true>>(true, false),
+    ToolSpec::tool::<ExplainQueryTool<false>>(false, false),
     ToolSpec::tool::<CreateDatabaseTool>(false, true),
     ToolSpec::tool::<DropDatabaseTool>(false, true),
-    ToolSpec::tool::<PinnedDropTableTool>(true, true),
-    ToolSpec::tool::<UnpinnedDropTableTool>(false, true),
-    ToolSpec::tool::<PinnedWriteQueryTool>(true, true),
-    ToolSpec::tool::<UnpinnedWriteQueryTool>(false, true),
+    ToolSpec::tool::<DropTableTool<true>>(true, true),
+    ToolSpec::tool::<DropTableTool<false>>(false, true),
+    ToolSpec::tool::<WriteQueryTool<true>>(true, true),
+    ToolSpec::tool::<WriteQueryTool<false>>(false, true),
 ];
 
 /// MySQL/MariaDB database handler.

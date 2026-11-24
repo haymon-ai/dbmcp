@@ -19,10 +19,13 @@ fn annotations() -> ToolAnnotations {
         .open_world(false)
 }
 
-/// Marker type for the `dropTable` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedDropTableTool;
+/// Marker type for the `dropTable` MCP tool.
+///
+/// `PINNED` serves a database pinned by configuration: the input schema has
+/// no `database` field, and the pinned route drops one sent anyway.
+pub(crate) struct DropTableTool<const PINNED: bool>;
 
-impl ToolBase for PinnedDropTableTool {
+impl<const PINNED: bool> ToolBase for DropTableTool<PINNED> {
     type Parameter = DropTableRequest;
     type Output = MessageResponse;
     type Error = ErrorData;
@@ -36,7 +39,14 @@ impl ToolBase for PinnedDropTableTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn annotations() -> Option<ToolAnnotations> {
@@ -44,7 +54,7 @@ impl ToolBase for PinnedDropTableTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -52,46 +62,7 @@ impl ToolBase for PinnedDropTableTool {
     }
 }
 
-impl AsyncTool<MysqlHandler> for PinnedDropTableTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.drop_table(None, params.table).await
-    }
-}
-
-/// Marker type for the `dropTable` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedDropTableTool;
-
-impl ToolBase for UnpinnedDropTableTool {
-    type Parameter = DropTableRequest;
-    type Output = MessageResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-}
-
-impl AsyncTool<MysqlHandler> for UnpinnedDropTableTool {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for DropTableTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler.drop_table(params.database, params.table).await
     }

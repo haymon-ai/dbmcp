@@ -9,6 +9,10 @@
 //! and output shapes are established at schema-generation time, not by
 //! post-processing the `tools/list` response.
 //!
+//! It also owns the pinned-database rule: a pinned input schema has no
+//! `database` property, and `pin_arguments` drops one from a pinned tool's
+//! arguments.
+//!
 //! [`input_schema`]: rmcp::handler::server::router::tool::ToolBase::input_schema
 //! [`output_schema`]: rmcp::handler::server::router::tool::ToolBase::output_schema
 
@@ -21,6 +25,9 @@ use schemars::JsonSchema;
 use schemars::Schema;
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
+
+/// The argument a pinned database removes.
+const DATABASE: &str = "database";
 
 thread_local! {
     static SCHEMA_CACHE: Mutex<HashMap<(TypeId, bool), Arc<JsonObject>>> = Mutex::new(HashMap::new());
@@ -126,27 +133,35 @@ fn strip_root_metadata(schema: &mut Schema) {
 
 /// Removes the root `database` property and its entry in `required`.
 ///
-/// Applied only for tools registered against a pinned database, where the
-/// runtime always passes `None` for `database` and the client never supplies
-/// it. Root-only — see [`strip_root_metadata`].
+/// Applied only for tools registered against a pinned database, where
+/// [`pin_arguments`] drops any `database` the client sends anyway.
+/// Root-only — see [`strip_root_metadata`].
 fn strip_root_database(schema: &mut Schema) {
     let Some(object) = schema.as_object_mut() else {
         return;
     };
     if let Some(Value::Object(properties)) = object.get_mut("properties") {
-        properties.shift_remove("database");
+        properties.shift_remove(DATABASE);
     }
     if let Some(Value::Array(required)) = object.get_mut("required") {
-        required.retain(|value| value.as_str() != Some("database"));
+        required.retain(|value| value.as_str() != Some(DATABASE));
         if required.is_empty() {
             object.shift_remove("required");
         }
     }
 }
 
+/// Applies the pinned-database rule to a pinned tool call's `arguments`.
+///
+/// Drops a sent `database` argument, which a pinned tool never advertises,
+/// so the tool always runs against the pinned database.
+pub(crate) fn pin_arguments(arguments: &mut JsonObject) {
+    arguments.shift_remove(DATABASE);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build, input_schema, output_schema};
+    use super::{build, input_schema, output_schema, pin_arguments};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -373,5 +388,15 @@ mod tests {
             "required": ["count", "strict"]
         });
         assert_eq!(text, expected.to_string());
+    }
+
+    #[test]
+    fn pin_arguments_drops_database_and_keeps_the_rest() {
+        let mut arguments = serde_json::json!({"database": "other", "name": "x"})
+            .as_object()
+            .cloned()
+            .expect("object");
+        pin_arguments(&mut arguments);
+        assert_eq!(Value::Object(arguments), serde_json::json!({"name": "x"}));
     }
 }

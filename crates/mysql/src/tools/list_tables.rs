@@ -321,10 +321,13 @@ fn annotations() -> ToolAnnotations {
         .open_world(false)
 }
 
-/// Marker type for the `listTables` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedListTablesTool;
+/// Marker type for the `listTables` MCP tool.
+///
+/// `PINNED` serves a database pinned by configuration: the input schema has
+/// no `database` field, and the pinned route drops one sent anyway.
+pub(crate) struct ListTablesTool<const PINNED: bool>;
 
-impl ToolBase for PinnedListTablesTool {
+impl<const PINNED: bool> ToolBase for ListTablesTool<PINNED> {
     type Parameter = ListTablesRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
@@ -338,7 +341,14 @@ impl ToolBase for PinnedListTablesTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn annotations() -> Option<ToolAnnotations> {
@@ -346,7 +356,7 @@ impl ToolBase for PinnedListTablesTool {
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
@@ -354,48 +364,7 @@ impl ToolBase for PinnedListTablesTool {
     }
 }
 
-impl AsyncTool<MysqlHandler> for PinnedListTablesTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_tables(None, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
-
-/// Marker type for the `listTables` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedListTablesTool;
-
-impl ToolBase for UnpinnedListTablesTool {
-    type Parameter = ListTablesRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-}
-
-impl AsyncTool<MysqlHandler> for UnpinnedListTablesTool {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for ListTablesTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .list_tables(params.database, params.cursor, params.search, params.detailed)
