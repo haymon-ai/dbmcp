@@ -16,9 +16,9 @@ Requires Codex 0.122.0 or later; the post-install **Set up** button needs 0.156.
 
 After install, pick **Set up**: the `setup` skill walks you through the connection. You can also do it by hand. `config.toml` cannot set environment variables for a plugin's server, so the plugin forwards these names from the environment Codex starts in: `DBMCP_CONFIG_FILE`, `DBMCP_ENV_FILE`, `DBMCP_DB_BACKEND`, `DBMCP_DB_HOST`, `DBMCP_DB_PORT`, `DBMCP_DB_USER`, `DBMCP_DB_PASSWORD`, and `DBMCP_DB_NAME`.
 
-1. Write the connection settings to an [env file](/configuration/env-files), such as `~/.config/dbmcp/.env`. For more settings, write a [`dbmcp.yaml`](/configuration/config-files) and name it in the env file with `DBMCP_CONFIG_FILE`; keep the password in the env file.
+1. Write the connection settings to an [env file](/configuration/env-files) in the plugin's data folder, `~/.codex/plugins/data/dbmcp-haymon-ai/.env` (create the folder first; it sits under `$CODEX_HOME` if you set that). For more settings, write a [`dbmcp.yaml`](/configuration/config-files) and name it in the env file with `DBMCP_CONFIG_FILE`; keep the password in the env file. The `setup` skill writes both files there.
 
-   ```bash title="~/.config/dbmcp/.env"
+   ```bash title="~/.codex/plugins/data/dbmcp-haymon-ai/.env"
    DBMCP_DB_BACKEND=mysql
    DBMCP_DB_HOST=127.0.0.1
    DBMCP_DB_USER=root
@@ -29,16 +29,18 @@ After install, pick **Set up**: the `setup` skill walks you through the connecti
 2. Point `DBMCP_ENV_FILE` at the file from your shell's startup file. dbmcp reads the env file itself, so the password never enters Codex's environment. Use absolute paths.
 
    ```bash tab="zsh" title="~/.zshenv"
-   export DBMCP_ENV_FILE="$HOME/.config/dbmcp/.env"
+   export DBMCP_ENV_FILE="${CODEX_HOME:-$HOME/.codex}/plugins/data/dbmcp-haymon-ai/.env"
    ```
 
    ```bash tab="bash" title="~/.bashrc"
-   export DBMCP_ENV_FILE="$HOME/.config/dbmcp/.env"
+   export DBMCP_ENV_FILE="${CODEX_HOME:-$HOME/.codex}/plugins/data/dbmcp-haymon-ai/.env"
    ```
 
    ```fish tab="fish" title="~/.config/fish/config.fish"
-   set -gx DBMCP_ENV_FILE "$HOME/.config/dbmcp/.env"
+   set -gx DBMCP_ENV_FILE "$HOME/.codex/plugins/data/dbmcp-haymon-ai/.env"
    ```
+
+   If you set `CODEX_HOME`, use it in place of `$HOME/.codex` in the fish line.
 
 3. Quit Codex fully and start it again. The Codex desktop app reads `~/.zshenv`, not `~/.zprofile`; if it does not see the variable, start Codex from a terminal.
 

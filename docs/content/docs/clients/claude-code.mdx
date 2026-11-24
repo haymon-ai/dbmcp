@@ -17,10 +17,10 @@ Requires Claude Code 2.1.119 or later (tested on 2.1.330) and [Node.js](https://
 On install, Claude Code asks for the connection settings. Every field is optional; fill in one of two routes:
 
 - **Quick connect**: Backend, Host, Port, User, Password, and Database (for SQLite, the absolute path of the database file). A blank field falls back to its default: backend `mysql`, host `localhost`, the backend's default port. The password is stored in the macOS Keychain, otherwise in `~/.claude/.credentials.json`.
-- **Full config**: Config file, the absolute path to a [`dbmcp.yaml`](/configuration/config-files), plus an optional Env file: an [env file](/configuration/env-files) holding `DBMCP_*` values and the secrets your config file reads with `${VAR}`. To layer several config files, set `DBMCP_CONFIG_FILE=/abs/a.yaml,/abs/b.yaml` in the env file.
+- **Full config**: Config file, the absolute path to a [`dbmcp.yaml`](/configuration/config-files), plus an optional Env file: an [env file](/configuration/env-files) holding `DBMCP_*` values and secrets beyond the password, such as an SSH key passphrase or `privacy.key`. Keep the password in the Password field. The `setup` skill writes both files to the plugin's data folder, `~/.claude/plugins/data/dbmcp-haymon-ai/`, which survives plugin updates and is deleted on uninstall unless you pass `--keep-data`. To layer several config files, set `DBMCP_CONFIG_FILE=/abs/a.yaml,/abs/b.yaml` in the env file.
 
 <Callout type="warn">
-Quick-connect fields reach dbmcp as `DBMCP_*` environment variables, which [take precedence](/configuration/precedence) over the same settings in your config file. Leave them blank when you use a config file.
+Quick-connect fields reach dbmcp as `DBMCP_*` environment variables, which [take precedence](/configuration/precedence) over the same settings in your config file. Leave them blank, except Password, when you use a config file.
 </Callout>
 
 Change the values later with `/plugin configure`. The plugin sets no safety option: the server stays [read-only](/security/read-only) and redacts [PII](/privacy) unless your own config says otherwise.
