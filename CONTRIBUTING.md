@@ -199,13 +199,7 @@ test(db): add integration tests for PostgreSQL backend
 
 ### Plugin Commits
 
-Changes under `plugins/dbmcp/` use the `plugin` scope, typed by effect:
-
-- `feat(plugin):` / `fix(plugin):` — skill text or wiring that changes agent or host behaviour
-- `docs(plugin):` — the plugin README
-- `ci(plugin):` — release or validation jobs
-
-Add `!` only for a user-side break (e.g. a renamed `userConfig` key).
+Changes under `plugins/dbmcp/` use the `plugin` scope; skill text or wiring that changes agent or host behaviour is `feat`/`fix`, and a renamed `userConfig` key is a breaking change.
 
 ### Breaking Changes
 
