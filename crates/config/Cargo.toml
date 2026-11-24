@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 boon = { workspace = true }
+dbmcp-types = { workspace = true }
 http = { workspace = true }
 indexmap = { workspace = true }
 secrecy = { workspace = true }

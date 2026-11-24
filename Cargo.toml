@@ -34,6 +34,7 @@ dbmcp-sql-lineage = { path = "crates/sql-lineage", version = "0.21.0" }
 dbmcp-sqlite = { path = "crates/sqlite", version = "0.21.0" }
 dbmcp-ssh = { path = "crates/ssh", version = "0.21.0" }
 dbmcp-truncate = { path = "crates/truncate", version = "0.21.0" }
+dbmcp-types = { path = "crates/types", version = "0.21.0" }
 sqlx-json = { path = "crates/sqlx-json", version = "0.21.0" }
 
 # External dependencies
@@ -132,6 +133,7 @@ dbmcp-postgres = { workspace = true }
 dbmcp-server = { workspace = true }
 dbmcp-sql = { workspace = true }
 dbmcp-sqlite = { workspace = true }
+dbmcp-types = { workspace = true }
 indexmap = { workspace = true }
 insta = { workspace = true }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }

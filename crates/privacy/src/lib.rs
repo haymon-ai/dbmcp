@@ -25,11 +25,9 @@
 
 pub mod analyzer;
 pub mod anonymizer;
-pub mod category;
 pub mod cells;
 mod codes;
 pub mod context;
-pub mod entity;
 pub mod error;
 pub mod ner;
 pub mod operators;
@@ -45,12 +43,11 @@ mod words;
 
 pub use crate::analyzer::{AnalyzeOptions, Analyzer};
 pub use crate::anonymizer::anonymize;
-pub use crate::category::{Category, ParseCategoryError};
 pub use crate::context::ContextSettings;
-pub use crate::entity::{Entity, ParseEntityError};
 pub use crate::ner::{NerEngine, NerError};
 pub use crate::operators::{ChunkCount, Operator};
 pub use crate::redact::{MaybeRedact, RedactionError, RedactionStats, Redactor, RedactorInitError};
 pub use crate::result::{AnalysisExplanation, Detector, RecognizerResult};
 pub use crate::score::{MAX_SCORE, Score};
 pub use crate::validation::ValidationOutcome;
+pub(crate) use dbmcp_types::privacy::{Category, Entity};

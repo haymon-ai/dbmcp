@@ -1,9 +1,9 @@
 //! A planned statement: its result checks, error withholding, and redaction.
 
-use dbmcp_config::PrivacyConfig;
 use dbmcp_privacy::cells::{Cells, Plan, Position, ShapeError, check_columns};
 use dbmcp_privacy::{RedactionError, Redactor};
 use dbmcp_sql_lineage::{Dialect, RelationId};
+use dbmcp_types::privacy;
 use serde_json::Value;
 
 use crate::explain;
@@ -15,7 +15,7 @@ use crate::plan::{Families, covering, covers_ruled, is_ruled};
 #[derive(Debug)]
 pub struct Planned<'c> {
     mode: Mode,
-    config: &'c PrivacyConfig,
+    config: &'c privacy::Config,
     /// The inheritance trees the statement was planned with.
     families: Families,
     withholds: bool,
@@ -46,7 +46,7 @@ pub enum Unfit {
 }
 
 impl<'c> Planned<'c> {
-    pub(crate) const fn new(mode: Mode, config: &'c PrivacyConfig, families: Families, withholds: bool) -> Self {
+    pub(crate) const fn new(mode: Mode, config: &'c privacy::Config, families: Families, withholds: bool) -> Self {
         Self {
             mode,
             config,
@@ -155,24 +155,22 @@ impl<'c> Planned<'c> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, PrivacyOperator};
-    use dbmcp_privacy::Entity;
     use dbmcp_privacy::cells::PlannedColumn;
     use serde_json::json;
 
     use super::*;
 
     /// A config ruling `shop.public.t.a`.
-    fn ruled() -> PrivacyConfig {
-        PrivacyConfig {
-            rules: vec![ColumnRule {
+    fn ruled() -> privacy::Config {
+        privacy::Config {
+            rules: vec![privacy::ColumnRule {
                 name: "r".into(),
                 item: 0,
                 key: ["shop", "public", "t", "a"].map(String::from),
-                entity: "US_SSN",
-                operator: PrivacyOperator::Mask,
+                entity: dbmcp_types::privacy::Entity::UsSsn,
+                operator: privacy::Operator::Mask,
             }],
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }
     }
 
@@ -186,7 +184,7 @@ mod tests {
     }
 
     /// A plan of `mode` under `config` with no inheritance trees.
-    fn new_planned(mode: Mode, config: &PrivacyConfig, withholds: bool) -> Planned<'_> {
+    fn new_planned(mode: Mode, config: &privacy::Config, withholds: bool) -> Planned<'_> {
         Planned::new(mode, config, Families::new(), withholds)
     }
 
@@ -205,13 +203,13 @@ mod tests {
     }
 
     /// The redactor `config` builds.
-    fn redactor(config: &PrivacyConfig) -> Redactor {
+    fn redactor(config: &privacy::Config) -> Redactor {
         Redactor::from_config(Some(config))
             .expect("builds")
             .expect("configured")
     }
 
-    const ACTION: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
+    const ACTION: Position = Position::Action(privacy::Operator::Mask, privacy::Entity::UsSsn);
 
     #[test]
     fn echoing_errors_are_withheld_only_when_the_plan_withholds() {
@@ -238,7 +236,7 @@ mod tests {
     #[test]
     fn ruled_origins_are_admitted_under_a_placeholder_position() {
         let config = ruled();
-        let placeholder = Position::Placeholder(Entity::UsSsn);
+        let placeholder = Position::Placeholder(privacy::Entity::UsSsn);
         let mut planned = new_planned(Mode::Positional(plan(&[placeholder])), &config, true);
         assert_eq!(planned.check_first(&names(1), [origin(0, "t", Some("a"))]), Ok(()));
     }

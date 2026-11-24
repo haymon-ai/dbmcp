@@ -4,9 +4,10 @@
 use std::borrow::Cow;
 
 use dbmcp_privacy::{
-    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Detector, Entity, Operator, RecognizerResult, Score,
+    AnalysisExplanation, AnalyzeOptions, Analyzer, ChunkCount, Detector, Operator, RecognizerResult, Score,
     ValidationOutcome, anonymize, operators::OperatorKind,
 };
+use dbmcp_types::privacy::Entity;
 
 /// The 32-byte test key from the keyed-token spec vectors.
 const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";

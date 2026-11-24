@@ -1,6 +1,6 @@
 //! Analyzer engine: registry + entry point + analyze-time options.
 
-use dbmcp_config::{PrivacyCategory, PrivacyConfig};
+use dbmcp_types::privacy;
 
 use crate::Category;
 use crate::context::{ContextSettings, apply_context_boost};
@@ -103,19 +103,19 @@ impl Analyzer {
         self.recognizers.iter()
     }
 
-    /// Resolve a [`PrivacyConfig`] to an [`Analyzer`].
+    /// Resolve a [`privacy::Config`] to an [`Analyzer`].
     ///
     /// - `categories` unset → [`Analyzer::with_defaults`].
     /// - `categories` set → builder filters the registry by category set.
     /// - On builder error, falls back to `with_defaults` and logs at `warn`
     ///   level so a misconfiguration never disables redaction silently.
     #[must_use]
-    pub fn from_config(config: &PrivacyConfig) -> Self {
+    pub fn from_config(config: &privacy::Config) -> Self {
         let Some(cats) = config.categories.as_ref() else {
             return Self::with_defaults();
         };
         Self::builder()
-            .categories(cats.iter().copied().map(map_category))
+            .categories(cats.iter().copied())
             .build()
             .unwrap_or_else(|err| {
                 tracing::warn!(
@@ -135,18 +135,6 @@ impl Analyzer {
     /// Attaches a loaded NER engine for the redactor's per-leaf pass.
     pub(crate) fn attach_ner(&mut self, engine: std::sync::Arc<crate::ner::NerEngine>) {
         self.ner = Some(engine);
-    }
-}
-
-fn map_category(c: PrivacyCategory) -> Category {
-    match c {
-        PrivacyCategory::Personal => Category::Personal,
-        PrivacyCategory::Financial => Category::Financial,
-        PrivacyCategory::Government => Category::Government,
-        PrivacyCategory::Contact => Category::Contact,
-        PrivacyCategory::Network => Category::Network,
-        PrivacyCategory::DigitalIdentity => Category::DigitalIdentity,
-        PrivacyCategory::Crypto => Category::Crypto,
     }
 }
 

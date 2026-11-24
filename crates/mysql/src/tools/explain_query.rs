@@ -1,12 +1,12 @@
 //! MCP tool: `explainQuery`.
 
-use dbmcp_config::DatabaseBackend;
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
 use dbmcp_server::types::{ExplainQueryRequest, QueryResponse, resolve_timeout};
 use dbmcp_sql::Dialect;
 use dbmcp_sql::validation::{validate_read, validate_single_statement};
 use dbmcp_truncate::{Window, fit};
+use dbmcp_types::database;
 
 use super::prelude::*;
 use dbmcp_policy::Access;
@@ -147,7 +147,7 @@ impl MysqlHandler {
             let _ = validate_read(
                 &query,
                 match self.config.backend {
-                    DatabaseBackend::Mariadb => Dialect::Mariadb,
+                    database::Backend::Mariadb => Dialect::Mariadb,
                     _ => Dialect::Mysql,
                 },
             )?;
@@ -156,7 +156,7 @@ impl MysqlHandler {
         }
 
         // The planner cannot parse MariaDB's `ANALYZE` statement, so it cannot tell ruled relations apart.
-        if analyze && self.config.backend == DatabaseBackend::Mariadb && self.policy.is_some() {
+        if analyze && self.config.backend == database::Backend::Mariadb && self.policy.is_some() {
             return Err(ErrorData::internal_error(
                 "column policy: ANALYZE is denied on MariaDB while column rules exist; explain without ANALYZE",
                 None,
@@ -168,7 +168,7 @@ impl MysqlHandler {
 
         // MariaDB replaced `EXPLAIN ANALYZE` with the `ANALYZE` statement.
         let explain_sql = match (analyze, self.config.backend) {
-            (true, DatabaseBackend::Mariadb) => format!("ANALYZE FORMAT=JSON {query}"),
+            (true, database::Backend::Mariadb) => format!("ANALYZE FORMAT=JSON {query}"),
             (true, _) => format!("EXPLAIN ANALYZE {query}"),
             (false, _) => format!("EXPLAIN FORMAT=JSON {query}"),
         };

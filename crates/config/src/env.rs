@@ -11,13 +11,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::database::{DatabaseBackend, DatabaseConfig};
-use crate::log::LogLevel;
+use crate::choices;
 use crate::node::Node;
-use crate::privacy::{PrivacyCategory, PrivacyMode, PrivacyOperator};
 use crate::rules::{self, Rule};
-use crate::ssh::StrictHostKeyChecking;
-use crate::transport::Transport;
+use dbmcp_types::database;
 
 /// Env var naming the YAML config files; a loader input, not a setting.
 pub const CONFIG_FILE_VAR: &str = "DBMCP_CONFIG_FILE";
@@ -293,7 +290,7 @@ const fn int(min: u64, max: u64) -> Kind {
     Kind::Int { min, max }
 }
 
-/// Returns the names in a typed `CHOICES` table, in order.
+/// Returns the names in a [`crate::choices`] table, in order.
 const fn names<T, const N: usize>(choices: &[(&'static str, T)]) -> [&'static str; N] {
     let mut names = [""; N];
     let mut i = 0;
@@ -308,14 +305,14 @@ const fn choice(choices: &'static [&'static str]) -> Kind {
     Kind::Enum { choices }
 }
 
-const TRANSPORT_NAMES: [&str; Transport::CHOICES.len()] = names(Transport::CHOICES);
-const LOG_LEVEL_NAMES: [&str; LogLevel::CHOICES.len()] = names(LogLevel::CHOICES);
-const DB_BACKEND_NAMES: [&str; DatabaseBackend::CHOICES.len()] = names(DatabaseBackend::CHOICES);
-pub(crate) const PRIVACY_OPERATOR_NAMES: [&str; PrivacyOperator::CHOICES.len()] = names(PrivacyOperator::CHOICES);
-const PRIVACY_MODE_NAMES: [&str; PrivacyMode::CHOICES.len()] = names(PrivacyMode::CHOICES);
-const PRIVACY_CATEGORY_NAMES: [&str; PrivacyCategory::CHOICES.len()] = names(PrivacyCategory::CHOICES);
-const STRICT_HOST_KEY_CHECKING_NAMES: [&str; StrictHostKeyChecking::CHOICES.len()] =
-    names(StrictHostKeyChecking::CHOICES);
+const TRANSPORT_NAMES: [&str; choices::TRANSPORT.len()] = names(choices::TRANSPORT);
+const LOG_LEVEL_NAMES: [&str; choices::LOG_LEVEL.len()] = names(choices::LOG_LEVEL);
+const DB_BACKEND_NAMES: [&str; choices::DB_BACKEND.len()] = names(choices::DB_BACKEND);
+pub(crate) const PRIVACY_OPERATOR_NAMES: [&str; choices::PRIVACY_OPERATOR.len()] = names(choices::PRIVACY_OPERATOR);
+const PRIVACY_MODE_NAMES: [&str; choices::PRIVACY_MODE.len()] = names(choices::PRIVACY_MODE);
+const PRIVACY_CATEGORY_NAMES: [&str; choices::PRIVACY_CATEGORY.len()] = names(choices::PRIVACY_CATEGORY);
+const STRICT_HOST_KEY_CHECKING_NAMES: [&str; choices::STRICT_HOST_KEY_CHECKING.len()] =
+    names(choices::STRICT_HOST_KEY_CHECKING);
 
 /// A list of free-form strings.
 const LIST: Kind = Kind::List { choices: None };
@@ -393,7 +390,7 @@ pub const DB_MAX_QUERY_TIMEOUT: Setting = setting(
 pub const DB_PAGE_SIZE: Setting = setting(
     "database.page_size",
     "DBMCP_DB_PAGE_SIZE",
-    int(1, DatabaseConfig::MAX_PAGE_SIZE as u64),
+    int(1, database::Config::MAX_PAGE_SIZE as u64),
 );
 /// `database.max_cell_chars` / `DBMCP_DB_MAX_CELL_CHARS`.
 pub const DB_MAX_CELL_CHARS: Setting = setting(

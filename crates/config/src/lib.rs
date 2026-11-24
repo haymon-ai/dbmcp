@@ -1,10 +1,10 @@
-//! Configuration loading and types for the dbmcp project.
+//! Configuration loading for the dbmcp project.
 //!
-//! [`load`] builds a validated [`Config`] from the process env, optional
-//! env files, and optional YAML config files. The crate's interface is [`load`],
-//! its inputs ([`LoadOptions`], [`home_dir`]), its outcome ([`Loaded`],
-//! [`LoadError`]), and the plain configuration types; the setting table,
-//! sources, and diagnostics stay internal.
+//! [`load`] builds a validated [`dbmcp_types::Config`] from the process env,
+//! optional env files, and optional YAML config files. The crate's interface is
+//! [`load`], its inputs ([`LoadOptions`], [`home_dir`]), and its outcome
+//! ([`Loaded`], [`LoadError`]). The configuration types live in `dbmcp-types`;
+//! the setting table, value names, sources, and diagnostics stay internal.
 //!
 //! Settings resolve with this precedence: non-empty process env > the
 //! last env file's value, if non-empty > the last config file's value >
@@ -17,34 +17,20 @@
 //! token are stored as [`secrecy::SecretString`], so their values never
 //! reach [`Debug`] output.
 
-mod config;
-mod database;
+mod choices;
 mod dotenv;
 mod env;
 mod error;
-mod http;
 mod interpolate;
 mod loader;
-mod log;
 mod node;
 mod options;
-mod origin;
-mod privacy;
 mod rules;
 mod schema;
 mod settings;
 mod source;
-mod ssh;
 mod template;
-mod transport;
+mod validate;
 
-pub use config::Config;
-pub use database::{DatabaseBackend, DatabaseConfig};
-pub use http::HttpConfig;
 pub use loader::{LoadError, Loaded, load};
-pub use log::LogLevel;
 pub use options::{LoadOptions, home_dir};
-pub use origin::AllowedOrigins;
-pub use privacy::{ColumnRule, PrivacyCategory, PrivacyConfig, PrivacyMode, PrivacyOperator};
-pub use ssh::{SshConfig, StrictHostKeyChecking};
-pub use transport::Transport;

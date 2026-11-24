@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::database::DatabaseBackend;
 use crate::env::Setting;
 use crate::source::Source;
+use dbmcp_types::database;
 
 /// What is wrong with the configuration.
 ///
@@ -80,7 +80,7 @@ pub enum ConfigError {
         /// What the segment must be: `def`, `main`, or `database.name`.
         expected: String,
         /// The configured backend.
-        backend: DatabaseBackend,
+        backend: database::Backend,
     },
 
     /// A shortened rule key needs `database.name` to fill its database.
@@ -91,7 +91,7 @@ pub enum ConfigError {
         /// The offending items, e.g. `item 0, item 2`.
         items: String,
         /// The configured backend.
-        backend: DatabaseBackend,
+        backend: database::Backend,
     },
 
     /// A rule lists the same column twice.

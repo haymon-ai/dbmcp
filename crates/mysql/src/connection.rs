@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::{DatabaseBackend, DatabaseConfig};
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::support::{self, Variant};
+use dbmcp_types::database;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
 use sqlx::AssertSqlSafe;
@@ -26,7 +26,7 @@ pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
 /// Owns every `MySqlPool` the handler uses and the logic that builds them.
 #[derive(Clone)]
 pub(crate) struct MysqlConnection {
-    config: DatabaseConfig,
+    config: database::Config,
     pools: Cache<String, MySqlPool>,
     /// Set once a connection read the server version, shared by every pool.
     checked: Arc<AtomicBool>,
@@ -47,7 +47,7 @@ impl MysqlConnection {
     ///
     /// Does **not** establish a database connection. All pools — including
     /// the default — are created lazily on first request via [`pool`](Self::pool).
-    pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
+    pub(crate) fn new(config: &database::Config, rules: bool) -> Self {
         info!(
             "MySQL lazy connection pool created (max size: {})",
             config.max_pool_size
@@ -164,9 +164,9 @@ impl MysqlConnection {
 
         let mut pool_ops = sqlx::pool::PoolOptions::new()
             .max_connections(config.max_pool_size)
-            .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
-            .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
-            .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+            .min_connections(database::Config::DEFAULT_MIN_CONNECTIONS)
+            .idle_timeout(Duration::from_secs(database::Config::DEFAULT_IDLE_TIMEOUT_SECS))
+            .max_lifetime(Duration::from_secs(database::Config::DEFAULT_MAX_LIFETIME_SECS));
 
         if let Some(timeout) = config.connection_timeout {
             pool_ops = pool_ops.acquire_timeout(Duration::from_secs(timeout));
@@ -195,7 +195,12 @@ impl MysqlConnection {
 ///
 /// Sets `checked` only once every read succeeded, so a failed read or probe
 /// leaves the check to the next connection.
-async fn check_version(conn: &mut sqlx::MySqlConnection, checked: &AtomicBool, backend: DatabaseBackend, rules: bool) {
+async fn check_version(
+    conn: &mut sqlx::MySqlConnection,
+    checked: &AtomicBool,
+    backend: database::Backend,
+    rules: bool,
+) {
     if checked.load(Ordering::Acquire) {
         return;
     }
@@ -218,7 +223,7 @@ async fn check_version(conn: &mut sqlx::MySqlConnection, checked: &AtomicBool, b
     } else if let Some(line) = flavour::line(&version, server) {
         let variant = match flavour::variant(&version) {
             Some(variant) => Some(variant),
-            None if backend == DatabaseBackend::Mysql => {
+            None if backend == database::Backend::Mysql => {
                 match sqlx::raw_sql("SHOW VARIABLES LIKE 'aurora_version'")
                     .fetch_optional(&mut *conn)
                     .await
@@ -274,7 +279,7 @@ impl Connection for MysqlConnection {
 
     async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection, limit: Duration) -> Result<(), sqlx::Error> {
         let query = match self.config.backend {
-            DatabaseBackend::Mariadb => sqlx::query("SET SESSION max_statement_time = ?").bind(limit.as_secs_f64()),
+            database::Backend::Mariadb => sqlx::query("SET SESSION max_statement_time = ?").bind(limit.as_secs_f64()),
             _ => sqlx::query("SET SESSION max_execution_time = ?")
                 .bind(u64::try_from(limit.as_millis()).unwrap_or(u64::MAX)),
         };
@@ -312,15 +317,15 @@ pub(crate) fn quote_ident(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn base_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Mysql,
+    fn base_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Mysql,
             host: "db.example.com".into(),
             port: 3307,
             user: "admin".into(),
             password: Some("s3cret".into()),
             name: Some("mydb".into()),
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
@@ -336,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn pool_without_password() {
         let pool = MysqlConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 password: None,
                 ..base_config()
             },
@@ -351,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn pool_without_database_name() {
         let pool = MysqlConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: None,
                 ..base_config()
             },
@@ -372,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn defaults_db_to_empty_when_name_missing() {
         let connection = MysqlConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: None,
                 ..base_config()
             },

@@ -5,10 +5,10 @@
 //! the MCP `ServerHandler` surface and exposes a small set of thin
 //! delegator methods that the per-tool implementations call.
 
-use dbmcp_config::{Config, DatabaseConfig, PrivacyConfig};
 use dbmcp_privacy::{MaybeRedact, Redactor};
 use dbmcp_server::{PoolFuture, Pools, Server, ToolHandler, ToolRouterExt, ToolSpec, server_info};
 use dbmcp_sql::Connection;
+use dbmcp_types::{Config, database, privacy};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
@@ -79,11 +79,11 @@ const TOOLS: &[ToolSpec<PostgresHandler>] = &[
 /// router.
 #[derive(Clone)]
 pub struct PostgresHandler {
-    pub(crate) config: DatabaseConfig,
+    pub(crate) config: database::Config,
     pub(crate) connection: PostgresConnection,
     pub(crate) redactor: Option<Redactor>,
     /// PII settings with column rules; `None` without rules.
-    pub(crate) policy: Option<PrivacyConfig>,
+    pub(crate) policy: Option<privacy::Config>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -164,24 +164,23 @@ impl ServerHandler for PostgresHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
-    fn base_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Postgres,
+    fn base_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Postgres,
             host: "pg.example.com".into(),
             port: 5433,
             user: "pgadmin".into(),
             password: Some("pgpass".into()),
             name: None,
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
     fn handler(read_only: bool) -> PostgresHandler {
         PostgresHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
                 read_only,
                 ..base_config()
             },
@@ -195,8 +194,8 @@ mod tests {
     /// Handler whose config pins a specific database name.
     fn pinned_handler(read_only: bool) -> PostgresHandler {
         PostgresHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
                 read_only,
                 name: Some("mydb".into()),
                 ..base_config()
@@ -211,8 +210,8 @@ mod tests {
     #[tokio::test]
     async fn handler_exposes_connection_default_db() {
         let handler = PostgresHandler::new(&Config {
-            transport: dbmcp_config::Transport::Stdio,
-            database: DatabaseConfig {
+            transport: dbmcp_types::Transport::Stdio,
+            database: database::Config {
                 name: Some("mydb".into()),
                 ..base_config()
             },

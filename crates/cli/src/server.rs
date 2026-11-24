@@ -1,17 +1,17 @@
 //! Server construction and process lifecycle helpers.
 //!
-//! [`serve`] maps the configured [`DatabaseBackend`] onto the matching
+//! [`serve`] maps the configured [`database::Backend`] onto the matching
 //! concrete adapter, tunnelling through SSH when configured, and runs it
 //! over the selected transport until shutdown.
 //! [`shutdown_signal`] resolves on Ctrl-C or `SIGTERM`.
 
-use dbmcp_config::{Config, DatabaseBackend, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::{ErrorContext, Server};
 use dbmcp_sql::is_connection_error;
 use dbmcp_sqlite::SqliteHandler;
 use dbmcp_ssh::Tunnel;
+use dbmcp_types::{Config, Transport, database};
 use tracing::info;
 
 use crate::error::ErrorKind;
@@ -96,9 +96,9 @@ pub(crate) async fn serve(config: &Config) -> Result<(), ErrorKind> {
 #[allow(clippy::result_large_err)]
 pub(crate) fn build_server(config: &Config) -> Result<Server, ErrorKind> {
     match config.database.backend {
-        DatabaseBackend::Sqlite => init(SqliteHandler::new(config)),
-        DatabaseBackend::Postgres => init(PostgresHandler::new(config)),
-        DatabaseBackend::Mysql | DatabaseBackend::Mariadb => init(MysqlHandler::new(config)),
+        database::Backend::Sqlite => init(SqliteHandler::new(config)),
+        database::Backend::Postgres => init(PostgresHandler::new(config)),
+        database::Backend::Mysql | database::Backend::Mariadb => init(MysqlHandler::new(config)),
     }
 }
 

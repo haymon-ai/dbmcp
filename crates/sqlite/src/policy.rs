@@ -22,13 +22,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
-use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Origin,
     Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, Step, WrittenName, admit, settle,
 };
 use dbmcp_sql::Connection as _;
 use dbmcp_truncate::Window;
+use dbmcp_types::{database, privacy};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::ast::Statement;
@@ -135,7 +135,7 @@ impl SqliteHandler {
     /// else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PrivacyConfig,
+        policy: &privacy::Config,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -157,7 +157,7 @@ impl SqliteHandler {
 async fn run<'c>(
     conn: &mut sqlx::SqliteConnection,
     read_only: bool,
-    config: &'c PrivacyConfig,
+    config: &'c privacy::Config,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
@@ -228,7 +228,7 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
     let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
-    let mut analysis = Analysis::new(sql, DatabaseBackend::Sqlite);
+    let mut analysis = Analysis::new(sql, database::Backend::Sqlite);
     analysis.creates_in(Some("main".into()));
     let mut entries = Vec::new();
     loop {
@@ -454,10 +454,10 @@ fn echoing(error: &sqlx::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dbmcp_config::{ColumnRule, Config, DatabaseConfig, PrivacyOperator, Transport};
     use dbmcp_policy::{NamePart, Unfit};
     use dbmcp_privacy::cells::ShapeError;
     use dbmcp_sql::SqlError;
+    use dbmcp_types::{Config, Transport};
     use sqlx::Connection as _;
 
     use super::*;
@@ -503,36 +503,36 @@ mod tests {
         locate(&listed(), &reference(schema, name)).map(|relation| format!("{}.{}", relation.schema, relation.name))
     }
 
-    fn column_rule(key: [&str; 4], entity: &'static str) -> ColumnRule {
-        ColumnRule {
+    fn column_rule(key: [&str; 4], entity: &'static str) -> privacy::ColumnRule {
+        privacy::ColumnRule {
             name: "rule".into(),
             item: 0,
             key: key.map(String::from),
-            entity,
-            operator: PrivacyOperator::Hash,
+            entity: entity.parse().expect("known entity"),
+            operator: privacy::Operator::Hash,
         }
     }
 
-    fn rules_config() -> PrivacyConfig {
-        PrivacyConfig {
+    fn rules_config() -> privacy::Config {
+        privacy::Config {
             key: Some(KEY.into()),
             rules: vec![
                 column_rule(["main", "main", "users", "email"], "EMAIL_ADDRESS"),
                 column_rule(["main", "main", "users", "ssn"], "US_SSN"),
             ],
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }
     }
 
     /// Builds a handler on a fresh in-memory database holding [`SETUP`] when writable.
-    async fn handler(read_only: bool, privacy: PrivacyConfig) -> SqliteHandler {
+    async fn handler(read_only: bool, privacy: privacy::Config) -> SqliteHandler {
         let handler = SqliteHandler::new(&Config {
             transport: Transport::Stdio,
-            database: DatabaseConfig {
-                backend: DatabaseBackend::Sqlite,
+            database: database::Config {
+                backend: database::Backend::Sqlite,
                 name: Some(":memory:".into()),
                 read_only,
-                ..DatabaseConfig::default()
+                ..database::Config::default()
             },
             http: None,
             privacy: Some(privacy),
@@ -923,6 +923,6 @@ mod tests {
     #[tokio::test]
     async fn policy_exists_only_with_rules() {
         assert!(handler(false, rules_config()).await.policy.is_some());
-        assert!(handler(false, PrivacyConfig::default()).await.policy.is_none());
+        assert!(handler(false, privacy::Config::default()).await.policy.is_none());
     }
 }

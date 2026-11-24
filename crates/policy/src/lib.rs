@@ -58,7 +58,7 @@
 //! touches a database. Rejection messages name only catalog identifiers,
 //! never a rule's name, entity, or operator, nor a value.
 //!
-//! [`PrivacyConfig`]: dbmcp_config::PrivacyConfig
+//! [`PrivacyConfig`]: dbmcp_types::privacy::Config
 //! [`Position`]: dbmcp_privacy::cells::Position
 
 mod analysis;

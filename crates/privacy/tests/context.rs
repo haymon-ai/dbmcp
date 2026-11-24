@@ -1,7 +1,7 @@
 //! Context-required recognizers through the redactor: business numbers stay, real ones go.
 
-use dbmcp_config::{PrivacyConfig, PrivacyOperator};
 use dbmcp_privacy::redact::Redactor;
+use dbmcp_types::privacy;
 use serde_json::json;
 
 /// Business identifiers that share a recognizer's shape and check digit.
@@ -105,9 +105,9 @@ const REDACTED: &[(&str, &str, &str)] = &[
 
 /// Redacts one `{column: value}` row with the `replace` operator.
 async fn redact(column: &str, value: &str) -> String {
-    let config = PrivacyConfig {
-        operator: PrivacyOperator::Replace,
-        ..PrivacyConfig::default()
+    let config = privacy::Config {
+        operator: privacy::Operator::Replace,
+        ..privacy::Config::default()
     };
     let redactor = Redactor::from_config(Some(&config))
         .expect("redactor builds")

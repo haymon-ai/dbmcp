@@ -11,18 +11,18 @@
 mod probe;
 mod rows;
 
-use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PrivacyConfig, PrivacyOperator, Transport};
 use dbmcp_mysql::MysqlHandler;
 use dbmcp_mysql::types::ListEntries;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
 use dbmcp_sql::support::Line;
+use dbmcp_types::{Config, Transport, database, privacy};
 use serde_json::Value;
 
 /// Returns the backend under test from `DBMCP_DB_BACKEND` (default `Mysql`).
-fn backend() -> DatabaseBackend {
+fn backend() -> database::Backend {
     match std::env::var("DBMCP_DB_BACKEND").as_deref() {
-        Ok("mariadb") => DatabaseBackend::Mariadb,
-        _ => DatabaseBackend::Mysql,
+        Ok("mariadb") => database::Backend::Mariadb,
+        _ => database::Backend::Mysql,
     }
 }
 
@@ -36,8 +36,8 @@ async fn server_version() -> Line {
     Line::parse(version).unwrap_or_else(|| panic!("unparsable VERSION(): {version}"))
 }
 
-fn base_db_config(read_only: bool) -> DatabaseConfig {
-    DatabaseConfig {
+fn base_db_config(read_only: bool) -> database::Config {
+    database::Config {
         backend: backend(),
         host: std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port: std::env::var("DBMCP_DB_PORT")
@@ -48,7 +48,7 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
         password: std::env::var("DBMCP_DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
-        ..DatabaseConfig::default()
+        ..database::Config::default()
     }
 }
 
@@ -56,7 +56,7 @@ fn handler(read_only: bool) -> MysqlHandler {
     handler_with(base_db_config(read_only))
 }
 
-fn handler_with(config: DatabaseConfig) -> MysqlHandler {
+fn handler_with(config: database::Config) -> MysqlHandler {
     MysqlHandler::new(&Config {
         transport: Transport::Stdio,
         database: config,
@@ -102,7 +102,7 @@ async fn assert_statement_gone(marker: &str) {
 /// Reads the session statement timeout variable for the backend under test.
 async fn session_timeout(handler: &MysqlHandler) -> f64 {
     let variable = match backend() {
-        DatabaseBackend::Mariadb => "max_statement_time",
+        database::Backend::Mariadb => "max_statement_time",
         _ => "max_execution_time",
     };
     let response = handler
@@ -117,8 +117,8 @@ async fn session_timeout(handler: &MysqlHandler) -> f64 {
 }
 
 /// Returns a size-1 pool config with the given query timeout.
-fn single_connection_config(query_timeout: u64) -> DatabaseConfig {
-    DatabaseConfig {
+fn single_connection_config(query_timeout: u64) -> database::Config {
+    database::Config {
         query_timeout,
         max_pool_size: 1,
         connection_timeout: Some(5),
@@ -146,7 +146,7 @@ async fn assert_timed_out<T>(handler: &MysqlHandler, result: Result<T, rmcp::Err
 }
 
 fn handler_with_page_size(page_size: u16) -> MysqlHandler {
-    handler_with(DatabaseConfig {
+    handler_with(database::Config {
         page_size,
         ..base_db_config(false)
     })
@@ -495,7 +495,7 @@ async fn test_uses_default_pool_for_matching_database() {
 
 #[tokio::test]
 async fn test_server_timeout_mapped_under_zero() {
-    if backend() != DatabaseBackend::Mariadb {
+    if backend() != database::Backend::Mariadb {
         eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb");
         return;
     }
@@ -511,12 +511,12 @@ async fn test_server_timeout_mapped_under_zero() {
 
 #[tokio::test]
 async fn test_session_timeout_set_from_query_timeout() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         ..base_db_config(true)
     });
     let expected = match backend() {
-        DatabaseBackend::Mariadb => 3.0,
+        database::Backend::Mariadb => 3.0,
         _ => 3000.0,
     };
     // The time left of the 3 s query timeout when the statement starts.
@@ -526,13 +526,13 @@ async fn test_session_timeout_set_from_query_timeout() {
 
 #[tokio::test]
 async fn test_read_query_timeout_sets_session_timeout() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
     });
     let variable = match backend() {
-        DatabaseBackend::Mariadb => "max_statement_time",
+        database::Backend::Mariadb => "max_statement_time",
         _ => "max_execution_time",
     };
     let response = handler
@@ -545,7 +545,7 @@ async fn test_read_query_timeout_sets_session_timeout() {
         .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
         .expect("numeric session timeout");
     let expected = match backend() {
-        DatabaseBackend::Mariadb => 7.0,
+        database::Backend::Mariadb => 7.0,
         _ => 7000.0,
     };
     // The time left of the 7 s call timeout when the statement starts.
@@ -554,7 +554,7 @@ async fn test_read_query_timeout_sets_session_timeout() {
 
 #[tokio::test]
 async fn test_read_query_timeout_above_cap_is_rejected() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -573,7 +573,7 @@ async fn test_read_query_timeout_above_cap_is_rejected() {
 
 #[tokio::test]
 async fn test_explain_query_timeout_above_cap_is_rejected() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -587,7 +587,7 @@ async fn test_explain_query_timeout_above_cap_is_rejected() {
 
 #[tokio::test]
 async fn test_query_timeout_zero_leaves_server_defaults() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 0,
         ..base_db_config(true)
     });
@@ -609,7 +609,7 @@ async fn test_server_timeout_stops_slow_read() {
 
 #[tokio::test]
 async fn test_server_timeout_stops_slow_write() {
-    if backend() != DatabaseBackend::Mariadb {
+    if backend() != database::Backend::Mariadb {
         eprintln!("skip: MySQL's server timeout covers SELECT only");
         return;
     }
@@ -627,7 +627,7 @@ async fn test_server_timeout_stops_slow_write() {
 
 #[tokio::test]
 async fn test_backstop_kills_statement_outside_server_timeout() {
-    if backend() != DatabaseBackend::Mysql {
+    if backend() != database::Backend::Mysql {
         eprintln!("skip: needs DBMCP_DB_BACKEND=mysql");
         return;
     }
@@ -645,14 +645,14 @@ async fn test_backstop_kills_statement_outside_server_timeout() {
 
 #[tokio::test]
 async fn test_backstop_kills_statement_when_session_set_fails() {
-    if backend() != DatabaseBackend::Mariadb {
+    if backend() != database::Backend::Mariadb {
         eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb");
         return;
     }
     // Backend mismatch: MariaDB rejects max_execution_time, so the SET only warns
     // and the backstop fires at the timeout, without grace.
-    let handler = handler_with(DatabaseConfig {
-        backend: DatabaseBackend::Mysql,
+    let handler = handler_with(database::Config {
+        backend: database::Backend::Mysql,
         ..single_connection_config(1)
     });
     let start = std::time::Instant::now();
@@ -851,7 +851,7 @@ async fn test_explain_query_analyze() {
     };
     // MySQL returns a text tree under `EXPLAIN`, MariaDB a JSON document under `ANALYZE`.
     let (column, statistic) = match backend() {
-        DatabaseBackend::Mariadb => ("ANALYZE", "r_rows"),
+        database::Backend::Mariadb => ("ANALYZE", "r_rows"),
         _ => ("EXPLAIN", "actual time"),
     };
     let plan = row[column].as_str().expect("plan column should be a string");
@@ -2059,7 +2059,7 @@ async fn test_read_query_vector_is_number_array() {
     // VECTOR arrived in MySQL 9.0 and MariaDB 11.7.
     let version = server_version().await;
     let (sql, expected, vector) = match backend() {
-        DatabaseBackend::Mariadb => (
+        database::Backend::Mariadb => (
             "SELECT VEC_FromText('[1.5,2,3]') AS v",
             Value::from("AADAPwAAAEAAAEBA"),
             version >= Line::new(11, 7),
@@ -2105,7 +2105,7 @@ async fn test_read_query_json_column_shape_per_flavour() {
 
     let metadata = &response.rows[0]["metadata"];
     match backend() {
-        DatabaseBackend::Mariadb => {
+        database::Backend::Mariadb => {
             let text = metadata.as_str().expect("MariaDB JSON should arrive as a string");
             let parsed: Value = serde_json::from_str(text).expect("MariaDB JSON string should parse");
             assert_eq!(parsed, expected);
@@ -4571,9 +4571,9 @@ fn handler_with_redaction(redact_privacy: bool) -> MysqlHandler {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -4583,15 +4583,15 @@ fn handler_with_redaction(redact_privacy: bool) -> MysqlHandler {
 /// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
 const PRIVACY_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
 
-fn handler_with_operator(operator: PrivacyOperator) -> MysqlHandler {
+fn handler_with_operator(operator: privacy::Operator) -> MysqlHandler {
     MysqlHandler::new(&Config {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             operator,
-            key: (operator == PrivacyOperator::Hash).then(|| PRIVACY_TEST_KEY.into()),
-            ..PrivacyConfig::default()
+            key: (operator == privacy::Operator::Hash).then(|| PRIVACY_TEST_KEY.into()),
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -4678,7 +4678,7 @@ async fn explain_query_redacts_when_enabled() {
 
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
-    let handler = handler_with_operator(PrivacyOperator::Mask);
+    let handler = handler_with_operator(privacy::Operator::Mask);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -4690,7 +4690,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
-    let handler = handler_with_operator(PrivacyOperator::Redact);
+    let handler = handler_with_operator(privacy::Operator::Redact);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -4700,7 +4700,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_keyed_token() {
-    let handler = handler_with_operator(PrivacyOperator::Hash);
+    let handler = handler_with_operator(privacy::Operator::Hash);
     let rows = handler
         .read_query(
             "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
@@ -4951,7 +4951,7 @@ async fn test_read_only_rejects_side_effecting_functions() {
 async fn test_read_only_session_per_connection() {
     // MariaDB names the variable `tx_read_only` before 11.1.
     let variable = match backend() {
-        DatabaseBackend::Mariadb if server_version().await < Line::new(11, 1) => "tx_read_only",
+        database::Backend::Mariadb if server_version().await < Line::new(11, 1) => "tx_read_only",
         _ => "transaction_read_only",
     };
     for (read_only, expected) in [(true, 1), (false, 0)] {
@@ -5048,15 +5048,15 @@ async fn test_write_query_reports_rows_affected_and_insert_id() {
 fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_privacy: bool) -> MysqlHandler {
     MysqlHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             max_cell_chars,
             max_response_chars,
             ..base_db_config(false)
         },
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -5110,7 +5110,7 @@ async fn read_query_response_cap_counts_unpaged_rows_it_drops() {
 
 #[tokio::test]
 async fn write_query_response_cap_counts_returned_rows_it_drops() {
-    if backend() != DatabaseBackend::Mariadb {
+    if backend() != database::Backend::Mariadb {
         eprintln!("skip: needs DBMCP_DB_BACKEND=mariadb (INSERT ... RETURNING)");
         return;
     }
@@ -5242,43 +5242,53 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
 
 // Column rules (`privacy.rules`)
 
-fn column_rule(table: &str, column: &str, entity: &'static str, operator: PrivacyOperator) -> ColumnRule {
-    ColumnRule {
+fn column_rule(table: &str, column: &str, entity: &'static str, operator: privacy::Operator) -> privacy::ColumnRule {
+    privacy::ColumnRule {
         name: format!("{table}_{column}"),
         item: 0,
         key: ["def", "app", table, column].map(String::from),
-        entity,
+        entity: entity.parse().expect("known entity"),
         operator,
     }
 }
 
-fn standard_rules() -> Vec<ColumnRule> {
+fn standard_rules() -> Vec<privacy::ColumnRule> {
     vec![
-        column_rule("users", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("orders", "customer_email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-        column_rule("users", "ssn", "US_SSN", PrivacyOperator::Redact),
-        column_rule("users", "credit_card", "CREDIT_CARD", PrivacyOperator::Replace),
-        column_rule("policy_hashed", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("policy_hashed_default", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
+        column_rule("users", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+        column_rule("orders", "customer_email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+        column_rule("users", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+        column_rule("users", "ssn", "US_SSN", privacy::Operator::Redact),
+        column_rule("users", "credit_card", "CREDIT_CARD", privacy::Operator::Replace),
+        column_rule("policy_hashed", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+        column_rule("policy_hashed_copy", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
+        column_rule(
+            "policy_hashed_default",
+            "email",
+            "EMAIL_ADDRESS",
+            privacy::Operator::Hash,
+        ),
         column_rule(
             "policy_hashed_generated",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "policy_hashed_on_update",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
-        column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("policy_hashed_trigger", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
-        column_rule("policy_masked", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-        column_rule("policy_masked", "note", "PHONE_NUMBER", PrivacyOperator::Mask),
-        column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
+        column_rule("policy_cascade_child", "k", "EMAIL_ADDRESS", privacy::Operator::Hash),
+        column_rule(
+            "policy_hashed_trigger",
+            "email",
+            "EMAIL_ADDRESS",
+            privacy::Operator::Hash,
+        ),
+        column_rule("policy_masked", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+        column_rule("policy_masked", "note", "PHONE_NUMBER", privacy::Operator::Mask),
+        column_rule("policy_masked_copy", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
     ]
 }
 
@@ -5286,22 +5296,22 @@ fn standard_rules() -> Vec<ColumnRule> {
 fn ruled_handler(user: Option<&str>, page_size: u16) -> MysqlHandler {
     let base = base_db_config(false);
     let database = match user {
-        Some(user) => DatabaseConfig {
+        Some(user) => database::Config {
             page_size,
             user: user.into(),
             password: None,
             ..base
         },
-        None => DatabaseConfig { page_size, ..base },
+        None => database::Config { page_size, ..base },
     };
     MysqlHandler::new(&Config {
         transport: Transport::Stdio,
         database,
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             key: Some(PRIVACY_TEST_KEY.into()),
             rules: standard_rules(),
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -5384,7 +5394,7 @@ async fn column_rules_follow_star_order_over_right_using_and_natural_joins() {
     };
     // MySQL reads a RIGHT JOIN ... ON operand right side first; MariaDB does not.
     let operand = match backend() {
-        DatabaseBackend::Mariadb => vec![
+        database::Backend::Mariadb => vec![
             Value::from(1),
             Value::from(7),
             Value::from("Alice Johnson"),
@@ -5687,7 +5697,7 @@ async fn column_rules_refuse_explain_analyze_of_ruled_relations() {
         .expect_err("ruled analyze");
     // MariaDB refuses every analyze under rules before the planner runs.
     let expected = match backend() {
-        DatabaseBackend::Mariadb => "ANALYZE is denied on MariaDB while column rules exist",
+        database::Backend::Mariadb => "ANALYZE is denied on MariaDB while column rules exist",
         _ => "EXPLAIN ANALYZE on ruled relation",
     };
     assert!(error.message.contains(expected), "{}", error.message);
@@ -5700,7 +5710,7 @@ async fn column_rules_analyze_of_unruled_relations_per_flavour() {
         .await;
     match backend() {
         // The planner cannot read MariaDB's ANALYZE statement, so every one is denied.
-        DatabaseBackend::Mariadb => {
+        database::Backend::Mariadb => {
             let error = result.expect_err("MariaDB analyze under rules");
             assert!(
                 error
@@ -5744,15 +5754,15 @@ async fn column_rules_restore_the_explain_format_after_a_pruned_plan() {
     // One pooled connection, so every call reuses the session the pin touched.
     let handler = MysqlHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             max_pool_size: 1,
             ..base_db_config(false)
         },
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             key: Some(PRIVACY_TEST_KEY.into()),
             rules: standard_rules(),
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -5828,7 +5838,7 @@ async fn column_rules_redact_returning_rows() {
     let insert = "INSERT INTO policy_hashed (id, email) SELECT 90, email FROM policy_hashed WHERE id = 1 \
                   RETURNING id, email";
     let delete = "DELETE FROM policy_hashed WHERE id = 90 RETURNING email";
-    if backend() == DatabaseBackend::Mariadb {
+    if backend() == database::Backend::Mariadb {
         for query in [insert, delete] {
             let response = handler.write_query(query.into(), None).await.expect(query);
             assert_eq!(response.rows.len(), 1, "{query}");
@@ -6083,7 +6093,7 @@ async fn column_rules_withhold_value_echoing_errors() {
         assert!(refusal.contains("withheld"), "{refusal}");
         assert!(!refusal.contains("at row"), "{refusal}");
     }
-    if backend() == DatabaseBackend::Mysql {
+    if backend() == database::Backend::Mysql {
         let refusal = ruled_refusal(&handler, "SELECT JSON_EXTRACT('{}', email) AS x FROM users").await;
         assert!(refusal.contains("withheld"), "{refusal}");
         // 3141 reports the position of the invalid JSON text, here the first character's code.
@@ -6149,7 +6159,7 @@ async fn column_rules_follow_renamed_columns() {
     let handler = ruled_handler(None, 100);
     let derived_list = "SELECT * FROM (SELECT email, name FROM users WHERE id = 1) AS t(a, b)";
     // MariaDB parses a derived column list (`AS t(a, b)`) from 11.7 on.
-    let derived_lists = backend() != DatabaseBackend::Mariadb || server_version().await >= Line::new(11, 7);
+    let derived_lists = backend() != database::Backend::Mariadb || server_version().await >= Line::new(11, 7);
     for query in [
         "WITH c(a, b) AS (SELECT email, name FROM users WHERE id = 1) SELECT * FROM c",
         derived_list,
@@ -6213,7 +6223,7 @@ async fn read_query_keys_follow_select_order() {
 
 #[tokio::test]
 async fn json_object_comes_back_in_canonical_order() {
-    if backend() == DatabaseBackend::Mariadb {
+    if backend() == database::Backend::Mariadb {
         eprintln!("skip: MariaDB returns JSON as text");
         return;
     }
@@ -6225,7 +6235,7 @@ async fn json_object_comes_back_in_canonical_order() {
 
 #[tokio::test]
 async fn write_query_returning_keys_follow_returning_order() {
-    if backend() != DatabaseBackend::Mariadb {
+    if backend() != database::Backend::Mariadb {
         eprintln!("skip: MySQL has no RETURNING");
         return;
     }

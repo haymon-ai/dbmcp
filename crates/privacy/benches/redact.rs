@@ -3,8 +3,8 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use dbmcp_config::{PrivacyConfig, PrivacyOperator};
 use dbmcp_privacy::Redactor;
+use dbmcp_types::privacy;
 use serde_json::{Map, Value, json};
 
 mod common;
@@ -79,9 +79,9 @@ fn large_blob_rows(pool: &[String]) -> Vec<Value> {
 }
 
 fn bench_redact_shapes(c: &mut Criterion) {
-    let config = PrivacyConfig {
-        operator: PrivacyOperator::Replace,
-        ..PrivacyConfig::default()
+    let config = privacy::Config {
+        operator: privacy::Operator::Replace,
+        ..privacy::Config::default()
     };
     let redactor = Redactor::from_config(Some(&config))
         .expect("replace needs no key or model")

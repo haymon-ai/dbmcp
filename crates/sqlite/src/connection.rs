@@ -10,10 +10,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use dbmcp_config::DatabaseConfig;
 use dbmcp_sql::Connection;
 use dbmcp_sql::SqlError;
 use dbmcp_sql::support::{self, Line};
+use dbmcp_types::database;
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use sqlparser::ast::Statement;
@@ -30,7 +30,7 @@ const PROGRESS_OPS: i32 = 1000;
 /// Owns the lazy `SQLite` pool and the logic that builds it.
 #[derive(Clone)]
 pub(crate) struct SqliteConnection {
-    config: DatabaseConfig,
+    config: database::Config,
     pool: SqlitePool,
 }
 
@@ -44,7 +44,7 @@ impl SqliteConnection {
     /// Builds the connection and its lazy pool.
     ///
     /// `rules` tells whether `privacy.rules` exist, for the version tier warning.
-    pub(crate) fn new(config: &DatabaseConfig, rules: bool) -> Self {
+    pub(crate) fn new(config: &database::Config, rules: bool) -> Self {
         info!("SQLite lazy connection pool created");
 
         Self {
@@ -158,7 +158,7 @@ impl Connection for SqliteConnection {
         Ok(())
     }
 }
-/// Creates a lazy `SQLite` pool from a [`DatabaseConfig`].
+/// Creates a lazy `SQLite` pool from a [`database::Config`].
 ///
 /// Forces `max_connections` to 1 — `SQLite` is a single-writer backend.
 /// Opens the file read-only when `config.read_only` is set, backing the
@@ -166,15 +166,15 @@ impl Connection for SqliteConnection {
 /// Otherwise switches `query_only` off on every acquire, undoing
 /// [`fetch_read_only`](Connection::fetch_read_only). Also warns once when
 /// the library is outside Supported; that check never fails the connection.
-fn create_lazy_pool(config: &DatabaseConfig, rules: bool) -> SqlitePool {
+fn create_lazy_pool(config: &database::Config, rules: bool) -> SqlitePool {
     let conn_ops = SqliteConnectOptions::new()
         .filename(config.name.as_deref().unwrap_or_default())
         .read_only(config.read_only);
     let mut pool_ops = sqlx::pool::PoolOptions::new()
         .max_connections(1)
-        .min_connections(DatabaseConfig::DEFAULT_MIN_CONNECTIONS)
-        .idle_timeout(Duration::from_secs(DatabaseConfig::DEFAULT_IDLE_TIMEOUT_SECS))
-        .max_lifetime(Duration::from_secs(DatabaseConfig::DEFAULT_MAX_LIFETIME_SECS));
+        .min_connections(database::Config::DEFAULT_MIN_CONNECTIONS)
+        .idle_timeout(Duration::from_secs(database::Config::DEFAULT_IDLE_TIMEOUT_SECS))
+        .max_lifetime(Duration::from_secs(database::Config::DEFAULT_MAX_LIFETIME_SECS));
 
     if !config.read_only {
         pool_ops = pool_ops.before_acquire(|conn, _meta| {
@@ -229,16 +229,15 @@ pub(crate) fn quote_ident(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbmcp_config::DatabaseBackend;
 
     /// Counts rows of an endless recursive CTE; only a timeout stops it.
     const ENDLESS: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c";
 
-    fn base_config() -> DatabaseConfig {
-        DatabaseConfig {
-            backend: DatabaseBackend::Sqlite,
+    fn base_config() -> database::Config {
+        database::Config {
+            backend: database::Backend::Sqlite,
             name: Some("test.db".into()),
-            ..DatabaseConfig::default()
+            ..database::Config::default()
         }
     }
 
@@ -251,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn create_lazy_pool_without_name() {
         let pool = create_lazy_pool(
-            &DatabaseConfig {
+            &database::Config {
                 name: None,
                 ..base_config()
             },
@@ -263,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn bundled_sqlite_is_supported() {
         let pool = create_lazy_pool(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 ..base_config()
             },
@@ -275,7 +274,7 @@ mod tests {
             .expect("read sqlite_version()");
         let line = Line::parse(&version).expect("parse sqlite_version()");
         assert!(
-            support::supported(DatabaseBackend::Sqlite).contains(&line),
+            support::supported(database::Backend::Sqlite).contains(&line),
             "bundled SQLite {version} is missing from the Supported list"
         );
     }
@@ -299,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn ping_succeeds_on_memory_db() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 ..base_config()
             },
@@ -311,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn ping_succeeds_while_connection_busy() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 ..base_config()
             },
@@ -327,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn ping_fails_on_missing_file() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some("/nonexistent-dbmcp-dir/missing.db".into()),
                 ..base_config()
             },
@@ -339,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn read_only_connection_rejects_writes() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 read_only: true,
                 ..base_config()
@@ -408,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn read_json_reads_in_read_only_mode() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 read_only: true,
                 ..base_config()
@@ -427,7 +426,7 @@ mod tests {
     async fn read_json_rejects_writes_in_read_only_mode() {
         // Without `query_only`, only the read-only file stops this write.
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 read_only: true,
                 ..base_config()
@@ -444,7 +443,7 @@ mod tests {
     #[tokio::test]
     async fn read_write_connection_allows_writes() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 read_only: false,
                 ..base_config()
@@ -477,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn timed_out_statement_stops_and_frees_connection() {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 query_timeout: 1,
                 ..base_config()
@@ -511,7 +510,7 @@ mod tests {
     /// between statements, as in production.
     async fn memory_with_table() -> SqliteConnection {
         let connection = SqliteConnection::new(
-            &DatabaseConfig {
+            &database::Config {
                 name: Some(":memory:".into()),
                 read_only: false,
                 ..base_config()

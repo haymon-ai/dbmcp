@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use dbmcp_config::{PrivacyCategory, PrivacyMode, PrivacyOperator};
+use dbmcp_types::privacy;
 use secrecy::ExposeSecret;
 use serde_json::Value;
 
@@ -98,7 +98,7 @@ pub struct Redactor {
     /// Global detection; `None` under `rules` mode, where only ruled columns change.
     analyzer: Option<Arc<Analyzer>>,
     /// The operator global detection applies to every span.
-    global: PrivacyOperator,
+    global: privacy::Operator,
     /// The keyed `hash` operator of global detection.
     hash: Operator,
     /// The `hash` operator of column rules, under a key derived for rules only.
@@ -123,14 +123,14 @@ impl Redactor {
     /// Builds a `Replace` redactor over `analyzer`.
     #[cfg(test)]
     pub(crate) fn with_analyzer(analyzer: Analyzer) -> Self {
-        Self::new(Some(analyzer), PrivacyOperator::Replace, TEST_KEY)
+        Self::new(Some(analyzer), privacy::Operator::Replace, TEST_KEY)
     }
 
     /// Builds a redactor whose `hash` operators derive from `key`.
     ///
     /// The analyzer runs the context-aware boost with its documented
     /// defaults and the `min_score_with_context` floor.
-    fn new(analyzer: Option<Analyzer>, global: PrivacyOperator, key: &[u8]) -> Self {
+    fn new(analyzer: Option<Analyzer>, global: privacy::Operator, key: &[u8]) -> Self {
         let settings = crate::context::ContextSettings::default();
         let min_score = settings.min_score_with_context;
         Self {
@@ -155,7 +155,7 @@ impl Redactor {
         self
     }
 
-    /// Resolve a [`dbmcp_config::PrivacyConfig`] to an optional [`Redactor`].
+    /// Resolve a [`privacy::Config`] to an optional [`Redactor`].
     ///
     /// Returns `None` when `cfg` is `None` (mode `none`). Under `rules` it
     /// builds no analyzer: ruled columns are rewritten, global cells and error
@@ -166,7 +166,7 @@ impl Redactor {
     /// lifts them.
     ///
     /// The `hash` operator is keyed from `cfg.key`, or, when unset, from
-    /// [`PrivacyConfig::MIN_KEY_BYTES`](dbmcp_config::PrivacyConfig::MIN_KEY_BYTES)
+    /// [`privacy::Config::MIN_KEY_BYTES`]
     /// bytes drawn from the OS random source (a per-process key), logging a
     /// warning when `cfg.operator` or any column rule hashes. Column rules
     /// hash under a key derived from it for rules only, so their tokens never
@@ -178,7 +178,7 @@ impl Redactor {
     /// to load, and [`RedactorInitError::Rng`] when the
     /// fallback `hash` key cannot be drawn. Startup must abort — the redactor
     /// is fail-closed and never degrades to regex-only when NER was requested.
-    pub fn from_config(cfg: Option<&dbmcp_config::PrivacyConfig>) -> Result<Option<Self>, RedactorInitError> {
+    pub fn from_config(cfg: Option<&privacy::Config>) -> Result<Option<Self>, RedactorInitError> {
         let Some(cfg) = cfg else {
             return Ok(None);
         };
@@ -190,30 +190,30 @@ impl Redactor {
             &random[..]
         };
         let analyzer = match cfg.mode {
-            PrivacyMode::Full => {
+            privacy::Mode::Full => {
                 let mut analyzer = crate::Analyzer::from_config(cfg);
                 attach_ner(&mut analyzer, cfg)?;
                 Some(analyzer)
             }
-            PrivacyMode::Rules | PrivacyMode::None => None,
+            privacy::Mode::Rules | privacy::Mode::None => None,
         };
         Ok(Some(Self::new(analyzer, cfg.operator, key)))
     }
 
     /// Returns global detection's operator `operator`; `hash` uses its key.
-    pub(crate) fn operator(&self, operator: PrivacyOperator) -> Operator {
+    pub(crate) fn operator(&self, operator: privacy::Operator) -> Operator {
         match operator {
-            PrivacyOperator::Replace => Operator::Replace,
-            PrivacyOperator::Mask => Operator::default_mask(),
-            PrivacyOperator::Redact => Operator::Redact,
-            PrivacyOperator::Hash => self.hash.clone(),
+            privacy::Operator::Replace => Operator::Replace,
+            privacy::Operator::Mask => Operator::default_mask(),
+            privacy::Operator::Redact => Operator::Redact,
+            privacy::Operator::Hash => self.hash.clone(),
         }
     }
 
     /// Returns a column rule's operator `operator`; `hash` uses the rules' key.
-    pub(crate) fn rule_operator(&self, operator: PrivacyOperator) -> Operator {
+    pub(crate) fn rule_operator(&self, operator: privacy::Operator) -> Operator {
         match operator {
-            PrivacyOperator::Hash => self.rule_hash.clone(),
+            privacy::Operator::Hash => self.rule_hash.clone(),
             other => self.operator(other),
         }
     }
@@ -478,7 +478,7 @@ pub(crate) fn log_redactions(stats: &RedactionStats, row_count: Option<usize>) {
 }
 
 /// Loads the NER engine when a model is set, failing closed on any load error.
-fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PrivacyConfig) -> Result<(), RedactorInitError> {
+fn attach_ner(analyzer: &mut Analyzer, cfg: &privacy::Config) -> Result<(), RedactorInitError> {
     let Some(model) = cfg.model.as_ref() else {
         return Ok(());
     };
@@ -488,7 +488,7 @@ fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PrivacyConfig) -> Res
     if allowed.is_empty() {
         return Ok(());
     }
-    let threshold = crate::Score::from_static(dbmcp_config::PrivacyConfig::DEFAULT_NER_THRESHOLD);
+    let threshold = crate::Score::from_static(privacy::Config::DEFAULT_NER_THRESHOLD);
     let mut engine =
         crate::ner::NerEngine::load(model, threshold).map_err(|e| RedactorInitError::Ner(e.to_string()))?;
     engine.set_allowed(allowed);
@@ -497,10 +497,10 @@ fn attach_ner(analyzer: &mut Analyzer, cfg: &dbmcp_config::PrivacyConfig) -> Res
 }
 
 /// Category each NER-emitted entity belongs to; `None` for ones NER never emits.
-fn ner_entity_category(entity: Entity) -> Option<PrivacyCategory> {
+fn ner_entity_category(entity: Entity) -> Option<privacy::Category> {
     match entity {
-        Entity::Person | Entity::Organization | Entity::Nrp => Some(PrivacyCategory::Personal),
-        Entity::Location | Entity::Facility => Some(PrivacyCategory::Contact),
+        Entity::Person | Entity::Organization | Entity::Nrp => Some(privacy::Category::Personal),
+        Entity::Location | Entity::Facility => Some(privacy::Category::Contact),
         _ => None,
     }
 }
@@ -508,7 +508,7 @@ fn ner_entity_category(entity: Entity) -> Option<PrivacyCategory> {
 /// Resolves the NER entities permitted by the category filter.
 ///
 /// An unset category subset means all NER entities apply.
-fn allowed_ner_entities(cfg: &dbmcp_config::PrivacyConfig) -> Vec<Entity> {
+fn allowed_ner_entities(cfg: &privacy::Config) -> Vec<Entity> {
     let selected = cfg.categories.as_ref();
     crate::ner::NER_ENTITIES
         .iter()
@@ -552,12 +552,11 @@ fn redact_spans(
 }
 
 /// Draws the random per-process `hash` key used when `privacy.key` is unset.
-fn random_key(
-    cfg: &dbmcp_config::PrivacyConfig,
-) -> Result<[u8; dbmcp_config::PrivacyConfig::MIN_KEY_BYTES], RedactorInitError> {
-    let mut key = [0u8; dbmcp_config::PrivacyConfig::MIN_KEY_BYTES];
+fn random_key(cfg: &privacy::Config) -> Result<[u8; privacy::Config::MIN_KEY_BYTES], RedactorInitError> {
+    let mut key = [0u8; privacy::Config::MIN_KEY_BYTES];
     getrandom::fill(&mut key).map_err(RedactorInitError::Rng)?;
-    if cfg.operator == PrivacyOperator::Hash || cfg.rules.iter().any(|rule| rule.operator == PrivacyOperator::Hash) {
+    if cfg.operator == privacy::Operator::Hash || cfg.rules.iter().any(|rule| rule.operator == privacy::Operator::Hash)
+    {
         tracing::warn!(
             "privacy.key is not set; PII placeholders use a random per-process key and change on restart and across replicas"
         );
@@ -580,15 +579,15 @@ mod tests {
     /// The 32-byte test key from the keyed-token spec vectors.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
-    fn hash_config(key: Option<&str>) -> dbmcp_config::PrivacyConfig {
-        dbmcp_config::PrivacyConfig {
-            operator: PrivacyOperator::Hash,
+    fn hash_config(key: Option<&str>) -> privacy::Config {
+        privacy::Config {
+            operator: privacy::Operator::Hash,
             key: key.map(Into::into),
-            ..dbmcp_config::PrivacyConfig::default()
+            ..privacy::Config::default()
         }
     }
 
-    fn build(cfg: &dbmcp_config::PrivacyConfig) -> Redactor {
+    fn build(cfg: &privacy::Config) -> Redactor {
         Redactor::from_config(Some(cfg))
             .expect("config ok")
             .expect("redactor present")
@@ -838,7 +837,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_redact_emits_empty_string() {
-        let r = Redactor::new(Some(Analyzer::with_defaults()), PrivacyOperator::Redact, TEST_KEY);
+        let r = Redactor::new(Some(Analyzer::with_defaults()), privacy::Operator::Redact, TEST_KEY);
         let mut rows = vec![json!({"v": "x@y.com"})];
         let _ = r.apply(&mut rows).expect("apply ok");
         // Whole-leaf match under `redact` → "" (Value::String, key preserved).
@@ -849,7 +848,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_mask_matches_text_column() {
-        let r = Redactor::new(Some(Analyzer::with_defaults()), PrivacyOperator::Mask, TEST_KEY);
+        let r = Redactor::new(Some(Analyzer::with_defaults()), privacy::Operator::Mask, TEST_KEY);
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -859,7 +858,7 @@ mod tests {
 
     #[test]
     fn whole_leaf_match_hash_matches_text_column() {
-        let r = Redactor::new(Some(Analyzer::with_defaults()), PrivacyOperator::Hash, KEY.as_bytes());
+        let r = Redactor::new(Some(Analyzer::with_defaults()), privacy::Operator::Hash, KEY.as_bytes());
         let mut json_rows = vec![json!({"v": "x@y.com"})];
         let mut text_rows = vec![Value::String("x@y.com".to_owned())];
         let _ = r.apply(&mut json_rows).expect("apply ok");
@@ -1229,9 +1228,9 @@ mod tests {
 
     #[test]
     fn from_config_bad_model_path_fails_closed() {
-        let cfg = dbmcp_config::PrivacyConfig {
+        let cfg = privacy::Config {
             model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
-            ..dbmcp_config::PrivacyConfig::default()
+            ..privacy::Config::default()
         };
         let err = Redactor::from_config(Some(&cfg)).expect_err("unreadable model must fail closed");
         assert!(matches!(err, RedactorInitError::Ner(_)));
@@ -1239,20 +1238,20 @@ mod tests {
 
     #[test]
     fn full_without_a_model_runs_no_ner() {
-        assert!(!build(&dbmcp_config::PrivacyConfig::default()).uses_ner());
+        assert!(!build(&privacy::Config::default()).uses_ner());
     }
 
     /// A `rules`-mode config with no rules.
-    fn rules_config() -> dbmcp_config::PrivacyConfig {
-        dbmcp_config::PrivacyConfig {
-            mode: dbmcp_config::PrivacyMode::Rules,
-            ..dbmcp_config::PrivacyConfig::default()
+    fn rules_config() -> privacy::Config {
+        privacy::Config {
+            mode: privacy::Mode::Rules,
+            ..privacy::Config::default()
         }
     }
 
     #[test]
     fn rules_mode_never_loads_a_model() {
-        let cfg = dbmcp_config::PrivacyConfig {
+        let cfg = privacy::Config {
             model: Some(std::path::PathBuf::from("/nonexistent/model/dir")),
             ..rules_config()
         };
@@ -1275,7 +1274,7 @@ mod tests {
 
     #[test]
     fn ner_allowance_unset_categories_allows_all() {
-        let allowed = allowed_ner_entities(&dbmcp_config::PrivacyConfig::default());
+        let allowed = allowed_ner_entities(&privacy::Config::default());
         assert_eq!(allowed.len(), 5, "unset categories must allow every NER entity");
         for entity in [
             Entity::Person,
@@ -1290,9 +1289,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_personal_only_gates_to_personal_entities() {
-        let cfg = dbmcp_config::PrivacyConfig {
-            categories: Some(vec![dbmcp_config::PrivacyCategory::Personal]),
-            ..dbmcp_config::PrivacyConfig::default()
+        let cfg = privacy::Config {
+            categories: Some(vec![privacy::Category::Personal]),
+            ..privacy::Config::default()
         };
         let allowed = allowed_ner_entities(&cfg);
         assert!(allowed.contains(&Entity::Person));
@@ -1304,9 +1303,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_contact_only_gates_to_contact_entities() {
-        let cfg = dbmcp_config::PrivacyConfig {
-            categories: Some(vec![dbmcp_config::PrivacyCategory::Contact]),
-            ..dbmcp_config::PrivacyConfig::default()
+        let cfg = privacy::Config {
+            categories: Some(vec![privacy::Category::Contact]),
+            ..privacy::Config::default()
         };
         let allowed = allowed_ner_entities(&cfg);
         assert!(allowed.contains(&Entity::Location));
@@ -1318,9 +1317,9 @@ mod tests {
 
     #[test]
     fn ner_allowance_unrelated_category_is_empty() {
-        let cfg = dbmcp_config::PrivacyConfig {
-            categories: Some(vec![dbmcp_config::PrivacyCategory::Financial]),
-            ..dbmcp_config::PrivacyConfig::default()
+        let cfg = privacy::Config {
+            categories: Some(vec![privacy::Category::Financial]),
+            ..privacy::Config::default()
         };
         assert!(
             allowed_ner_entities(&cfg).is_empty(),
@@ -1338,9 +1337,9 @@ mod tests {
             eprintln!("PRIVACY_TEST_MODEL unset; skipping NER redactor test");
             return;
         };
-        let cfg = dbmcp_config::PrivacyConfig {
+        let cfg = privacy::Config {
             model: Some(dir),
-            ..dbmcp_config::PrivacyConfig::default()
+            ..privacy::Config::default()
         };
         let r = Redactor::from_config(Some(&cfg))
             .expect("config ok")
@@ -1391,18 +1390,18 @@ mod tests {
 
     #[test]
     fn from_config_maps_each_operator() {
-        let cfg = |operator| dbmcp_config::PrivacyConfig {
+        let cfg = |operator| privacy::Config {
             operator,
-            ..dbmcp_config::PrivacyConfig::default()
+            ..privacy::Config::default()
         };
         let global = |operator| {
             let r = build(&cfg(operator));
             r.operator(r.global)
         };
-        assert!(matches!(global(PrivacyOperator::Replace), Operator::Replace));
-        assert!(matches!(global(PrivacyOperator::Mask), Operator::Mask { .. }));
-        assert!(matches!(global(PrivacyOperator::Redact), Operator::Redact));
-        assert!(matches!(global(PrivacyOperator::Hash), Operator::Hash { .. }));
+        assert!(matches!(global(privacy::Operator::Replace), Operator::Replace));
+        assert!(matches!(global(privacy::Operator::Mask), Operator::Mask { .. }));
+        assert!(matches!(global(privacy::Operator::Redact), Operator::Redact));
+        assert!(matches!(global(privacy::Operator::Hash), Operator::Hash { .. }));
     }
 
     #[test]

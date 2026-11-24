@@ -29,7 +29,6 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Member,
     Origin, Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, StatementKind, Step, WrittenName,
@@ -37,6 +36,7 @@ use dbmcp_policy::{
 };
 use dbmcp_sql::Connection as _;
 use dbmcp_truncate::Window;
+use dbmcp_types::{database, privacy};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlx::postgres::{PgColumn, PgRow};
@@ -300,7 +300,7 @@ impl PostgresHandler {
     /// else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PrivacyConfig,
+        policy: &privacy::Config,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -321,7 +321,7 @@ impl PostgresHandler {
 /// Plans and executes one statement inside a transaction on `conn`.
 async fn run<'c>(
     conn: &mut sqlx::PgConnection,
-    config: &'c PrivacyConfig,
+    config: &'c privacy::Config,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
@@ -473,7 +473,7 @@ async fn resolve(conn: &mut sqlx::PgConnection, sql: &str) -> Result<(Analyzed, 
         database,
         creation: first.filter(|first| !temp_first(&search_path, first, &user)),
     };
-    let mut analysis = Analysis::new(sql, DatabaseBackend::Postgres);
+    let mut analysis = Analysis::new(sql, database::Backend::Postgres);
     analysis.connected_to(Some(probe.database.clone()));
     analysis.creates_in(probe.creation.clone());
     if conforming != "on" {
@@ -1314,7 +1314,7 @@ mod tests {
         async fn unchanged_across(
             conn: &mut sqlx::PgConnection,
             other: &mut sqlx::PgConnection,
-            config: &PrivacyConfig,
+            config: &privacy::Config,
             sql: &str,
             change: &'static str,
         ) -> bool {
@@ -1360,16 +1360,16 @@ mod tests {
             .execute(&mut other)
             .await
             .expect("setup");
-            let rule = |table: &str| dbmcp_config::ColumnRule {
+            let rule = |table: &str| dbmcp_types::privacy::ColumnRule {
                 name: table.into(),
                 item: 0,
                 key: ["app", "public", table, "email"].map(String::from),
-                entity: "EMAIL_ADDRESS",
-                operator: dbmcp_config::PrivacyOperator::Hash,
+                entity: dbmcp_types::privacy::Entity::EmailAddress,
+                operator: dbmcp_types::privacy::Operator::Hash,
             };
-            let config = PrivacyConfig {
+            let config = privacy::Config {
                 rules: vec![rule("drift_p2"), rule("drift_kid")],
-                ..PrivacyConfig::default()
+                ..privacy::Config::default()
             };
             let read = "SELECT id, email FROM drift_p";
 

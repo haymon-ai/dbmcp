@@ -2,15 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use dbmcp_config::{ColumnRule, PrivacyConfig, PrivacyOperator};
 use dbmcp_sql_lineage as lineage;
 use dbmcp_sql_lineage::{
     Catalog, Dialect, Entry, ExplainForm, Flow, FunctionUse, Lineage, LineageError, NamePart, Origin, OutputColumn,
     Reference, Relation, RelationId, RelationKind, RelationUse, Role, Show, SourceRef, StatementKind, TargetColumn,
     TypeUse, WrittenName, analyze,
 };
+use dbmcp_types::privacy;
 
-use dbmcp_privacy::Entity;
 use dbmcp_privacy::cells::{Plan, Position};
 
 use crate::plan::{Effects, Facts, Families, Names, effects, plan, touches_ruled};
@@ -31,27 +30,27 @@ fn col(table_name: &str, column: &str) -> SourceRef {
 }
 
 /// Builds a rule `r` for one `catalog.schema.table.column` key, folded like the loader.
-fn rule(key: &str, operator: PrivacyOperator, entity: &'static str) -> ColumnRule {
-    let segments: Vec<String> = key.split('.').map(ColumnRule::fold).collect();
-    ColumnRule {
+fn rule(key: &str, operator: privacy::Operator, entity: &'static str) -> privacy::ColumnRule {
+    let segments: Vec<String> = key.split('.').map(privacy::ColumnRule::fold).collect();
+    privacy::ColumnRule {
         name: "r".into(),
         item: 0,
         key: segments.try_into().expect("four segments"),
-        entity,
+        entity: entity.parse().expect("known entity"),
         operator,
     }
 }
 
 /// A `mask` rule labelled `US_SSN`.
-fn ssn(key: &str) -> ColumnRule {
-    rule(key, PrivacyOperator::Mask, "US_SSN")
+fn ssn(key: &str) -> privacy::ColumnRule {
+    rule(key, privacy::Operator::Mask, "US_SSN")
 }
 
 /// Builds a config holding `rules`, with global defaults.
-fn config(rules: Vec<ColumnRule>) -> PrivacyConfig {
-    PrivacyConfig {
+fn config(rules: Vec<privacy::ColumnRule>) -> privacy::Config {
+    privacy::Config {
         rules,
-        ..PrivacyConfig::default()
+        ..privacy::Config::default()
     }
 }
 
@@ -88,27 +87,27 @@ fn select(columns: Vec<Vec<SourceRef>>) -> Lineage {
 }
 
 /// Plans `lineage` without bare names.
-fn plan_on(lineage: &Lineage, dialect: Dialect, config: &PrivacyConfig) -> Result<Plan, Rejection> {
+fn plan_on(lineage: &Lineage, dialect: Dialect, config: &privacy::Config) -> Result<Plan, Rejection> {
     plan(lineage, dialect, config, &Names::default())
 }
 
 /// Plans `lineage` on `PostgreSQL`.
-fn pg(lineage: &Lineage, config: &PrivacyConfig) -> Result<Plan, Rejection> {
+fn pg(lineage: &Lineage, config: &privacy::Config) -> Result<Plan, Rejection> {
     plan_on(lineage, Dialect::Postgres, config)
 }
 
 /// Analyzes `sql` on `PostgreSQL` against `catalog` and plans it.
-fn pg_sql(sql: &str, catalog: &Catalog, config: &PrivacyConfig) -> Result<Plan, Rejection> {
+fn pg_sql(sql: &str, catalog: &Catalog, config: &privacy::Config) -> Result<Plan, Rejection> {
     pg(&analyze(sql, Dialect::Postgres, catalog).expect(sql), config)
 }
 
 /// Plans `lineage` on `PostgreSQL` under `names`.
-fn pg_with(lineage: &Lineage, config: &PrivacyConfig, names: &Names) -> Result<Plan, Rejection> {
+fn pg_with(lineage: &Lineage, config: &privacy::Config, names: &Names) -> Result<Plan, Rejection> {
     plan(lineage, Dialect::Postgres, config, names)
 }
 
 /// The single position of a one-column plan.
-fn only(lineage: &Lineage, config: &PrivacyConfig) -> Position {
+fn only(lineage: &Lineage, config: &privacy::Config) -> Position {
     let positions = positions(pg(lineage, config).expect("plan"));
     assert_eq!(positions.len(), 1);
     positions.into_iter().next().expect("one position")
@@ -120,7 +119,7 @@ fn positions(plan: Plan) -> Vec<Position> {
 }
 
 /// The masked `US_SSN` position.
-const MASKED_SSN: Position = Position::Action(PrivacyOperator::Mask, Entity::UsSsn);
+const MASKED_SSN: Position = Position::Action(privacy::Operator::Mask, privacy::Entity::UsSsn);
 
 // Rule match.
 
@@ -161,10 +160,14 @@ fn rule_for_another_engine_tuple_never_matches() {
 
 #[test]
 fn ner_only_entity_labels_a_rule() {
-    let config = config(vec![rule("shop.public.users.name", PrivacyOperator::Replace, "PERSON")]);
+    let config = config(vec![rule(
+        "shop.public.users.name",
+        privacy::Operator::Replace,
+        "PERSON",
+    )]);
     assert_eq!(
         only(&select(vec![vec![col("users", "name")]]), &config),
-        Position::Action(PrivacyOperator::Replace, Entity::Person)
+        Position::Action(privacy::Operator::Replace, privacy::Entity::Person)
     );
 }
 
@@ -752,7 +755,7 @@ fn ruled_source_wins_over_unruled() {
 fn different_actions_conflict() {
     let config = config(vec![
         ssn("shop.public.users.ssn"),
-        rule("shop.public.users.email", PrivacyOperator::Redact, "US_SSN"),
+        rule("shop.public.users.email", privacy::Operator::Redact, "US_SSN"),
     ]);
     let lineage = select(vec![vec![col("users", "ssn"), col("users", "email")]]);
     assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
@@ -761,8 +764,8 @@ fn different_actions_conflict() {
 #[test]
 fn same_operator_different_entity_conflicts() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.users.phone", PrivacyOperator::Hash, "PHONE_NUMBER"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", privacy::Operator::Hash, "PHONE_NUMBER"),
     ]);
     let lineage = select(vec![vec![col("users", "email"), col("users", "phone")]]);
     assert!(matches!(pg(&lineage, &config), Err(Rejection::Conflict { .. })));
@@ -771,25 +774,25 @@ fn same_operator_different_entity_conflicts() {
 #[test]
 fn same_rule_pair_combines() {
     let config = config(vec![
-        rule("shop.public.users.firstname", PrivacyOperator::Hash, "PERSON"),
-        rule("shop.public.users.lastname", PrivacyOperator::Hash, "PERSON"),
+        rule("shop.public.users.firstname", privacy::Operator::Hash, "PERSON"),
+        rule("shop.public.users.lastname", privacy::Operator::Hash, "PERSON"),
     ]);
     let lineage = select(vec![vec![col("users", "firstname"), col("users", "lastname")]]);
     assert_eq!(
         only(&lineage, &config),
-        Position::Action(PrivacyOperator::Hash, Entity::Person)
+        Position::Action(privacy::Operator::Hash, privacy::Entity::Person)
     );
 }
 
 // Flow: `hash` only on bare outputs; derived outputs read as the placeholder.
 
 /// The `hash` rule on `users.email` and `invoices.billing_email`, `EMAIL_ADDRESS`.
-fn hashed_emails() -> Vec<ColumnRule> {
+fn hashed_emails() -> Vec<privacy::ColumnRule> {
     vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
         rule(
             "shop.public.invoices.billing_email",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
             "EMAIL_ADDRESS",
         ),
     ]
@@ -802,9 +805,9 @@ fn flowed(sources: Vec<SourceRef>, flow: Flow) -> Lineage {
     lineage
 }
 
-const HASHED_EMAIL: Position = Position::Action(PrivacyOperator::Hash, Entity::EmailAddress);
-const REPLACED_EMAIL: Position = Position::Action(PrivacyOperator::Replace, Entity::EmailAddress);
-const PLACEHOLDER_EMAIL: Position = Position::Placeholder(Entity::EmailAddress);
+const HASHED_EMAIL: Position = Position::Action(privacy::Operator::Hash, privacy::Entity::EmailAddress);
+const REPLACED_EMAIL: Position = Position::Action(privacy::Operator::Replace, privacy::Entity::EmailAddress);
+const PLACEHOLDER_EMAIL: Position = Position::Placeholder(privacy::Entity::EmailAddress);
 
 #[test]
 fn bare_hash_output_keeps_hash() {
@@ -828,16 +831,16 @@ fn bare_union_of_same_hash_pair_keeps_hash() {
 #[test]
 fn derived_ruled_output_reads_as_the_placeholder_under_every_operator() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.users.phone", PrivacyOperator::Mask, "PHONE_NUMBER"),
-        rule("shop.public.users.ssn", PrivacyOperator::Redact, "US_SSN"),
-        rule("shop.public.users.card", PrivacyOperator::Replace, "CREDIT_CARD"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", privacy::Operator::Mask, "PHONE_NUMBER"),
+        rule("shop.public.users.ssn", privacy::Operator::Redact, "US_SSN"),
+        rule("shop.public.users.card", privacy::Operator::Replace, "CREDIT_CARD"),
     ]);
     let cases = [
-        ("email", Entity::EmailAddress),
-        ("phone", Entity::PhoneNumber),
-        ("ssn", Entity::UsSsn),
-        ("card", Entity::CreditCard),
+        ("email", privacy::Entity::EmailAddress),
+        ("phone", privacy::Entity::PhoneNumber),
+        ("ssn", privacy::Entity::UsSsn),
+        ("card", privacy::Entity::CreditCard),
     ];
     for (column, entity) in cases {
         assert_eq!(
@@ -865,10 +868,10 @@ fn bare_union_with_unruled_column_becomes_replace() {
 #[test]
 fn bare_union_with_another_rule_merges_into_replace() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
         rule(
             "shop.public.invoices.billing_email",
-            PrivacyOperator::Replace,
+            privacy::Operator::Replace,
             "EMAIL_ADDRESS",
         ),
     ]);
@@ -882,8 +885,8 @@ fn bare_union_with_another_rule_merges_into_replace() {
 #[test]
 fn derived_hash_of_different_entities_conflicts() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.users.phone", PrivacyOperator::Hash, "PHONE_NUMBER"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.phone", privacy::Operator::Hash, "PHONE_NUMBER"),
     ]);
     let lineage = flowed(vec![col("users", "email"), col("users", "phone")], Flow::Derived);
     assert_eq!(pg(&lineage, &config), Err(Rejection::Conflict { position: 0 }));
@@ -892,10 +895,10 @@ fn derived_hash_of_different_entities_conflicts() {
 #[test]
 fn derived_same_entity_under_different_operators_reads_as_the_placeholder() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
         rule(
             "shop.public.invoices.billing_email",
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
             "EMAIL_ADDRESS",
         ),
     ]);
@@ -1032,7 +1035,7 @@ fn row_count_uses_of_ruled_columns_reject() {
 fn conflict_message_omits_output_name() {
     let config = config(vec![
         ssn("shop.public.users.ssn"),
-        rule("shop.public.users.email", PrivacyOperator::Redact, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Redact, "EMAIL_ADDRESS"),
     ]);
     let mut lineage = select(vec![vec![col("users", "ssn"), col("users", "email")]]);
     lineage.columns[0].name = "CASE WHEN ssn = '123-45-6789' THEN ssn ELSE email END".into();
@@ -1133,8 +1136,8 @@ fn write(target: &str, column: &str, sources: Vec<SourceRef>, statement: Stateme
 #[test]
 fn derived_hash_source_into_same_hash_target_rejects() {
     let config = config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.copy.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.copy.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
     ]);
     let mut lineage = write("copy", "email", vec![col("users", "email")], StatementKind::Insert);
     let names = facts(&[("copy", &[("email", NONE)])]);
@@ -1171,8 +1174,8 @@ fn ruled_source_into_same_pair_target_passes() {
 fn ruled_source_into_other_pair_target_rejects() {
     let lineage = write("copy", "x", vec![col("users", "ssn")], StatementKind::Insert);
     for target in [
-        rule("shop.public.copy.x", PrivacyOperator::Redact, "US_SSN"),
-        rule("shop.public.copy.x", PrivacyOperator::Mask, "EMAIL_ADDRESS"),
+        rule("shop.public.copy.x", privacy::Operator::Redact, "US_SSN"),
+        rule("shop.public.copy.x", privacy::Operator::Mask, "EMAIL_ADDRESS"),
     ] {
         let config = config(vec![ssn("shop.public.users.ssn"), target]);
         assert!(matches!(pg(&lineage, &config), Err(Rejection::Laundering { .. })));
@@ -1299,19 +1302,19 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
     );
     let cases = [
         (
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
             "INSERT INTO copy (phone) SELECT CASE WHEN phone LIKE '+1%' THEN NULL ELSE '1' END FROM masked",
             "INSERT INTO copy (phone) SELECT phone FROM masked",
             "public.copy.phone",
         ),
         (
-            PrivacyOperator::Redact,
+            privacy::Operator::Redact,
             "UPDATE masked SET note = CASE WHEN phone LIKE '+1%' THEN NULL ELSE 'x' END",
             "UPDATE masked SET note = phone",
             "public.masked.note",
         ),
         (
-            PrivacyOperator::Replace,
+            privacy::Operator::Replace,
             "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
              ON CONFLICT (id) DO UPDATE SET phone = lower(excluded.phone)",
             "INSERT INTO copy (id, phone) SELECT id, phone FROM masked \
@@ -1319,13 +1322,13 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
             "public.copy.phone",
         ),
         (
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
             "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = upper(m.phone)",
             "MERGE INTO copy c USING masked m ON c.id = m.id WHEN MATCHED THEN UPDATE SET phone = m.phone",
             "public.copy.phone",
         ),
         (
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
             "CREATE MATERIALIZED VIEW mv AS SELECT lower(phone) AS phone FROM masked",
             "CREATE MATERIALIZED VIEW mv AS SELECT phone FROM masked",
             "public.mv.phone",
@@ -1350,7 +1353,7 @@ fn derived_same_pair_writes_launder_and_bare_copies_pass() {
 fn conflicting_write_sources_reject() {
     let config = config(vec![
         ssn("shop.public.users.ssn"),
-        rule("shop.public.users.email", PrivacyOperator::Redact, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Redact, "EMAIL_ADDRESS"),
         ssn("shop.public.copy.x"),
     ]);
     let lineage = write(
@@ -1403,10 +1406,10 @@ fn facts(tables: &[(&str, &[(&str, ColumnFacts)])]) -> Names {
 }
 
 /// `users.email` and `hashed.email` hashed as `EMAIL_ADDRESS`, `users.ssn` masked.
-fn hashed_target() -> PrivacyConfig {
+fn hashed_target() -> privacy::Config {
     config(vec![
-        rule("shop.public.users.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.hashed.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.users.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.hashed.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
         ssn("shop.public.users.ssn"),
     ])
 }
@@ -1532,7 +1535,7 @@ fn hash_columns_missing_from_the_facts_have_every_fact() {
     // A descendant's own column is not among the target's facts.
     let config = config(vec![rule(
         "shop.public.ptab_1.email",
-        PrivacyOperator::Hash,
+        privacy::Operator::Hash,
         "EMAIL_ADDRESS",
     )]);
     let mut names = tree();
@@ -1643,7 +1646,7 @@ fn columns_with_every_fact_refuse_writes_to_hash_tables() {
 fn hash_rules_on_a_landing_member_gate_writes_through_the_parent() {
     let config = config(vec![rule(
         "shop.public.ptab_1.email",
-        PrivacyOperator::Hash,
+        privacy::Operator::Hash,
         "EMAIL_ADDRESS",
     )]);
     let mut names = tree();
@@ -1683,14 +1686,18 @@ fn edge(parent: &str, child: &str, action: CascadeAction, on_delete: bool) -> Ca
 }
 
 /// `child.k` hashed as `EMAIL_ADDRESS`, plus `parent` rules.
-fn cascade_rules(parent: Vec<ColumnRule>) -> PrivacyConfig {
-    let mut rules = vec![rule("shop.public.child.k", PrivacyOperator::Hash, "EMAIL_ADDRESS")];
+fn cascade_rules(parent: Vec<privacy::ColumnRule>) -> privacy::Config {
+    let mut rules = vec![rule("shop.public.child.k", privacy::Operator::Hash, "EMAIL_ADDRESS")];
     rules.extend(parent);
     config(rules)
 }
 
 /// Plans `statement` on `parent` writing `k`, whose facts list `cascades`.
-fn through_parent(statement: StatementKind, config: &PrivacyConfig, cascades: Vec<Cascade>) -> Result<Plan, Rejection> {
+fn through_parent(
+    statement: StatementKind,
+    config: &privacy::Config,
+    cascades: Vec<Cascade>,
+) -> Result<Plan, Rejection> {
     let mut lineage = write("parent", "k", vec![], statement);
     lineage.writes[0].flow = Flow::Derived;
     let mut names = facts(&[("parent", &[("k", NONE)])]);
@@ -1712,12 +1719,12 @@ fn copy_cascades_into_a_hash_column_need_the_same_pair_on_the_parent() {
         through_parent(StatementKind::Update, &cascade_rules(vec![]), copy.clone()),
         computed_at("child.k")
     );
-    let masked = vec![rule("shop.public.parent.k", PrivacyOperator::Mask, "EMAIL_ADDRESS")];
+    let masked = vec![rule("shop.public.parent.k", privacy::Operator::Mask, "EMAIL_ADDRESS")];
     assert_eq!(
         through_parent(StatementKind::Update, &cascade_rules(masked), copy.clone()),
         computed_at("child.k")
     );
-    let same = vec![rule("shop.public.parent.k", PrivacyOperator::Hash, "EMAIL_ADDRESS")];
+    let same = vec![rule("shop.public.parent.k", privacy::Operator::Hash, "EMAIL_ADDRESS")];
     let mut lineage = write("parent", "k", vec![col("child", "k")], StatementKind::Update);
     let mut names = facts(&[("parent", &[("k", NONE)])]);
     names.facts.get_mut(&table("parent")).expect("parent facts").cascades = copy;
@@ -1781,7 +1788,7 @@ fn set_null_and_delete_cascades_pass() {
 fn cascades_into_unhashed_columns_pass() {
     let config = config(vec![rule(
         "shop.public.other.e",
-        PrivacyOperator::Hash,
+        privacy::Operator::Hash,
         "EMAIL_ADDRESS",
     )]);
     let edges = vec![edge("parent.k", "child.k", CascadeAction::Default, false)];
@@ -1792,7 +1799,7 @@ fn cascades_into_unhashed_columns_pass() {
 fn transitive_cascades_are_followed() {
     let rules = config(vec![rule(
         "shop.public.grandchild.k",
-        PrivacyOperator::Hash,
+        privacy::Operator::Hash,
         "EMAIL_ADDRESS",
     )]);
     let chain = |first: CascadeAction, second: Cascade| {
@@ -1855,7 +1862,7 @@ fn cascades_changing_a_child_with_other_hash_columns_are_computed() {
     // A generated or on-update column of the child may be recomputed from the changed column.
     let rules = config(vec![rule(
         "shop.public.child.h",
-        PrivacyOperator::Hash,
+        privacy::Operator::Hash,
         "EMAIL_ADDRESS",
     )]);
     for action in [CascadeAction::Copy, CascadeAction::Null, CascadeAction::Default] {
@@ -1996,7 +2003,7 @@ fn chosen_computed_and_trigger_messages_and_gates_are_pinned() {
 
 #[test]
 fn rejection_messages_name_no_rule() {
-    let mut secret = rule("shop.public.users.ssn", PrivacyOperator::Mask, "US_SSN");
+    let mut secret = rule("shop.public.users.ssn", privacy::Operator::Mask, "US_SSN");
     secret.name = "secret-rule".into();
     let config = config(vec![secret]);
     let lineages = [
@@ -2144,7 +2151,7 @@ fn tree() -> Names {
 }
 
 /// The single position of a one-column plan under [`tree`].
-fn only_in_tree(lineage: &Lineage, config: &PrivacyConfig) -> Position {
+fn only_in_tree(lineage: &Lineage, config: &privacy::Config) -> Position {
     let positions = positions(pg_with(lineage, config, &tree()).expect("plan"));
     assert_eq!(positions.len(), 1);
     positions.into_iter().next().expect("one position")
@@ -2201,8 +2208,8 @@ fn family_rules_match_by_column_name() {
 #[test]
 fn different_pairs_across_a_family_conflict() {
     let config = config(vec![
-        rule("shop.public.ptab.email", PrivacyOperator::Hash, "EMAIL_ADDRESS"),
-        rule("shop.public.ptab_1.email", PrivacyOperator::Mask, "EMAIL_ADDRESS"),
+        rule("shop.public.ptab.email", privacy::Operator::Hash, "EMAIL_ADDRESS"),
+        rule("shop.public.ptab_1.email", privacy::Operator::Mask, "EMAIL_ADDRESS"),
     ]);
     for relation in ["ptab", "ptab_1"] {
         let lineage = select(vec![vec![col(relation, "email")]]);
@@ -2214,7 +2221,7 @@ fn different_pairs_across_a_family_conflict() {
     }
     assert_eq!(
         only_in_tree(&select(vec![vec![col("ptab_2", "email")]]), &config),
-        Position::Action(PrivacyOperator::Hash, Entity::EmailAddress)
+        Position::Action(privacy::Operator::Hash, privacy::Entity::EmailAddress)
     );
 }
 
@@ -2300,7 +2307,7 @@ fn writes_launder_into_a_descendant_ruled_otherwise() {
     let config = config(vec![
         ssn("shop.public.users.ssn"),
         ssn("shop.public.ptab.email"),
-        rule("shop.public.ptab_2.email", PrivacyOperator::Redact, "US_SSN"),
+        rule("shop.public.ptab_2.email", privacy::Operator::Redact, "US_SSN"),
     ]);
     let lineage = write("ptab", "email", vec![col("users", "ssn")], StatementKind::Insert);
     assert_eq!(
@@ -2329,7 +2336,7 @@ fn writes_check_each_landing_member_not_the_family_union() {
 fn unruled_writes_skip_the_landing_check() {
     let config = config(vec![
         ssn("shop.public.ptab.email"),
-        rule("shop.public.ptab_2.email", PrivacyOperator::Redact, "US_SSN"),
+        rule("shop.public.ptab_2.email", privacy::Operator::Redact, "US_SSN"),
     ]);
     let lineage = write("ptab", "email", vec![col("users", "name")], StatementKind::Insert);
     assert!(pg_with(&lineage, &config, &tree()).is_ok());
@@ -2364,7 +2371,7 @@ fn explained_updates_through_a_non_uniformly_ruled_partitioned_table_reject() {
 fn every_merge_into_a_non_uniformly_ruled_partitioned_table_rejects() {
     let config = config(vec![
         ssn("shop.public.ptab_1.email"),
-        rule("shop.public.ptab_2.email", PrivacyOperator::Redact, "US_SSN"),
+        rule("shop.public.ptab_2.email", privacy::Operator::Redact, "US_SSN"),
     ]);
     let lineage = write("ptab", "note", vec![], StatementKind::Merge);
     assert!(matches!(

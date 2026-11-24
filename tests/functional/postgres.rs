@@ -10,9 +10,9 @@
 mod probe;
 mod rows;
 
-use dbmcp_config::{ColumnRule, Config, DatabaseBackend, DatabaseConfig, PrivacyConfig, PrivacyOperator, Transport};
 use dbmcp_postgres::PostgresHandler;
 use dbmcp_server::types::{CreateDatabaseRequest, DropDatabaseRequest, ListDatabasesRequest};
+use dbmcp_types::{Config, Transport, database, privacy};
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -30,9 +30,9 @@ async fn server_version_num() -> i64 {
     response.rows[0]["v"].as_i64().expect("server_version_num is a number")
 }
 
-fn base_db_config(read_only: bool) -> DatabaseConfig {
-    DatabaseConfig {
-        backend: DatabaseBackend::Postgres,
+fn base_db_config(read_only: bool) -> database::Config {
+    database::Config {
+        backend: database::Backend::Postgres,
         host: std::env::var("DBMCP_DB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port: std::env::var("DBMCP_DB_PORT")
             .ok()
@@ -42,18 +42,18 @@ fn base_db_config(read_only: bool) -> DatabaseConfig {
         password: std::env::var("DBMCP_DB_PASSWORD").ok().map(Into::into),
         name: Some("app".into()),
         read_only,
-        ..DatabaseConfig::default()
+        ..database::Config::default()
     }
 }
 
 fn handler_with_page_size(page_size: u16) -> PostgresHandler {
-    handler_with(DatabaseConfig {
+    handler_with(database::Config {
         page_size,
         ..base_db_config(false)
     })
 }
 
-fn handler_with(config: DatabaseConfig) -> PostgresHandler {
+fn handler_with(config: database::Config) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
         database: config,
@@ -111,8 +111,8 @@ async fn session_timeout(handler: &PostgresHandler) -> u64 {
 }
 
 /// Returns a size-1 pool config with the given query timeout.
-fn single_connection_config(query_timeout: u64) -> DatabaseConfig {
-    DatabaseConfig {
+fn single_connection_config(query_timeout: u64) -> database::Config {
+    database::Config {
         query_timeout,
         max_pool_size: 1,
         connection_timeout: Some(5),
@@ -500,7 +500,7 @@ async fn test_server_timeout_mapped_under_zero() {
 
 #[tokio::test]
 async fn test_session_timeout_set_from_query_timeout() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         ..base_db_config(true)
     });
@@ -511,7 +511,7 @@ async fn test_session_timeout_set_from_query_timeout() {
 
 #[tokio::test]
 async fn test_read_query_timeout_sets_session_timeout() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -535,7 +535,7 @@ async fn test_read_query_timeout_sets_session_timeout() {
 
 #[tokio::test]
 async fn test_read_query_timeout_above_cap_is_rejected() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -549,7 +549,7 @@ async fn test_read_query_timeout_above_cap_is_rejected() {
 
 #[tokio::test]
 async fn test_explain_query_timeout_raises_the_limit() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 1,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -566,7 +566,7 @@ async fn test_explain_query_timeout_raises_the_limit() {
 
 #[tokio::test]
 async fn test_explain_query_timeout_above_cap_is_rejected() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 3,
         max_query_timeout: 10,
         ..base_db_config(true)
@@ -580,7 +580,7 @@ async fn test_explain_query_timeout_above_cap_is_rejected() {
 
 #[tokio::test]
 async fn test_query_timeout_zero_leaves_server_defaults() {
-    let handler = handler_with(DatabaseConfig {
+    let handler = handler_with(database::Config {
         query_timeout: 0,
         ..base_db_config(true)
     });
@@ -3887,9 +3887,9 @@ fn handler_with_redaction(redact_privacy: bool) -> PostgresHandler {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -3899,15 +3899,15 @@ fn handler_with_redaction(redact_privacy: bool) -> PostgresHandler {
 /// HMAC key for the `hash` operator: the 32-byte keyed-token spec test key.
 const PRIVACY_TEST_KEY: &str = "0123456789abcdef0123456789abcdef";
 
-fn handler_with_operator(operator: PrivacyOperator) -> PostgresHandler {
+fn handler_with_operator(operator: privacy::Operator) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
         database: base_db_config(false),
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             operator,
-            key: (operator == PrivacyOperator::Hash).then(|| PRIVACY_TEST_KEY.into()),
-            ..PrivacyConfig::default()
+            key: (operator == privacy::Operator::Hash).then(|| PRIVACY_TEST_KEY.into()),
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -3985,7 +3985,7 @@ async fn explain_analyze_redacts_plan_text() {
 
 #[tokio::test]
 async fn read_query_mask_operator_replaces_with_asterisks() {
-    let handler = handler_with_operator(PrivacyOperator::Mask);
+    let handler = handler_with_operator(privacy::Operator::Mask);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -3997,7 +3997,7 @@ async fn read_query_mask_operator_replaces_with_asterisks() {
 
 #[tokio::test]
 async fn read_query_redact_operator_returns_empty_span() {
-    let handler = handler_with_operator(PrivacyOperator::Redact);
+    let handler = handler_with_operator(privacy::Operator::Redact);
     let rows = handler
         .read_query("SELECT 'jane.doe@example.com' AS msg".into(), None, None, None)
         .await
@@ -4007,7 +4007,7 @@ async fn read_query_redact_operator_returns_empty_span() {
 
 #[tokio::test]
 async fn read_query_hash_operator_emits_keyed_token() {
-    let handler = handler_with_operator(PrivacyOperator::Hash);
+    let handler = handler_with_operator(privacy::Operator::Hash);
     let rows = handler
         .read_query(
             "SELECT 'jane.doe@example.com' AS a, 'jane.doe@example.com' AS b".into(),
@@ -4534,15 +4534,15 @@ async fn test_write_query_reports_rows_affected() {
 fn handler_with_caps(max_cell_chars: usize, max_response_chars: usize, redact_privacy: bool) -> PostgresHandler {
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             max_cell_chars,
             max_response_chars,
             ..base_db_config(false)
         },
         http: None,
-        privacy: redact_privacy.then(|| PrivacyConfig {
-            operator: PrivacyOperator::Replace,
-            ..PrivacyConfig::default()
+        privacy: redact_privacy.then(|| privacy::Config {
+            operator: privacy::Operator::Replace,
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -4712,128 +4712,140 @@ async fn test_read_query_pagination_late_error_spares_merged_first_page() {
 
 // Column rules (`privacy.rules`)
 
-fn column_rule(schema: &str, table: &str, column: &str, entity: &'static str, operator: PrivacyOperator) -> ColumnRule {
-    ColumnRule {
+fn column_rule(
+    schema: &str,
+    table: &str,
+    column: &str,
+    entity: &'static str,
+    operator: privacy::Operator,
+) -> privacy::ColumnRule {
+    privacy::ColumnRule {
         name: format!("{schema}_{table}_{column}"),
         item: 0,
         key: ["app", schema, table, column].map(String::from),
-        entity,
+        entity: entity.parse().expect("known entity"),
         operator,
     }
 }
 
 /// The rules [`handler_with_rules`] uses: hash e-mails (`users`, `invoices`,
 /// the `policy_hashed*` tables, the `policy_cascade_*` children's `k`), mask phones, redact SSNs, and replace card numbers.
-fn standard_rules() -> Vec<ColumnRule> {
+fn standard_rules() -> Vec<privacy::ColumnRule> {
     vec![
-        column_rule("public", "users", "email", "EMAIL_ADDRESS", PrivacyOperator::Hash),
+        column_rule("public", "users", "email", "EMAIL_ADDRESS", privacy::Operator::Hash),
         column_rule(
             "public",
             "invoices",
             "billing_email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
-        column_rule("public", "users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-        column_rule("public", "users", "ssn", "US_SSN", PrivacyOperator::Redact),
+        column_rule("public", "users", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+        column_rule("public", "users", "ssn", "US_SSN", privacy::Operator::Redact),
         column_rule(
             "public",
             "users",
             "credit_card",
             "CREDIT_CARD",
-            PrivacyOperator::Replace,
+            privacy::Operator::Replace,
         ),
-        column_rule("public", "users", "phone", "PHONE_NUMBER", PrivacyOperator::Mask),
-        column_rule("public", "users", "ssn", "US_SSN", PrivacyOperator::Redact),
+        column_rule("public", "users", "phone", "PHONE_NUMBER", privacy::Operator::Mask),
+        column_rule("public", "users", "ssn", "US_SSN", privacy::Operator::Redact),
         column_rule(
             "public",
             "users",
             "credit_card",
             "CREDIT_CARD",
-            PrivacyOperator::Replace,
+            privacy::Operator::Replace,
         ),
         column_rule(
             "public",
             "policy_hashed",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_copy",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_default",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_generated",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_cascade_child",
             "k",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_cascade_default",
             "k",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_hashed_trigger",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Hash,
+            privacy::Operator::Hash,
         ),
         column_rule(
             "public",
             "policy_masked",
             "phone",
             "PHONE_NUMBER",
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
         ),
-        column_rule("public", "policy_masked", "note", "PHONE_NUMBER", PrivacyOperator::Mask),
+        column_rule(
+            "public",
+            "policy_masked",
+            "note",
+            "PHONE_NUMBER",
+            privacy::Operator::Mask,
+        ),
         column_rule(
             "public",
             "policy_masked_copy",
             "phone",
             "PHONE_NUMBER",
-            PrivacyOperator::Mask,
+            privacy::Operator::Mask,
         ),
     ]
 }
 
 /// A handler connected as `user` (the default user when `None`) under `rules`.
-fn ruled_handler(user: Option<&str>, page_size: u16, rules: Vec<ColumnRule>) -> PostgresHandler {
+fn ruled_handler(user: Option<&str>, page_size: u16, rules: Vec<privacy::ColumnRule>) -> PostgresHandler {
     let base = base_db_config(false);
     PostgresHandler::new(&Config {
         transport: Transport::Stdio,
-        database: DatabaseConfig {
+        database: database::Config {
             page_size,
             user: user.map_or(base.user.clone(), Into::into),
             ..base
         },
         http: None,
-        privacy: Some(PrivacyConfig {
+        privacy: Some(privacy::Config {
             key: Some(PRIVACY_TEST_KEY.into()),
             rules,
-            ..PrivacyConfig::default()
+            ..privacy::Config::default()
         }),
         ssh: None,
     })
@@ -5565,7 +5577,15 @@ async fn column_rules_follow_renamed_columns() {
 
 #[tokio::test]
 async fn column_rules_bind_bare_names_through_the_search_path() {
-    let shadow_ssn = || vec![column_rule("shadow", "users", "ssn", "US_SSN", PrivacyOperator::Redact)];
+    let shadow_ssn = || {
+        vec![column_rule(
+            "shadow",
+            "users",
+            "ssn",
+            "US_SSN",
+            privacy::Operator::Redact,
+        )]
+    };
     let query = "SELECT id FROM users WHERE ssn IS NOT NULL";
     // `postgres` resolves `users` to `public.users`, which this rule leaves alone.
     ruled_read(&ruled_handler(None, 100, shadow_ssn()), query)
@@ -5632,19 +5652,19 @@ async fn column_rules_refuse_bare_creates_when_pg_temp_leads_the_search_path() {
 async fn column_rules_apply_in_the_database_a_tool_selects() {
     // Without a pinned database, a rule applies only in the database its key names.
     let events_name_ruled_in = |catalog: &str| {
-        let mut rule = column_rule("public", "events", "name", "PERSON", PrivacyOperator::Replace);
+        let mut rule = column_rule("public", "events", "name", "PERSON", privacy::Operator::Replace);
         rule.key[0] = catalog.into();
         PostgresHandler::new(&Config {
             transport: Transport::Stdio,
-            database: DatabaseConfig {
+            database: database::Config {
                 name: None,
                 ..base_db_config(false)
             },
             http: None,
-            privacy: Some(PrivacyConfig {
+            privacy: Some(privacy::Config {
                 key: Some(PRIVACY_TEST_KEY.into()),
                 rules: vec![rule],
-                ..PrivacyConfig::default()
+                ..privacy::Config::default()
             }),
             ssh: None,
         })
@@ -5699,7 +5719,7 @@ async fn column_rules_withhold_errors_raised_at_commit() {
             "policy_deferred",
             "email",
             "EMAIL_ADDRESS",
-            PrivacyOperator::Replace,
+            privacy::Operator::Replace,
         )],
     )
     .write_query(query.into(), None)
@@ -5763,8 +5783,8 @@ async fn list_tables_detailed_values_have_sorted_keys() {
 // Column rules across inheritance and partitions (#373)
 
 /// An e-mail hash rule on `public.<table>.email`.
-fn email_rule(table: &str) -> ColumnRule {
-    column_rule("public", table, "email", "EMAIL_ADDRESS", PrivacyOperator::Hash)
+fn email_rule(table: &str) -> privacy::ColumnRule {
+    column_rule("public", table, "email", "EMAIL_ADDRESS", privacy::Operator::Hash)
 }
 
 /// Asserts `rows` hold `count` rows, each with an e-mail token under `email`.
@@ -5864,7 +5884,7 @@ async fn column_rules_on_members_refuse_laundering_through_their_parent() {
 
 #[tokio::test]
 async fn column_rules_refuse_conflicting_rules_across_a_tree() {
-    let mask = column_rule("public", "ptab_1", "email", "EMAIL_ADDRESS", PrivacyOperator::Mask);
+    let mask = column_rule("public", "ptab_1", "email", "EMAIL_ADDRESS", privacy::Operator::Mask);
     let handler = ruled_handler(None, 100, vec![email_rule("ptab"), mask]);
     for query in ["SELECT email FROM ptab", "SELECT email FROM ptab_1"] {
         let refusal = ruled_refusal(&handler, query).await;

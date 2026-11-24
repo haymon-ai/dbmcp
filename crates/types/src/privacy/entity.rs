@@ -2,18 +2,18 @@
 //!
 //! Variants map 1:1 to the `SCREAMING_SNAKE` wire format used in JSON output,
 //! tracing logs, and placeholder tokens (e.g. `Entity::EmailAddress` ↔
-//! `"EMAIL_ADDRESS"` ↔ `"<EMAIL_ADDRESS>"`). Mirrors the [`crate::Category`]
-//! pattern: `#[non_exhaustive]`, [`Entity::ALL`] slice, [`std::fmt::Display`]
-//! and [`std::str::FromStr`] round-trip via [`Entity::as_str`].
+//! `"EMAIL_ADDRESS"` ↔ `"<EMAIL_ADDRESS>"`). Mirrors the [`super::Category`]
+//! pattern: [`Entity::ALL`] slice, [`std::fmt::Display`] and
+//! [`std::str::FromStr`] round-trip via [`Entity::as_str`].
 
 use std::borrow::Cow;
 use std::str::FromStr;
 
 /// Built-in entity types emitted by `dbmcp_privacy` recognizers.
 ///
-/// Closed set; new entries are non-breaking thanks to `#[non_exhaustive]`.
+/// Closed and exhaustive: adding a variant is a breaking change, so the
+/// compiler flags every `match` across the workspace that must handle it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Entity {
     /// `EMAIL_ADDRESS` — RFC-style email recognizer.
     EmailAddress,
@@ -237,7 +237,7 @@ impl Entity {
         }
     }
 
-    /// Placeholder token written by [`crate::Operator::Replace`].
+    /// Placeholder token written by the `replace` operator.
     #[must_use]
     pub const fn placeholder(self) -> &'static str {
         match self {
@@ -306,61 +306,11 @@ impl FromStr for Entity {
     type Err = ParseEntityError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "EMAIL_ADDRESS" => Ok(Entity::EmailAddress),
-            "CREDIT_CARD" => Ok(Entity::CreditCard),
-            "IBAN_CODE" => Ok(Entity::IbanCode),
-            "IP_ADDRESS" => Ok(Entity::IpAddress),
-            "URL" => Ok(Entity::Url),
-            "PHONE_NUMBER" => Ok(Entity::PhoneNumber),
-            "CRYPTO" => Ok(Entity::Crypto),
-            "US_SSN" => Ok(Entity::UsSsn),
-            "API_KEY" => Ok(Entity::ApiKey),
-            "BANK_ACCOUNT_UK" => Ok(Entity::BankAccountUk),
-            "CVV" => Ok(Entity::Cvv),
-            "ITIN" => Ok(Entity::Itin),
-            "JWT_TOKEN" => Ok(Entity::JwtToken),
-            "MAC_ADDRESS" => Ok(Entity::MacAddress),
-            "NHS_NUMBER" => Ok(Entity::NhsNumber),
-            "NINO_UK" => Ok(Entity::NinoUk),
-            "PASSPORT_UK" => Ok(Entity::PassportUk),
-            "PASSPORT_US" => Ok(Entity::PassportUs),
-            "PRIVATE_KEY" => Ok(Entity::PrivateKey),
-            "ROUTING_NUMBER_US" => Ok(Entity::RoutingNumberUs),
-            "SIN_CA" => Ok(Entity::SinCa),
-            "SORT_CODE_UK" => Ok(Entity::SortCodeUk),
-            "TAX_ID_EIN" => Ok(Entity::TaxIdEin),
-            "VAT_NUMBER" => Ok(Entity::VatNumber),
-            "MEDICAL_LICENSE_US" => Ok(Entity::MedicalLicenseUs),
-            "BANK_ACCOUNT_US" => Ok(Entity::BankAccountUs),
-            "DRIVER_LICENSE_US" => Ok(Entity::DriverLicenseUs),
-            "MBI_US" => Ok(Entity::MbiUs),
-            "NPI_US" => Ok(Entity::NpiUs),
-            "DRIVING_LICENCE_UK" => Ok(Entity::DrivingLicenceUk),
-            "POSTCODE_UK" => Ok(Entity::PostcodeUk),
-            "VEHICLE_REGISTRATION_UK" => Ok(Entity::VehicleRegistrationUk),
-            "MEDICAL_PRACTICE_ID_DE" => Ok(Entity::MedicalPracticeIdDe),
-            "DRIVING_LICENCE_DE" => Ok(Entity::DrivingLicenceDe),
-            "COMMERCIAL_REGISTER_DE" => Ok(Entity::CommercialRegisterDe),
-            "HEALTH_INSURANCE_DE" => Ok(Entity::HealthInsuranceDe),
-            "ID_CARD_DE" => Ok(Entity::IdCardDe),
-            "LICENSE_PLATE_DE" => Ok(Entity::LicensePlateDe),
-            "LIFETIME_PHYSICIAN_NUMBER_DE" => Ok(Entity::LifetimePhysicianNumberDe),
-            "PASSPORT_DE" => Ok(Entity::PassportDe),
-            "POSTCODE_DE" => Ok(Entity::PostcodeDe),
-            "SOCIAL_SECURITY_DE" => Ok(Entity::SocialSecurityDe),
-            "TAX_ID_DE" => Ok(Entity::TaxIdDe),
-            "TAX_NUMBER_DE" => Ok(Entity::TaxNumberDe),
-            "POSTCODE" => Ok(Entity::Postcode),
-            "DATE_OF_BIRTH" => Ok(Entity::DateOfBirth),
-            "PASSWORD_HASH" => Ok(Entity::PasswordHash),
-            "PERSON" => Ok(Entity::Person),
-            "LOCATION" => Ok(Entity::Location),
-            "ORGANIZATION" => Ok(Entity::Organization),
-            "NATIONALITY_RELIGION_POLITICS" => Ok(Entity::Nrp),
-            "FACILITY" => Ok(Entity::Facility),
-            other => Err(ParseEntityError(other.to_string())),
-        }
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|entity| entity.as_str() == s)
+            .ok_or_else(|| ParseEntityError(s.to_string()))
     }
 }
 
@@ -386,12 +336,6 @@ impl<'de> serde::Deserialize<'de> for Entity {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn config_entity_names_mirror_entity() {
-        let names: Vec<&str> = Entity::ALL.iter().map(|e| e.as_str()).collect();
-        assert_eq!(names, dbmcp_config::ColumnRule::ENTITIES);
-    }
 
     #[test]
     fn all_round_trips_through_as_str() {

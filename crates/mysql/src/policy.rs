@@ -33,7 +33,6 @@
 
 use std::collections::BTreeMap;
 
-use dbmcp_config::{DatabaseBackend, PrivacyConfig};
 use dbmcp_policy::{
     Access, Analysis, Analyzed, Cascade, CascadeAction, CatalogColumn, Enforced, Entry, Executed, Family, Origin,
     Planned, Relation, RelationId, RelationKind, RelationRef, Run, SourceRef, StatementKind, Step, WrittenName, admit,
@@ -42,6 +41,7 @@ use dbmcp_policy::{
 use dbmcp_sql::Connection as _;
 use dbmcp_sql::validation::validate_single_statement;
 use dbmcp_truncate::Window;
+use dbmcp_types::{database, privacy};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use sqlparser::dialect::MySqlDialect;
@@ -218,7 +218,7 @@ impl Probe {
     ///
     /// [`Refusal::BackendMismatch`] when the server is not the configured
     /// `backend`, [`Stop::Sql`] when the probe query fails.
-    async fn read(conn: &mut sqlx::MySqlConnection, backend: DatabaseBackend) -> Result<Self, Stop> {
+    async fn read(conn: &mut sqlx::MySqlConnection, backend: database::Backend) -> Result<Self, Stop> {
         let (database, lower_case, sql_mode, charset, version): (Option<String>, i64, String, String, String) =
             sqlx::query_as(PROBE_SQL).fetch_one(conn).await?;
         let server = flavour::of(&version);
@@ -233,7 +233,7 @@ impl Probe {
             lower_case,
             sql_mode,
             charset,
-            mariadb: server == DatabaseBackend::Mariadb,
+            mariadb: server == database::Backend::Mariadb,
         })
     }
 
@@ -414,7 +414,7 @@ impl MysqlHandler {
     /// of anything else that failed.
     pub(crate) async fn enforce(
         &self,
-        policy: &PrivacyConfig,
+        policy: &privacy::Config,
         sql: &str,
         access: Access,
         timeout_secs: u64,
@@ -439,8 +439,8 @@ impl MysqlHandler {
 /// Plans one statement on `conn`, then executes it inside a transaction.
 async fn run<'c>(
     conn: &mut sqlx::MySqlConnection,
-    config: &'c PrivacyConfig,
-    backend: DatabaseBackend,
+    config: &'c privacy::Config,
+    backend: database::Backend,
     sql: &str,
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
@@ -455,7 +455,7 @@ async fn run<'c>(
         return Err(Stop::Refused(Refusal::Unrollable));
     }
     // The prune reads only format version 1 plans.
-    let pins = backend == DatabaseBackend::Mysql && planned.prunes();
+    let pins = backend == database::Backend::Mysql && planned.prunes();
     if pins {
         explain_format(&mut *conn, "SET SESSION explain_json_format_version = 1").await?;
     }
@@ -614,7 +614,7 @@ fn origins(columns: &[MySqlColumn], probe: &Probe, owners: &[Owner]) -> Vec<(usi
 /// Refuses before analysis when the server is not the configured `backend`.
 async fn resolve(
     conn: &mut sqlx::MySqlConnection,
-    backend: DatabaseBackend,
+    backend: database::Backend,
     sql: &str,
 ) -> Result<(Analyzed, Probe, Vec<Owner>), Stop> {
     let probe = Probe::read(&mut *conn, backend).await?;
@@ -1197,8 +1197,8 @@ mod tests {
         #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
         async fn origins_translate_described_columns() {
             let backend = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
-                Ok("mariadb") => DatabaseBackend::Mariadb,
-                _ => DatabaseBackend::Mysql,
+                Ok("mariadb") => database::Backend::Mariadb,
+                _ => database::Backend::Mysql,
             };
             let mut conn = seeded().await;
             let sql = "SELECT name, email, 1 FROM users";
@@ -1219,8 +1219,8 @@ mod tests {
         #[ignore = "needs the seeded MySQL or MariaDB container: ./tests/run.sh --filter mysql"]
         async fn opposite_backend_refuses_the_probe() {
             let (configured, server) = match std::env::var("DBMCP_DB_BACKEND").as_deref() {
-                Ok("mariadb") => (DatabaseBackend::Mysql, DatabaseBackend::Mariadb),
-                _ => (DatabaseBackend::Mariadb, DatabaseBackend::Mysql),
+                Ok("mariadb") => (database::Backend::Mysql, database::Backend::Mariadb),
+                _ => (database::Backend::Mariadb, database::Backend::Mysql),
             };
             let mut conn = seeded().await;
             let stop = Probe::read(&mut conn, configured)

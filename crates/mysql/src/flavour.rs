@@ -6,8 +6,8 @@
 //! private): [`MysqlConnection`](crate::connection::MysqlConnection) once per
 //! process to warn, the column policy on every statement to refuse.
 
-use dbmcp_config::DatabaseBackend;
 use dbmcp_sql::support::{Line, Variant};
+use dbmcp_types::database;
 
 /// The server is not the configured `MySQL`-family backend.
 #[derive(Debug, thiserror::Error)]
@@ -16,21 +16,21 @@ use dbmcp_sql::support::{Line, Variant};
      set database.backend / DBMCP_DB_BACKEND to {server}"
 )]
 pub(crate) struct BackendMismatch {
-    pub(crate) configured: DatabaseBackend,
-    pub(crate) server: DatabaseBackend,
+    pub(crate) configured: database::Backend,
+    pub(crate) server: database::Backend,
 }
 
 /// Classifies a `VERSION()` string: `MariaDB` if it contains `mariadb` (any case).
 #[must_use]
-pub(crate) fn of(version: &str) -> DatabaseBackend {
+pub(crate) fn of(version: &str) -> database::Backend {
     if version
         .as_bytes()
         .windows(7)
         .any(|w| w.eq_ignore_ascii_case(b"mariadb"))
     {
-        DatabaseBackend::Mariadb
+        database::Backend::Mariadb
     } else {
-        DatabaseBackend::Mysql
+        database::Backend::Mysql
     }
 }
 
@@ -39,9 +39,9 @@ pub(crate) fn of(version: &str) -> DatabaseBackend {
 /// Skips the `5.5.5-` replication prefix some `MariaDB` servers and proxies
 /// report, such as `5.5.5-10.11.6-MariaDB` → 10.11.
 #[must_use]
-pub(crate) fn line(version: &str, server: DatabaseBackend) -> Option<Line> {
+pub(crate) fn line(version: &str, server: database::Backend) -> Option<Line> {
     let version = match version.strip_prefix("5.5.5-") {
-        Some(rest) if server == DatabaseBackend::Mariadb => rest,
+        Some(rest) if server == database::Backend::Mariadb => rest,
         _ => version,
     };
     Line::parse(version)
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn of_is_mariadb_only_for_mariadb_versions() {
-        use DatabaseBackend::{Mariadb, Mysql};
+        use database::Backend::{Mariadb, Mysql};
         for (version, expected) in [
             ("11.8.9-MariaDB", Mariadb),
             ("10.11.10-MariaDB-log", Mariadb),
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn line_skips_the_mariadb_replication_prefix() {
-        use DatabaseBackend::{Mariadb, Mysql};
+        use database::Backend::{Mariadb, Mysql};
         assert_eq!(line("5.5.5-10.11.6-MariaDB", Mariadb), Some(Line::new(10, 11)));
         assert_eq!(line("11.8.9-MariaDB-ubu2404", Mariadb), Some(Line::new(11, 8)));
         assert_eq!(line("8.4.11", Mysql), Some(Line::new(8, 4)));
