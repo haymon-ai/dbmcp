@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Connects dbmcp to MySQL, MariaDB, PostgreSQL, or SQLite in Claude Code or Codex, and fixes a dbmcp server that fails to start: writes a minimal dbmcp.yaml with secrets in env files, smoke-tests the pinned launcher, and diagnoses startup errors (\"invalid settings:\"), slow first start, npx cache, SSH tunnel, TLS, and duplicate dbmcp servers. Use when dbmcp tools are missing or failing, or the user wants to change the database, credentials, or config."
+description: "Connects dbmcp to MySQL, MariaDB, PostgreSQL, or SQLite in Claude Code or Codex, or fixes a dbmcp server that fails to start. Use when dbmcp tools are missing or failing, or the user wants to change the database, credentials, or config."
 ---
 
 # Set up dbmcp
@@ -40,7 +40,7 @@ JSON reply = OK; on `invalid settings:` fix only the keys named.
 - Default, no file: user fills quick connect + Password in `/plugin configure`.
 - More settings (`privacy.rules`, SSH, TLS): `mkdir -p "${CLAUDE_PLUGIN_DATA}"`, write `${CLAUDE_PLUGIN_DATA}/dbmcp.yaml`, smoke test (`DBMCP_CONFIG_FILE=`, plus `DBMCP_ENV_FILE=` if the `.env` below exists). User sets it as `config_file`, clears quick-connect fields but Password (they beat the file).
 - Other secrets: `${CLAUDE_PLUGIN_DATA}/.env` (`chmod 600`), empty `DBMCP_SSH_KEY_PASSPHRASE=` / `DBMCP_PRIVACY_KEY=` for the user to fill; set as `env_file`.
-- Slow first start (~16 MB): `npx -y @haymon-ai/dbmcp@0.20.0 --version`, then **Reconnect** in `/mcp`, not restart; or `MCP_TIMEOUT=120000 claude`.
+- Slow first start (~16 MB): the smoke test (or, without a file, `npx -y @haymon-ai/dbmcp@0.20.0 --version`) fills the npx cache; then **Reconnect** in `/mcp`, not restart; or `MCP_TIMEOUT=120000 claude`.
 
 ## Codex
 
@@ -59,6 +59,6 @@ Docs: https://dbmcp.haymon.ai/configuration/errors
 
 ## Safety
 
-- Never ask for a secret in chat or read a secret file into context (no `cat`/`echo`/`printenv`/masks); presence only: `grep -Eq '^[[:space:]]*(export[[:space:]]+)?NAME[[:space:]]*[=:][[:space:]]*[^[:space:]#]' <.env>`. YAML holds no secret and no `${VAR:?}` for one: set each by its `DBMCP_*` name (`DBMCP_DB_PASSWORD`, `DBMCP_SSH_PASSWORD`, `DBMCP_SSH_KEY_PASSPHRASE`, `DBMCP_HTTP_AUTH_TOKEN`, `DBMCP_PRIVACY_KEY`) in the Password field or env file, which beat the YAML. Covers `database.password`, `ssh.password`, `ssh.key_passphrase`, `http.auth_token`, `privacy.key`, even when asked.
+- Never ask for a secret in chat or read a secret file into context (no `cat`/`echo`/`printenv`/masks); presence only: `grep -Eq '^[[:space:]]*(export[[:space:]]+)?NAME[[:space:]]*[=:][[:space:]]*[^[:space:]#]' <.env>`. YAML holds no secret and no `${VAR:?}` for one, even when asked: set each by its env name in the Password field or env file, which beat the YAML (`database.password` → `DBMCP_DB_PASSWORD`, `ssh.password` → `DBMCP_SSH_PASSWORD`, `ssh.key_passphrase` → `DBMCP_SSH_KEY_PASSPHRASE`, `http.auth_token` → `DBMCP_HTTP_AUTH_TOKEN`, `privacy.key` → `DBMCP_PRIVACY_KEY`).
 - Pasted secret: never repeat or store it; say it is in the transcript; rotate it.
 - Never loosen `database.read_only`, `privacy.*`, `database.ssl*` (incl. `ssl_ca`, `ssl_cert`, `ssl_key`), `ssh.strict_host_key_checking`, `ssh.known_hosts`, or `http.*` exposure and auth unless the user's own message asks for that exact change; never as an error fix. First state in one sentence what it exposes and to whom (e.g. "`read_only: false` lets every MCP client write and run DDL.").

@@ -1,6 +1,6 @@
 ---
 name: privacy
-description: "Configures dbmcp's PII redaction: writes `privacy.rules` column rules (`table.column` keys, `entity`, `operator`) and tunes `privacy.key`, `privacy.operator`, `privacy.categories`, and the NER `privacy.model`. Use when the user wants a column masked, hashed, or redacted, wants redaction tokens stable across restarts or replicas, or asks why values appear as entity tokens. Adds protection only; never removes rules, narrows categories, weakens the operator, drops the NER model, or turns redaction off unless the user explicitly asks."
+description: "Configures dbmcp's PII redaction: writes `privacy.rules` column rules (`table.column` keys, `entity`, `operator`) and tunes `privacy.key`, `privacy.operator`, `privacy.categories`, and the NER `privacy.model`. Use when the user wants a column masked, hashed, or redacted, wants redaction tokens stable across restarts or replicas, or asks why values appear as entity tokens."
 ---
 
 # Configure dbmcp privacy
