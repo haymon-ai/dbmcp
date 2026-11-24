@@ -16,7 +16,7 @@ Claude Code sets `CLAUDECODE=1`; else Codex (ask if unsure). No plugin tools: ne
 Absolute paths; if it exists, change only the asked keys, keep the rest (`privacy.*`, `ssh.*`, TLS, `read_only`); print the path.
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/v0.20.0/crates/config/assets/dbmcp.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/haymon-ai/dbmcp/v0.21.0/crates/config/assets/dbmcp.schema.json
 database:
   backend: postgres   # mysql | mariadb | postgres | sqlite
   host: localhost
@@ -31,7 +31,7 @@ Other settings: every key and its meaning is in the schema above (this release) 
 
 Smoke test (config only; `<vars>` names the files):
 ```sh
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' | <vars> npx -y @haymon-ai/dbmcp@0.20.0
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' | <vars> npx -y @haymon-ai/dbmcp@0.21.0
 ```
 JSON reply = OK; on `invalid settings:` fix only the keys named.
 
@@ -40,7 +40,7 @@ JSON reply = OK; on `invalid settings:` fix only the keys named.
 - Default, no file: user fills quick connect + Password in `/plugin configure`.
 - More settings (`privacy.rules`, SSH, TLS): `mkdir -p "${CLAUDE_PLUGIN_DATA}"`, write `${CLAUDE_PLUGIN_DATA}/dbmcp.yaml`, smoke test (`DBMCP_CONFIG_FILE=`, plus `DBMCP_ENV_FILE=` if the `.env` below exists). User sets it as `config_file`, clears quick-connect fields but Password (they beat the file).
 - Other secrets: `${CLAUDE_PLUGIN_DATA}/.env` (`chmod 600`), empty `DBMCP_SSH_KEY_PASSPHRASE=` / `DBMCP_PRIVACY_KEY=` for the user to fill; set as `env_file`.
-- Slow first start (~16 MB): the smoke test (or, without a file, `npx -y @haymon-ai/dbmcp@0.20.0 --version`) fills the npx cache; then **Reconnect** in `/mcp`, not restart; or `MCP_TIMEOUT=120000 claude`.
+- Slow first start (~16 MB): the smoke test (or, without a file, `npx -y @haymon-ai/dbmcp@0.21.0 --version`) fills the npx cache; then **Reconnect** in `/mcp`, not restart; or `MCP_TIMEOUT=120000 claude`.
 
 ## Codex
 

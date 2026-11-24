@@ -1,6 +1,6 @@
 {
   "name": "dbmcp",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "The privacy first MCP server for SQL databases.",
   "author": {
     "name": "Haymon AI",

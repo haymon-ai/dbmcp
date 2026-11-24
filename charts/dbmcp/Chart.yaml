@@ -2,8 +2,8 @@ apiVersion: v2
 name: dbmcp
 description: "The privacy first MCP server for SQL databases."
 type: application
-version: 0.20.0
-appVersion: "0.20.0"
+version: 0.21.0
+appVersion: "0.21.0"
 kubeVersion: ">=1.25.0-0"
 home: https://dbmcp.haymon.ai
 icon: https://dbmcp.haymon.ai/logo.svg
@@ -32,7 +32,7 @@ annotations:
       url: https://github.com/haymon-ai/dbmcp
   artifacthub.io/images: |
     - name: dbmcp
-      image: ghcr.io/haymon-ai/dbmcp:0.20.0
+      image: ghcr.io/haymon-ai/dbmcp:0.21.0
       platforms:
         - linux/amd64
         - linux/arm64

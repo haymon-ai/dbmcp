@@ -2,7 +2,7 @@
   "mcpServers": {
     "dbmcp": {
       "command": "npx",
-      "args": ["-y", "@haymon-ai/dbmcp@0.20.0"],
+      "args": ["-y", "@haymon-ai/dbmcp@0.21.0"],
       "env": {
         "DBMCP_CONFIG_FILE": "${user_config.config_file}",
         "DBMCP_ENV_FILE": "${user_config.env_file}",

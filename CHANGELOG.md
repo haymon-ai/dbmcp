@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.21.0](https://github.com/haymon-ai/dbmcp/compare/2a8aa1f92f4de2a0ec45aba1012891ee7b4f5936..v0.21.0) - 2026-11-24
+#### 🚀 Features
+- (**plugin**) ship Claude Code and Codex plugins (#433) - ([1e2f31c](https://github.com/haymon-ai/dbmcp/commit/1e2f31c96268d61452715cdd50aa2888cbf36a10)) - [@athopen](https://github.com/athopen)
+- test every supported database version in CI and warn on others - ([bcc8f47](https://github.com/haymon-ai/dbmcp/commit/bcc8f47457b17a7b58ea183eb7c838bf93787395)) - [@athopen](https://github.com/athopen)
+#### 📚 Documentation
+- consolidate project messaging (#432) - ([1f322ca](https://github.com/haymon-ai/dbmcp/commit/1f322cad95905031666cb2660d8fbaa91a204a7e)) - [@athopen](https://github.com/athopen)
+#### 🚜 Refactoring
+- (**policy**) share the column-rules enforcement envelope (#431) - ([63a3de7](https://github.com/haymon-ai/dbmcp/commit/63a3de76326f88ff908caa3102e4fe33cc8bedf7)) - [@athopen](https://github.com/athopen)
+
+- - -
+
 ## [v0.20.0](https://github.com/haymon-ai/dbmcp/compare/b4c48ee3f88b2cc27905877bbe0b0ba353bd6b39..v0.20.0) - 2026-11-23
 
 #### 💥 Breaking Changes
