@@ -30,6 +30,14 @@ impl ToolBase for CreateDatabaseTool {
         Some(DESCRIPTION.into())
     }
 
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>(false))
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
+
     fn annotations() -> Option<ToolAnnotations> {
         Some(
             ToolAnnotations::new()
@@ -38,14 +46,6 @@ impl ToolBase for CreateDatabaseTool {
                 .idempotent(false)
                 .open_world(false),
         )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
     }
 }
 

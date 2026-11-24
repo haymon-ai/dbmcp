@@ -48,16 +48,16 @@ impl<const PINNED: bool> ToolBase for ListViewsTool<PINNED> {
         )
     }
 
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-
     fn input_schema() -> Option<Arc<JsonObject>> {
         Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(annotations())
     }
 }
 

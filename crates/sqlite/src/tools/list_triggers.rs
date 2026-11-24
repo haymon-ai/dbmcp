@@ -30,6 +30,14 @@ impl ToolBase for ListTriggersTool {
         Some(DESCRIPTION.into())
     }
 
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>(true))
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
+
     fn annotations() -> Option<ToolAnnotations> {
         Some(
             ToolAnnotations::new()
@@ -38,14 +46,6 @@ impl ToolBase for ListTriggersTool {
                 .idempotent(true)
                 .open_world(false),
         )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
     }
 }
 
