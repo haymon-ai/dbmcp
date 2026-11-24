@@ -29,17 +29,15 @@ const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-o
 
 /// Declarative tool table: `(tool, pinned, read_only)`.
 ///
-/// `SQLite` has no cross-database tools and no `database` request field;
-/// its file path is always pinned, so every tool is `pinned = true` and
-/// the handler builds the router with `pinned = true`.
+/// `SQLite` has no `database` field, so no tool is pinned.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
-    ToolSpec::tool::<ListTablesTool>(true, false),
-    ToolSpec::tool::<ListViewsTool>(true, false),
-    ToolSpec::tool::<ListTriggersTool>(true, false),
-    ToolSpec::tool::<ReadQueryTool>(true, false),
-    ToolSpec::tool::<ExplainQueryTool>(true, false),
-    ToolSpec::tool::<WriteQueryTool>(true, true),
-    ToolSpec::tool::<DropTableTool>(true, true),
+    ToolSpec::tool::<ListTablesTool>(false, false),
+    ToolSpec::tool::<ListViewsTool>(false, false),
+    ToolSpec::tool::<ListTriggersTool>(false, false),
+    ToolSpec::tool::<ReadQueryTool>(false, false),
+    ToolSpec::tool::<ExplainQueryTool>(false, false),
+    ToolSpec::tool::<WriteQueryTool>(false, true),
+    ToolSpec::tool::<DropTableTool>(false, true),
 ];
 
 /// `SQLite` file-based database handler.
@@ -83,7 +81,7 @@ impl SqliteHandler {
             connection: SqliteConnection::new(&config.database, policy.is_some()),
             redactor: Redactor::from_config(config.privacy.as_ref())?,
             policy,
-            tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, true),
+            tool_router: ToolRouter::from_specs(TOOLS, config.database.read_only, false),
         })
     }
 }

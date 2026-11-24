@@ -12,8 +12,7 @@ use dbmcp_policy::Access;
 
 const NAME: &str = "explainQuery";
 const TITLE: &str = "Explain Query";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/explain_query/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/explain_query/unpinned.md");
+const DESCRIPTION: &str = include_str!("../../assets/tools/explain_query.md");
 
 fn annotations() -> ToolAnnotations {
     ToolAnnotations::new()
@@ -23,10 +22,10 @@ fn annotations() -> ToolAnnotations {
         .open_world(true)
 }
 
-/// Marker type for the `explainQuery` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedExplainQueryTool;
+/// Marker type for the `explainQuery` MCP tool.
+pub(crate) struct ExplainQueryTool<const PINNED: bool>;
 
-impl ToolBase for PinnedExplainQueryTool {
+impl<const PINNED: bool> ToolBase for ExplainQueryTool<PINNED> {
     type Parameter = ExplainQueryRequest;
     type Output = QueryResponse;
     type Error = ErrorData;
@@ -40,64 +39,23 @@ impl ToolBase for PinnedExplainQueryTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(DESCRIPTION.into())
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
     }
-}
-
-impl AsyncTool<PostgresHandler> for PinnedExplainQueryTool {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .explain_query(None, params.query, params.analyze, params.timeout)
-            .await
-    }
-}
-
-/// Marker type for the `explainQuery` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedExplainQueryTool;
-
-impl ToolBase for UnpinnedExplainQueryTool {
-    type Parameter = ExplainQueryRequest;
-    type Output = QueryResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
 }
 
-impl AsyncTool<PostgresHandler> for UnpinnedExplainQueryTool {
+impl<const PINNED: bool> AsyncTool<PostgresHandler> for ExplainQueryTool<PINNED> {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .explain_query(params.database, params.query, params.analyze, params.timeout)

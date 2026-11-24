@@ -22,10 +22,10 @@ fn annotations() -> ToolAnnotations {
         .open_world(true)
 }
 
-/// Marker type for the `writeQuery` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedWriteQueryTool;
+/// Marker type for the `writeQuery` MCP tool.
+pub(crate) struct WriteQueryTool<const PINNED: bool>;
 
-impl ToolBase for PinnedWriteQueryTool {
+impl<const PINNED: bool> ToolBase for WriteQueryTool<PINNED> {
     type Parameter = QueryRequest;
     type Output = WriteQueryResponse;
     type Error = ErrorData;
@@ -39,62 +39,30 @@ impl ToolBase for PinnedWriteQueryTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
     }
-}
-
-impl AsyncTool<MysqlHandler> for PinnedWriteQueryTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.write_query(params.query, None).await
-    }
-}
-
-/// Marker type for the `writeQuery` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedWriteQueryTool;
-
-impl ToolBase for UnpinnedWriteQueryTool {
-    type Parameter = QueryRequest;
-    type Output = WriteQueryResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
 }
 
-impl AsyncTool<MysqlHandler> for UnpinnedWriteQueryTool {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for WriteQueryTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler.write_query(params.query, params.database).await
     }

@@ -33,6 +33,14 @@ impl ToolBase for WriteQueryTool {
         Some(DESCRIPTION.into())
     }
 
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>(true))
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
+
     fn annotations() -> Option<ToolAnnotations> {
         Some(
             ToolAnnotations::new()
@@ -41,14 +49,6 @@ impl ToolBase for WriteQueryTool {
                 .idempotent(false)
                 .open_world(true),
         )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
     }
 }
 

@@ -27,10 +27,10 @@ fn annotations() -> ToolAnnotations {
         .open_world(true)
 }
 
-/// Marker type for the `readQuery` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedReadQueryTool;
+/// Marker type for the `readQuery` MCP tool.
+pub(crate) struct ReadQueryTool<const PINNED: bool>;
 
-impl ToolBase for PinnedReadQueryTool {
+impl<const PINNED: bool> ToolBase for ReadQueryTool<PINNED> {
     type Parameter = ReadQueryRequest;
     type Output = ReadQueryResponse;
     type Error = ErrorData;
@@ -44,64 +44,30 @@ impl ToolBase for PinnedReadQueryTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
     }
-}
-
-impl AsyncTool<MysqlHandler> for PinnedReadQueryTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .read_query(params.query, None, params.cursor, params.timeout)
-            .await
-    }
-}
-
-/// Marker type for the `readQuery` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedReadQueryTool;
-
-impl ToolBase for UnpinnedReadQueryTool {
-    type Parameter = ReadQueryRequest;
-    type Output = ReadQueryResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
 }
 
-impl AsyncTool<MysqlHandler> for UnpinnedReadQueryTool {
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for ReadQueryTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .read_query(params.query, params.database, params.cursor, params.timeout)

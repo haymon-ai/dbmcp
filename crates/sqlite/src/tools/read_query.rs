@@ -39,6 +39,14 @@ impl ToolBase for ReadQueryTool {
         Some(DESCRIPTION.into())
     }
 
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>(true))
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
+
     fn annotations() -> Option<ToolAnnotations> {
         Some(
             ToolAnnotations::new()
@@ -47,14 +55,6 @@ impl ToolBase for ReadQueryTool {
                 .idempotent(true)
                 .open_world(true),
         )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
     }
 }
 

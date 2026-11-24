@@ -18,10 +18,10 @@ fn annotations() -> ToolAnnotations {
         .open_world(false)
 }
 
-/// Marker type for the `listMaterializedViews` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedListMaterializedViewsTool;
+/// Marker type for the `listMaterializedViews` MCP tool.
+pub(crate) struct ListMaterializedViewsTool<const PINNED: bool>;
 
-impl ToolBase for PinnedListMaterializedViewsTool {
+impl<const PINNED: bool> ToolBase for ListMaterializedViewsTool<PINNED> {
     type Parameter = ListMaterializedViewsRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
@@ -35,64 +35,30 @@ impl ToolBase for PinnedListMaterializedViewsTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
     }
-}
-
-impl AsyncTool<PostgresHandler> for PinnedListMaterializedViewsTool {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_materialized_views(None, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
-
-/// Marker type for the `listMaterializedViews` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedListMaterializedViewsTool;
-
-impl ToolBase for UnpinnedListMaterializedViewsTool {
-    type Parameter = ListMaterializedViewsRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
 }
 
-impl AsyncTool<PostgresHandler> for UnpinnedListMaterializedViewsTool {
+impl<const PINNED: bool> AsyncTool<PostgresHandler> for ListMaterializedViewsTool<PINNED> {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .list_materialized_views(params.database, params.cursor, params.search, params.detailed)

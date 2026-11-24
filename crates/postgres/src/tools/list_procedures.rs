@@ -18,10 +18,10 @@ fn annotations() -> ToolAnnotations {
         .open_world(false)
 }
 
-/// Marker type for the `listProcedures` MCP tool (pinned variant — no `database` field).
-pub(crate) struct PinnedListProceduresTool;
+/// Marker type for the `listProcedures` MCP tool.
+pub(crate) struct ListProceduresTool<const PINNED: bool>;
 
-impl ToolBase for PinnedListProceduresTool {
+impl<const PINNED: bool> ToolBase for ListProceduresTool<PINNED> {
     type Parameter = ListProceduresRequest;
     type Output = ListEntriesResponse;
     type Error = ErrorData;
@@ -35,64 +35,30 @@ impl ToolBase for PinnedListProceduresTool {
     }
 
     fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_PINNED.into())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
+        Some(
+            if PINNED {
+                DESCRIPTION_PINNED
+            } else {
+                DESCRIPTION_UNPINNED
+            }
+            .into(),
+        )
     }
 
     fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(true))
+        Some(input_schema::<Self::Parameter>(PINNED))
     }
 
     fn output_schema() -> Option<Arc<JsonObject>> {
         Some(output_schema::<Self::Output>())
     }
-}
-
-impl AsyncTool<PostgresHandler> for PinnedListProceduresTool {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_procedures(None, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
-
-/// Marker type for the `listProcedures` MCP tool (unpinned variant — carries `database`).
-pub(crate) struct UnpinnedListProceduresTool;
-
-impl ToolBase for UnpinnedListProceduresTool {
-    type Parameter = ListProceduresRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION_UNPINNED.into())
-    }
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(annotations())
     }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
 }
 
-impl AsyncTool<PostgresHandler> for UnpinnedListProceduresTool {
+impl<const PINNED: bool> AsyncTool<PostgresHandler> for ListProceduresTool<PINNED> {
     async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
         handler
             .list_procedures(params.database, params.cursor, params.search, params.detailed)

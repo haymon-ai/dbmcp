@@ -24,8 +24,9 @@ use std::sync::Arc;
 use rmcp::ErrorData;
 use rmcp::handler::server::common::{AsRequestContext, FromContextPart, schema_for_empty_input};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase, ToolRoute, ToolRouter};
+use rmcp::handler::server::tool::parse_json_object;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool};
 use uuid::Uuid;
 
 /// Backend handler hooks the tool registry calls at tool-call time.
@@ -89,7 +90,7 @@ impl std::fmt::Debug for ErrorContext {
 pub struct ToolSpec<H: ToolHandler> {
     /// Builds the tool's route.
     route: fn() -> ToolRoute<H>,
-    /// Whether the tool registers only when a database name is pinned in config.
+    /// Registers only when pinning matches: `true` pinned, `false` unpinned.
     pinned: bool,
     /// Whether the tool is hidden in read-only mode.
     read_only: bool,
@@ -109,11 +110,15 @@ impl<H: ToolHandler> ToolSpec<H> {
     ///
     /// Each text block of the tool's results, error messages included, is
     /// wrapped in random `<untrusted-data-{id}>` boundaries;
-    /// `structuredContent` is unchanged.
+    /// `structuredContent` is unchanged. A `pinned` tool drops a sent `database`.
     #[must_use]
     pub const fn tool<T: AsyncTool<H> + 'static>(pinned: bool, read_only: bool) -> Self {
         Self {
-            route: route::<H, T>,
+            route: if pinned {
+                route::<H, T, true>
+            } else {
+                route::<H, T, false>
+            },
             pinned,
             read_only,
         }
@@ -124,11 +129,11 @@ impl<H: ToolHandler> ToolSpec<H> {
 ///
 /// Tools without an input schema take no arguments and are invoked with
 /// `T::Parameter::default()`, matching rmcp's own registration.
-fn route<H: ToolHandler, T: AsyncTool<H> + 'static>() -> ToolRoute<H> {
-    if T::input_schema().is_some() {
-        ToolRoute::new(attribute::<T>(), invoke::<H, T>)
-    } else {
-        ToolRoute::new(attribute::<T>(), invoke_without_params::<H, T>)
+fn route<H: ToolHandler, T: AsyncTool<H> + 'static, const PINNED: bool>() -> ToolRoute<H> {
+    match (T::input_schema().is_some(), PINNED) {
+        (true, true) => ToolRoute::new(attribute::<T>(), invoke_pinned::<H, T>),
+        (true, false) => ToolRoute::new(attribute::<T>(), invoke::<H, T>),
+        (false, _) => ToolRoute::new(attribute::<T>(), invoke_without_params::<H, T>),
     }
 }
 
@@ -183,6 +188,19 @@ fn invoke<H: ToolHandler, T: AsyncTool<H>>(
     ErrorContextPart(context): ErrorContextPart,
 ) -> ToolFuture<'_> {
     run::<H, T>(handler, params, context)
+}
+
+/// Runs tool `T` with the call's `arguments`, minus a sent `database`.
+fn invoke_pinned<H: ToolHandler, T: AsyncTool<H>>(
+    handler: &H,
+    mut arguments: JsonObject,
+    ErrorContextPart(context): ErrorContextPart,
+) -> ToolFuture<'_> {
+    arguments.shift_remove("database");
+    match parse_json_object(arguments) {
+        Ok(params) => run::<H, T>(handler, params, context),
+        Err(error) => Box::pin(async move { Err(error) }),
+    }
 }
 
 /// Runs argument-less tool `T` with its default parameter value.
@@ -247,7 +265,7 @@ impl<H: ToolHandler> ToolRouterExt<H> for ToolRouter<H> {
 mod tests {
     use std::borrow::Cow;
 
-    use rmcp::model::{JsonObject, ToolAnnotations};
+    use rmcp::model::ToolAnnotations;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
@@ -356,6 +374,31 @@ mod tests {
                 None => Err(ErrorData::internal_error(ERROR, None)),
                 Some(_) => Ok(Response { note: NOTE.into() }),
             }
+        }
+    }
+
+    #[derive(Default, Deserialize, JsonSchema)]
+    struct Scoped {
+        database: Option<String>,
+    }
+
+    struct ScopedTool;
+
+    impl ToolBase for ScopedTool {
+        type Parameter = Scoped;
+        type Output = Response;
+        type Error = ErrorData;
+
+        fn name() -> Cow<'static, str> {
+            "scoped".into()
+        }
+    }
+
+    impl AsyncTool<Handler> for ScopedTool {
+        async fn invoke(_: &Handler, scoped: Scoped) -> Result<Response, ErrorData> {
+            Ok(Response {
+                note: format!("{:?}", scoped.database),
+            })
         }
     }
 
@@ -503,7 +546,7 @@ mod tests {
     #[test]
     fn no_input_attribute_matches_rmcp_registration() {
         let rmcp = ToolRouter::<Handler>::new().with_async_tool::<NoInputTool>();
-        let ours = ToolRouter::new().with_route(route::<Handler, NoInputTool>());
+        let ours = ToolRouter::new().with_route(route::<Handler, NoInputTool, false>());
 
         assert_eq!(ours.get("no_input"), rmcp.get("no_input"));
     }
@@ -511,7 +554,7 @@ mod tests {
     #[test]
     fn attribute_matches_rmcp_registration() {
         let rmcp = ToolRouter::<Handler>::new().with_async_tool::<FailingTool>();
-        let ours = ToolRouter::new().with_route(route::<Handler, FailingTool>());
+        let ours = ToolRouter::new().with_route(route::<Handler, FailingTool, false>());
 
         assert_eq!(ours.get("failing"), rmcp.get("failing"));
     }
@@ -549,5 +592,19 @@ mod tests {
             let overhead = envelope(&response.to_string()).chars().count() - 2;
             assert!(overhead <= RESERVED_CHARS, "{overhead} > {RESERVED_CHARS}");
         }
+    }
+
+    #[tokio::test]
+    async fn pinned_tool_never_sees_a_sent_database() {
+        let arguments = serde_json::json!({"database": "other"})
+            .as_object()
+            .cloned()
+            .expect("object arguments");
+        let output =
+            invoke_pinned::<Handler, ScopedTool>(&Handler { redact: false }, arguments, ErrorContextPart(None)).await;
+
+        let result = output.expect("tool result");
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.structured_content, Some(serde_json::json!({"note": "None"})));
     }
 }
