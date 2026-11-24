@@ -56,6 +56,24 @@ MCP Registry name: `mcp-name: ai.haymon/dbmcp`
 
 The buttons launch dbmcp with `npx` (Node.js 18+). VS Code prompts for the connection settings; Cursor installs placeholders to edit afterwards. For Claude Desktop, Claude Code, Codex, Windsurf, Zed, Gemini CLI, Goose, JetBrains, and LM Studio, see [MCP Clients](https://dbmcp.haymon.ai/clients).
 
+### Claude Code and Codex plugins
+
+**Claude Code**:
+
+```text
+/plugin marketplace add haymon-ai/marketplace
+/plugin install dbmcp@haymon-ai
+```
+
+**Codex**:
+
+```bash
+codex plugin marketplace add haymon-ai/marketplace
+codex plugin add dbmcp@haymon-ai
+```
+
+The plugin adds the dbmcp MCP server and the `setup` and `privacy` skills, and prompts for the connection settings. See [Claude Code](https://dbmcp.haymon.ai/clients/claude-code#plugin-recommended) and [Codex](https://dbmcp.haymon.ai/clients/codex#plugin-recommended).
+
 ### Using `.mcp.json` (recommended)
 
 Add a `.mcp.json` file to your project root. MCP clients read this file and configure the server automatically.
