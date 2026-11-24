@@ -14,13 +14,13 @@
     "config_file": {
       "type": "file",
       "title": "Config file (full config)",
-      "description": "Absolute path to a `dbmcp.yaml`. Leave the quick-connect fields blank when you use one: they override the same settings in the file.",
+      "description": "Absolute path to a `dbmcp.yaml`, such as the one the setup skill writes under `~/.claude/plugins/data/dbmcp-haymon-ai/`. Leave the quick-connect fields except Password blank when you use one: they override the same settings in the file.",
       "default": ""
     },
     "env_file": {
       "type": "file",
       "title": "Env file (full config)",
-      "description": "Optional absolute path to a `.env` file holding `DBMCP_*` values and the secrets your config file reads with `${VAR}`.",
+      "description": "Optional absolute path to a `.env` file holding `DBMCP_*` values and secrets beyond the password, such as an SSH key passphrase or `privacy.key`.",
       "default": ""
     },
     "backend": {
