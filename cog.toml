@@ -21,7 +21,7 @@ pre_bump_hooks = [
     "git add :/charts/dbmcp/Chart.yaml",
     "sed -i 's/^  \"version\": \"[^\"]*\"/  \"version\": \"{{version}}\"/' plugins/dbmcp/.claude-plugin/plugin.json plugins/dbmcp/.codex-plugin/plugin.json",
     "sed -i 's|@haymon-ai/dbmcp@[0-9]*\\.[0-9]*\\.[0-9]*|@haymon-ai/dbmcp@{{version}}|g' plugins/dbmcp/.mcp.json plugins/dbmcp/mcp.codex.json plugins/dbmcp/skills/setup/SKILL.md",
-    "git add :/plugins/dbmcp",
+    "git add :/plugins/dbmcp/.claude-plugin/plugin.json :/plugins/dbmcp/.codex-plugin/plugin.json :/plugins/dbmcp/.mcp.json :/plugins/dbmcp/mcp.codex.json :/plugins/dbmcp/skills/setup/SKILL.md",
 ]
 
 # Post-bump: push commit and tag
