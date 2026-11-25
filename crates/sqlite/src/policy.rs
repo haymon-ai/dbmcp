@@ -35,71 +35,14 @@ use sqlparser::ast::Statement;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
 use sqlx::sqlite::{SqliteColumn, SqliteRow};
-use sqlx::{AssertSqlSafe, Column as _, ColumnOrigin, Row as _, SqlStr};
+use sqlx::{Column as _, ColumnOrigin, Row as _};
 
 use crate::SqliteHandler;
-use crate::connection::{SqliteConnection, quote_ident};
+use crate::connection::SqliteConnection;
+use crate::queries;
 
 /// Catalog segment of every `SQLite` rule key.
 const CATALOG: &str = "main";
-
-/// Lists the relations named by the JSON array of names in `?1`, `temp` first.
-///
-/// `pragma_table_list(name)` searches every schema and matches names
-/// case-insensitively, as `SQLite` resolves them. Listing every relation
-/// instead costs about 13 ms per call at 2,000 tables; this lookup stays
-/// near 0.3 ms whatever the schema size.
-const LOOKUP_SQL: &str = "SELECT t.schema, t.name, t.type \
-     FROM json_each(?1) AS j, pragma_table_list(j.value) AS t \
-     JOIN pragma_database_list AS d ON d.name = t.schema \
-     ORDER BY t.schema <> 'temp', d.seq";
-
-const SCHEMAS_SQL: &str = "SELECT name FROM pragma_database_list ORDER BY seq";
-
-/// Lists the columns of each `[schema, name]` pair of the JSON array in `?1`.
-///
-/// Also whether the server can fill each column: a declared default, or an
-/// `INTEGER` primary-key column, which may alias the rowid (over-approximated:
-/// composite keys count too).
-const COLUMNS_SQL: &str = "SELECT j.key, x.name, x.hidden, \
-     x.dflt_value IS NOT NULL OR (x.pk > 0 AND upper(x.type) = 'INTEGER') \
-     FROM json_each(?1) AS j, \
-     pragma_table_xinfo(json_extract(j.value, '$[1]'), json_extract(j.value, '$[0]')) AS x \
-     ORDER BY j.key, x.cid";
-
-/// Lists the tables of `?1` that a trigger names, the `temp` schema's triggers included.
-///
-/// `{schema}` is the quoted schema. A temporary trigger may fire on a table
-/// of any schema; it is matched by table name alone (fail closed).
-const TRIGGERS_SQL: &str = "SELECT tbl_name FROM {schema}.sqlite_schema WHERE type = 'trigger' \
-     UNION SELECT tbl_name FROM temp.sqlite_schema WHERE type = 'trigger'";
-
-/// Walks the referential actions below table `?2` of schema `?1`.
-///
-/// Per edge: parent table and column, child table and column, the action
-/// (`CASCADE`, `SET NULL`, `SET DEFAULT`), and whether a parent `DELETE`
-/// fires it (else a parent `UPDATE` of the column). A foreign key never
-/// leaves its schema; one naming no parent column references the parent's
-/// primary key, mapped by position. Table and column names come back as
-/// stored, not as the foreign key spells them; a key naming a missing
-/// column, which no write gets past, gives no edge. Below each reached
-/// child table come all its edges, the closure [`Relation::cascades`] asks
-/// for. `UNION` ends the walk on cycles.
-const CASCADES_SQL: &str = "WITH RECURSIVE \
-     fk(parent, pcol, child, ccol, rule, deletes) AS (SELECT p.name, \
-           CASE WHEN f.\"to\" IS NULL \
-             THEN (SELECT k.name FROM pragma_table_info(p.name, ?1) AS k WHERE k.pk = f.seq + 1) \
-             ELSE (SELECT k.name FROM pragma_table_info(p.name, ?1) AS k WHERE k.name = f.\"to\" COLLATE NOCASE) END, \
-           t.name, (SELECT k.name FROM pragma_table_info(t.name, ?1) AS k WHERE k.name = f.\"from\" COLLATE NOCASE), upper(CASE d.deletes WHEN 1 THEN f.on_delete ELSE f.on_update END), d.deletes \
-         FROM pragma_table_list AS t \
-         JOIN pragma_foreign_key_list(t.name, t.schema) AS f \
-         JOIN pragma_table_list AS p ON p.schema = t.schema AND p.name = f.\"table\" COLLATE NOCASE \
-         JOIN (SELECT 0 AS deletes UNION ALL SELECT 1) AS d \
-         WHERE t.schema = ?1 AND t.type = 'table'), \
-     edge AS (SELECT * FROM fk WHERE pcol IS NOT NULL AND ccol IS NOT NULL AND rule IN ('CASCADE', 'SET NULL', 'SET DEFAULT')), \
-     walk AS (SELECT * FROM edge WHERE parent = ?2 COLLATE NOCASE \
-       UNION SELECT e.* FROM walk AS w JOIN edge AS e ON e.parent = w.child COLLATE NOCASE) \
-     SELECT parent, pcol, child, ccol, rule, deletes FROM walk";
 
 /// Extended result codes whose messages name schema objects, never values.
 ///
@@ -162,17 +105,17 @@ async fn run<'c>(
     access: Access,
     sink: &mut (impl FnMut(Value) + Send),
 ) -> Result<Run<'c>, Stop> {
-    let begin = match access {
+    let write = match access {
         Access::Read => {
             // A file opened read-only needs no pragma; `before_acquire` switches it off again.
             if !read_only {
-                sqlx::query("PRAGMA query_only = ON").execute(&mut *conn).await?;
+                queries::session::query_only(&mut *conn, true).await?;
             }
-            "BEGIN"
+            false
         }
-        Access::Write => "BEGIN IMMEDIATE",
+        Access::Write => true,
     };
-    let mut tx = sqlx::Connection::begin_with(conn, SqlStr::from_static(begin)).await?;
+    let mut tx = queries::policy::begin(conn, write).await?;
     let analyzed = resolve(&mut tx, sql).await?;
     let mut planned = analyzed.plan(config)?;
     let executed = execute(&mut tx, sql, &mut planned, sink).await;
@@ -227,7 +170,7 @@ fn readings(table: &str) -> impl Iterator<Item = (&str, &str)> {
 
 /// Analyzes `sql`, fetching missing relations for at most [`CATALOG_ROUNDS`](dbmcp_policy::CATALOG_ROUNDS) rounds.
 async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyzed, Stop> {
-    let schemas: Vec<String> = sqlx::query_scalar(SCHEMAS_SQL).fetch_all(&mut *conn).await?;
+    let schemas = queries::policy::schemas(&mut *conn).await?;
     let mut analysis = Analysis::new(sql, database::Backend::Sqlite);
     analysis.creates_in(Some("main".into()));
     let mut entries = Vec::new();
@@ -241,9 +184,8 @@ async fn resolve(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Analyze
 
 /// Lists the relations named `tables` in any schema, in name-resolution order.
 async fn lookup(conn: &mut sqlx::SqliteConnection, tables: &[&str]) -> Result<Vec<Listed>, sqlx::Error> {
-    let tables = Value::from(tables.to_vec()).to_string();
-    let rows: Vec<(String, String, String)> = sqlx::query_as(LOOKUP_SQL).bind(tables).fetch_all(conn).await?;
-    Ok(rows
+    Ok(queries::policy::lookup(conn, tables)
+        .await?
         .into_iter()
         .map(|(schema, name, kind)| Listed {
             schema,
@@ -323,12 +265,11 @@ async fn fetch(
     if found.is_empty() {
         return Ok(entries);
     }
-    let pairs: Vec<Value> = found
+    let pairs: Vec<(&str, &str)> = found
         .iter()
-        .map(|(_, relation, _)| Value::from(vec![relation.schema.as_str(), relation.name.as_str()]))
+        .map(|(_, relation, _)| (relation.schema.as_str(), relation.name.as_str()))
         .collect();
-    let pairs = Value::from(pairs).to_string();
-    let rows: Vec<(i64, String, i64, bool)> = sqlx::query_as(COLUMNS_SQL).bind(pairs).fetch_all(&mut *conn).await?;
+    let rows = queries::policy::columns(&mut *conn, &pairs).await?;
     let mut triggers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (index, (name, listed, kind)) in found.into_iter().enumerate() {
         let columns = rows
@@ -382,8 +323,7 @@ async fn fetch(
 
 /// Lists lowercased names of tables in `schema` a trigger may fire on.
 async fn triggered(conn: &mut sqlx::SqliteConnection, schema: &str) -> Result<BTreeSet<String>, sqlx::Error> {
-    let sql = TRIGGERS_SQL.replace("{schema}", &quote_ident(schema));
-    let names: Vec<String> = sqlx::query_scalar(AssertSqlSafe(sql)).fetch_all(conn).await?;
+    let names = queries::policy::triggered(conn, schema).await?;
     Ok(names.into_iter().map(|name| name.to_lowercase()).collect())
 }
 
@@ -393,11 +333,7 @@ async fn cascades(
     table: &Listed,
     triggered: &BTreeSet<String>,
 ) -> Result<Vec<Cascade>, sqlx::Error> {
-    let rows: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(CASCADES_SQL)
-        .bind(&table.schema)
-        .bind(&table.name)
-        .fetch_all(conn)
-        .await?;
+    let rows = queries::policy::cascades(conn, &table.schema, &table.name).await?;
     let column =
         |relation: &str, column: String| SourceRef::new(RelationId::new(CATALOG, &table.schema, relation), column);
     Ok(rows
@@ -419,15 +355,8 @@ async fn cascades(
 
 /// Reads the query of a view's `CREATE VIEW` statement; `None` when unreadable.
 async fn view_body(conn: &mut sqlx::SqliteConnection, view: &Listed) -> Result<Option<String>, sqlx::Error> {
-    let sql = format!(
-        "SELECT sql FROM {}.sqlite_schema WHERE type = 'view' AND name = ?1",
-        quote_ident(&view.schema)
-    );
-    let create: Option<Option<String>> = sqlx::query_scalar(AssertSqlSafe(sql))
-        .bind(&view.name)
-        .fetch_optional(conn)
-        .await?;
-    Ok(create.flatten().as_deref().and_then(view_query))
+    let create = queries::policy::view_body(conn, &view.schema, &view.name).await?;
+    Ok(create.as_deref().and_then(view_query))
 }
 
 fn view_query(create: &str) -> Option<String> {
@@ -458,7 +387,7 @@ mod tests {
     use dbmcp_privacy::cells::ShapeError;
     use dbmcp_sql::SqlError;
     use dbmcp_types::{Config, Transport};
-    use sqlx::Connection as _;
+    use sqlx::{AssertSqlSafe, Connection as _};
 
     use super::*;
     use crate::types::{QueryRequest, ReadQueryRequest};
