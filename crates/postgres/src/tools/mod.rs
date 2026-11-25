@@ -8,7 +8,6 @@
 
 mod explain;
 mod objects;
-mod prelude;
 mod read;
 mod write;
 

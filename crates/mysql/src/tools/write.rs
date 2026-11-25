@@ -1,8 +1,14 @@
 //! MCP tool: `write`.
 
-use dbmcp_server::types::{WriteRequest, WriteResponse};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use super::prelude::*;
+use dbmcp_server::types::{WriteRequest, WriteResponse};
+use dbmcp_server::{input_schema, output_schema};
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
+use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+
+use crate::MysqlHandler;
 
 const NAME: &str = "write";
 const TITLE: &str = "Write";

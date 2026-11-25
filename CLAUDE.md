@@ -73,6 +73,7 @@ This project follows the [Microsoft Pragmatic Rust Guidelines](https://microsoft
 - **M-MIMALLOC-APPS**: Use mimalloc as global allocator
 - Backend crates: every server-authored SQL statement lives in `src/queries/` (`const` beside the `pub(crate)` fn that runs it); operations, `policy.rs`, `connection.rs`, `handler.rs` call those fns. Test fixtures exempt.
 - Backend crates: `src/tools/<tool>.rs` holds only the tool shape (consts, marker, `ToolBase` with its annotations inline, `AsyncTool`); its `invoke` forwards to the handler method in `src/operations/<tool>.rs`. Descriptions live in `assets/tools/<tool>/default.md` (`default.pinned.md` for the pinned variant).
+- Backend crates: files in `tools/`, `operations/`, and `queries/` import what they use explicitly; no prelude.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, PR process, and detailed testing guide.
 

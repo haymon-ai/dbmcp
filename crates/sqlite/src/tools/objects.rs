@@ -1,6 +1,13 @@
 //! MCP tool: `objects`.
 
-use super::prelude::*;
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use dbmcp_server::{input_schema, output_schema};
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
+use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+
+use crate::SqliteHandler;
 use crate::types::{ListObjectsResponse, ObjectsRequest};
 
 const NAME: &str = "objects";

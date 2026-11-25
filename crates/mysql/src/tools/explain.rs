@@ -1,8 +1,14 @@
 //! MCP tool: `explain`.
 
-use dbmcp_server::types::{ExplainRequest, ExplainResponse};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use super::prelude::*;
+use dbmcp_server::types::{ExplainRequest, ExplainResponse};
+use dbmcp_server::{input_schema, output_schema};
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
+use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+
+use crate::MysqlHandler;
 
 const NAME: &str = "explain";
 const TITLE: &str = "Explain";
