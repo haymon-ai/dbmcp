@@ -116,11 +116,6 @@ expression: tools
               "description": "User-defined procedures in the `public` schema.",
               "type": "string",
               "const": "procedure"
-            },
-            {
-              "description": "Databases on the server; unavailable when a database is pinned.",
-              "type": "string",
-              "const": "database"
             }
           ]
         },

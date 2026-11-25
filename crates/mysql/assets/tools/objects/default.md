@@ -19,7 +19,7 @@ Use before writing SQL to discover object names and shapes. Prefer this over que
 - `trigger`: `schema`, `table`, `timing`, `events`, `activationLevel`, `definition`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`.
 - `function`: `schema`, `language`, `arguments`, `returnType`, `deterministic`, `sqlDataAccess`, `security`, `definer`, `description`, `definition`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`.
 - `procedure`: `schema`, `language`, `arguments`, `deterministic`, `sqlDataAccess`, `security`, `definer`, `description`, `definition`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`.
-- `database`: names only; `search` and `detail` are rejected.
+- `database`: names only, server-wide; `search`, `detail`, and `database` are rejected.
 </what_it_returns>
 
 <pagination>

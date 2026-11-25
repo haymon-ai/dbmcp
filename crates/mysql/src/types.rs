@@ -21,7 +21,7 @@ pub enum ObjectKind {
     Function,
     /// Stored procedures in the database.
     Procedure,
-    /// Databases on the server; unavailable when a database is pinned.
+    /// Databases on the server; not offered when a database is pinned.
     Database,
 }
 

@@ -20,7 +20,7 @@ Use before writing SQL to discover object names and shapes. Prefer this over que
 - `trigger`: `schema`, `table`, `status`, `timing`, `events`, `activationLevel`, `functionName`, `definition`; internal triggers excluded.
 - `function`: keyed by `name(arguments)` (one key per overload): `schema`, `name`, `language`, `arguments`, `returnType`, `volatility`, `strict`, `security`, `parallelSafety`, `owner`, `description`, `definition`.
 - `procedure`: keyed by `name(arguments)`: `schema`, `name`, `language`, `arguments`, `security`, `owner`, `description`, `definition`.
-- `database`: names only; `search` and `detail` are rejected.
+- `database`: names only, server-wide; `search`, `detail`, and `database` are rejected.
 </what_it_returns>
 
 <pagination>

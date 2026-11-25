@@ -111,11 +111,13 @@ pub fn unavailable_kind(kind: &str, reason: &str) -> rmcp::ErrorData {
 
 /// Rejects `search` and `detail: full` for an `objects` kind that lists names only.
 ///
+/// A blank `search` counts as unset, as in [`list_objects`](crate::listing::list_objects).
+///
 /// # Errors
 ///
 /// Returns an invalid-params error when either option is set.
 pub fn names_only(kind: &str, search: Option<&str>, detail: Detail) -> Result<(), rmcp::ErrorData> {
-    if search.is_some() || detail == Detail::Full {
+    if search.is_some_and(|s| !s.trim().is_empty()) || detail == Detail::Full {
         Err(rmcp::ErrorData::invalid_params(
             format!("kind `{kind}` lists names only: omit `search` and `detail`"),
             None,
@@ -264,8 +266,8 @@ pub struct ExplainRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListObjectsResponse, MAX_TIMEOUT_SECS, Objects, ReadResponse, Truncation, WriteResponse,
-        resolve_timeout,
+        Detail, IndexMap, ListObjectsResponse, MAX_TIMEOUT_SECS, Objects, ReadResponse, Truncation, WriteResponse,
+        names_only, resolve_timeout,
     };
     use serde_json::{Value, json};
 
@@ -277,6 +279,15 @@ mod tests {
         let text = serde_json::to_string(&ListObjectsResponse::detailed(objects, None)).expect("serializes");
         let sorted = r#"{"a":{"b":3,"y":2},"z":1}"#;
         assert_eq!(text, format!(r#"{{"objects":{{"users":{sorted},"orders":{sorted}}}}}"#));
+    }
+
+    #[test]
+    fn names_only_treats_blank_search_as_unset() {
+        assert!(names_only("view", None, Detail::Names).is_ok());
+        assert!(names_only("view", Some(""), Detail::Names).is_ok());
+        assert!(names_only("view", Some("  "), Detail::Names).is_ok());
+        assert!(names_only("view", Some("ord"), Detail::Names).is_err());
+        assert!(names_only("view", None, Detail::Full).is_err());
     }
 
     #[test]

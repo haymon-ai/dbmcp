@@ -23,7 +23,7 @@ pub enum ObjectKind {
     Function,
     /// User-defined procedures in the `public` schema.
     Procedure,
-    /// Databases on the server; unavailable when a database is pinned.
+    /// Databases on the server; not offered when a database is pinned.
     Database,
 }
 

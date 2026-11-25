@@ -1,7 +1,7 @@
 //! Logic of the `objects` tool.
 
 use dbmcp_server::listing;
-use dbmcp_server::types::names_only;
+use dbmcp_server::types::{names_only, unavailable_kind};
 use rmcp::model::ErrorData;
 
 use crate::PostgresHandler;
@@ -15,8 +15,9 @@ impl PostgresHandler {
     ///
     /// # Errors
     ///
-    /// Returns an invalid-params [`ErrorData`] when `kind: database` gets
-    /// `search` or `detail: full`, and an internal-error [`ErrorData`] if
+    /// Returns an invalid-params [`ErrorData`] when `kind: database` is asked
+    /// for with a pinned database or gets `search`, `detail: full`, or
+    /// `database`, and an internal-error [`ErrorData`] if
     /// `database` is invalid or the underlying query fails.
     pub async fn objects(
         &self,
@@ -103,7 +104,16 @@ impl PostgresHandler {
                 .await
             }
             ObjectKind::Database => {
+                if self.config.name.is_some() {
+                    return Err(unavailable_kind("database", "a database is pinned"));
+                }
                 names_only("database", search, detail)?;
+                if database.is_some() {
+                    return Err(ErrorData::invalid_params(
+                        "kind `database` lists every database on the server: omit `database`",
+                        None,
+                    ));
+                }
                 // Server-wide catalog: the default pool lists every database.
                 listing::paginate(cursor, page_size, async |page| {
                     queries::databases::names(&self.connection, page).await

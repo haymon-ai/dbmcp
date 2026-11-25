@@ -83,7 +83,8 @@ pub fn output_schema<T: JsonSchema + Any>() -> Arc<JsonObject> {
 /// natively (schemars only inserts it when this is `Some`), and root-only
 /// transforms that strip the `title`/`description` schemars derives from the
 /// type's name and doc-comment, and — when `pinned` is `true` — strip the
-/// root `database` property and remove it from the `required` array.
+/// root `database` property, remove it from the `required` array, and drop
+/// the `database` choice of a root `kind` property.
 ///
 /// Serializes with `serde_json::to_value` on purpose: that path runs schemars'
 /// keyword ordering (`title`, `description`, `type`, … first); `to_value()`
@@ -124,17 +125,21 @@ fn strip_root_metadata(schema: &mut Schema) {
     }
 }
 
-/// Removes the root `database` property and its entry in `required`.
+/// Removes the root `database` property, its `required` entry, and `kind: database`.
 ///
 /// Applied only for tools registered against a pinned database, where the
 /// runtime always passes `None` for `database` and the client never supplies
-/// it. Root-only — see [`strip_root_metadata`].
+/// it, and where `objects` refuses `kind: database`. Root-only — see
+/// [`strip_root_metadata`].
 fn strip_root_database(schema: &mut Schema) {
     let Some(object) = schema.as_object_mut() else {
         return;
     };
     if let Some(Value::Object(properties)) = object.get_mut("properties") {
         properties.shift_remove("database");
+        if let Some(Value::Array(choices)) = properties.get_mut("kind").and_then(|kind| kind.get_mut("oneOf")) {
+            choices.retain(|choice| choice.get("const").and_then(Value::as_str) != Some("database"));
+        }
     }
     if let Some(Value::Array(required)) = object.get_mut("required") {
         required.retain(|value| value.as_str() != Some("database"));
@@ -213,6 +218,38 @@ mod tests {
         query: String,
         #[serde(default)]
         database: Option<String>,
+    }
+
+    /// Kind fixture with a `database` choice the pinned schema drops.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    enum KindFixture {
+        /// Tables.
+        Table,
+        /// Databases.
+        Database,
+    }
+
+    /// Fixture with a `kind` property to exercise the pinned-strip transform.
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct KindRequestFixture {
+        kind: KindFixture,
+    }
+
+    fn kind_choices(pinned: bool) -> Vec<String> {
+        let schema = input_schema::<KindRequestFixture>(pinned);
+        schema["properties"]["kind"]["oneOf"]
+            .as_array()
+            .expect("kind is a oneOf")
+            .iter()
+            .map(|choice| choice["const"].as_str().expect("choice has a const").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn pinned_input_schema_drops_kind_database() {
+        assert_eq!(kind_choices(false), ["table", "database"]);
+        assert_eq!(kind_choices(true), ["table"]);
     }
 
     /// Fixture with non-alphabetical field order.

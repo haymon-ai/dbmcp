@@ -46,6 +46,15 @@ fn base_db_config(read_only: bool) -> database::Config {
     }
 }
 
+/// Handler without a pinned database, so `objects` offers `kind: database`.
+fn unpinned_handler(page_size: u16) -> PostgresHandler {
+    handler_with(database::Config {
+        page_size,
+        name: None,
+        ..base_db_config(false)
+    })
+}
+
 fn handler_with_page_size(page_size: u16) -> PostgresHandler {
     handler_with(database::Config {
         page_size,
@@ -256,7 +265,7 @@ async fn test_write_query_delete() {
 
 #[tokio::test]
 async fn test_lists_databases() {
-    let handler = handler(false);
+    let handler = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
 
     let response = handler
         .objects(ObjectsRequest {
@@ -359,7 +368,7 @@ async fn test_executes_sql_cross_database() {
 
 #[tokio::test]
 async fn test_lists_databases_includes_cross_db() {
-    let handler = handler(false);
+    let handler = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
 
     let response = handler
         .objects(ObjectsRequest {
@@ -1183,8 +1192,8 @@ async fn collect_all_paged_databases(handler: &PostgresHandler) -> Vec<String> {
 
 #[tokio::test]
 async fn test_list_databases_pagination_traverses_pages() {
-    let handler_paged = handler_with_page_size(1);
-    let handler_full = handler(true);
+    let handler_paged = unpinned_handler(1);
+    let handler_full = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
 
     let collected = collect_all_paged_databases(&handler_paged).await;
 
@@ -1207,7 +1216,7 @@ async fn test_list_databases_pagination_traverses_pages() {
 
 #[tokio::test]
 async fn test_list_databases_pagination_small_set_no_next_cursor() {
-    let handler = handler(true);
+    let handler = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
     let response = handler
         .objects(ObjectsRequest {
             kind: ObjectKind::Database,
@@ -1223,7 +1232,7 @@ async fn test_list_databases_pagination_small_set_no_next_cursor() {
 
 #[tokio::test]
 async fn test_list_databases_pagination_boundary_page_size_equals_total() {
-    let handler_full = handler(true);
+    let handler_full = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
     let total = handler_full
         .objects(ObjectsRequest {
             kind: ObjectKind::Database,
@@ -1237,7 +1246,7 @@ async fn test_list_databases_pagination_boundary_page_size_equals_total() {
         .len();
     let page_size = u16::try_from(total).expect("seed total fits in u16");
 
-    let handler_boundary = handler_with_page_size(page_size);
+    let handler_boundary = unpinned_handler(page_size);
     let response = handler_boundary
         .objects(ObjectsRequest {
             kind: ObjectKind::Database,
@@ -1260,7 +1269,7 @@ async fn test_list_databases_pagination_boundary_page_size_equals_total() {
 async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() {
     use dbmcp_server::listing::Cursor;
 
-    let handler = handler(true);
+    let handler = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE);
     let request = ObjectsRequest {
         kind: ObjectKind::Database,
         cursor: Some(Cursor { offset: 10_000 }),
@@ -1278,7 +1287,7 @@ async fn test_list_databases_pagination_off_the_end_cursor_returns_empty_page() 
 
 #[tokio::test]
 async fn test_list_databases_respects_configured_page_size() {
-    let handler = handler_with_page_size(1);
+    let handler = unpinned_handler(1);
     let first = handler
         .objects(ObjectsRequest {
             kind: ObjectKind::Database,
@@ -6065,4 +6074,43 @@ async fn column_rules_refuse_row_movement_between_differently_ruled_partitions()
         .await
         .expect("a named partition keeps its rows");
     assert_eq!(response.rows_affected, 0);
+}
+
+#[tokio::test]
+async fn test_objects_kind_database_is_unavailable_when_pinned() {
+    let error = handler(true)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            ..Default::default()
+        })
+        .await
+        .expect_err("pinned handler must refuse kind database");
+    assert!(error.message.contains("a database is pinned"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn test_objects_kind_database_rejects_database_parameter() {
+    let error = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            database: Some("app".into()),
+            ..Default::default()
+        })
+        .await
+        .expect_err("kind database must refuse a database argument");
+    assert!(error.message.contains("omit `database`"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn test_objects_kind_database_treats_blank_search_as_unset() {
+    let response = unpinned_handler(database::Config::DEFAULT_PAGE_SIZE)
+        .objects(ObjectsRequest {
+            kind: ObjectKind::Database,
+            search: Some("  ".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("blank search lists every database");
+    let dbs = response.objects.into_brief().expect("database names");
+    assert!(dbs.iter().any(|db| db == "app"), "Expected 'app' in: {dbs:?}");
 }

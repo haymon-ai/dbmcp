@@ -3,13 +3,12 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use dbmcp_server::types::unavailable_kind;
 use dbmcp_server::{input_schema, output_schema};
 use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
 use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
 
 use crate::MysqlHandler;
-use crate::types::{ListObjectsResponse, ObjectKind, ObjectsRequest};
+use crate::types::{ListObjectsResponse, ObjectsRequest};
 
 const NAME: &str = "objects";
 const TITLE: &str = "Objects";
@@ -64,9 +63,6 @@ impl<const PINNED: bool> ToolBase for ObjectsTool<PINNED> {
 
 impl<const PINNED: bool> AsyncTool<MysqlHandler> for ObjectsTool<PINNED> {
     async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        if PINNED && params.kind == ObjectKind::Database {
-            return Err(unavailable_kind("database", "a database is pinned"));
-        }
         handler.objects(params).await
     }
 }
