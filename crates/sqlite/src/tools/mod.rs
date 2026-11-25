@@ -10,14 +10,12 @@ mod explain_query;
 mod list_tables;
 mod list_triggers;
 mod list_views;
+mod objects;
 mod prelude;
 mod read_query;
 mod write_query;
 
-pub(crate) use drop_table::DropTableTool;
 pub(crate) use explain_query::ExplainQueryTool;
-pub(crate) use list_tables::ListTablesTool;
-pub(crate) use list_triggers::ListTriggersTool;
-pub(crate) use list_views::ListViewsTool;
+pub(crate) use objects::ObjectsTool;
 pub(crate) use read_query::ReadQueryTool;
 pub(crate) use write_query::WriteQueryTool;

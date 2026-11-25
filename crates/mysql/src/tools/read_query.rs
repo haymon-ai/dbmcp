@@ -1,4 +1,4 @@
-//! MCP tool: `readQuery`.
+//! MCP tool: `read`.
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
@@ -14,8 +14,8 @@ use dbmcp_types::database;
 use super::prelude::*;
 use dbmcp_policy::Access;
 
-const NAME: &str = "readQuery";
-const TITLE: &str = "Read Query";
+const NAME: &str = "read";
+const TITLE: &str = "Read";
 const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/read_query/pinned.md");
 const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/read_query/unpinned.md");
 

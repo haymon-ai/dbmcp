@@ -14,10 +14,7 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::MysqlConnection;
-use crate::tools::{
-    CreateDatabaseTool, DropDatabaseTool, DropTableTool, ExplainQueryTool, ListDatabasesTool, ListFunctionsTool,
-    ListProceduresTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
-};
+use crate::tools::{ExplainQueryTool, ObjectsTool, ReadQueryTool, WriteQueryTool};
 
 /// Backend-specific description for MySQL/MariaDB.
 const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
@@ -39,25 +36,12 @@ const INSTRUCTIONS_READ_ONLY_PINNED: &str = include_str!("../assets/instructions
 /// Per-database tools register as `Tool<true>` when pinned, else `Tool<false>`.
 /// Cross-database tools are hidden when pinned.
 const TOOLS: &[ToolSpec<MysqlHandler>] = &[
-    ToolSpec::tool::<ListDatabasesTool>(false, false),
-    ToolSpec::tool::<ListTablesTool<true>>(true, false),
-    ToolSpec::tool::<ListTablesTool<false>>(false, false),
-    ToolSpec::tool::<ListViewsTool<true>>(true, false),
-    ToolSpec::tool::<ListViewsTool<false>>(false, false),
-    ToolSpec::tool::<ListTriggersTool<true>>(true, false),
-    ToolSpec::tool::<ListTriggersTool<false>>(false, false),
-    ToolSpec::tool::<ListFunctionsTool<true>>(true, false),
-    ToolSpec::tool::<ListFunctionsTool<false>>(false, false),
-    ToolSpec::tool::<ListProceduresTool<true>>(true, false),
-    ToolSpec::tool::<ListProceduresTool<false>>(false, false),
+    ToolSpec::tool::<ObjectsTool<true>>(true, false),
+    ToolSpec::tool::<ObjectsTool<false>>(false, false),
     ToolSpec::tool::<ReadQueryTool<true>>(true, false),
     ToolSpec::tool::<ReadQueryTool<false>>(false, false),
     ToolSpec::tool::<ExplainQueryTool<true>>(true, false),
     ToolSpec::tool::<ExplainQueryTool<false>>(false, false),
-    ToolSpec::tool::<CreateDatabaseTool>(false, true),
-    ToolSpec::tool::<DropDatabaseTool>(false, true),
-    ToolSpec::tool::<DropTableTool<true>>(true, true),
-    ToolSpec::tool::<DropTableTool<false>>(false, true),
     ToolSpec::tool::<WriteQueryTool<true>>(true, true),
     ToolSpec::tool::<WriteQueryTool<false>>(false, true),
 ];
@@ -223,117 +207,75 @@ mod tests {
         assert!(with(vec![rule]).policy.is_some());
     }
 
+    fn tool_names(router: &ToolRouter<MysqlHandler>) -> Vec<String> {
+        let mut names: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[tokio::test]
-    async fn router_exposes_all_twelve_tools_in_read_write_mode() {
+    async fn router_exposes_four_tools_in_read_write_mode() {
+        for router in [handler(false).tool_router, pinned_handler(false).tool_router] {
+            assert_eq!(tool_names(&router), ["explain", "objects", "read", "write"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn router_hides_write_in_read_only_mode() {
+        for router in [handler(true).tool_router, pinned_handler(true).tool_router] {
+            assert_eq!(tool_names(&router), ["explain", "objects", "read"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn objects_is_read_only_and_write_destructive() {
         let router = handler(false).tool_router;
-        for name in [
-            "listDatabases",
-            "listTables",
-            "listViews",
-            "listTriggers",
-            "listFunctions",
-            "listProcedures",
-            "readQuery",
-            "explainQuery",
-            "createDatabase",
-            "dropDatabase",
-            "dropTable",
-            "writeQuery",
+        let objects = router.get("objects").expect("objects registered");
+        let annotations = objects.annotations.as_ref().expect("annotations present");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        let write = router.get("write").expect("write registered");
+        let annotations = write.annotations.as_ref().expect("annotations present");
+        assert_eq!(annotations.destructive_hint, Some(true));
+    }
+
+    #[tokio::test]
+    async fn pinned_objects_schema_drops_database() {
+        let pinned = pinned_handler(true).tool_router;
+        let unpinned = handler(true).tool_router;
+        let has_database = |router: &ToolRouter<MysqlHandler>| {
+            router.get("objects").expect("objects registered").input_schema["properties"]
+                .as_object()
+                .expect("properties")
+                .contains_key("database")
+        };
+        assert!(has_database(&unpinned));
+        assert!(!has_database(&pinned));
+    }
+
+    #[tokio::test]
+    async fn instructions_name_only_registered_tools() {
+        for (read_only, instructions) in [
+            (false, handler(false).get_info().instructions),
+            (true, handler(true).get_info().instructions),
+            (false, pinned_handler(false).get_info().instructions),
+            (true, pinned_handler(true).get_info().instructions),
         ] {
-            assert!(router.has_route(name), "missing tool: {name}");
-        }
-    }
-
-    #[tokio::test]
-    async fn router_hides_write_tools_in_read_only_mode() {
-        let router = handler(true).tool_router;
-        assert!(router.has_route("listDatabases"));
-        assert!(router.has_route("listTables"));
-        assert!(router.has_route("listViews"));
-        assert!(router.has_route("listTriggers"));
-        assert!(router.has_route("listFunctions"));
-        assert!(router.has_route("listProcedures"));
-        assert!(router.has_route("readQuery"));
-        assert!(router.has_route("explainQuery"));
-        assert!(!router.has_route("writeQuery"));
-        assert!(!router.has_route("createDatabase"));
-        assert!(!router.has_route("dropDatabase"));
-        assert!(!router.has_route("dropTable"));
-    }
-
-    #[tokio::test]
-    async fn instructions_match_read_only_mode() {
-        let read_write = handler(false).get_info().instructions.expect("instructions present");
-        assert!(
-            read_write.contains("writeQuery"),
-            "read-write instructions mention writeQuery"
-        );
-
-        let read_only = handler(true).get_info().instructions.expect("instructions present");
-        for tool in ["writeQuery", "createDatabase", "dropDatabase", "dropTable"] {
-            assert!(
-                !read_only.contains(tool),
-                "read-only instructions must not mention {tool}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn router_does_not_advertise_list_materialized_views() {
-        let router = handler(false).tool_router;
-        assert!(
-            !router.has_route("listMaterializedViews"),
-            "MySQL must not advertise listMaterializedViews"
-        );
-    }
-
-    #[tokio::test]
-    async fn router_does_not_expose_get_table_schema() {
-        let rw = handler(false).tool_router;
-        let ro = handler(true).tool_router;
-        assert!(
-            !rw.has_route("getTableSchema"),
-            "read-write router must not expose getTableSchema"
-        );
-        assert!(
-            !ro.has_route("getTableSchema"),
-            "read-only router must not expose getTableSchema"
-        );
-    }
-
-    #[tokio::test]
-    async fn router_hides_cross_database_tools_when_name_pinned() {
-        let router = pinned_handler(false).tool_router;
-        for present in ["listTables", "readQuery", "explainQuery", "dropTable", "writeQuery"] {
-            assert!(router.has_route(present), "missing tool: {present}");
-        }
-        for absent in ["listDatabases", "createDatabase", "dropDatabase"] {
-            assert!(!router.has_route(absent), "pinned router must not expose {absent}");
-        }
-    }
-
-    #[tokio::test]
-    async fn router_hides_list_databases_when_name_pinned_read_only() {
-        let router = pinned_handler(true).tool_router;
-        assert!(!router.has_route("listDatabases"));
-        assert!(!router.has_route("createDatabase"));
-        assert!(!router.has_route("dropDatabase"));
-        assert!(router.has_route("listTables"));
-        assert!(router.has_route("readQuery"));
-    }
-
-    #[tokio::test]
-    async fn instructions_match_pinned_mode() {
-        for read_only in [false, true] {
-            let instructions = pinned_handler(read_only)
-                .get_info()
-                .instructions
-                .expect("instructions present");
-            for tool in ["listDatabases", "createDatabase", "dropDatabase"] {
-                assert!(
-                    !instructions.contains(tool),
-                    "pinned instructions must not mention {tool} (read_only={read_only})"
-                );
+            let instructions = instructions.expect("instructions present");
+            assert!(instructions.contains("`objects`"));
+            assert_eq!(instructions.contains("`write`"), !read_only);
+            for old in [
+                "listTables",
+                "readQuery",
+                "writeQuery",
+                "explainQuery",
+                "dropTable",
+                "createDatabase",
+            ] {
+                assert!(!instructions.contains(old), "instructions must not mention {old}");
             }
         }
     }

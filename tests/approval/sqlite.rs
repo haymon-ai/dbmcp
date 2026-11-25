@@ -124,7 +124,7 @@ async fn test_call_tool_error_is_returned_in_band() {
     common::run_with_client(server(true), |peer| async move {
         let result = call_tool(
             &peer,
-            "readQuery",
+            "read",
             Some(object(json!({"query": "SELECT * FROM missing_table"}))),
         )
         .await
@@ -141,7 +141,7 @@ async fn test_call_tool_error_is_redacted_when_pii_enabled() {
     common::run_with_client(server_with_privacy(true, privacy), |peer| async move {
         let result = call_tool(
             &peer,
-            "readQuery",
+            "read",
             Some(object(json!({"query": "SELECT * FROM \"jane@doe.com\""}))),
         )
         .await
@@ -156,9 +156,9 @@ async fn test_call_tool_error_is_redacted_when_pii_enabled() {
 #[tokio::test]
 async fn test_read_query_text_is_marked_untrusted() {
     common::run_with_client(server(true), |peer| async move {
-        let result = call_tool(&peer, "readQuery", Some(object(json!({"query": "SELECT 1 AS one"}))))
+        let result = call_tool(&peer, "read", Some(object(json!({"query": "SELECT 1 AS one"}))))
             .await
-            .expect("readQuery succeeds");
+            .expect("read succeeds");
         assert_ne!(result.is_error, Some(true), "got: {}", text(&result));
         assert_eq!(result.structured_content, Some(json!({"rows": [{"one": 1}]})));
 
@@ -178,7 +178,9 @@ async fn test_read_query_text_is_marked_untrusted() {
 #[tokio::test]
 async fn test_list_tool_text_is_marked_untrusted() {
     common::run_with_client(server(true), |peer| async move {
-        let result = call_tool(&peer, "listViews", None).await.expect("listViews succeeds");
+        let result = call_tool(&peer, "objects", Some(object(json!({"kind": "view"}))))
+            .await
+            .expect("objects succeeds");
         let json = result
             .structured_content
             .as_ref()
@@ -201,7 +203,7 @@ async fn test_tool_error_text_is_marked_untrusted() {
     common::run_with_client(server(true), |peer| async move {
         let result = call_tool(
             &peer,
-            "readQuery",
+            "read",
             Some(object(json!({"query": "SELECT * FROM missing_table"}))),
         )
         .await
@@ -215,9 +217,13 @@ async fn test_tool_error_text_is_marked_untrusted() {
 #[tokio::test]
 async fn test_write_tool_error_text_is_marked_untrusted() {
     common::run_with_client(server(false), |peer| async move {
-        let result = call_tool(&peer, "dropTable", Some(object(json!({"table": "missing_table"}))))
-            .await
-            .expect("tool error must not be a protocol error");
+        let result = call_tool(
+            &peer,
+            "write",
+            Some(object(json!({"query": "DROP TABLE missing_table"}))),
+        )
+        .await
+        .expect("tool error must not be a protocol error");
         assert_eq!(result.is_error, Some(true));
         assert!(text(&result).contains("<untrusted-data-"), "got: {}", text(&result));
     })
@@ -227,7 +233,7 @@ async fn test_write_tool_error_text_is_marked_untrusted() {
 #[tokio::test]
 async fn test_call_tool_without_arguments() {
     common::run_with_client(server(true), |peer| async move {
-        let result = call_tool(&peer, "listViews", None).await.expect("listViews succeeds");
+        let result = call_tool(&peer, "objects", None).await.expect("objects succeeds");
         assert_ne!(result.is_error, Some(true), "got: {}", text(&result));
     })
     .await;

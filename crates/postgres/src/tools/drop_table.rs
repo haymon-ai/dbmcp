@@ -1,69 +1,9 @@
-//! MCP tool: `dropTable`.
+//! Handler method behind the former `dropTable` tool.
 
 use dbmcp_server::types::MessageResponse;
 
 use super::prelude::*;
 use crate::queries;
-use crate::types::DropTableRequest;
-
-const NAME: &str = "dropTable";
-const TITLE: &str = "Drop Table";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/drop_table/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/drop_table/unpinned.md");
-
-fn annotations() -> ToolAnnotations {
-    ToolAnnotations::new()
-        .read_only(false)
-        .destructive(true)
-        .idempotent(false)
-        .open_world(false)
-}
-
-/// Marker type for the `dropTable` MCP tool.
-pub(crate) struct DropTableTool<const PINNED: bool>;
-
-impl<const PINNED: bool> ToolBase for DropTableTool<PINNED> {
-    type Parameter = DropTableRequest;
-    type Output = MessageResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(PINNED))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-}
-
-impl<const PINNED: bool> AsyncTool<PostgresHandler> for DropTableTool<PINNED> {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.drop_table(params.database, params.table, params.cascade).await
-    }
-}
 
 impl PostgresHandler {
     /// Drops a table from a database.

@@ -1,59 +1,10 @@
-//! MCP tool: `dropDatabase`.
+//! Handler method behind the former `dropDatabase` tool.
 
 use dbmcp_server::types::{DropDatabaseRequest, MessageResponse};
 use dbmcp_sql::SqlError;
 
 use super::prelude::*;
 use crate::queries;
-
-const NAME: &str = "dropDatabase";
-const TITLE: &str = "Drop Database";
-const DESCRIPTION: &str = include_str!("../../assets/tools/drop_database/default.md");
-
-/// Marker type for the `dropDatabase` MCP tool.
-pub(crate) struct DropDatabaseTool;
-
-impl ToolBase for DropDatabaseTool {
-    type Parameter = DropDatabaseRequest;
-    type Output = MessageResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION.into())
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(false)
-                .destructive(true)
-                .idempotent(false)
-                .open_world(false),
-        )
-    }
-}
-
-impl AsyncTool<MysqlHandler> for DropDatabaseTool {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.drop_database(params).await
-    }
-}
 
 impl MysqlHandler {
     /// Drops an existing database.

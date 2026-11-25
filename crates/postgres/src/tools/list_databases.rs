@@ -1,59 +1,10 @@
-//! MCP tool: `listDatabases`.
+//! Handler method behind the former `listDatabases` tool.
 
 use dbmcp_server::listing;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
 use crate::queries;
-
-const NAME: &str = "listDatabases";
-const TITLE: &str = "List Databases";
-const DESCRIPTION: &str = include_str!("../../assets/tools/list_databases/default.md");
-
-/// Marker type for the `listDatabases` MCP tool.
-pub(crate) struct ListDatabasesTool;
-
-impl ToolBase for ListDatabasesTool {
-    type Parameter = ListDatabasesRequest;
-    type Output = ListDatabasesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(DESCRIPTION.into())
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(false))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(
-            ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
-                .idempotent(true)
-                .open_world(false),
-        )
-    }
-}
-
-impl AsyncTool<PostgresHandler> for ListDatabasesTool {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler.list_databases(params).await
-    }
-}
 
 impl PostgresHandler {
     /// Lists one page of accessible databases.

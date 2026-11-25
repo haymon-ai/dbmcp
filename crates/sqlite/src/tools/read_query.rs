@@ -1,4 +1,4 @@
-//! MCP tool: `readQuery`.
+//! MCP tool: `read`.
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::listing::Cursor;
@@ -15,8 +15,8 @@ use super::prelude::*;
 use crate::types::ReadQueryRequest;
 use dbmcp_policy::Access;
 
-const NAME: &str = "readQuery";
-const TITLE: &str = "Read Query";
+const NAME: &str = "read";
+const TITLE: &str = "Read";
 const DESCRIPTION: &str = include_str!("../../assets/tools/read_query.md");
 
 /// Marker type for the `readQuery` MCP tool.

@@ -1,71 +1,10 @@
-//! MCP tool: `listTables`.
+//! Handler method behind the former `listTables` tool.
 
 use dbmcp_server::listing::{self, Cursor};
 
 use super::prelude::*;
 use crate::queries;
-use crate::types::{ListEntriesResponse, ListTablesRequest};
-
-const NAME: &str = "listTables";
-const TITLE: &str = "List Tables";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_tables/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_tables/unpinned.md");
-
-fn annotations() -> ToolAnnotations {
-    ToolAnnotations::new()
-        .read_only(true)
-        .destructive(false)
-        .idempotent(true)
-        .open_world(false)
-}
-
-/// Marker type for the `listTables` MCP tool.
-pub(crate) struct ListTablesTool<const PINNED: bool>;
-
-impl<const PINNED: bool> ToolBase for ListTablesTool<PINNED> {
-    type Parameter = ListTablesRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(PINNED))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-}
-
-impl<const PINNED: bool> AsyncTool<MysqlHandler> for ListTablesTool<PINNED> {
-    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_tables(params.database, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
+use crate::types::ListEntriesResponse;
 
 impl MysqlHandler {
     /// Lists one page of tables in a database, optionally filtered and/or detailed.

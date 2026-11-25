@@ -5732,7 +5732,7 @@ async fn column_rules_refuse_read_query_explain_of_ruled_relations_in_other_form
         "EXPLAIN FORMAT=TREE SELECT email FROM users",
     ] {
         let error = ruled_refusal(&handler, query).await;
-        assert!(error.contains("use explainQuery"), "{query}: {error}");
+        assert!(error.contains("use the explain tool"), "{query}: {error}");
     }
     let error = ruled_refusal(&handler, "EXPLAIN ANALYZE SELECT email FROM users").await;
     assert!(error.contains("explain without ANALYZE"), "{error}");

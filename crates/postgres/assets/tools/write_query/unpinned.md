@@ -8,16 +8,15 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Read-only queries (SELECT, SHOW) → use readQuery
-- Query performance analysis → use explainQuery
-- Creating/dropping entire databases → use createDatabase or dropDatabase
+- Read-only queries (SELECT, SHOW) → use `read`
+- Query performance analysis → use `explain`
 </when_not_to_use>
 
 <examples>
 ✓ "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')"
 ✓ "UPDATE orders SET status = 'shipped' WHERE id = 42"
 ✓ "CREATE TABLE logs (id SERIAL PRIMARY KEY, message TEXT)"
-✗ "SELECT * FROM users" → use readQuery
+✗ "SELECT * FROM users" → use `read`
 </examples>
 
 <what_it_returns>

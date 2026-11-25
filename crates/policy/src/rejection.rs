@@ -47,7 +47,7 @@ pub enum Rejection {
     DeniedStatement,
 
     /// `EXPLAIN` touching a ruled relation, other than a plain JSON or query-plan form.
-    #[error("column policy: EXPLAIN touches ruled relation {relation:?}; use explainQuery")]
+    #[error("column policy: EXPLAIN touches ruled relation {relation:?}; use the explain tool")]
     Explain {
         /// The ruled relation, as `schema.name`.
         relation: String,

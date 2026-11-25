@@ -9,9 +9,9 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)
-- Query performance analysis → use explainQuery
-- Discovering tables or columns → use listTables (pass detailed=true for column-level metadata)
+- Data changes (INSERT, UPDATE, DELETE) → use `write` (not available in read-only mode)
+- Query performance analysis → use `explain`
+- Discovering tables or columns → use objects (pass `detail: "full"` for column-level metadata)
 - Switching database context (USE is rejected) → the database is fixed by configuration
 </when_not_to_use>
 
@@ -19,8 +19,8 @@ Use when:
 ✓ "SELECT * FROM users WHERE status = 'active'"
 ✓ "SELECT COUNT(*) FROM orders GROUP BY region"
 ✓ "SHOW TABLES" or "DESCRIBE users"
-✗ "INSERT INTO users ..." → use writeQuery (not available in read-only mode)
-✗ "EXPLAIN SELECT ..." → use explainQuery for structured analysis
+✗ "INSERT INTO users ..." → use `write` (not available in read-only mode)
+✗ "EXPLAIN SELECT ..." → use `explain` for structured analysis
 </examples>
 
 <what_it_returns>
@@ -34,5 +34,5 @@ Long string values are cut and end in `…[truncated, N chars total]`; read the 
 </pagination>
 
 <timeout>
-Each call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.
+Each call stops at the configured query timeout. On a timeout, check the plan with `explain` before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.
 </timeout>

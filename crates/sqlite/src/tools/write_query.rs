@@ -1,4 +1,4 @@
-//! MCP tool: `writeQuery`.
+//! MCP tool: `write`.
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
@@ -9,8 +9,8 @@ use super::prelude::*;
 use crate::types::QueryRequest;
 use dbmcp_policy::Access;
 
-const NAME: &str = "writeQuery";
-const TITLE: &str = "Write Query";
+const NAME: &str = "write";
+const TITLE: &str = "Write";
 const DESCRIPTION: &str = include_str!("../../assets/tools/write_query.md");
 
 /// Marker type for the `writeQuery` MCP tool.

@@ -95,6 +95,47 @@ impl ListEntriesResponse {
     }
 }
 
+/// How much metadata the `objects` tool returns per entry.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Detail {
+    /// A sorted array of bare object names.
+    #[default]
+    Names,
+    /// An object keyed by name, each value carrying the object's full metadata.
+    Full,
+}
+
+impl Detail {
+    /// Whether full metadata is requested.
+    #[must_use]
+    pub const fn is_full(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
+/// Rejects an `objects` call whose `kind` is unavailable in this configuration.
+#[must_use]
+pub fn unavailable_kind(kind: &str, reason: &str) -> rmcp::ErrorData {
+    rmcp::ErrorData::invalid_params(format!("kind `{kind}` is unavailable: {reason}"), None)
+}
+
+/// Rejects `search` and `detail: full` for an `objects` kind that lists names only.
+///
+/// # Errors
+///
+/// Returns an invalid-params error when either option is set.
+pub fn names_only(kind: &str, search: Option<&str>, detail: Detail) -> Result<(), rmcp::ErrorData> {
+    if search.is_some() || detail.is_full() {
+        Err(rmcp::ErrorData::invalid_params(
+            format!("kind `{kind}` lists names only: omit `search` and `detail`"),
+            None,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Response for tools with no structured return data.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct MessageResponse {
@@ -133,48 +174,6 @@ pub struct CreateDatabaseRequest {
 pub struct DropDatabaseRequest {
     /// Name of the database to drop. Must be non-empty.
     pub database: String,
-}
-
-/// Request for the `listViews` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListViewsRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Database to list views from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the `listTriggers` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListTriggersRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on trigger names. The input is used within a `LIKE`
-    /// clause: `%` matches any sequence of characters and `_` matches any single character.
-    #[serde(default)]
-    pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (schema, table, timing,
-    /// events, activationLevel, definition, plus backend-specific fields); when `false` or
-    /// omitted, each entry is the bare trigger-name string.
-    #[serde(default)]
-    pub detailed: bool,
-    /// Database to list triggers from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the `listFunctions` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListFunctionsRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Database to list functions from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
 }
 
 /// Request for the `writeQuery` tool.
@@ -316,8 +315,8 @@ pub struct ExplainQueryRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, MAX_TIMEOUT_SECS, ReadQueryResponse,
-        Truncation, WriteQueryResponse, resolve_timeout,
+        IndexMap, ListEntries, ListEntriesResponse, MAX_TIMEOUT_SECS, ReadQueryResponse, Truncation,
+        WriteQueryResponse, resolve_timeout,
     };
     use serde_json::{Value, json};
 
@@ -329,30 +328,6 @@ mod tests {
         let text = serde_json::to_string(&ListEntriesResponse::detailed(entries, None)).expect("serializes");
         let sorted = r#"{"a":{"b":3,"y":2},"z":1}"#;
         assert_eq!(text, format!(r#"{{"entries":{{"users":{sorted},"orders":{sorted}}}}}"#));
-    }
-
-    #[test]
-    fn list_triggers_request_defaults_to_brief_mode_without_search() {
-        let req: ListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_triggers_request_accepts_search_and_detailed() {
-        let req: ListTriggersRequest = serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("audit"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_triggers_request_accepts_database_and_inner_fields() {
-        let req: ListTriggersRequest =
-            serde_json::from_str(r#"{"database": "mydb", "search": "audit", "detailed": true}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-        assert_eq!(req.search.as_deref(), Some("audit"));
-        assert!(req.detailed);
     }
 
     #[test]

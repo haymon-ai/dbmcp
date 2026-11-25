@@ -1,4 +1,4 @@
-Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured JSON output.
+Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through `read` — it provides structured JSON output.
 
 <usecase>
 Use when:
@@ -9,14 +9,14 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)
-- Checking table structure → use listTables(detailed=true)
+- Running actual queries → use `read`, or `write` for data changes (not available in read-only mode)
+- Checking table structure → use objects(detail="full")
 </when_not_to_use>
 
 <examples>
-✓ "Why is my SELECT on orders slow?" → explainQuery(query="SELECT ...")
-✓ "Should I add an index?" → explainQuery with analyze=true
-✗ "Run this SELECT" → use readQuery
+✓ "Why is my SELECT on orders slow?" → explain(query="SELECT ...")
+✓ "Should I add an index?" → `explain` with analyze=true
+✗ "Run this SELECT" → use `read`
 </examples>
 
 <safety>

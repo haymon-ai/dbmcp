@@ -8,8 +8,8 @@ Use when:
 </usecase>
 
 <when_not_to_use>
-- Read-only queries (SELECT, SHOW) → use readQuery
-- Query performance analysis → use explainQuery
+- Read-only queries (SELECT, SHOW) → use `read`
+- Query performance analysis → use `explain`
 - Switching database context (USE is rejected) → the database is fixed by configuration
 </when_not_to_use>
 
@@ -17,7 +17,7 @@ Use when:
 ✓ "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')"
 ✓ "UPDATE orders SET status = 'shipped' WHERE id = 42"
 ✓ "CREATE TABLE logs (id INT PRIMARY KEY, message TEXT)"
-✗ "SELECT * FROM users" → use readQuery
+✗ "SELECT * FROM users" → use `read`
 </examples>
 
 <what_it_returns>

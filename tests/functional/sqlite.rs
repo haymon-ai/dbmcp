@@ -2228,16 +2228,16 @@ fn sqlite_command() -> tokio::process::Command {
     command
 }
 
-/// Returns whether a server started from `command` exposes `writeQuery`.
+/// Returns whether a server started from `command` exposes `write`.
 async fn exposes_write_query_with(command: tokio::process::Command) -> bool {
     let transport = TokioChildProcess::new(command).expect("spawn dbmcp");
     let client = ().serve(transport).await.expect("mcp handshake");
     let tools = client.list_all_tools().await.expect("tools/list");
     client.cancel().await.expect("shutdown");
-    tools.iter().any(|tool| tool.name == "writeQuery")
+    tools.iter().any(|tool| tool.name == "write")
 }
 
-/// Returns whether a server started with `DBMCP_DB_READ_ONLY=value` exposes `writeQuery`.
+/// Returns whether a server started with `DBMCP_DB_READ_ONLY=value` exposes `write`.
 async fn exposes_write_query(value: &str) -> bool {
     let mut command = sqlite_command();
     command.env("DBMCP_DB_READ_ONLY", value);
@@ -2393,12 +2393,12 @@ async fn test_later_config_file_wins_and_resolves_paths_against_itself() {
     let client = ().serve(transport).await.expect("mcp handshake");
     let tools = client.list_all_tools().await.expect("tools/list");
     let tables = client
-        .call_tool(CallToolRequestParams::new("listTables"))
+        .call_tool(CallToolRequestParams::new("objects"))
         .await
-        .expect("listTables");
+        .expect("objects");
     client.cancel().await.expect("shutdown");
     assert!(
-        tools.iter().any(|tool| tool.name == "writeQuery"),
+        tools.iter().any(|tool| tool.name == "write"),
         "the earlier file's read_only must still apply"
     );
     let tables = serde_json::to_string(&tables).expect("serialize result");
@@ -3141,7 +3141,7 @@ async fn column_rules_read_query_explain_query_plan_of_ruled_relations_returns_p
 async fn column_rules_refuse_read_query_bytecode_explain_of_ruled_relations() {
     let handler = handler_with_rules(100);
     let error = ruled_refusal(&handler, "EXPLAIN SELECT email FROM users").await;
-    assert!(error.contains("use explainQuery"), "{error}");
+    assert!(error.contains("use the explain tool"), "{error}");
 }
 
 #[tokio::test]

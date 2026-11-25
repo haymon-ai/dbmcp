@@ -14,9 +14,7 @@ use rmcp::model::ServerConfig;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::connection::SqliteConnection;
-use crate::tools::{
-    DropTableTool, ExplainQueryTool, ListTablesTool, ListTriggersTool, ListViewsTool, ReadQueryTool, WriteQueryTool,
-};
+use crate::tools::{ExplainQueryTool, ObjectsTool, ReadQueryTool, WriteQueryTool};
 
 /// Backend-specific description for `SQLite`.
 const DESCRIPTION: &str = "The privacy first MCP server for SQL databases.";
@@ -31,13 +29,10 @@ const INSTRUCTIONS_READ_ONLY: &str = include_str!("../assets/instructions/read-o
 ///
 /// `SQLite` has no `database` field, so no tool is pinned.
 const TOOLS: &[ToolSpec<SqliteHandler>] = &[
-    ToolSpec::tool::<ListTablesTool>(false, false),
-    ToolSpec::tool::<ListViewsTool>(false, false),
-    ToolSpec::tool::<ListTriggersTool>(false, false),
+    ToolSpec::tool::<ObjectsTool>(false, false),
     ToolSpec::tool::<ReadQueryTool>(false, false),
     ToolSpec::tool::<ExplainQueryTool>(false, false),
     ToolSpec::tool::<WriteQueryTool>(false, true),
-    ToolSpec::tool::<DropTableTool>(false, true),
 ];
 
 /// `SQLite` file-based database handler.
@@ -143,83 +138,41 @@ mod tests {
         .expect("handler builds in test")
     }
 
-    #[tokio::test]
-    async fn router_exposes_all_seven_tools_in_read_write_mode() {
-        let router = handler(false).tool_router;
-        for name in [
-            "listTables",
-            "listViews",
-            "listTriggers",
-            "dropTable",
-            "readQuery",
-            "writeQuery",
-            "explainQuery",
-        ] {
-            assert!(router.has_route(name), "missing tool: {name}");
-        }
+    fn tool_names(router: &ToolRouter<SqliteHandler>) -> Vec<String> {
+        let mut names: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect();
+        names.sort();
+        names
     }
 
     #[tokio::test]
-    async fn router_excludes_get_table_schema() {
-        // Spec 046 US4: `getTableSchema` is retired on SQLite. Both read-only and
-        // read-write catalogues must no longer advertise it.
-        for read_only in [false, true] {
-            let router = handler(read_only).tool_router;
-            assert!(
-                !router.has_route("getTableSchema"),
-                "getTableSchema must be absent (read_only={read_only})"
-            );
-        }
+    async fn router_exposes_four_tools_in_read_write_mode() {
+        assert_eq!(
+            tool_names(&handler(false).tool_router),
+            ["explain", "objects", "read", "write"]
+        );
     }
 
     #[tokio::test]
-    async fn router_does_not_advertise_backend_specific_tools() {
-        let router = handler(false).tool_router;
-        for absent in [
-            "listDatabases",
-            "listFunctions",
-            "listProcedures",
-            "listMaterializedViews",
-            "createDatabase",
-            "dropDatabase",
-        ] {
-            assert!(!router.has_route(absent), "SQLite must not advertise {absent}");
-        }
-    }
-
-    #[tokio::test]
-    async fn router_hides_write_tools_in_read_only_mode() {
-        let router = handler(true).tool_router;
-        assert!(router.has_route("listTables"));
-        assert!(router.has_route("listViews"));
-        assert!(router.has_route("listTriggers"));
-        assert!(router.has_route("readQuery"));
-        assert!(router.has_route("explainQuery"));
-        assert!(!router.has_route("writeQuery"));
-        assert!(!router.has_route("dropTable"));
+    async fn router_hides_write_in_read_only_mode() {
+        assert_eq!(tool_names(&handler(true).tool_router), ["explain", "objects", "read"]);
     }
 
     #[tokio::test]
     async fn instructions_match_read_only_mode() {
         let read_write = handler(false).get_info().instructions.expect("instructions present");
-        assert!(
-            read_write.contains("writeQuery"),
-            "read-write instructions mention writeQuery"
-        );
-
+        assert!(read_write.contains("`write`"));
         let read_only = handler(true).get_info().instructions.expect("instructions present");
-        for tool in ["writeQuery", "dropTable"] {
-            assert!(
-                !read_only.contains(tool),
-                "read-only instructions must not mention {tool}"
-            );
-        }
+        assert!(!read_only.contains("`write`"));
     }
 
     #[tokio::test]
-    async fn list_tables_annotations() {
+    async fn objects_annotations() {
         let router = handler(false).tool_router;
-        let tool = router.get("listTables").expect("listTables registered");
+        let tool = router.get("objects").expect("objects registered");
 
         let annotations = tool.annotations.as_ref().expect("annotations present");
         assert_eq!(annotations.read_only_hint, Some(true));

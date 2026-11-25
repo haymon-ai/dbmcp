@@ -1,4 +1,4 @@
-//! MCP tool: `writeQuery`.
+//! MCP tool: `write`.
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
@@ -9,8 +9,8 @@ use dbmcp_truncate::{Window, fit};
 use super::prelude::*;
 use dbmcp_policy::Access;
 
-const NAME: &str = "writeQuery";
-const TITLE: &str = "Write Query";
+const NAME: &str = "write";
+const TITLE: &str = "Write";
 const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/write_query/pinned.md");
 const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/write_query/unpinned.md");
 

@@ -585,7 +585,7 @@ fn other_explain_of_ruled_relation_points_to_explain_query() {
     assert_eq!(rejection.gate(), "explain");
     assert_eq!(
         rejection.to_string(),
-        "column policy: EXPLAIN touches ruled relation \"public.users\"; use explainQuery"
+        "column policy: EXPLAIN touches ruled relation \"public.users\"; use the explain tool"
     );
 }
 

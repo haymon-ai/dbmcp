@@ -4,9 +4,9 @@ expression: tools
 ---
 [
   {
-    "name": "explainQuery",
-    "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured JSON output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables(detailed=true)\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → explainQuery with analyze=true\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query, so only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN (FORMAT JSON) output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<timeout>\nEach call stops at the configured query timeout; with `analyze`, that includes running the statement. To measure a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
+    "name": "explain",
+    "title": "Explain",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through `read` — it provides structured JSON output.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Investigating performance bottlenecks\n- Planning index creation to optimize queries\n- Analyzing join methods, table scan strategies, and sort operations\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use `read`, or `write` for data changes (not available in read-only mode)\n- Checking table structure → use objects(detail=\"full\")\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explain(query=\"SELECT ...\")\n✓ \"Should I add an index?\" → `explain` with analyze=true\n✗ \"Run this SELECT\" → use `read`\n</examples>\n\n<safety>\nSet `analyze` to true for actual execution statistics (EXPLAIN ANALYZE).\nIMPORTANT: EXPLAIN ANALYZE actually executes the query, so only read-only statements are allowed with analyze.\nWhen analyze is false, returns EXPLAIN (FORMAT JSON) output without executing.\nOnly a single SQL statement is accepted.\n</safety>\n\n<what_it_returns>\nA JSON array of execution plan rows showing access methods, join types, row estimates, and costs.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<timeout>\nEach call stops at the configured query timeout; with `analyze`, that includes running the statement. To measure a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -78,12 +78,75 @@ expression: tools
     }
   },
   {
-    "name": "listFunctions",
-    "title": "List Functions",
-    "description": "List user-defined functions in the `public` schema, optionally filtered and/or with full metadata. Aggregates, window functions, and procedures are excluded.\n\n<usecase>\nUse when:\n- Auditing functions across the database (brief mode, default).\n- Searching for a function by partial name (pass `search`).\n- Inspecting a function's language, signature, return type, volatility, strictness, security mode, parallel-safety, owner, comment, and full `CREATE FUNCTION` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_proc` / `information_schema.routines`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on function names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by `name(arguments)` instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What functions are here?\" → listFunctions()\n✓ \"Find the order-total calculation\" → listFunctions(search=\"order\")\n✓ \"What does calc_order_total do?\" → listFunctions(search=\"calc_order_total\", detailed=true)\n✗ \"List stored procedures\" → use listProcedures instead\n✗ \"List aggregates\" → not supported; aggregates are excluded\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of function-name strings, e.g. `[\"audit_user_login\", \"calc_order_subtotal\", \"calc_order_total\", \"calc_order_total\"]`. Overloaded functions appear as one entry per overload (duplicate name strings allowed).\nDetailed mode: a JSON object keyed by function signature `name(arguments)`; each value carries `schema`, `name`, `language`, `arguments`, `returnType`, `volatility` (IMMUTABLE/STABLE/VOLATILE), `strict` (boolean), `security` (INVOKER/DEFINER), `parallelSafety` (SAFE/RESTRICTED/UNSAFE), `owner`, `description` (or null when no `COMMENT ON FUNCTION`), and `definition` (the full `CREATE OR REPLACE FUNCTION` text). Overloads occupy distinct keys (e.g. `calc_total(integer)` vs `calc_total(integer, numeric)`).\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `(proname, oid)` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>\n",
+    "name": "objects",
+    "title": "Objects",
+    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<parameters>\n- `kind` — Object kind: `table`, `view`, `materialized_view`, `trigger`, `function`, `procedure`. Default `table`.\n- `search` — Case-insensitive filter on names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detail` — `names` (default) returns bare names; `full` returns metadata keyed by name.\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n</parameters>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"entries\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"entries\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: `schema`, `owner`, `description`, `definition` (the `SELECT` body).\n- `materialized_view`: `schema`, `owner`, `description`, `definition`, `populated`, `indexed`.\n- `trigger`: `schema`, `table`, `status`, `timing`, `events`, `activationLevel`, `functionName`, `definition`; internal triggers excluded.\n- `function`: keyed by `name(arguments)` (one key per overload): `schema`, `name`, `language`, `arguments`, `returnType`, `volatility`, `strict`, `security`, `parallelSafety`, `owner`, `description`, `definition`.\n- `procedure`: keyed by `name(arguments)`: `schema`, `name`, `language`, `arguments`, `security`, `owner`, `description`, `definition`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor`; keep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "kind": {
+          "description": "Kind of object to list. Defaults to `table`.",
+          "oneOf": [
+            {
+              "description": "Tables in the `public` schema.",
+              "type": "string",
+              "const": "table"
+            },
+            {
+              "description": "Views in the `public` schema.",
+              "type": "string",
+              "const": "view"
+            },
+            {
+              "description": "Materialized views in the `public` schema.",
+              "type": "string",
+              "const": "materialized_view"
+            },
+            {
+              "description": "User-defined triggers in the `public` schema.",
+              "type": "string",
+              "const": "trigger"
+            },
+            {
+              "description": "User-defined functions in the `public` schema.",
+              "type": "string",
+              "const": "function"
+            },
+            {
+              "description": "User-defined procedures in the `public` schema.",
+              "type": "string",
+              "const": "procedure"
+            },
+            {
+              "description": "Databases on the server; unavailable when a database is pinned.",
+              "type": "string",
+              "const": "database"
+            }
+          ]
+        },
+        "search": {
+          "description": "Optional case-insensitive filter on object names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "detail": {
+          "description": "`names` (default) returns bare names; `full` returns metadata keyed by name.",
+          "oneOf": [
+            {
+              "description": "A sorted array of bare object names.",
+              "type": "string",
+              "const": "names"
+            },
+            {
+              "description": "An object keyed by name, each value carrying the object's full metadata.",
+              "type": "string",
+              "const": "full"
+            }
+          ]
+        },
         "cursor": {
           "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
           "type": [
@@ -91,19 +154,6 @@ expression: tools
             "null"
           ],
           "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on function names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema, name,\nlanguage, arguments, returnType, volatility, strict, security,\nparallelSafety, owner, description, definition); when `false` or omitted,\neach entry is the bare function-name string.",
-          "type": "boolean",
-          "default": false
         }
       }
     },
@@ -144,339 +194,9 @@ expression: tools
     }
   },
   {
-    "name": "listMaterializedViews",
-    "title": "List Materialized Views",
-    "description": "List materialized views in the `public` schema, optionally filtered and/or with full metadata. Unlike regular views, materialized views store their results physically and must be refreshed explicitly. Regular views and system-schema matviews are excluded.\n\n<usecase>\nUse when:\n- Auditing materialized views across the database (brief mode, default).\n- Searching for a matview by partial name (pass `search`).\n- Inspecting a matview's owner, comment, full SELECT body, populated state, and index presence before querying or refreshing it (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_matviews` / `pg_class`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on matview names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by bare matview name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What materialized views are here?\" → listMaterializedViews()\n✓ \"Find the recent-orders matview\" → listMaterializedViews(search=\"orders\")\n✓ \"What does mv_orders_by_region compute?\" → listMaterializedViews(search=\"mv_orders_by_region\", detailed=true)\n✓ \"Has the cache matview ever been refreshed?\" → listMaterializedViews(search=\"cache\", detailed=true) — read `populated`\n✓ \"Which matviews can I refresh concurrently?\" → listMaterializedViews(detailed=true) — read `indexed` (CONCURRENTLY additionally needs a unique index)\n✗ \"List regular views\" → use listViews instead\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of matview-name strings, e.g. `[\"mv_archived_orders\", \"mv_recent_orders\"]`. Matview names are unique per schema, so no duplicates appear.\nDetailed mode: a JSON object keyed by bare matview name; each value carries:\n- `schema` — schema name (always `\"public\"` in this build).\n- `owner` — owning role's name from `pg_matviews.matviewowner`.\n- `description` — `COMMENT ON MATERIALIZED VIEW` text, or `null` when no comment.\n- `definition` — the SELECT body verbatim from `pg_matviews.definition`, with no `CREATE MATERIALIZED VIEW` wrapper.\n- `populated` — `true` once the matview has been refreshed at least once. `false` for matviews created `WITH NO DATA` and never refreshed; querying such a matview returns zero rows until `REFRESH MATERIALIZED VIEW` runs.\n- `indexed` — `true` when at least one index exists on the matview. `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index; this tool reports the broader has-any-index signal.\n\nThe matview name is the map key only — it is not repeated inside the value. Detailed mode deliberately omits column metadata (`columns`), `tablespace`, storage parameters, and unique-index detection. Column shape is recoverable from the `definition` text or via `listTables(detailed=true)` since Postgres exposes matviews in `pg_class`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `matviewname` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>\n",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on matview names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema, owner,\ndescription, definition, populated, indexed); when `false` or omitted, each\nentry is the bare matview-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "listProcedures",
-    "title": "List Procedures",
-    "description": "List user-defined procedures in the `public` schema, optionally filtered and/or with full metadata. Functions, aggregates, and window functions are excluded.\n\n<usecase>\nUse when:\n- Auditing procedures across the database (brief mode, default).\n- Searching for a procedure by partial name (pass `search`).\n- Inspecting a procedure's language, signature, security mode, owner, comment, and full `CREATE PROCEDURE` text before reasoning about correctness or invocation safety (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_proc` / `information_schema.routines`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on procedure names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by `name(arguments)` instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What procedures are here?\" → listProcedures()\n✓ \"Find the order archival routine\" → listProcedures(search=\"archive\")\n✓ \"What does archive_order do?\" → listProcedures(search=\"archive_order\", detailed=true)\n✗ \"List functions\" → use listFunctions instead\n✗ \"List aggregates\" → not supported; aggregates are excluded\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of procedure-name strings, e.g. `[\"archive_order\", \"archive_order_history\", \"archive_order_history\"]`. Overloaded procedures appear as one entry per overload (duplicate name strings allowed).\nDetailed mode: a JSON object keyed by procedure signature `name(arguments)`; each value carries `schema`, `name`, `language`, `arguments`, `security` (INVOKER/DEFINER), `owner`, `description` (or null when no `COMMENT ON PROCEDURE`), and `definition` (the full `CREATE OR REPLACE PROCEDURE` text). Overloads occupy distinct keys (e.g. `archive_order_history(integer)` vs `archive_order_history(integer, boolean)`). Zero-arg procedures key as `name()` — the parens are always present so the key shape stays uniform.\n\nDetailed mode deliberately omits the `listFunctions`-only fields `returnType`, `volatility`, `strict`, and `parallelSafety`: procedures don't return a value, `pg_proc.provolatile` / `proisstrict` are not user-settable for procedures, and `proparallel` carries no procedure-level guarantee in PostgreSQL.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `(proname, oid)` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>\n",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on procedure names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema, name,\nlanguage, arguments, security, owner, description, definition); when `false`\nor omitted, each entry is the bare procedure-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "listTables",
-    "title": "List Tables",
-    "description": "List tables, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring the database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`).\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are here?\" → listTables()\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"public\", \"kind\": \"TABLE\", …}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>\n",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on table names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (columns,\nconstraints, indexes, triggers, owner, comment, kind); when `false` or\nomitted, each entry is the bare table-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "listTriggers",
-    "title": "List Triggers",
-    "description": "List user-defined triggers in the `public` schema, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Auditing triggers across the database (brief mode, default).\n- Searching for a trigger by partial name (pass `search`).\n- Inspecting a trigger's timing, events, activation level, handler function, status, and full `CREATE TRIGGER` text before reasoning about side-effects (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_trigger` / `information_schema.triggers`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on trigger names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by trigger name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What triggers are here?\" → listTriggers()\n✓ \"Find the audit triggers\" → listTriggers(search=\"audit\")\n✓ \"What does orders_audit_after_iu do?\" → listTriggers(search=\"orders_audit_after_iu\", detailed=true)\n✗ \"Show me a trigger's body\" → use detailed mode; the `definition` field carries the full `CREATE TRIGGER` text\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of trigger-name strings, e.g. `[\"customers_audit_after_insert\", \"orders_audit_after_insert\"]`.\nDetailed mode: a JSON object keyed by trigger name; each value carries `schema`, `table`, `status` (ENABLED/DISABLED/REPLICA/ALWAYS), `timing` (BEFORE/AFTER/INSTEAD OF), `events` (array of strings drawn from INSERT/UPDATE/DELETE/TRUNCATE in that fixed order), `activationLevel` (ROW/STATEMENT), `functionName`, and `definition` (the full `CREATE TRIGGER` text). Internal triggers (FK enforcement etc.) are excluded.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>\n",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on trigger names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema, table, timing,\nevents, activationLevel, definition, plus backend-specific fields); when `false` or\nomitted, each entry is the bare trigger-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "listViews",
-    "title": "List Views",
-    "description": "List user-defined views in the `public` schema, optionally filtered and/or with full metadata. Materialized views and system-schema views are excluded.\n\n<usecase>\nUse when:\n- Auditing views across the database (brief mode, default).\n- Searching for a view by partial name (pass `search`).\n- Inspecting a view's owner, comment, and full SELECT body before querying it (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `pg_views` / `pg_class`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on view names via `ILIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by bare view name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What views are here?\" → listViews()\n✓ \"Find the active-users view\" → listViews(search=\"active\")\n✓ \"What does active_users select?\" → listViews(search=\"active_users\", detailed=true)\n✗ \"Show me the columns of a view\" → use listTables with `detailed: true` instead\n✗ \"List materialized views\" → use listMaterializedViews\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of view-name strings, e.g. `[\"active_orders\", \"active_users\"]`. View names are unique per schema, so no duplicates appear.\nDetailed mode: a JSON object keyed by bare view name; each value carries `schema`, `owner`, `description` (or null when no `COMMENT ON VIEW`), and `definition` (the SELECT body verbatim from `pg_views.definition`, with no `CREATE VIEW` wrapper). The view name is the map key only — it is not repeated inside the value.\n\nDetailed mode deliberately omits column metadata (`columns`), the `name` field (already the key), and view-level options (`security_barrier`, `security_invoker`, `WITH CHECK OPTION`). Column shape is recoverable from the `definition` text or via `listTables(detailed=true)` since Postgres exposes views in `pg_class`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity. Brief and detailed modes share the same `viewname` row order, so a client can switch `detailed` between pages without losing position.\n</pagination>\n",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on view names. The input is used within an `ILIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema, owner,\ndescription, definition); when `false` or omitted, each entry is the bare\nview-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "readQuery",
-    "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server configuration parameters (SHOW)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass `detailed: true` to get columns, keys, and indexes)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW server_version\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
+    "name": "read",
+    "title": "Read",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Listing server configuration parameters (SHOW)\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use `write` (not available in read-only mode)\n- Query performance analysis → use `explain`\n- Discovering tables or columns → use objects (pass `detail: \"full\"` to get columns, keys, and indexes)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✓ \"SHOW server_version\"\n✗ \"INSERT INTO users ...\" → use `write` (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use `explain` for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with `explain` before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
     "inputSchema": {
       "type": "object",
       "properties": {

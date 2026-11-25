@@ -1,4 +1,4 @@
-//! MCP tool: `explainQuery`.
+//! MCP tool: `explain`.
 
 use dbmcp_privacy::MaybeRedact as _;
 use dbmcp_server::truncate::{Truncation, caps};
@@ -11,8 +11,8 @@ use crate::queries;
 use crate::types::ExplainQueryRequest;
 use dbmcp_policy::Access;
 
-const NAME: &str = "explainQuery";
-const TITLE: &str = "Explain Query";
+const NAME: &str = "explain";
+const TITLE: &str = "Explain";
 const DESCRIPTION: &str = include_str!("../../assets/tools/explain_query.md");
 
 /// Marker type for the `explainQuery` MCP tool.

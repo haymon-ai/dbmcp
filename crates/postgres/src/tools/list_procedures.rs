@@ -1,71 +1,10 @@
-//! MCP tool: `listProcedures`.
+//! Handler method behind the former `listProcedures` tool.
 
 use dbmcp_server::listing::{self, Cursor};
 
 use super::prelude::*;
 use crate::queries;
-use crate::types::{ListEntriesResponse, ListProceduresRequest};
-
-const NAME: &str = "listProcedures";
-const TITLE: &str = "List Procedures";
-const DESCRIPTION_PINNED: &str = include_str!("../../assets/tools/list_procedures/pinned.md");
-const DESCRIPTION_UNPINNED: &str = include_str!("../../assets/tools/list_procedures/unpinned.md");
-
-fn annotations() -> ToolAnnotations {
-    ToolAnnotations::new()
-        .read_only(true)
-        .destructive(false)
-        .idempotent(true)
-        .open_world(false)
-}
-
-/// Marker type for the `listProcedures` MCP tool.
-pub(crate) struct ListProceduresTool<const PINNED: bool>;
-
-impl<const PINNED: bool> ToolBase for ListProceduresTool<PINNED> {
-    type Parameter = ListProceduresRequest;
-    type Output = ListEntriesResponse;
-    type Error = ErrorData;
-
-    fn name() -> Cow<'static, str> {
-        NAME.into()
-    }
-
-    fn title() -> Option<String> {
-        Some(TITLE.into())
-    }
-
-    fn description() -> Option<Cow<'static, str>> {
-        Some(
-            if PINNED {
-                DESCRIPTION_PINNED
-            } else {
-                DESCRIPTION_UNPINNED
-            }
-            .into(),
-        )
-    }
-
-    fn input_schema() -> Option<Arc<JsonObject>> {
-        Some(input_schema::<Self::Parameter>(PINNED))
-    }
-
-    fn output_schema() -> Option<Arc<JsonObject>> {
-        Some(output_schema::<Self::Output>())
-    }
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(annotations())
-    }
-}
-
-impl<const PINNED: bool> AsyncTool<PostgresHandler> for ListProceduresTool<PINNED> {
-    async fn invoke(handler: &PostgresHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
-        handler
-            .list_procedures(params.database, params.cursor, params.search, params.detailed)
-            .await
-    }
-}
+use crate::types::ListEntriesResponse;
 
 impl PostgresHandler {
     /// Lists one page of user-defined procedures, optionally filtered and/or detailed.
