@@ -1,0 +1,286 @@
+---
+title: Mautic
+description: Privacy rules for Mautic 5.2 and 6.0 on MySQL and MariaDB
+---
+
+Covers contacts, companies, tracking hits, admin users, and Mautic's secrets: password hashes, OAuth2 and API tokens, and tracking hashes.
+
+## Coverage
+
+- **Versions:** 5.2 and 6.0; both have the same columns for every table below.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. Mautic has no prefix unless `db_table_prefix` is set in `config/local.php`; prepend it to every key.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - leads.email
+        - companies.companyemail
+        - email_stats.email_address
+        - users.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - leads.firstname
+        - leads.lastname
+        - leads.facebook
+        - leads.foursquare
+        - leads.instagram
+        - leads.linkedin
+        - leads.skype
+        - leads.twitter
+        - contact_merge_records.name
+        - users.username
+        - users.first_name
+        - users.last_name
+        - audit_log.user_name
+        - lead_event_log.user_name
+        # Admin names on records (optional)
+        - leads.created_by_user
+        - leads.modified_by_user
+        - leads.checked_out_by_user
+        - companies.created_by_user
+        - companies.modified_by_user
+        - companies.checked_out_by_user
+        - lead_notes.created_by_user
+        - lead_notes.modified_by_user
+        - lead_notes.checked_out_by_user
+        - lead_lists.created_by_user
+        - lead_lists.modified_by_user
+        - lead_lists.checked_out_by_user
+        - lead_fields.created_by_user
+        - lead_fields.modified_by_user
+        - lead_fields.checked_out_by_user
+        - imports.created_by_user
+        - imports.modified_by_user
+        - imports.checked_out_by_user
+        - users.created_by_user
+        - users.modified_by_user
+        - users.checked_out_by_user
+        - roles.created_by_user
+        - roles.modified_by_user
+        - roles.checked_out_by_user
+        - assets.created_by_user
+        - assets.modified_by_user
+        - assets.checked_out_by_user
+        - campaigns.created_by_user
+        - campaigns.modified_by_user
+        - campaigns.checked_out_by_user
+        - categories.created_by_user
+        - categories.modified_by_user
+        - categories.checked_out_by_user
+        - messages.created_by_user
+        - messages.modified_by_user
+        - messages.checked_out_by_user
+        - dynamic_content.created_by_user
+        - dynamic_content.modified_by_user
+        - dynamic_content.checked_out_by_user
+        - emails.created_by_user
+        - emails.modified_by_user
+        - emails.checked_out_by_user
+        - forms.created_by_user
+        - forms.modified_by_user
+        - forms.checked_out_by_user
+        - pages.created_by_user
+        - pages.modified_by_user
+        - pages.checked_out_by_user
+        - page_redirects.created_by_user
+        - page_redirects.modified_by_user
+        - page_redirects.checked_out_by_user
+        - points.created_by_user
+        - points.modified_by_user
+        - points.checked_out_by_user
+        - point_triggers.created_by_user
+        - point_triggers.modified_by_user
+        - point_triggers.checked_out_by_user
+        - point_groups.created_by_user
+        - point_groups.modified_by_user
+        - point_groups.checked_out_by_user
+        - push_notifications.created_by_user
+        - push_notifications.modified_by_user
+        - push_notifications.checked_out_by_user
+        - reports.created_by_user
+        - reports.modified_by_user
+        - reports.checked_out_by_user
+        - sms_messages.created_by_user
+        - sms_messages.modified_by_user
+        - sms_messages.checked_out_by_user
+        - stages.created_by_user
+        - stages.modified_by_user
+        - stages.checked_out_by_user
+        - webhooks.created_by_user
+        - webhooks.modified_by_user
+        - webhooks.checked_out_by_user
+        - widgets.created_by_user
+        - widgets.modified_by_user
+        - widgets.checked_out_by_user
+        - focus.created_by_user
+        - focus.modified_by_user
+        - focus.checked_out_by_user
+        - monitoring.created_by_user
+        - monitoring.modified_by_user
+        - monitoring.checked_out_by_user
+        - tweets.created_by_user
+        - tweets.modified_by_user
+        - tweets.checked_out_by_user
+        # Social plugin (optional)
+        - tweet_stats.handle
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - leads.phone
+        - leads.mobile
+        - leads.fax
+        - companies.companyphone
+        - companies.companyfax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - leads.address1
+        - leads.address2
+        - leads.city
+        - companies.companyaddress1
+        - companies.companyaddress2
+        - companies.companycity
+        - page_hits.city
+        - video_hits.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - leads.zipcode
+        - companies.companyzipcode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - leads.company
+        - companies.companyname
+        - page_hits.organization
+        - video_hits.organization
+      entity: ORGANIZATION
+      operator: hash
+    urls:
+      columns:
+        - leads.website
+        - companies.companywebsite
+        - page_hits.url
+        - page_hits.referer
+        - video_hits.url
+        - video_hits.referer
+        - lead_utmtags.url
+        - lead_utmtags.referer
+        - form_submissions.referer
+        - asset_downloads.referer
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - ip_addresses.ip_address
+        - audit_log.ip_address
+        - page_hits.remote_host
+        - video_hits.remote_host
+        - lead_utmtags.remote_host
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - lead_notes.text
+        - lead_donotcontact.comments
+        - users.signature
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user_tokens.secret
+        - oauth2_accesstokens.token
+        - oauth2_refreshtokens.token
+        - oauth2_authcodes.token
+        - oauth2_clients.secret
+        - webhooks.secret
+        - plugin_integration_settings.api_keys
+        - push_ids.push_id
+        - lead_devices.tracking_id
+        - page_hits.tracking_id
+        - form_submissions.tracking_id
+        - asset_downloads.tracking_id
+        - email_stats.tracking_hash
+        - sms_message_stats.tracking_hash
+        - push_notification_stats.tracking_hash
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - leads.internal
+        - leads.social_cache
+        - companies.social_cache
+        - ip_addresses.ip_details
+        - email_stats.tokens
+        - email_stats.open_details
+        - sms_message_stats.tokens
+        - push_notification_stats.tokens
+        - push_notification_stats.click_details
+        - email_copies.subject
+        - email_copies.body
+        - email_copies.body_text
+        - lead_event_log.properties
+        - audit_log.details
+        - campaign_lead_event_log.metadata
+        - campaign_lead_event_failed_log.reason
+        - webhook_queue.payload
+        - webhook_queue.payload_compressed
+        - page_hits.query
+        - video_hits.query
+        - lead_utmtags.query
+        - notifications.message
+        - contact_export_scheduler.data
+        - integration_entity.internal
+        - lead_lists.filters
+        - tweet_stats.response_details
+      entity: PERSON
+      operator: replace
+```
+
+**Choices**
+
+- `email_stats.tracking_hash` is a secret: it opens `/email/view/{idHash}`, the sent e-mail with the contact's data. `lead_devices.tracking_id` is the device cookie; the hit tables copy it.
+- `remote_host` holds the client's reverse-DNS name, which embeds the IP, hence `IP_ADDRESS`. Social columns (`leads.facebook` … `twitter`) hold handles, so they sit in `names`.
+- `companies` is ruled like contacts, since many B2B records are sole traders; drop the `companies.*` keys if company data may be shown.
+- Optional parts: delete the commented admin-name and Social plugin columns you do not need, and the `mixed-content` rule to keep those columns readable.
+- Custom contact and company fields are columns on `leads` and `companies`, form fields on `form_results_<id>_<alias>`; add each to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `leads.email`, `leads.fax`, `leads.website`, the six social columns, `companies.companyname`, `companyemail`, `companycity`, `companyfax`, `users.username`, `users.email`, `ip_addresses.ip_address`, every `tracking_id` and `tracking_hash`, `oauth2_accesstokens.token`, `oauth2_refreshtokens.token`.
+- **Lookups that stop working:** a contact by e-mail, name, phone, or company; a user by username; hits by IP; visits grouped by `url` or `referer`.
+- **Join keys that stay unruled:** `id` and `*_id` columns, such as `lead_id`, `companies_leads.company_id`, and `lead_ips_xref.ip_id`; join hits to devices through `device_id`.
+
+## Not covered
+
+- `users.preferences`, `leads.preferred_profile_image`: UI settings and an avatar source.
+- `companies.companydescription`, `companyindustry`, other firmographics: business data.
+- `user_agent`, `client_info` on hit and device tables: browser data, no matching data type.
+- `email_stat_replies.message_id`, `integration_entity.integration_entity_id`, `sync_object_mapping`: external ids, used as join keys.
+- `imports.original_file`: an uploaded file name; the files live on disk.
+- `cache_items`, Messenger queue tables, third-party plugin tables: content depends on configuration.
+
+## Sources
+
+- [mautic/mautic 6.0.10 `app/bundles`](https://github.com/mautic/mautic/tree/6.0.10/app/bundles)
+- [mautic/mautic 6.0.10 `plugins`](https://github.com/mautic/mautic/tree/6.0.10/plugins)
+- [mautic/mautic 5.2.12 `app/bundles`](https://github.com/mautic/mautic/tree/5.2.12/app/bundles)
+- [`LeadBundle/Model/FieldModel.php`](https://github.com/mautic/mautic/blob/6.0.10/app/bundles/LeadBundle/Model/FieldModel.php) and [`InstallBundle/EventListener/DoctrineEventSubscriber.php`](https://github.com/mautic/mautic/blob/6.0.10/app/bundles/InstallBundle/EventListener/DoctrineEventSubscriber.php) at 6.0.10 (core field columns)
+- [`FormBundle/Model/FormModel.php`](https://github.com/mautic/mautic/blob/6.0.10/app/bundles/FormBundle/Model/FormModel.php) at 6.0.10 (form results tables)

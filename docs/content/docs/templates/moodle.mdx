@@ -1,0 +1,987 @@
+---
+title: Moodle
+description: Privacy rules for Moodle 4.5 LTS and 5.0 to 5.3 on MySQL, MariaDB, and PostgreSQL
+---
+
+Covers Moodle users' e-mail addresses, names, phones, addresses, IP addresses, password hashes, sessions, tokens, and secrets in core and bundled-plugin tables, plus messages and posts.
+
+## Coverage
+
+- **Versions:** 4.5 LTS and 5.0 to 5.3.
+- **Engines:** MySQL, MariaDB, PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Moodle prefixes every table with `mdl_` by default (`$CFG->prefix` in `config.php`); prepend yours to every key.
+
+## Template
+
+<Tabs groupId="moodle-version" persist items={['4.5', '5.0', '5.1', '5.2', '5.3']} defaultIndex={4}>
+<Tab value="4.5">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - auth_oauth2_linked_login.email
+        - oauth2_system_account.email
+        - oauth2_issuer.systememail
+        - badge_backpack.email
+        - badge.issuercontact
+        - badge_endorsement.issueremail
+        - badge.imageauthoremail
+        # Bundled activity and enrolment plugins (optional)
+        - enrol_paypal.business
+        - enrol_paypal.receiver_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.username
+        - user.firstname
+        - user.lastname
+        - user.middlename
+        - user.alternatename
+        - user.firstnamephonetic
+        - user.lastnamephonetic
+        - tool_mfa.label
+        - auth_oauth2_linked_login.username
+        - oauth2_system_account.username
+        - mnet_session.username
+        - mnet_sso_access_control.username
+        - repository_instances.username
+        - user.moodlenetprofile
+        - badge.imageauthorname
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - user.phone1
+        - user.phone2
+        - sms_messages.recipientnumber
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - user.address
+        - user.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - user.institution
+        - user.department
+        - badge.issuername
+        - badge_endorsement.issuername
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - user.lastip
+        - sessions.firstip
+        - sessions.lastip
+        - log.ip
+        - mnet_log.ip
+        - logstore_standard_log.ip
+        - tool_mfa.createdfromip
+        - external_tokens.iprestriction
+        - external_services_users.iprestriction
+        - user_private_key.iprestriction
+        # Bundled activity and enrolment plugins (optional)
+        - chat_users.ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - user.imagealt
+        # Messages and posts (optional)
+        - messages.subject
+        - messages.fullmessage
+        - messages.fullmessagehtml
+        - messages.smallmessage
+        - notifications.subject
+        - notifications.fullmessage
+        - notifications.fullmessagehtml
+        - notifications.smallmessage
+        - message.subject
+        - message.fullmessage
+        - message.fullmessagehtml
+        - message.smallmessage
+        - message_read.subject
+        - message_read.fullmessage
+        - message_read.fullmessagehtml
+        - message_read.smallmessage
+        - forum_posts.subject
+        - forum_posts.message
+        - comments.content
+        - post.subject
+        - post.summary
+        - post.content
+        - grade_grades.feedback
+        - tool_dataprivacy_request.comments
+        - tool_dataprivacy_request.dpocomment
+        - tool_policy_acceptances.note
+        - sms_messages.content
+        - ai_action_generate_text.prompt
+        - ai_action_generate_text.generatedcontent
+        - ai_action_summarise_text.prompt
+        - ai_action_summarise_text.generatedcontent
+        - ai_action_generate_image.prompt
+        - ai_action_generate_image.revisedprompt
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.password
+        - user_password_history.hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.secret
+        - user_password_resets.token
+        - user_private_key.value
+        - sessions.sid
+        - external_tokens.token
+        - external_tokens.privatetoken
+        - external_tokens.sid
+        - mnet_session.token
+        - registration_hubs.token
+        - registration_hubs.secret
+        - oauth2_issuer.clientsecret
+        - oauth2_system_account.refreshtoken
+        - oauth2_access_token.token
+        - oauth2_refresh_token.token
+        - badge_backpack.password
+        - badge_backpack_oauth2.token
+        - badge_backpack_oauth2.refreshtoken
+        - repository_instances.password
+        - user_devices.pushid
+        - messageinbound_datakeys.datakey
+        - auth_oauth2_linked_login.confirmtoken
+        - tool_mfa.secret
+        - tool_mfa_secrets.secret
+        - tool_mfa_secrets.sessionid
+        - enrol.password
+        - groups.enrolmentkey
+        - course_request.password
+        # Bundled activity and enrolment plugins (optional)
+        - quiz.password
+        - quiz_overrides.password
+        - lti.password
+        - lti.servicesalt
+        - lti_tool_proxies.secret
+        - lti_access_tokens.token
+        - enrol_lti_tools.secret
+        - enrol_lti_users.consumersecret
+        - enrol_lti_lti2_consumer.secret
+        - bigbluebuttonbn.moderatorpass
+        - bigbluebuttonbn.viewerpass
+        - bigbluebuttonbn.guestpassword
+        - chat_users.sid
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_info_data.data
+        - user_preferences.value
+        - logstore_standard_log.other
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sessions.sessdata
+        - config.value
+        - config_plugins.value
+        - portfolio_instance_user.value
+        - repository_instance_config.value
+        - sms_gateways.config
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="5.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - auth_oauth2_linked_login.email
+        - oauth2_system_account.email
+        - oauth2_issuer.systememail
+        - badge_backpack.email
+        - badge.issuercontact
+        - badge_endorsement.issueremail
+        # Bundled activity and enrolment plugins (optional)
+        - enrol_paypal.business
+        - enrol_paypal.receiver_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.username
+        - user.firstname
+        - user.lastname
+        - user.middlename
+        - user.alternatename
+        - user.firstnamephonetic
+        - user.lastnamephonetic
+        - tool_mfa.label
+        - auth_oauth2_linked_login.username
+        - oauth2_system_account.username
+        - mnet_session.username
+        - mnet_sso_access_control.username
+        - repository_instances.username
+        - user.moodlenetprofile
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - user.phone1
+        - user.phone2
+        - sms_messages.recipientnumber
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - user.address
+        - user.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - user.institution
+        - user.department
+        - badge.issuername
+        - badge_endorsement.issuername
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - user.lastip
+        - sessions.firstip
+        - sessions.lastip
+        - log.ip
+        - mnet_log.ip
+        - logstore_standard_log.ip
+        - tool_mfa.createdfromip
+        - external_tokens.iprestriction
+        - external_services_users.iprestriction
+        - user_private_key.iprestriction
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - user.imagealt
+        # Messages and posts (optional)
+        - messages.subject
+        - messages.fullmessage
+        - messages.fullmessagehtml
+        - messages.smallmessage
+        - notifications.subject
+        - notifications.fullmessage
+        - notifications.fullmessagehtml
+        - notifications.smallmessage
+        - message.subject
+        - message.fullmessage
+        - message.fullmessagehtml
+        - message.smallmessage
+        - message_read.subject
+        - message_read.fullmessage
+        - message_read.fullmessagehtml
+        - message_read.smallmessage
+        - forum_posts.subject
+        - forum_posts.message
+        - comments.content
+        - post.subject
+        - post.summary
+        - post.content
+        - grade_grades.feedback
+        - tool_dataprivacy_request.comments
+        - tool_dataprivacy_request.dpocomment
+        - tool_policy_acceptances.note
+        - sms_messages.content
+        - ai_action_generate_text.prompt
+        - ai_action_generate_text.generatedcontent
+        - ai_action_summarise_text.prompt
+        - ai_action_summarise_text.generatedcontent
+        - ai_action_explain_text.prompt
+        - ai_action_explain_text.generatedcontent
+        - ai_action_generate_image.prompt
+        - ai_action_generate_image.revisedprompt
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.password
+        - user_password_history.hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.secret
+        - user_password_resets.token
+        - user_private_key.value
+        - sessions.sid
+        - external_tokens.token
+        - external_tokens.privatetoken
+        - external_tokens.sid
+        - mnet_session.token
+        - registration_hubs.token
+        - registration_hubs.secret
+        - oauth2_issuer.clientsecret
+        - oauth2_system_account.refreshtoken
+        - oauth2_access_token.token
+        - oauth2_refresh_token.token
+        - badge_backpack.password
+        - badge_backpack_oauth2.token
+        - badge_backpack_oauth2.refreshtoken
+        - repository_instances.password
+        - user_devices.pushid
+        - messageinbound_datakeys.datakey
+        - auth_oauth2_linked_login.confirmtoken
+        - tool_mfa.secret
+        - tool_mfa_secrets.secret
+        - tool_mfa_secrets.sessionid
+        - enrol.password
+        - groups.enrolmentkey
+        - course_request.password
+        # Bundled activity and enrolment plugins (optional)
+        - quiz.password
+        - quiz_overrides.password
+        - lti.password
+        - lti.servicesalt
+        - lti_tool_proxies.secret
+        - lti_access_tokens.token
+        - enrol_lti_tools.secret
+        - enrol_lti_users.consumersecret
+        - enrol_lti_lti2_consumer.secret
+        - bigbluebuttonbn.moderatorpass
+        - bigbluebuttonbn.viewerpass
+        - bigbluebuttonbn.guestpassword
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_info_data.data
+        - user_preferences.value
+        - logstore_standard_log.other
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sessions.sessdata
+        - config.value
+        - config_plugins.value
+        - portfolio_instance_user.value
+        - repository_instance_config.value
+        - sms_gateways.config
+        - ai_providers.config
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="5.1">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - auth_oauth2_linked_login.email
+        - oauth2_system_account.email
+        - oauth2_issuer.systememail
+        - badge_backpack.email
+        - badge.issuercontact
+        - badge_endorsement.issueremail
+        # Bundled activity and enrolment plugins (optional)
+        - enrol_paypal.business
+        - enrol_paypal.receiver_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.username
+        - user.firstname
+        - user.lastname
+        - user.middlename
+        - user.alternatename
+        - user.firstnamephonetic
+        - user.lastnamephonetic
+        - tool_mfa.label
+        - auth_oauth2_linked_login.username
+        - oauth2_system_account.username
+        - mnet_session.username
+        - mnet_sso_access_control.username
+        - repository_instances.username
+        - user.moodlenetprofile
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - user.phone1
+        - user.phone2
+        - sms_messages.recipientnumber
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - user.address
+        - user.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - user.institution
+        - user.department
+        - badge.issuername
+        - badge_endorsement.issuername
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - user.lastip
+        - sessions.firstip
+        - sessions.lastip
+        - log.ip
+        - mnet_log.ip
+        - logstore_standard_log.ip
+        - tool_mfa.createdfromip
+        - external_tokens.iprestriction
+        - external_services_users.iprestriction
+        - user_private_key.iprestriction
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - user.imagealt
+        # Messages and posts (optional)
+        - messages.subject
+        - messages.fullmessage
+        - messages.fullmessagehtml
+        - messages.smallmessage
+        - notifications.subject
+        - notifications.fullmessage
+        - notifications.fullmessagehtml
+        - notifications.smallmessage
+        - message.subject
+        - message.fullmessage
+        - message.fullmessagehtml
+        - message.smallmessage
+        - message_read.subject
+        - message_read.fullmessage
+        - message_read.fullmessagehtml
+        - message_read.smallmessage
+        - forum_posts.subject
+        - forum_posts.message
+        - comments.content
+        - post.subject
+        - post.summary
+        - post.content
+        - grade_grades.feedback
+        - tool_dataprivacy_request.comments
+        - tool_dataprivacy_request.dpocomment
+        - tool_policy_acceptances.note
+        - sms_messages.content
+        - ai_action_generate_text.prompt
+        - ai_action_generate_text.generatedcontent
+        - ai_action_summarise_text.prompt
+        - ai_action_summarise_text.generatedcontent
+        - ai_action_explain_text.prompt
+        - ai_action_explain_text.generatedcontent
+        - ai_action_generate_image.prompt
+        - ai_action_generate_image.revisedprompt
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.password
+        - user_password_history.hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.secret
+        - user_password_resets.token
+        - user_private_key.value
+        - sessions.sid
+        - external_tokens.token
+        - external_tokens.privatetoken
+        - external_tokens.sid
+        - mnet_session.token
+        - registration_hubs.token
+        - registration_hubs.secret
+        - oauth2_issuer.clientsecret
+        - oauth2_system_account.refreshtoken
+        - oauth2_access_token.token
+        - oauth2_refresh_token.token
+        - badge_backpack.password
+        - badge_backpack_oauth2.token
+        - badge_backpack_oauth2.refreshtoken
+        - repository_instances.password
+        - user_devices.pushid
+        - messageinbound_datakeys.datakey
+        - auth_oauth2_linked_login.confirmtoken
+        - tool_mfa.secret
+        - tool_mfa_secrets.secret
+        - tool_mfa_secrets.sessionid
+        - enrol.password
+        - groups.enrolmentkey
+        - course_request.password
+        # Bundled activity and enrolment plugins (optional)
+        - quiz.password
+        - quiz_overrides.password
+        - lti.password
+        - lti.servicesalt
+        - lti_tool_proxies.secret
+        - lti_access_tokens.token
+        - enrol_lti_tools.secret
+        - enrol_lti_users.consumersecret
+        - enrol_lti_lti2_consumer.secret
+        - bigbluebuttonbn.moderatorpass
+        - bigbluebuttonbn.viewerpass
+        - bigbluebuttonbn.guestpassword
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_info_data.data
+        - user_preferences.value
+        - logstore_standard_log.other
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sessions.sessdata
+        - config.value
+        - config_plugins.value
+        - portfolio_instance_user.value
+        - repository_instance_config.value
+        - sms_gateways.config
+        - ai_providers.config
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="5.2">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - auth_oauth2_linked_login.email
+        - oauth2_system_account.email
+        - oauth2_issuer.systememail
+        - badge_backpack.email
+        - badge.issuercontact
+        - badge_endorsement.issueremail
+        # Bundled activity and enrolment plugins (optional)
+        - enrol_paypal.business
+        - enrol_paypal.receiver_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.username
+        - user.firstname
+        - user.lastname
+        - user.middlename
+        - user.alternatename
+        - user.firstnamephonetic
+        - user.lastnamephonetic
+        - tool_mfa.label
+        - auth_oauth2_linked_login.username
+        - oauth2_system_account.username
+        - mnet_session.username
+        - mnet_sso_access_control.username
+        - repository_instances.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - user.phone1
+        - user.phone2
+        - sms_messages.recipientnumber
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - user.address
+        - user.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - user.institution
+        - user.department
+        - badge.issuername
+        - badge_endorsement.issuername
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - user.lastip
+        - sessions.firstip
+        - sessions.lastip
+        - log.ip
+        - mnet_log.ip
+        - logstore_standard_log.ip
+        - tool_mfa.createdfromip
+        - external_tokens.iprestriction
+        - external_services_users.iprestriction
+        - user_private_key.iprestriction
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - user.imagealt
+        # Messages and posts (optional)
+        - messages.subject
+        - messages.fullmessage
+        - messages.fullmessagehtml
+        - messages.smallmessage
+        - notifications.subject
+        - notifications.fullmessage
+        - notifications.fullmessagehtml
+        - notifications.smallmessage
+        - message.subject
+        - message.fullmessage
+        - message.fullmessagehtml
+        - message.smallmessage
+        - message_read.subject
+        - message_read.fullmessage
+        - message_read.fullmessagehtml
+        - message_read.smallmessage
+        - forum_posts.subject
+        - forum_posts.message
+        - comments.content
+        - post.subject
+        - post.summary
+        - post.content
+        - grade_grades.feedback
+        - tool_dataprivacy_request.comments
+        - tool_dataprivacy_request.dpocomment
+        - tool_policy_acceptances.note
+        - sms_messages.content
+        - ai_action_generate_text.prompt
+        - ai_action_generate_text.generatedcontent
+        - ai_action_summarise_text.prompt
+        - ai_action_summarise_text.generatedcontent
+        - ai_action_explain_text.prompt
+        - ai_action_explain_text.generatedcontent
+        - ai_action_generate_image.prompt
+        - ai_action_generate_image.revisedprompt
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.password
+        - user_password_history.hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.secret
+        - user_password_resets.token
+        - user_private_key.value
+        - sessions.sid
+        - external_tokens.token
+        - external_tokens.privatetoken
+        - external_tokens.sid
+        - mnet_session.token
+        - registration_hubs.token
+        - registration_hubs.secret
+        - oauth2_issuer.clientsecret
+        - oauth2_system_account.refreshtoken
+        - oauth2_access_token.token
+        - oauth2_refresh_token.token
+        - badge_backpack.password
+        - badge_backpack_oauth2.token
+        - badge_backpack_oauth2.refreshtoken
+        - repository_instances.password
+        - user_devices.pushid
+        - messageinbound_datakeys.datakey
+        - auth_oauth2_linked_login.confirmtoken
+        - tool_mfa.secret
+        - tool_mfa_secrets.secret
+        - tool_mfa_secrets.sessionid
+        - enrol.password
+        - groups.enrolmentkey
+        - course_request.password
+        # Bundled activity and enrolment plugins (optional)
+        - quiz.password
+        - quiz_overrides.password
+        - lti.password
+        - lti.servicesalt
+        - lti_tool_proxies.secret
+        - lti_access_tokens.token
+        - enrol_lti_tools.secret
+        - enrol_lti_users.consumersecret
+        - enrol_lti_lti2_consumer.secret
+        - bigbluebuttonbn.moderatorpass
+        - bigbluebuttonbn.viewerpass
+        - bigbluebuttonbn.guestpassword
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_info_data.data
+        - user_preferences.value
+        - logstore_standard_log.other
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sessions.sessdata
+        - config.value
+        - config_plugins.value
+        - portfolio_instance_user.value
+        - repository_instance_config.value
+        - sms_gateways.config
+        - ai_providers.config
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="5.3">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user.email
+        - auth_oauth2_linked_login.email
+        - oauth2_system_account.email
+        - oauth2_issuer.systememail
+        - badge_backpack.email
+        - badge.issuercontact
+        - badge_endorsement.issueremail
+        # Bundled activity and enrolment plugins (optional)
+        - enrol_paypal.business
+        - enrol_paypal.receiver_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - user.username
+        - user.firstname
+        - user.lastname
+        - user.middlename
+        - user.alternatename
+        - user.firstnamephonetic
+        - user.lastnamephonetic
+        - tool_mfa.label
+        - auth_oauth2_linked_login.username
+        - oauth2_system_account.username
+        - mnet_session.username
+        - mnet_sso_access_control.username
+        - repository_instances.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - user.phone1
+        - user.phone2
+        - sms_messages.recipientnumber
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - user.address
+        - user.city
+      entity: LOCATION
+      operator: hash
+    companies:
+      columns:
+        - user.institution
+        - user.department
+        - badge.issuername
+        - badge_endorsement.issuername
+      entity: ORGANIZATION
+      operator: hash
+    ip-addresses:
+      columns:
+        - user.lastip
+        - sessions.firstip
+        - sessions.lastip
+        - log.ip
+        - mnet_log.ip
+        - logstore_standard_log.ip
+        - tool_mfa.createdfromip
+        - external_tokens.iprestriction
+        - external_services_users.iprestriction
+        - user_private_key.iprestriction
+        - rest_api_tokens.lastaccessip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user.description
+        - user.imagealt
+        # Messages and posts (optional)
+        - messages.subject
+        - messages.fullmessage
+        - messages.fullmessagehtml
+        - messages.smallmessage
+        - notifications.subject
+        - notifications.fullmessage
+        - notifications.fullmessagehtml
+        - notifications.smallmessage
+        - message.subject
+        - message.fullmessage
+        - message.fullmessagehtml
+        - message.smallmessage
+        - message_read.subject
+        - message_read.fullmessage
+        - message_read.fullmessagehtml
+        - message_read.smallmessage
+        - forum_posts.subject
+        - forum_posts.message
+        - comments.content
+        - post.subject
+        - post.summary
+        - post.content
+        - grade_grades.feedback
+        - tool_dataprivacy_request.comments
+        - tool_dataprivacy_request.dpocomment
+        - tool_policy_acceptances.note
+        - sms_messages.content
+        - ai_action_generate_text.prompt
+        - ai_action_generate_text.generatedcontent
+        - ai_action_summarise_text.prompt
+        - ai_action_summarise_text.generatedcontent
+        - ai_action_explain_text.prompt
+        - ai_action_explain_text.generatedcontent
+        - ai_action_generate_image.prompt
+        - ai_action_generate_image.revisedprompt
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user.password
+        - user_password_history.hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - user.secret
+        - user_password_resets.token
+        - user_private_key.value
+        - sessions.sid
+        - external_tokens.token
+        - external_tokens.privatetoken
+        - external_tokens.sid
+        - mnet_session.token
+        - registration_hubs.token
+        - registration_hubs.secret
+        - oauth2_issuer.clientsecret
+        - oauth2_system_account.refreshtoken
+        - oauth2_access_token.token
+        - oauth2_refresh_token.token
+        - badge_backpack.password
+        - badge_backpack_oauth2.token
+        - badge_backpack_oauth2.refreshtoken
+        - repository_instances.password
+        - user_devices.pushid
+        - messageinbound_datakeys.datakey
+        - auth_oauth2_linked_login.confirmtoken
+        - tool_mfa.secret
+        - tool_mfa_secrets.secret
+        - tool_mfa_secrets.sessionid
+        - enrol.password
+        - groups.enrolmentkey
+        - course_request.password
+        - rest_api_tokens.token
+        - oauth2_server_client_secrets.secret
+        - oauth2_server_client_access_tokens.identifier
+        - oauth2_server_client_auth_codes.identifier
+        - oauth2_server_client_refresh_tokens.identifier
+        - oauth2_server_client_refresh_tokens.accesstokenidentifier
+        # Bundled activity and enrolment plugins (optional)
+        - quiz.password
+        - quiz_overrides.password
+        - lti.password
+        - lti.servicesalt
+        - lti_tool_proxies.secret
+        - lti_access_tokens.token
+        - enrol_lti_tools.secret
+        - enrol_lti_users.consumersecret
+        - enrol_lti_lti2_consumer.secret
+        - bigbluebuttonbn.moderatorpass
+        - bigbluebuttonbn.viewerpass
+        - bigbluebuttonbn.guestpassword
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_info_data.data
+        - user_preferences.value
+        - logstore_standard_log.other
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - sessions.sessdata
+        - config.value
+        - config_plugins.value
+        - portfolio_instance_user.value
+        - repository_instance_config.value
+        - sms_gateways.config
+        - ai_providers.config
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- `tool_mfa.label` holds the SMS factor's phone number, the e-mail factor's address, or a device name: ruled whole as `PERSON`. The `iprestriction` columns hold address lists and ranges.
+- `user.secret` is the e-mail confirmation secret; `enrol.password` and `groups.enrolmentkey` are plaintext enrolment keys; 5.3's OAuth 2 `identifier` columns are ids inside issued tokens.
+- `mixed-content-secrets` covers settings holding SMTP, LDAP, and plugin credentials, and the serialized session: keep it even if you drop `mixed-content`.
+- Optional parts: delete the commented bundled-plugin columns you do not run, the messages and posts if the assistant should read them, and the `mixed-content` rule if it needs those columns readable.
+- Custom profile fields are rows of `user_info_data.data`, ruled whole by `mixed-content`.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `user.username`, `email`, the name columns, `city`; `sessions.sid`; `external_tokens.token`, `sid`; `user_private_key.value`; `mnet_session.token`; `mnet_sso_access_control.username`; `auth_oauth2_linked_login.username`; `user_devices.pushid`; `rest_api_tokens.token` (5.3); `enrol_paypal.business`, `receiver_email`; `lti_access_tokens.token`.
+- **Lookups that stop working:** users by username, e-mail, name, city, or institution; sessions and web service tokens by value; log rows and sessions by IP address.
+- **Join keys that stay unruled:** `user.id`, `user.idnumber`, every `userid`, `relateduserid` and `realuserid` in the log, `useridfrom` / `useridto`.
+- **`user.idnumber`** is the join key to HR and student systems and holds employee or student numbers; rule it as `PERSON` if you do not join on it.
+
+## Not covered
+
+- Activity content (quiz responses, assignment text, database, glossary, wiki, workshop, H5P, SCORM): free text in plugin tables.
+- `files.author`, `filename`, `source`: names mixed with file metadata.
+- `event.name`, `description`, `location`, `course_request.reason`, `enrol` `custom*`: free text or plugin settings.
+- `enrol_lti` and `lti` keys (`consumerkey`, `sourceid`, `ltiuserkey`, `resourcekey`): identifiers shared with LTI platforms.
+
+## Sources
+
+- moodle/moodle core schema: [`lib/db/install.xml` at v4.5.16](https://github.com/moodle/moodle/blob/v4.5.16/lib/db/install.xml), [v5.0.4](https://github.com/moodle/moodle/blob/v5.0.4/lib/db/install.xml); [`public/lib/db/install.xml` at v5.1.0](https://github.com/moodle/moodle/blob/v5.1.0/public/lib/db/install.xml), [v5.2.0](https://github.com/moodle/moodle/blob/v5.2.0/public/lib/db/install.xml), [v5.3.1](https://github.com/moodle/moodle/blob/v5.3.1/public/lib/db/install.xml)
+- moodle/moodle plugin `db/install.xml` at v5.3.1: [`admin/tool/log/store/standard`](https://github.com/moodle/moodle/blob/v5.3.1/public/admin/tool/log/store/standard/db/install.xml), [`admin/tool/mfa`](https://github.com/moodle/moodle/blob/v5.3.1/public/admin/tool/mfa/db/install.xml), [`auth/oauth2`](https://github.com/moodle/moodle/blob/v5.3.1/public/auth/oauth2/db/install.xml), [`admin/tool/dataprivacy`](https://github.com/moodle/moodle/blob/v5.3.1/public/admin/tool/dataprivacy/db/install.xml), [`admin/tool/policy`](https://github.com/moodle/moodle/blob/v5.3.1/public/admin/tool/policy/db/install.xml), [`mod/forum`](https://github.com/moodle/moodle/blob/v5.3.1/public/mod/forum/db/install.xml), [`mod/quiz`](https://github.com/moodle/moodle/blob/v5.3.1/public/mod/quiz/db/install.xml), [`mod/lti`](https://github.com/moodle/moodle/blob/v5.3.1/public/mod/lti/db/install.xml), [`enrol/lti`](https://github.com/moodle/moodle/blob/v5.3.1/public/enrol/lti/db/install.xml), [`enrol/paypal`](https://github.com/moodle/moodle/blob/v5.3.1/public/enrol/paypal/db/install.xml), [`mod/bigbluebuttonbn`](https://github.com/moodle/moodle/blob/v5.3.1/public/mod/bigbluebuttonbn/db/install.xml)
+- moodle/moodle at v4.5.16: [`mod/chat/db/install.xml`](https://github.com/moodle/moodle/blob/v4.5.16/mod/chat/db/install.xml), [`tool/mfa` SMS factor](https://github.com/moodle/moodle/blob/v4.5.16/admin/tool/mfa/factor/sms/classes/factor.php), [e-mail factor](https://github.com/moodle/moodle/blob/v4.5.16/admin/tool/mfa/factor/email/classes/factor.php)

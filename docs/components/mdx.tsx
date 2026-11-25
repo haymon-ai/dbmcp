@@ -1,5 +1,6 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { CodeBlockTabs } from 'fumadocs-ui/components/codeblock';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import type { MDXComponents } from 'mdx/types';
 import type { ComponentProps } from 'react';
 import { cn } from '@/lib/cn';
@@ -25,6 +26,8 @@ export function getMDXComponents(components?: MDXComponents) {
     ...defaultMdxComponents,
     pre: DocsCodeBlock,
     CodeBlockTabs: DocsCodeBlockTabs,
+    Tab,
+    Tabs,
     DatabaseGrid,
     Demo,
     Dbmcp: Wordmark,

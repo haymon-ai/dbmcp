@@ -1,0 +1,184 @@
+---
+title: Saleor
+description: Privacy rules for Saleor 3.20 to 3.23 on PostgreSQL
+---
+
+Covers customers, shared addresses, orders, checkouts, payments, gift cards, and app and webhook secrets of Saleor's core schema.
+
+## Coverage
+
+- **Versions:** 3.20 to 3.23; keys added in 3.22 and 3.23 carry a comment.
+- **Engines:** PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Saleor uses no table prefix; its Django tables are named `<app>_<model>`.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - account_user.email
+        - account_staffnotificationrecipient.staff_email
+        - order_order.user_email
+        - checkout_checkout.email
+        - payment_payment.billing_email
+        - giftcard_giftcard.created_by_email
+        - giftcard_giftcard.used_by_email
+        - giftcard_giftcard.assigned_to_email   # 3.23+
+        - discount_vouchercustomer.customer_email
+        - app_appproblem.dismissed_by_user_email   # 3.22+
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - account_user.first_name
+        - account_user.last_name
+        - account_address.first_name
+        - account_address.last_name
+        - payment_payment.billing_first_name
+        - payment_payment.billing_last_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - account_address.phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - account_address.street_address_1
+        - account_address.street_address_2
+        - account_address.city
+        - account_address.city_area
+        - payment_payment.billing_address_1
+        - payment_payment.billing_address_2
+        - payment_payment.billing_city
+        - payment_payment.billing_city_area
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - account_address.postal_code
+        - payment_payment.billing_postal_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - account_address.company_name
+        - payment_payment.billing_company_name
+      entity: ORGANIZATION
+      operator: hash
+    cards:
+      columns:
+        - payment_payment.cc_first_digits
+        - payment_payment.cc_last_digits
+        - payment_transactionitem.cc_first_digits   # 3.22+
+        - payment_transactionitem.cc_last_digits   # 3.22+
+      entity: CREDIT_CARD
+      operator: redact
+    ip-addresses:
+      columns:
+        - payment_payment.customer_ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - account_user.note
+        - account_customernote.content
+        - order_order.customer_note
+        - checkout_checkout.note
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - account_user.password
+        - app_apptoken.auth_token
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - account_user.jwt_token_key
+        - webhook_webhook.secret_key
+        - giftcard_giftcard.code
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - account_user.search_document
+        - account_user.search_vector   # 3.23+
+        - order_order.search_document
+        - order_order.search_vector
+        - checkout_checkout.search_vector   # 3.23+
+        - account_user.metadata
+        - account_user.private_metadata
+        - account_address.metadata
+        - account_address.private_metadata
+        - order_order.metadata
+        - order_order.private_metadata
+        - checkout_checkoutmetadata.metadata
+        - checkout_checkoutmetadata.private_metadata
+        - payment_payment.metadata
+        - payment_payment.private_metadata
+        - payment_transactionitem.metadata
+        - payment_transactionitem.private_metadata
+        - giftcard_giftcard.metadata
+        - giftcard_giftcard.private_metadata
+        - account_customerevent.parameters
+        - order_orderevent.parameters
+        - giftcard_giftcardevent.parameters
+        - invoice_invoiceevent.parameters
+        - csv_exportevent.parameters
+        - payment_payment.extra_data
+        - payment_transaction.gateway_response
+        - payment_transaction.action_required_data
+        - core_eventpayload.payload
+        - core_eventdeliveryattempt.response
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - giftcard_giftcard.search_vector
+        - webhook_webhook.custom_headers
+        - plugins_pluginconfiguration.configuration
+        - core_eventdeliveryattempt.request_headers
+        - core_eventdeliveryattempt.response_headers
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `cc_first_digits` and `cc_last_digits` hold the card's BIN and last four digits, not full numbers.
+- `app_apptoken.auth_token` is stored through Django's `make_password`, so it is a password hash.
+- `account_user.jwt_token_key` revokes a user's JWTs, `webhook_webhook.secret_key` signs payloads, and a gift card `code` is spendable: all `secrets`.
+- Optional parts: delete the `mixed-content` rule if the assistant needs search, metadata, event, or webhook columns readable; keep `mixed-content-secrets`.
+
+<Callout type="warn">
+`giftcard_giftcard.search_vector` holds every gift card's full code. Without the `mixed-content-secrets` rule, the codes `secrets` redacts stay readable there.
+</Callout>
+
+## Trade-offs
+
+- **Indexed ruled columns:** `account_user.email`, `account_address.phone`, `giftcard_giftcard.code`, `app_apptoken.auth_token`, `account_staffnotificationrecipient.staff_email`, `discount_vouchercustomer.customer_email`.
+- **Lookups that stop working:** customers, orders, or checkouts by e-mail or name; gift cards by code; grouping guest orders by `user_email`.
+- **Join keys that stay unruled:** ids and `*_id` columns, plus `order_order.number`, `checkout_checkout.token`, `order_order.checkout_token`.
+- **Shared address table:** warehouse addresses and the shop's `site_sitesettings.company_address_id` in `account_address` are hidden too.
+
+## Not covered
+
+- `psp_reference`, `payment_payment.token`, `payment_transaction.customer_id`: provider references needed to reconcile payments.
+- `checkout_checkout.token`, `order_order.checkout_token`: the checkout's primary key and the order's reference to it; ruling them breaks joins.
+- Tracking ids and URLs (`redirect_url`, `return_url`, `target_url`): analytics and endpoints.
+- `warehouse_warehouse.email`, `site_sitesettings` mail sender: business contacts, not customers.
+- `discount_vouchercode.code`: promotional codes, usually shared publicly.
+- Job and gateway messages (`invoice_invoice.message`, `payment_transaction.error`): error text.
+
+## Sources
+
+- [saleor/saleor@3.23.50 `saleor/`](https://github.com/saleor/saleor/tree/3.23.50/saleor)
+- [saleor/saleor@3.22.77 `saleor/`](https://github.com/saleor/saleor/tree/3.22.77/saleor)
+- [saleor/saleor@3.21.71 `saleor/`](https://github.com/saleor/saleor/tree/3.21.71/saleor)
+- [saleor/saleor@3.20.119 `saleor/`](https://github.com/saleor/saleor/tree/3.20.119/saleor)

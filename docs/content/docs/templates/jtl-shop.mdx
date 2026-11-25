@@ -1,0 +1,348 @@
+---
+title: JTL-Shop
+description: Privacy rules for JTL-Shop 5.6 to 5.8 on MySQL and MariaDB
+---
+
+Covers customer and admin accounts, addresses, orders, returns, contact forms, newsletter and opt-in records, mail history, visitor IPs, payment details, and the secrets JTL-Shop 5 keeps.
+
+## Coverage
+
+- **Versions:** 5.6 to 5.8.
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. JTL-Shop uses no table prefix.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - tkunde.cMail
+        - tlieferadresse.cMail
+        - tlieferadressevorlage.cMail
+        - trechnungsadresse.cMail
+        - tadminlogin.cMail
+        - tsynclogin.cMail
+        - tkontakthistory.cMail
+        - tproduktanfragehistory.cMail
+        - tverfuegbarkeitsbenachrichtigung.cMail
+        - twiderruf.cMail   # 5.7+
+        - tnewsletterempfaenger.cEmail
+        - tnewsletterempfaengerhistory.cEmail
+        - tnewsletterempfaengerblacklist.cMail
+        - toptin.cMail
+        - toptinhistory.cMail
+        - tkuponkunde.cMail
+        - tkuponflag.cEmailHash
+        - tnewskommentar.cEmail
+        - temailhistory.cFromEmail
+        - temailhistory.cToEmail
+        - emails.fromMail
+        - emails.toMail
+        - emails.replyToMail
+        - temailblacklist.cEmail
+        - temailblacklistblock.cEmail
+        - tstatusemail.cEmail
+        - tkontaktbetreff.cMail
+        - return_address.mail
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - tkunde.cVorname
+        - tkunde.cNachname
+        - tlieferadresse.cVorname
+        - tlieferadresse.cNachname
+        - tlieferadressevorlage.cVorname
+        - tlieferadressevorlage.cNachname
+        - trechnungsadresse.cVorname
+        - trechnungsadresse.cNachname
+        - tadminlogin.cLogin
+        - tadminlogin.cName
+        - tsynclogin.cName
+        - teinstellungenlog.cAdminname
+        - ttrustedshopszertifikat.cWSUser
+        - tkontakthistory.cVorname
+        - tkontakthistory.cNachname
+        - tproduktanfragehistory.cVorname
+        - tproduktanfragehistory.cNachname
+        - tverfuegbarkeitsbenachrichtigung.cVorname
+        - tverfuegbarkeitsbenachrichtigung.cNachname
+        - tnewsletterempfaenger.cVorname
+        - tnewsletterempfaenger.cNachname
+        - tnewsletterempfaengerhistory.cVorname
+        - tnewsletterempfaengerhistory.cNachname
+        - tbewertung.cName
+        - tnewskommentar.cName
+        - twiderruf.cName   # 5.7+
+        - return_address.firstName
+        - return_address.lastName
+        - temailhistory.cFromName
+        - temailhistory.cToName
+        - emails.fromName
+        - emails.toName
+        - emails.replyToName
+        - tkundenkontodaten.cInhaber
+        - tzahlungsinfo.cInhaber
+        - tzahlungseingang.cZahler
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - tkunde.cTel
+        - tkunde.cMobil
+        - tkunde.cFax
+        - tlieferadresse.cTel
+        - tlieferadresse.cMobil
+        - tlieferadresse.cFax
+        - tlieferadressevorlage.cTel
+        - tlieferadressevorlage.cMobil
+        - tlieferadressevorlage.cFax
+        - trechnungsadresse.cTel
+        - trechnungsadresse.cMobil
+        - trechnungsadresse.cFax
+        - tkontakthistory.cTel
+        - tkontakthistory.cMobil
+        - tkontakthistory.cFax
+        - tproduktanfragehistory.cTel
+        - tproduktanfragehistory.cMobil
+        - tproduktanfragehistory.cFax
+        - return_address.phone
+        - return_address.mobilePhone
+        - return_address.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - tkunde.cStrasse
+        - tkunde.cHausnummer
+        - tkunde.cAdressZusatz
+        - tkunde.cOrt
+        - tlieferadresse.cStrasse
+        - tlieferadresse.cHausnummer
+        - tlieferadresse.cAdressZusatz
+        - tlieferadresse.cOrt
+        - tlieferadressevorlage.cStrasse
+        - tlieferadressevorlage.cHausnummer
+        - tlieferadressevorlage.cAdressZusatz
+        - tlieferadressevorlage.cOrt
+        - trechnungsadresse.cStrasse
+        - trechnungsadresse.cHausnummer
+        - trechnungsadresse.cAdressZusatz
+        - trechnungsadresse.cOrt
+        - return_address.street
+        - return_address.houseNumber
+        - return_address.addressAdditional
+        - return_address.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - tkunde.cPLZ
+        - tlieferadresse.cPLZ
+        - tlieferadressevorlage.cPLZ
+        - trechnungsadresse.cPLZ
+        - return_address.postalCode
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - tkunde.cFirma
+        - tkunde.cZusatz
+        - tlieferadresse.cFirma
+        - tlieferadresse.cZusatz
+        - tlieferadressevorlage.cFirma
+        - tlieferadressevorlage.cZusatz
+        - trechnungsadresse.cFirma
+        - trechnungsadresse.cZusatz
+        - tkontakthistory.cFirma
+        - tproduktanfragehistory.cFirma
+        - tkundenkontodaten.cBankName
+        - tzahlungsinfo.cBankName
+        - return_address.companyName
+        - return_address.companyAdditional
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - tkunde.cUSTID
+        - trechnungsadresse.cUSTID
+      entity: VAT_NUMBER
+      operator: hash
+    bank-accounts:
+      columns:
+        - tkundenkontodaten.cIBAN
+        - tkundenkontodaten.cBIC
+        - tkundenkontodaten.cBLZ
+        - tkundenkontodaten.nKonto
+        - tzahlungsinfo.cIBAN
+        - tzahlungsinfo.cBIC
+        - tzahlungsinfo.cBLZ
+        - tzahlungsinfo.cKontoNr
+      entity: IBAN_CODE
+      operator: hash
+    cards:
+      columns:
+        - tzahlungsinfo.cKartenNr
+        - tzahlungsinfo.cGueltigkeit
+      entity: CREDIT_CARD
+      operator: redact
+    card-codes:
+      columns:
+        - tzahlungsinfo.cCVV
+      entity: CVV
+      operator: redact
+    birth-dates:
+      columns:
+        - tkunde.dGeburtstag
+      entity: DATE_OF_BIRTH
+      operator: replace
+    urls:
+      columns:
+        - tkunde.cWWW
+        - trechnungsadresse.cWWW
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - tbestellung.cIP
+        - tbesucher.cIP
+        - tbesucher.cID
+        - tbesucherarchiv.cIP
+        - tfsession.cIP
+        - tfloodprotect.cIP
+        - tkontakthistory.cIP
+        - tproduktanfragehistory.cIP
+        - tverfuegbarkeitsbenachrichtigung.cIP
+        - tnewsletterempfaengerhistory.cRegIp
+        - tnewsletterempfaengerhistory.cOptIp
+        - tredirectreferer.cIP
+        - tsitemaptracker.cIP
+        - tsuchanfragencache.cIP
+        - tvergleichsliste.cIP
+        - teinstellungenlog.cIP
+        - twiderruf.cIP   # 5.7+
+        - reports.remoteIP
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - tkontakthistory.cNachricht
+        - tproduktanfragehistory.cNachricht
+        - tnewsletterempfaengerhistory.cEmailBodyHtml
+        - twiderruf.cKommentar   # 5.7+
+        - tbestellung.cKommentar
+        - rma.comment
+        - rma_items.comment
+        - emails.bodyHTML
+        - emails.bodyText
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - tkunde.cPasswort
+        - password_history.password   # 5.7+
+        - tadminlogin.cPass
+        - tsynclogin.cPass
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - tkunde.c2FAauthSecret
+        - tkunde2facodes.cEmergencyCode
+        - tadminlogin.c2FAauthSecret
+        - tadminlogin.cResetPasswordHash
+        - tadmin2facodes.cEmergencyCode
+        - tpasswordreset.cKey
+        - tnewsletterempfaenger.cOptCode
+        - tnewsletterempfaenger.cLoeschCode
+        - tnewsletterempfaengerhistory.cOptCode
+        - tnewsletterempfaengerhistory.cLoeschCode
+        - toptin.kOptinCode
+        - toptinhistory.kOptinCode
+        - tsession.cSessionId
+        - tadminsession.cSessionId
+        - active_admin_sessions.sessionID
+        - tbestellung.cSession
+        - tbesucher.cSessID
+        - tzahlungsession.cSID
+        - twunschliste.cURLID
+        - reports.hash
+        - api_keys.key
+        - tstoreauth.auth_code
+        - tstoreauth.access_token
+        - ttrustedshopszertifikat.cWSPasswort
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - tsession.cSessionData
+        - tadminsession.cSessionData
+        - tkundenattribut.cWert
+        - tkundendatenhistory.cJsonAlt
+        - tkundendatenhistory.cJsonNeu
+        - tanondatajournal.cDetail
+        - tanondatajournal.cMessage
+        - toptin.cRefData
+        - toptinhistory.cRefData
+        - temailhistory.cSubject
+        - emails.subject
+        - emails.copyRecipients
+        - emails.lastError
+        - twiderruf.cMailError   # 5.7+
+        - tbestellung.cPUIZahlungsdaten
+        - tzahlungsinfo.cVerwendungszweck
+        - tzahlungslog.cLog
+        - tzahlungslog.cLogData
+        - tjtllog.cLog
+        - tadminloginattribut.cAttribValue
+        - tadminloginattribut.cAttribText
+        - tbewertung.cTitel
+        - tbewertung.cText
+        - tbewertung.cAntwort
+        - tnewskommentar.cKommentar
+        - rma_history.eventDataJson
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - teinstellungen.cWert
+        - tplugineinstellungen.cWert
+        - teinstellungenlog.cEinstellungenWertAlt
+        - teinstellungenlog.cEinstellungenWertNeu
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- The card expiry `tzahlungsinfo.cGueltigkeit` is ruled with the card number as `CREDIT_CARD`.
+- `tkuponflag.cEmailHash` (unsalted SHA-256 of the address) and `tbesucher.cID` (MD5 of user agent and IP) are ruled: SQL could confirm a guessed address or IP.
+- Optional parts: delete the `mixed-content` rules if the assistant needs those columns readable; `mixed-content-secrets` covers settings with SMTP, Redis, FTP, and payment credentials.
+- The shop's own customer and admin fields are rows in `tkundenattribut` and `tadminloginattribut`, ruled under `mixed-content`.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `tkunde.cMail`, most `cIP` columns, `toptin.cMail`, `kOptinCode`, `tnewsletterempfaengerhistory.cEmail`, `cOptCode`, `tnewsletterempfaengerblacklist.cMail`, `temailblacklist.cEmail`, `tkuponkunde.cMail`, `tkuponflag.cEmailHash`, `tpasswordreset.cKey`, the `cEmergencyCode` columns, session ids, `twunschliste.cURLID`.
+- **Lookups that stop working:** customers, subscribers and contact requests by e-mail or name; visits and orders by IP; orders grouped by postcode or city.
+- **Join keys that stay unruled:** the `k` ids (`kKunde`, `kBestellung`), `tkunde.cKundenNr` (the JTL-Wawi number), and `tbestellung.cBestellNr`.
+- **Empty values:** JTL stores missing values as `''`, which comes back as a token, so "has a phone number" is unreadable.
+
+## Not covered
+
+- Referrers and user agents (`tbesucher.cReferer`, `tredirectreferer.cRefererUrl`): browser data, no matching data type.
+- Search terms (`tsuchanfrage.cSuche`, `tsuchanfragencache.cSuche`): statistics; the paired IP is ruled.
+- Tracking and payment references (`tbestellung.cTracking`, `tzahlungsid.txn_id`): needed to reconcile carriers and providers.
+- `tfirma`, `tzahlungseingang.cEmpfaenger`: the merchant's own imprint and account.
+- Upload and attachment file names (`tuploaddatei.cName`, `email_attachments.fileName`): file names only.
+- Plugin tables (`xplugin_<plugin id>_*`): not part of the core schema.
+
+## Sources
+
+- [`initial_schema.sql` at v5.8.3](https://gitlab.com/jtl-software/jtl-shop/core/-/blob/v5.8.3/build/components/vue-installer/initial_schema.sql)
+- [`initial_schema.sql` at v5.6.5](https://gitlab.com/jtl-software/jtl-shop/core/-/blob/v5.6.5/build/components/vue-installer/initial_schema.sql)
+- [Migrations at v5.8.3](https://gitlab.com/jtl-software/jtl-shop/core/-/tree/v5.8.3/includes/src/Migrations)
+- [`GeneralDataProtection/` at v5.8.3](https://gitlab.com/jtl-software/jtl-shop/core/-/tree/v5.8.3/includes/src/GeneralDataProtection)

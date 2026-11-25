@@ -3,7 +3,7 @@ import { loader } from 'fumadocs-core/source';
 
 // Section start pages keep their real title (heading, browser tab, search, previous/next)
 // but read "Overview" in the sidebar.
-const overviewPages = ['clients', 'configuration', 'features', 'privacy', 'tools', 'security'].map(
+const overviewPages = ['clients', 'configuration', 'features', 'privacy', 'templates', 'tools', 'security'].map(
   (section) => `${section}/index.mdx`,
 );
 

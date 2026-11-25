@@ -1,0 +1,80 @@
+---
+title: Django
+description: Privacy rules for Django 4.2, 5.2, and 6.0 on MySQL, MariaDB, PostgreSQL, and SQLite
+---
+
+Covers the default `django.contrib.auth` user table, the database session table, and the admin log.
+
+## Coverage
+
+- **Versions:** 4.2 LTS, 5.2 LTS, 6.0.
+- **Engines:** MySQL, MariaDB, PostgreSQL, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. Django uses no table prefix; tables are named `<app_label>_<model>` unless `Meta.db_table` overrides it.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - auth_user.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - auth_user.username
+        - auth_user.first_name
+        - auth_user.last_name
+      entity: PERSON
+      operator: hash
+    passwords:
+      columns:
+        - auth_user.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - django_session.session_key
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - django_admin_log.object_repr
+        - django_admin_log.change_message
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - django_session.session_data
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `django_session` rules apply only with the database session engine (`db` or `cached_db`); cache and signed-cookie sessions store nothing in the database.
+- Optional parts: delete the `mixed-content` rules if the assistant needs those columns readable.
+- `django_session.session_data` is signed but unencrypted JSON holding the user id and project data; `django_admin_log.object_repr` is each edited object's `str()`, often a name.
+- With `AUTH_USER_MODEL`, the user table is `<app_label>_<model>` (`accounts.User` gives `accounts_user`); add its columns to the matching rules. Of these columns, an `AbstractBaseUser` subclass has only `password`.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `auth_user.username`, `django_session.session_key`.
+- **Lookups that stop working:** finding a user by username or e-mail, sorting by name, matching a session to its key.
+- **Join keys that stay unruled:** `id` and every `user_id`, such as `auth_user_groups.user_id` and `django_admin_log.user_id`.
+
+## Not covered
+
+- `django_admin_log.object_id`: edited object's key, personal only for e-mail keys.
+- Third-party packages' tables: social login, API tokens, profiles.
+
+## Sources
+
+- [django/django@6.0.10 `django/contrib/auth/`](https://github.com/django/django/tree/6.0.10/django/contrib/auth)
+- [django/django@5.2.19 `django/contrib/auth/`](https://github.com/django/django/tree/5.2.19/django/contrib/auth)
+- [django/django@4.2.30 `django/contrib/auth/`](https://github.com/django/django/tree/4.2.30/django/contrib/auth)
+- [django/django@6.0.10 `django/contrib/sessions/`](https://github.com/django/django/tree/6.0.10/django/contrib/sessions)
+- [django/django@6.0.10 `django/contrib/admin/models.py`](https://github.com/django/django/blob/6.0.10/django/contrib/admin/models.py)

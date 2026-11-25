@@ -1,0 +1,602 @@
+---
+title: OroCommerce
+description: Privacy rules for OroCommerce 6.0 and 6.1 on PostgreSQL
+---
+
+Covers back-office users, storefront customer users and addresses, orders, checkouts, quotes, requests for quote, shopping lists, the e-mail client, logins, tokens, and integration credentials.
+
+## Coverage
+
+- **Versions:** 6.0 and 6.1.
+- **Engines:** PostgreSQL, the only database Oro 6.x supports.
+- **Table prefix:** the template assumes unprefixed table names. OroCommerce uses no table prefix.
+
+## Template
+
+<Tabs groupId="orocommerce-version" persist items={['6.0', '6.1']} defaultIndex={1}>
+<Tab value="6.0">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - oro_user.email
+        - oro_user.email_lowercase
+        - oro_user_email.email
+        - oro_customer_user.username
+        - oro_customer_user.email
+        - oro_customer_user.email_lowercase
+        - oro_customer_user_login.username
+        - oro_rfp_request.email
+        - oro_email_address.email
+        - oro_email_address_visibility.email
+        - oro_email_mailbox.email
+        - oro_email_origin.mailbox_name
+        - oro_email_origin.imap_user
+        - oro_business_unit.email
+        - oro_notification_recip_list.email
+        - oro_notification_mass_notif.email
+        - oro_notification_mass_notif.sender
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - oro_user.username
+        - oro_user.username_lowercase
+        - oro_user.first_name
+        - oro_user.middle_name
+        - oro_user.last_name
+        - oro_user.googleId
+        - oro_user_login.username
+        - rememberme_token.username
+        - oro_customer_user.first_name
+        - oro_customer_user.middle_name
+        - oro_customer_user.last_name
+        - oro_address.first_name
+        - oro_address.middle_name
+        - oro_address.last_name
+        - oro_customer_address.first_name
+        - oro_customer_address.middle_name
+        - oro_customer_address.last_name
+        - oro_customer_user_address.first_name
+        - oro_customer_user_address.middle_name
+        - oro_customer_user_address.last_name
+        - oro_order_address.first_name
+        - oro_order_address.middle_name
+        - oro_order_address.last_name
+        - oro_quote_address.first_name
+        - oro_quote_address.middle_name
+        - oro_quote_address.last_name
+        - oro_rfp_request.first_name
+        - oro_rfp_request.last_name
+        - oro_rfp_request_add_note.author
+        - oro_email.from_name
+        - oro_email_recipient.name
+        - oro_oauth2_access_token.user_identifier
+        - oro_oauth2_auth_code.user_identifier
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - oro_user.phone
+        - oro_customer_address.phone
+        - oro_customer_user_address.phone
+        - oro_order_address.phone
+        - oro_quote_address.phone
+        - oro_rfp_request.phone
+        - oro_business_unit.phone
+        - oro_business_unit.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - oro_address.street
+        - oro_address.street2
+        - oro_address.city
+        - oro_address.region_text
+        - oro_customer_address.street
+        - oro_customer_address.street2
+        - oro_customer_address.city
+        - oro_customer_address.region_text
+        - oro_customer_user_address.street
+        - oro_customer_user_address.street2
+        - oro_customer_user_address.city
+        - oro_customer_user_address.region_text
+        - oro_order_address.street
+        - oro_order_address.street2
+        - oro_order_address.city
+        - oro_order_address.region_text
+        - oro_quote_address.street
+        - oro_quote_address.street2
+        - oro_quote_address.city
+        - oro_quote_address.region_text
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - oro_address.postal_code
+        - oro_customer_address.postal_code
+        - oro_customer_user_address.postal_code
+        - oro_order_address.postal_code
+        - oro_quote_address.postal_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - oro_customer.name
+        - oro_address.organization
+        - oro_customer_address.organization
+        - oro_customer_user_address.organization
+        - oro_order_address.organization
+        - oro_quote_address.organization
+        - oro_rfp_request.company
+      entity: ORGANIZATION
+      operator: hash
+    birth-dates:
+      columns:
+        - oro_user.birthday
+        - oro_customer_user.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - oro_user_login.ip
+        - oro_customer_user_login.ip
+        - oro_user_impersonation.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - oro_order.customer_notes
+        - oro_order_line_item.comment
+        - oro_checkout.customer_notes
+        - oro_checkout_line_item.comment
+        - oro_shopping_list.notes
+        - oro_shopping_list_line_item.notes
+        - oro_rfp_request.note
+        - oro_rfp_request.cancellation_reason
+        - oro_rfp_request_add_note.text
+        - oro_rfp_request_product.comment
+        - oro_sale_quote_product.comment
+        - oro_sale_quote_product.comment_customer
+        - oro_note.message
+        - oro_comment.message
+        - oro_email.subject
+        - oro_email_body.body
+        - oro_email_body.text_body
+        - oro_activity_list.subject
+        - oro_activity_list.description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - oro_user.password
+        - oro_user.salt
+        - oro_customer_user.password
+        - oro_customer_user.salt
+        - oro_oauth2_client.secret
+        - oro_oauth2_client.salt
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - oro_user.confirmation_token
+        - oro_user_impersonation.token
+        - oro_customer_user.confirmation_token
+        - oro_customer_visitor.session_id
+        - oro_session.id
+        - rememberme_token.series
+        - rememberme_token.value
+        - oro_oauth2_access_token.identifier
+        - oro_oauth2_refresh_token.identifier
+        - oro_oauth2_auth_code.identifier
+        - oro_email_origin.imap_password
+        - oro_email_origin.access_token
+        - oro_email_origin.refresh_token
+        - oro_payment_transaction.access_token
+        - oro_sale_quote.guest_access_id
+        - oro_integration_transport.fedex_key
+        - oro_integration_transport.fedex_password
+        - oro_integration_transport.fedex_client_secret
+        - oro_integration_transport.fedex_access_token
+        - oro_integration_transport.ups_api_key
+        - oro_integration_transport.ups_api_password
+        - oro_integration_transport.ups_client_secret
+        - oro_integration_transport.ups_access_token
+        - oro_integration_transport.pp_partner
+        - oro_integration_transport.pp_vendor
+        - oro_integration_transport.pp_user
+        - oro_integration_transport.pp_password
+        - oro_user_api.api_key
+        - oro_customer_user_api.api_key
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - oro_user.serialized_data
+        - oro_customer_user.serialized_data
+        - oro_customer.serialized_data
+        - oro_customer_visitor.serialized_data
+        - oro_address.serialized_data
+        - oro_customer_address.serialized_data
+        - oro_customer_user_address.serialized_data
+        - oro_order.serialized_data
+        - oro_order_address.serialized_data
+        - oro_checkout.serialized_data
+        - oro_shopping_list.serialized_data
+        - oro_rfp_request.serialized_data
+        - oro_sale_quote.serialized_data
+        - oro_quote_address.serialized_data
+        - oro_business_unit.serialized_data
+        - oro_note.serialized_data
+        - oro_email.serialized_data
+        - oro_audit.object_name
+        - oro_audit.owner_description
+        - oro_audit.additional_fields
+        - oro_audit_field.old_text
+        - oro_audit_field.new_text
+        - oro_audit_field.old_array
+        - oro_audit_field.new_array
+        - oro_audit_field.old_simplearray
+        - oro_audit_field.new_simplearray
+        - oro_audit_field.old_jsonarray
+        - oro_audit_field.new_jsonarray
+        - oro_audit_field.old_object
+        - oro_audit_field.new_object
+        - oro_audit_field.collection_diffs
+        - oro_checkout.completed_data
+        - oro_checkout_workflow_state.state_data
+        - oro_workflow_item.data
+        - oro_user_login.user_agent
+        - oro_user_login.context
+        - oro_customer_user_login.user_agent
+        - oro_customer_user_login.context
+        - oro_navigation_history.title
+        - oro_navigation_history.url
+        - oro_navigation_item.title
+        - oro_navigation_item.url
+        - oro_logger_log_entry.message
+        - oro_logger_log_entry.context
+        - oro_logger_log_entry.extra
+        - oro_message_queue_job.data
+        - oro_integration_channel_status.message
+        - oro_integration_channel_status.data
+        - oro_email_attachment.file_name
+        - oro_email_attachment_content.content
+        - oro_search_index_text.value
+        - oro_search_query.query
+        - oro_website_search_result_history.search_term
+        - oro_website_search_term_report.search_term
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - oro_session.sess_data
+        - oro_payment_transaction.request
+        - oro_payment_transaction.response
+        - oro_payment_transaction.transaction_options
+        - oro_config_value.text_value
+        - oro_config_value.array_value
+        - oro_config_value.object_value
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+<Tab value="6.1">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - oro_user.email
+        - oro_user.email_lowercase
+        - oro_user_email.email
+        - oro_customer_user.username
+        - oro_customer_user.email
+        - oro_customer_user.email_lowercase
+        - oro_customer_user_login.username
+        - oro_rfp_request.email
+        - oro_email_address.email
+        - oro_email_address_visibility.email
+        - oro_email_mailbox.email
+        - oro_email_origin.mailbox_name
+        - oro_email_origin.imap_user
+        - oro_business_unit.email
+        - oro_notification_recip_list.email
+        - oro_notification_mass_notif.email
+        - oro_notification_mass_notif.sender
+        - oro_customer_user.new_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - oro_user.username
+        - oro_user.username_lowercase
+        - oro_user.first_name
+        - oro_user.middle_name
+        - oro_user.last_name
+        - oro_user.googleId
+        - oro_user_login.username
+        - rememberme_token.username
+        - oro_customer_user.first_name
+        - oro_customer_user.middle_name
+        - oro_customer_user.last_name
+        - oro_address.first_name
+        - oro_address.middle_name
+        - oro_address.last_name
+        - oro_customer_address.first_name
+        - oro_customer_address.middle_name
+        - oro_customer_address.last_name
+        - oro_customer_user_address.first_name
+        - oro_customer_user_address.middle_name
+        - oro_customer_user_address.last_name
+        - oro_order_address.first_name
+        - oro_order_address.middle_name
+        - oro_order_address.last_name
+        - oro_quote_address.first_name
+        - oro_quote_address.middle_name
+        - oro_quote_address.last_name
+        - oro_rfp_request.first_name
+        - oro_rfp_request.last_name
+        - oro_rfp_request_add_note.author
+        - oro_email.from_name
+        - oro_email_recipient.name
+        - oro_oauth2_access_token.user_identifier
+        - oro_oauth2_auth_code.user_identifier
+        - oro_oauth2_session_transfer_token.user_identifier
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - oro_user.phone
+        - oro_customer_address.phone
+        - oro_customer_user_address.phone
+        - oro_order_address.phone
+        - oro_quote_address.phone
+        - oro_rfp_request.phone
+        - oro_business_unit.phone
+        - oro_business_unit.fax
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - oro_address.street
+        - oro_address.street2
+        - oro_address.city
+        - oro_address.region_text
+        - oro_customer_address.street
+        - oro_customer_address.street2
+        - oro_customer_address.city
+        - oro_customer_address.region_text
+        - oro_customer_user_address.street
+        - oro_customer_user_address.street2
+        - oro_customer_user_address.city
+        - oro_customer_user_address.region_text
+        - oro_order_address.street
+        - oro_order_address.street2
+        - oro_order_address.city
+        - oro_order_address.region_text
+        - oro_quote_address.street
+        - oro_quote_address.street2
+        - oro_quote_address.city
+        - oro_quote_address.region_text
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - oro_address.postal_code
+        - oro_customer_address.postal_code
+        - oro_customer_user_address.postal_code
+        - oro_order_address.postal_code
+        - oro_quote_address.postal_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - oro_customer.name
+        - oro_address.organization
+        - oro_customer_address.organization
+        - oro_customer_user_address.organization
+        - oro_order_address.organization
+        - oro_quote_address.organization
+        - oro_rfp_request.company
+      entity: ORGANIZATION
+      operator: hash
+    birth-dates:
+      columns:
+        - oro_user.birthday
+        - oro_customer_user.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - oro_user_login.ip
+        - oro_customer_user_login.ip
+        - oro_user_impersonation.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - oro_order.customer_notes
+        - oro_order_line_item.comment
+        - oro_checkout.customer_notes
+        - oro_checkout_line_item.comment
+        - oro_shopping_list.notes
+        - oro_shopping_list_line_item.notes
+        - oro_rfp_request.note
+        - oro_rfp_request.cancellation_reason
+        - oro_rfp_request_add_note.text
+        - oro_rfp_request_product.comment
+        - oro_sale_quote_product.comment
+        - oro_sale_quote_product.comment_customer
+        - oro_note.message
+        - oro_comment.message
+        - oro_email.subject
+        - oro_email_body.body
+        - oro_email_body.text_body
+        - oro_activity_list.subject
+        - oro_activity_list.description
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - oro_user.password
+        - oro_user.salt
+        - oro_customer_user.password
+        - oro_customer_user.salt
+        - oro_oauth2_client.secret
+        - oro_oauth2_client.salt
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - oro_user.confirmation_token
+        - oro_user_impersonation.token
+        - oro_customer_user.confirmation_token
+        - oro_customer_visitor.session_id
+        - oro_session.id
+        - rememberme_token.series
+        - rememberme_token.value
+        - oro_oauth2_access_token.identifier
+        - oro_oauth2_refresh_token.identifier
+        - oro_oauth2_auth_code.identifier
+        - oro_email_origin.imap_password
+        - oro_email_origin.access_token
+        - oro_email_origin.refresh_token
+        - oro_payment_transaction.access_token
+        - oro_sale_quote.guest_access_id
+        - oro_integration_transport.fedex_key
+        - oro_integration_transport.fedex_password
+        - oro_integration_transport.fedex_client_secret
+        - oro_integration_transport.fedex_access_token
+        - oro_integration_transport.ups_api_key
+        - oro_integration_transport.ups_api_password
+        - oro_integration_transport.ups_client_secret
+        - oro_integration_transport.ups_access_token
+        - oro_integration_transport.pp_partner
+        - oro_integration_transport.pp_vendor
+        - oro_integration_transport.pp_user
+        - oro_integration_transport.pp_password
+        - oro_customer_user.new_email_verification_code
+        - oro_oauth2_session_transfer_token.identifier
+        - oro_oauth2_session_transfer_token.source_access_token_identifier
+        - oro_integration_webhook_producer_settings.secret
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - oro_user.serialized_data
+        - oro_customer_user.serialized_data
+        - oro_customer.serialized_data
+        - oro_customer_visitor.serialized_data
+        - oro_address.serialized_data
+        - oro_customer_address.serialized_data
+        - oro_customer_user_address.serialized_data
+        - oro_order.serialized_data
+        - oro_order_address.serialized_data
+        - oro_checkout.serialized_data
+        - oro_shopping_list.serialized_data
+        - oro_rfp_request.serialized_data
+        - oro_sale_quote.serialized_data
+        - oro_quote_address.serialized_data
+        - oro_business_unit.serialized_data
+        - oro_note.serialized_data
+        - oro_email.serialized_data
+        - oro_audit.object_name
+        - oro_audit.owner_description
+        - oro_audit.additional_fields
+        - oro_audit_field.old_text
+        - oro_audit_field.new_text
+        - oro_audit_field.old_array
+        - oro_audit_field.new_array
+        - oro_audit_field.old_simplearray
+        - oro_audit_field.new_simplearray
+        - oro_audit_field.old_jsonarray
+        - oro_audit_field.new_jsonarray
+        - oro_audit_field.old_object
+        - oro_audit_field.new_object
+        - oro_audit_field.collection_diffs
+        - oro_checkout.completed_data
+        - oro_checkout_workflow_state.state_data
+        - oro_workflow_item.data
+        - oro_user_login.user_agent
+        - oro_user_login.context
+        - oro_customer_user_login.user_agent
+        - oro_customer_user_login.context
+        - oro_navigation_history.title
+        - oro_navigation_history.url
+        - oro_navigation_item.title
+        - oro_navigation_item.url
+        - oro_logger_log_entry.message
+        - oro_logger_log_entry.context
+        - oro_logger_log_entry.extra
+        - oro_message_queue_job.data
+        - oro_integration_channel_status.message
+        - oro_integration_channel_status.data
+        - oro_email_attachment.file_name
+        - oro_email_attachment_content.content
+        - oro_search_index_text.value
+        - oro_search_query.query
+        - oro_website_search_result_history.search_term
+        - oro_website_search_term_report.search_term
+        - oro_audit_field.old_json
+        - oro_audit_field.new_json
+        - oro_checkout.additional_data
+        - oro_oauth2_session_transfer_token.context_data
+        - oro_pdf_generator_pdf_document.pdf_document_payload
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - oro_session.sess_data
+        - oro_payment_transaction.request
+        - oro_payment_transaction.response
+        - oro_payment_transaction.transaction_options
+        - oro_config_value.text_value
+        - oro_config_value.array_value
+        - oro_config_value.object_value
+        - oro_payment_transaction.webhook_request_logs
+      entity: API_KEY
+      operator: redact
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- `oro_customer_user.username` and `oro_customer_user_login.username` are `EMAIL_ADDRESS`: Oro copies the e-mail into the storefront login. Back-office logins are `PERSON`, so their tokens differ from `oro_user.email`.
+- `oro_email_origin.mailbox_name` defaults to the IMAP login, usually an e-mail address.
+- `oro_sale_quote.guest_access_id` opens a quote without logging in; `oro_session.id` and `oro_customer_visitor.session_id` are live session ids.
+- Optional parts: delete the `mixed-content` rule to keep serialized data, audit, checkout, login, navigation, log, and search columns readable. Keep `mixed-content-secrets`: sessions, payment transactions, and configuration values hold credentials.
+- 6.0 rules the WSSE API keys (`oro_user_api`, `oro_customer_user_api`); 6.1 drops those tables.
+- Custom fields with "table column" storage are real columns on the entity table; add each to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `oro_user.username`, `email`, `username_lowercase`, `email_lowercase`, `phone`, `first_name`, `last_name`; `oro_user_email.email`; `oro_customer_user.email`, `email_lowercase`; `oro_customer.name`; `oro_email_address.email`; `oro_email_mailbox.email`; `oro_email_origin.mailbox_name`; `oro_session.id`; `rememberme_token.series`; OAuth `identifier`s; `oro_payment_transaction.access_token`; `oro_search_index_text.value`.
+- **Lookups that stop working:** customer users, back-office users, or requests for quote by e-mail; e-mails by sender address; visitors by session id.
+- **Join keys that stay unruled:** `id` and `*_id` foreign keys, such as `oro_email.from_email_address_id`; order and quote numbers (`oro_order.identifier`, `oro_sale_quote.qid`).
+
+## Not covered
+
+- `oro_oauth2_client.identifier`, UPS and FedEx client ids and account numbers: account identifiers, not secrets.
+- `oro_audit_field.old_date`, `new_date`, other typed audit values: dates and numbers, though they show an audited birthday change.
+- `oro_email.message_id`, `refs`, `x_message_id`, `x_thread_id`: headers carry host names, not addresses.
+- `oro_notification_mass_notif.subject`, `body`, e-mail templates, CMS content: written by staff.
+- `oro_website_search_text.value`: storefront product data.
+
+## Sources
+
+- [oroinc/platform@6.1.11](https://github.com/oroinc/platform/tree/6.1.11) and [6.0.10](https://github.com/oroinc/platform/tree/6.0.10) (bundle installer migrations)
+- [oroinc/customer-portal@6.1.11](https://github.com/oroinc/customer-portal/tree/6.1.11) and [6.0.10](https://github.com/oroinc/customer-portal/tree/6.0.10)
+- [oroinc/orocommerce@6.1.11](https://github.com/oroinc/orocommerce/tree/6.1.11) and [6.0.10](https://github.com/oroinc/orocommerce/tree/6.0.10)
+- [oroinc/oauth2-server@6.1.9](https://github.com/oroinc/oauth2-server/tree/6.1.9) and [6.0.10](https://github.com/oroinc/oauth2-server/tree/6.0.10)
+- [oroinc/OroEntitySerializedFieldsBundle@6.1.9 `SerializedDataMigrationQuery`](https://github.com/oroinc/OroEntitySerializedFieldsBundle/blob/6.1.9/Migration/SerializedDataMigrationQuery.php)

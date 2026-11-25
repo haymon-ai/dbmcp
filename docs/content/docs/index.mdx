@@ -5,7 +5,7 @@ description: The privacy first MCP server for SQL databases.
 
 <Demo src="/privacy.gif" alt="An assistant lists last week's biggest orders through dbmcp; customer names and email addresses come back as placeholders while order totals stay visible" />
 
-<Dbmcp /> is the privacy first [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for SQL databases. Out of the box, <Dbmcp /> redacts e-mail addresses, phone numbers, bank and card numbers, national IDs, API keys, and other pattern-detected values inside the server, so the AI client never sees them. An optional local [model](/privacy/machine-learning) adds names and places, and [column rules](/privacy/rules) cover any column you name. Redaction is on by default, and access is read-only by default. It works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
+<Dbmcp /> is the privacy first [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for SQL databases. Out of the box, <Dbmcp /> redacts e-mail addresses, phone numbers, bank and card numbers, national IDs, API keys, and other pattern-detected values inside the server, so the AI client never sees them. An optional local [model](/privacy/machine-learning) adds names and places, and [column rules](/privacy/rules) cover any column you name, with ready-made [templates](/templates) for popular applications. Redaction is on by default, and access is read-only by default. It works with any MCP-compatible client including Claude Desktop, Cursor, and [others](/clients).
 
 ## Quick Install
 
@@ -39,6 +39,7 @@ For more installation options, see [Installation](/installation).
 - **Redaction on by default** — sensitive data in query results is replaced before the AI client sees it; keyed tokens keep equal values equal, so the assistant can still count, group, and join ([details](/privacy))
 - **Finds what you did not label** — 47 built-in [data types](/privacy/data-types), from contact details and national IDs to bank numbers, API keys, and VAT numbers, plus an optional local [model](/privacy/machine-learning) for names, places, and company names
 - **Column rules that follow the data** — every value of a named column is rewritten however a query reaches it, and statements that cannot be proven safe are refused ([details](/privacy/rules), [residual risks](/privacy/rules#residual-risks))
+- **Templates for popular applications** — ready-made column rules for Shopware, Magento, WooCommerce, Odoo, Keycloak, and [more](/templates), listing every table that holds personal data so none is forgotten
 - **Fewer side doors** — errors that would echo ruled values are withheld, results are fenced as untrusted data to make prompt injection harder, and write operations are blocked unless explicitly enabled
 - **Stdio and HTTP transport** — works as a local stdio server or a remote HTTP server with CORS preflight and server-side Origin/Host allowlists
 - **SSH tunnel** — reach MySQL, MariaDB, or PostgreSQL through an SSH bastion with the embedded client: password or key auth, `known_hosts` verification, automatic reconnect ([details](/features/ssh-tunnel))

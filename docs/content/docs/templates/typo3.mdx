@@ -1,0 +1,224 @@
+---
+title: TYPO3
+description: Privacy rules for TYPO3 12.4, 13.4, and 14.3 on MySQL, MariaDB, PostgreSQL, and SQLite
+---
+
+Covers frontend and backend users, sessions, the backend log, record locks, page authors, and the creator and location of file metadata in the TYPO3 core.
+
+## Coverage
+
+- **Versions:** 12.4, 13.4, 14.3 LTS; tt_address 9.1, 10.0; powermail 12.6, 13.3; femanager 8.4, 13.4. File metadata rules need the `filemetadata` system extension.
+- **Engines:** MySQL, MariaDB, PostgreSQL, SQLite.
+- **Table prefix:** the template assumes unprefixed table names. TYPO3 uses no table prefix.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - fe_users.email
+        - be_users.email
+        - pages.author_email
+        # tt_address (optional)
+        - tt_address.email
+        # powermail (optional)
+        - tx_powermail_domain_model_mail.sender_mail
+        - tx_powermail_domain_model_mail.receiver_mail
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - fe_users.username
+        - fe_users.name
+        - fe_users.first_name
+        - fe_users.middle_name
+        - fe_users.last_name
+        - be_users.username
+        - be_users.realName
+        - sys_lockedrecords.username
+        - pages.author
+        - sys_file_metadata.creator
+        # tt_address (optional)
+        - tt_address.name
+        - tt_address.first_name
+        - tt_address.middle_name
+        - tt_address.last_name
+        - tt_address.skype # 9.1 only
+        - tt_address.twitter
+        - tt_address.facebook
+        - tt_address.instagram
+        - tt_address.tiktok
+        - tt_address.linkedin
+        - tt_address.bluesky # 10.0+
+        - tt_address.youtubechannel # 10.0+
+        # powermail (optional)
+        - tx_powermail_domain_model_mail.sender_name
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - fe_users.telephone
+        - fe_users.fax
+        # tt_address (optional)
+        - tt_address.phone
+        - tt_address.mobile
+        - tt_address.fax
+        - tt_address.whatsapp # 10.0+
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - fe_users.address
+        - fe_users.city
+        - sys_file_metadata.location_country
+        - sys_file_metadata.location_region
+        - sys_file_metadata.location_city
+        - sys_file_metadata.latitude
+        - sys_file_metadata.longitude
+        # tt_address (optional)
+        - tt_address.address
+        - tt_address.building
+        - tt_address.room
+        - tt_address.city
+        - tt_address.region
+        - tt_address.latitude
+        - tt_address.longitude
+        # femanager (optional)
+        - fe_users.state
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - fe_users.zip
+        # tt_address (optional)
+        - tt_address.zip
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - fe_users.company
+        # tt_address (optional)
+        - tt_address.company
+        - tt_address.linkedincompany # 10.0+
+      entity: ORGANIZATION
+      operator: hash
+    birth-dates:
+      columns:
+        # tt_address (optional)
+        - tt_address.birthday
+        # femanager (optional)
+        - fe_users.date_of_birth
+      entity: DATE_OF_BIRTH
+      operator: replace
+    urls:
+      columns:
+        - fe_users.www
+        # tt_address (optional)
+        - tt_address.www
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - fe_sessions.ses_iplock
+        - be_sessions.ses_iplock
+        - sys_log.IP
+        # powermail (optional)
+        - tx_powermail_domain_model_mail.sender_ip
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - fe_users.description
+        - be_users.description
+        # System extensions (optional)
+        - sys_note.subject
+        - sys_note.message
+        # tt_address (optional)
+        - tt_address.description
+        # powermail (optional)
+        - tx_powermail_domain_model_mail.body
+        - tx_powermail_domain_model_mail.subject
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - fe_users.password
+        - be_users.password
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - be_users.password_reset_token
+        # System extensions (optional)
+        - fe_users.felogin_forgotHash
+        - sys_reaction.secret
+        - sys_webhook.secret
+        - sys_preview.keyword
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - sys_log.log_data
+        - sys_log.data
+        - sys_history.history_data
+        - be_users.uc
+        - fe_users.uc
+        - be_users.user_settings # 14.3+
+        - sys_messenger_messages.body
+        # powermail (optional)
+        - tx_powermail_domain_model_answer.value
+        # femanager (optional)
+        - fe_users.tx_femanager_changerequest
+        - tx_femanager_domain_model_log.additional_properties
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - be_users.mfa
+        - fe_users.mfa
+        - be_sessions.ses_data
+        - fe_sessions.ses_data
+        - sys_webhook.additional_headers
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `pages.author`, `pages.author_email`: the editor responsible for a page, staff data often printed in page metadata.
+- `ses_iplock`: the client IP or its first octets; with IP locking off it holds `[DISABLED]`, which also comes back as a token.
+- `latitude`, `longitude`: decimals ruled as `LOCATION`; they come back as text tokens. `be_users.mfa`, `fe_users.mfa` hold TOTP secrets.
+- Optional parts: delete the commented columns of extensions you do not run ([tt_address](https://github.com/FriendsOfTYPO3/tt_address), [powermail](https://github.com/einpraegsam/powermail), [femanager](https://github.com/in2code-de/femanager)), and the `mixed-content` rule to keep those columns readable; keep `mixed-content-secrets` (MFA secrets, session data).
+- powermail and femanager have no release for TYPO3 14 yet.
+- `sys_preview.keyword` is the token in workspace preview links.
+
+<Callout type="warn">
+Without the `mixed-content` rule, every submitted powermail form value stays readable in `tx_powermail_domain_model_answer.value`.
+</Callout>
+
+## Trade-offs
+
+- **Indexed ruled columns:** `fe_users.username`, `be_users.username`, `fe_users.felogin_forgotHash`, `sys_preview.keyword`, `tt_address.email`.
+- **Lookups that stop working:** finding a user by username or e-mail, counting log entries per IP, finding a form submission by sender. Empty `''` values come back as tokens too.
+- **Join keys that stay unruled:** `uid` and `pid` on every table, plus `ses_userid`, `sys_log.userid`, and `sys_file_metadata.file`.
+- **Shared copies:** without the `mixed-content` rules, `sys_history.history_data` and `sys_log.log_data` repeat ruled values, such as an edited user's e-mail.
+
+## Not covered
+
+- `fe_users.title`, `country`; tt_address `title`, `position`, `gender`, `country`: coarse, left readable.
+- `sys_log.details`, `sys_log.message`: placeholder templates; values sit in `log_data`.
+- `sys_file_metadata.publisher`, `source`, `copyright`, `caption`, `description`: editorial text that can name photographers.
+- `sys_http_report.meta`, `details`: CSP reports with anonymized IP, user agent, URLs.
+- `index_stat_word.word`: visitor search terms without a user reference.
+- `tx_powermail_domain_model_mail.user_agent`, `marketing_*`: browser data, no matching data type.
+
+## Sources
+
+- TYPO3 `typo3/sysext/` (`ext_tables.sql` and TCA of core, frontend, backend, felogin, filemetadata, and the system extensions) at [v12.4.45](https://github.com/TYPO3/typo3/tree/v12.4.45/typo3/sysext), [v13.4.40](https://github.com/TYPO3/typo3/tree/v13.4.40/typo3/sysext), [v14.3.12](https://github.com/TYPO3/typo3/tree/v14.3.12/typo3/sysext)
+- tt_address `ext_tables.sql` at [9.1.1](https://github.com/FriendsOfTYPO3/tt_address/blob/9.1.1/ext_tables.sql) and [10.0.1](https://github.com/FriendsOfTYPO3/tt_address/blob/10.0.1/ext_tables.sql)
+- powermail `ext_tables.sql` at [12.6.1](https://github.com/einpraegsam/powermail/blob/12.6.1/ext_tables.sql) and [13.3.0](https://github.com/einpraegsam/powermail/blob/13.3.0/ext_tables.sql)
+- femanager `ext_tables.sql` at [8.4.2](https://github.com/in2code-de/femanager/blob/8.4.2/ext_tables.sql) and [13.4.1](https://github.com/in2code-de/femanager/blob/13.4.1/ext_tables.sql)

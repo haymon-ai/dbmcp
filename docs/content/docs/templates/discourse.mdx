@@ -1,0 +1,228 @@
+---
+title: Discourse
+description: Privacy rules for Discourse 2026.1 to 2026.11 on PostgreSQL
+---
+
+Covers forum users' names, e-mail and IP addresses, profiles, password hashes, and tokens, including copies in logs, mail tables, user search, and bundled plugins.
+
+## Coverage
+
+- **Versions:** 2026.1 to 2026.11.
+- **Engines:** PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Discourse uses no table prefix.
+
+<Callout type="warn">
+Restoring a backup moves the previous tables into a `backup` schema for up to 7 days. The keys name `public` only, so `backup.users` and the rest come back unredacted. Drop the `backup` schema after a restore, or add each key again as `backup.<table>.<column>`.
+</Callout>
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - user_emails.email
+        - user_emails.normalized_email
+        - email_tokens.email
+        - email_login_codes.email
+        - email_change_requests.old_email
+        - email_change_requests.new_email
+        - invites.email
+        - screened_emails.email
+        - user_histories.email
+        - email_logs.to_address
+        - email_logs.cc_addresses
+        - email_logs.bcc_addresses
+        - skipped_email_logs.to_address
+        - incoming_emails.from_address
+        - incoming_emails.to_addresses
+        - incoming_emails.cc_addresses
+        - single_sign_on_records.external_email
+        - user_open_ids.email
+        - oauth2_user_infos.email
+        - dsa_notices.email
+        # Bundled plugins (optional)
+        - github_commits.email
+        - blog_review_feedback.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - users.username
+        - users.username_lower
+        - users.name
+        - user_search_data.raw_data
+        - user_search_data.search_data
+        - single_sign_on_records.external_username
+        - single_sign_on_records.external_name
+        - oauth2_user_infos.name
+        - dsa_notices.name
+        # Bundled plugins (optional)
+        - blog_review_feedback.name
+        - calendar_events.username
+        - discourse_automation_pending_pms.target_usernames
+      entity: PERSON
+      operator: hash
+    addresses:
+      columns:
+        - user_profiles.location
+      entity: LOCATION
+      operator: hash
+    birth-dates:
+      columns:
+        - users.date_of_birth
+      entity: DATE_OF_BIRTH
+      operator: replace
+    urls:
+      columns:
+        - user_profiles.website
+        - user_open_ids.url
+        - single_sign_on_records.external_avatar_url
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - users.ip_address
+        - users.registration_ip_address
+        - user_ip_address_histories.ip_address
+        - screened_ip_addresses.ip_address
+        - screened_emails.ip_address
+        - user_auth_tokens.client_ip
+        - user_auth_token_logs.client_ip
+        - user_histories.ip_address
+        - search_logs.ip_address
+        - topic_views.ip_address
+        - topic_link_clicks.ip_address
+        - incoming_links.ip_address
+        - user_profile_views.ip_address
+        - browser_pageview_events.ip_address
+        - browser_pageview_events_backup.ip_address
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - user_profiles.bio_raw
+        - user_profiles.bio_cooked
+        # Bundled plugins (optional)
+        - blog_review_feedback.message
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - user_passwords.password_hash
+        - user_passwords.password_salt
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - api_keys.key_hash
+        - api_keys.truncated_key
+        - user_api_keys.key_hash
+        - user_auth_tokens.auth_token
+        - user_auth_tokens.prev_auth_token
+        - user_auth_token_logs.auth_token
+        - retired_user_auth_tokens.token_hash
+        - retired_user_auth_tokens.previous_token_hash
+        - email_tokens.token_hash
+        - email_login_codes.code_hash
+        - invites.invite_key
+        - invites.email_token
+        - unsubscribe_keys.key
+        - post_reply_keys.reply_key
+        - user_second_factors.data
+        - user_associated_accounts.credentials
+        - push_subscriptions.data
+        - web_hooks.secret
+        - groups.email_password
+        - mcp_oauth_access_tokens.token_hash
+        - mcp_oauth_refresh_tokens.token_hash
+        - mcp_oauth_authorization_codes.code_hash
+        # Bundled plugins (optional)
+        - ai_secrets.secret
+        - llm_models.api_key
+        - embedding_definitions.api_key
+        - decision_models.api_key
+        - ai_mcp_oauth_tokens.access_token
+        - ai_mcp_oauth_tokens.refresh_token
+        - ai_artifact_shares.share_key
+        - shared_ai_conversations.share_key
+        - incoming_chat_webhooks.key
+        - discourse_workflows_credentials.data
+        - blog_reviews.token
+        - blog_publications.schedule_token
+      entity: API_KEY
+      operator: redact
+    private-keys:
+      columns:
+        - remote_themes.private_key
+      entity: PRIVATE_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - user_custom_fields.value
+        - user_associated_accounts.info
+        - user_associated_accounts.extra
+        - single_sign_on_records.last_payload
+        - incoming_emails.raw
+        - incoming_emails.subject
+        - incoming_emails.error
+        - incoming_emails.rejection_message
+        - email_logs.raw
+        - posts.raw_email
+        - user_histories.details
+        - user_histories.context
+        - user_histories.subject
+        - user_histories.previous_value
+        - user_histories.new_value
+        - reviewables.payload
+        - notifications.data
+        - plugin_store_rows.value
+        - message_bus.data
+        - ai_api_audit_logs.raw_request_payload
+        - ai_api_audit_logs.raw_response_payload
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - site_settings.value
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `user_search_data.raw_data` and `search_data` copy usernames, names, and user fields; `users.username` and `username_lower` share a token only when the username is lower case.
+- Stored token hashes (`key_hash`, `auth_token`, `token_hash`, `code_hash`) are redacted: a hash is enough to look the row up.
+- Address lists (`cc_addresses`, `bcc_addresses`, `to_addresses`) are hashed whole: a list's token never equals one address's token.
+- Bundled plugins ship in core; a disabled plugin's tables exist once its migrations have run, so keep their columns unless the plugin never ran.
+- Optional parts: delete the commented plugin columns you do not need and the `mixed-content` rules if the assistant needs those columns readable.
+
+<Callout type="warn">
+Without `mixed-content-secrets`, `site_settings.value` returns OAuth client secrets and storage keys set in the admin panel.
+</Callout>
+
+## Trade-offs
+
+- **Indexed ruled columns:** `users.username`, `username_lower`, `ip_address`; `user_emails.email`, `normalized_email`; `screened_emails.email`; `screened_ip_addresses.ip_address`; `invites.email`; `user_search_data.search_data`; most token columns; `notifications.data` (mixed-content); plugin share keys.
+- **Lookups that stop working:** a user by username or e-mail, accounts sharing an IP, matching `screened_ip_addresses`, a session by token, user search.
+- **Join keys that stay unruled:** `id` and `user_id` columns, plus `user_histories.acting_user_id` and `target_user_id`.
+- **Multisite:** each site has its own database; run one <Dbmcp /> config per site with that site's `database.name`.
+
+## Not covered
+
+- `posts.raw`, `cooked`, `post_revisions`, `chat_messages.message`, `drafts.data`: user content.
+- `user_auth_tokens.user_agent` and the other `user_agent` columns: browser data, no matching data type.
+- `search_logs.term`: search queries, mostly topics.
+- `user_associated_accounts.provider_uid`, `single_sign_on_records.external_id`: join keys to identity providers.
+- `users.title`, `user_statuses.description`: labels the user chooses.
+- Uploads, backups on disk or S3, Redis: outside PostgreSQL.
+
+## Sources
+
+- [discourse/discourse `db/structure.sql` at v2026.11.0](https://github.com/discourse/discourse/blob/v2026.11.0/db/structure.sql)
+- discourse/discourse `app/models` at [v2026.11.0](https://github.com/discourse/discourse/tree/v2026.11.0/app/models) and [v2026.1.9](https://github.com/discourse/discourse/tree/v2026.1.9/app/models)
+- [discourse/discourse `plugins` at v2026.11.0](https://github.com/discourse/discourse/tree/v2026.11.0/plugins)
+- discourse/discourse at v2026.11.0: [`app/services/search_indexer.rb`](https://github.com/discourse/discourse/blob/v2026.11.0/app/services/search_indexer.rb), [`lib/backup_restore.rb`](https://github.com/discourse/discourse/blob/v2026.11.0/lib/backup_restore.rb), [`lib/backup_restore/database_restorer.rb`](https://github.com/discourse/discourse/blob/v2026.11.0/lib/backup_restore/database_restorer.rb)

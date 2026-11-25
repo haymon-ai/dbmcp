@@ -1,0 +1,284 @@
+---
+title: Spryker
+description: Privacy rules for Spryker B2B Marketplace 202610 on MySQL, MariaDB, and PostgreSQL
+---
+
+Covers customers and addresses, orders and their address copies, returns, back-office and company users, merchants, reviews, notes, social-login identities, and Spryker's tokens and secrets.
+
+## Coverage
+
+- **Versions:** B2B Marketplace demo 202610.0.
+- **Engines:** MySQL, MariaDB, PostgreSQL.
+- **Table prefix:** the template assumes unprefixed table names. Spryker uses no table prefix; its tables start with `spy_` by name.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - spy_customer.email
+        - spy_sales_order.email
+        - spy_sales_order.agent_email
+        - spy_sales_order_address.email
+        - spy_sales_order_address_history.email
+        - spy_sales_reclamation.customer_email
+        - spy_newsletter_subscriber.email
+        - spy_availability_notification_subscription.email
+        - spy_user.username
+        - spy_company_business_unit.email
+        - spy_company_user_invitation.email
+        - spy_merchant.email
+        - spy_merchant_profile.public_email
+        - spy_merchant_registration_request.email
+        - spy_oauth_knpu_customer_identity.email
+        - spy_oauth_knpu_merchant_user_identity.email
+        - spy_oauth_knpu_user_identity.email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - spy_customer.first_name
+        - spy_customer.last_name
+        - spy_customer_address.first_name
+        - spy_customer_address.last_name
+        - spy_customer_note.username
+        - spy_sales_order.first_name
+        - spy_sales_order.last_name
+        - spy_sales_order_address.first_name
+        - spy_sales_order_address.middle_name
+        - spy_sales_order_address.last_name
+        - spy_sales_order_address_history.first_name
+        - spy_sales_order_address_history.middle_name
+        - spy_sales_order_address_history.last_name
+        - spy_sales_order_comment.username
+        - spy_sales_reclamation.customer_name
+        - spy_user.first_name
+        - spy_user.last_name
+        - spy_company_user_invitation.first_name
+        - spy_company_user_invitation.last_name
+        - spy_merchant_profile.contact_person_first_name
+        - spy_merchant_profile.contact_person_last_name
+        - spy_merchant_registration_request.contact_person_first_name
+        - spy_merchant_registration_request.contact_person_last_name
+        - spy_product_review.nickname
+        - spy_oauth_knpu_customer_identity.external_id
+        - spy_oauth_knpu_merchant_user_identity.external_id
+        - spy_oauth_knpu_user_identity.external_id
+        # Spryker Eco: PunchOut Gateway and Vertex (optional)
+        - spy_punchout_credential.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - spy_customer.phone
+        - spy_customer_address.phone
+        - spy_sales_order_address.phone
+        - spy_sales_order_address.cell_phone
+        - spy_sales_order_address_history.phone
+        - spy_sales_order_address_history.cell_phone
+        - spy_company_business_unit.phone
+        - spy_company_unit_address.phone
+        - spy_merchant_profile.contact_person_phone
+        - spy_merchant_profile.public_phone
+        - spy_merchant_profile.fax_number
+        - spy_merchant_registration_request.contact_person_phone
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - spy_customer_address.address1
+        - spy_customer_address.address2
+        - spy_customer_address.address3
+        - spy_customer_address.city
+        - spy_sales_order_address.address1
+        - spy_sales_order_address.address2
+        - spy_sales_order_address.address3
+        - spy_sales_order_address.city
+        - spy_sales_order_address.po_box
+        - spy_sales_order_address_history.address1
+        - spy_sales_order_address_history.address2
+        - spy_sales_order_address_history.address3
+        - spy_sales_order_address_history.city
+        - spy_sales_order_address_history.po_box
+        - spy_company_unit_address.address1
+        - spy_company_unit_address.address2
+        - spy_company_unit_address.address3
+        - spy_company_unit_address.city
+        - spy_merchant_profile_address.address1
+        - spy_merchant_profile_address.address2
+        - spy_merchant_profile_address.address3
+        - spy_merchant_profile_address.city
+        - spy_merchant_profile_address.longitude
+        - spy_merchant_profile_address.latitude
+        - spy_merchant_registration_request.address1
+        - spy_merchant_registration_request.address2
+        - spy_merchant_registration_request.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - spy_customer_address.zip_code
+        - spy_sales_order_address.zip_code
+        - spy_sales_order_address_history.zip_code
+        - spy_company_unit_address.zip_code
+        - spy_merchant_profile_address.zip_code
+        - spy_merchant_registration_request.zip_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - spy_customer.company
+        - spy_customer_address.company
+        - spy_sales_order_address.company
+        - spy_sales_order_address_history.company
+        - spy_company.name
+        - spy_merchant_registration_request.company_name
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        # Spryker Eco: PunchOut Gateway and Vertex (optional)
+        - spy_vertex_tax_id_validation_history.tax_id
+      entity: VAT_NUMBER
+      operator: hash
+    registry-numbers:
+      columns:
+        - spy_merchant.registration_number
+        - spy_merchant_registration_request.registration_number
+      entity: COMMERCIAL_REGISTER_DE
+      operator: hash
+    bank-accounts:
+      columns:
+        - spy_company_business_unit.iban
+        - spy_company_business_unit.bic
+      entity: IBAN_CODE
+      operator: hash
+    birth-dates:
+      columns:
+        - spy_customer.date_of_birth
+      entity: DATE_OF_BIRTH
+      operator: replace
+    text:
+      columns:
+        - spy_customer_address.comment
+        - spy_customer_note.message
+        - spy_sales_order.cart_note
+        - spy_sales_order_item.cart_note
+        - spy_sales_order_address.description
+        - spy_sales_order_address.comment
+        - spy_sales_order_address_history.description
+        - spy_sales_order_address_history.comment
+        - spy_sales_order_comment.message
+        - spy_sales_return_item.reason
+        - spy_company_unit_address.comment
+        - spy_merchant_relation_request.request_note
+        - spy_merchant_relation_request.decision_note
+        - spy_comment.message
+        - spy_shopping_list_item_note.note
+        - spy_product_review.summary
+        - spy_product_review.description
+        - spy_ssp_inquiry.subject
+        - spy_ssp_inquiry.description
+        - spy_ssp_asset.note
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - spy_customer.password
+        - spy_user.password
+        - spy_api_key.key_hash
+        # Spryker Eco: PunchOut Gateway and Vertex (optional)
+        - spy_punchout_credential.password_hash
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - spy_customer.restore_password_key
+        - spy_customer.registration_key
+        - spy_customer_data_change_request.verification_token
+        - spy_customer_multi_factor_auth.configuration
+        - spy_customer_multi_factor_auth_codes.code
+        - spy_user_multi_factor_auth.configuration
+        - spy_user_multi_factor_auth_codes.code
+        - spy_auth_reset_password.code
+        - spy_newsletter_subscriber.subscriber_key
+        - spy_availability_notification_subscription.subscription_key
+        - spy_company_user_invitation.hash
+        - spy_resource_share.uuid
+        - spy_oauth_access_token.identifier
+        - spy_oauth_refresh_token.identifier
+        - spy_oauth_client.secret
+        - spy_oauth_client_access_token_cache.access_token
+        - spy_vault_deposit.initial_vector
+        - spy_vault_deposit.cipher_text
+        # Spryker Eco: PunchOut Gateway and Vertex (optional)
+        - spy_punchout_session.session_token
+        - spy_punchout_session.buyer_cookie
+        - spy_vertex_api_access_token.access_token
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - spy_quote.quote_data
+        - spy_quote_request_version.quote
+        - spy_quote_request_version.metadata
+        - spy_sales_order_amendment_quote.quote_data
+        - spy_recurring_schedule.quote_data
+        - spy_oauth_access_token.user_identifier
+        - spy_oauth_refresh_token.user_identifier
+        - spy_customer_data_change_request.data
+        - spy_product_review_search.data
+        - spy_product_review_search.structured_data
+        - spy_merchant_storage.data
+        - spy_merchant_search.data
+        - spy_merchant_search.structured_data
+        - spy_company_user_storage.data
+        - spy_ai_conversation_history.original_messages
+        - spy_ai_interaction_log.prompt
+        - spy_ai_interaction_log.response
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - spy_event_behavior_entity_change.data
+        - spy_configuration_value.value
+        - spy_app_config.config
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `spy_user.username` is the back-office login and must be an e-mail address, so it is `EMAIL_ADDRESS`.
+- `spy_resource_share.uuid` opens a shared cart; each multi-factor method's `configuration` holds its secret.
+- `spy_merchant_profile_address.longitude` and `latitude` pin the merchant address; `external_id` on `spy_oauth_knpu_*_identity` is the social-login account id.
+- Optional parts: delete the Spryker Eco columns if you do not run PunchOut Gateway or Vertex, and the `mixed-content` rule to keep those columns readable; keep `mixed-content-secrets`.
+- Projects add tables and columns in their own schema files under `src/Pyz`; add each to the rule for its data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `spy_customer.email`, `first_name`, `last_name`; `spy_newsletter_subscriber.email`, `subscriber_key`; `spy_user.username`; `spy_merchant.email`; `spy_company_user_invitation.email`, `hash`; `spy_auth_reset_password.code`; `spy_api_key.key_hash`; `spy_resource_share.uuid`; `spy_availability_notification_subscription.email`, `subscription_key`; `spy_company.name`; `spy_customer_data_change_request.verification_token`; `spy_oauth_refresh_token.identifier`; `spy_merchant_registration_request.email`, `company_name`; `spy_oauth_knpu_*_identity.external_id`; `spy_punchout_credential.username`; `spy_punchout_session.buyer_cookie`, `session_token`.
+- **Lookups that stop working:** customers, orders, subscribers, or back-office users by e-mail; orders by city or postcode; shared carts by `uuid`; alerts by unsubscribe key.
+- **Join keys that stay unruled:** `id_*` and `fk_*` keys, `customer_reference`, `merchant_reference`, and `order_reference`.
+- **B2B data:** company names, business-unit contacts and bank details, and merchant contacts are ruled: in B2B shops they name one person or a sole trader.
+
+## Not covered
+
+- `spy_glossary_translation.value`: merchant imprint and terms, beside every shop text.
+- `spy_refund.comment`, `spy_shopping_list.name`, `description`, `spy_quote.name`, `order_custom_reference`: short labels; rule them if yours hold names.
+- `spy_sales_order_note.message`, `command`: the state machine's command log.
+- `spryker-eco/stripe`, PunchOut `session_data` and `configuration`, Vertex `response_data`: payment ids and integration payloads.
+- `spy_stock_address`, `spy_service_point_address`, `spy_merchant.name`, business-unit names: business locations and names.
+- `spy_sales_payment_detail.details`, item configuration, other `*_storage` and `*_search` data: payment and catalog metadata.
+
+## Sources
+
+- [spryker-shop/b2b-demo-marketplace@202610.0 `composer.lock`](https://github.com/spryker-shop/b2b-demo-marketplace/blob/202610.0/composer.lock) (pins every module below) and [`src/Pyz/Zed`](https://github.com/spryker-shop/b2b-demo-marketplace/tree/202610.0/src/Pyz/Zed)
+- `spryker/*` Propel schemas at the locked versions, such as [customer@7.88.0](https://github.com/spryker/customer/tree/7.88.0/src/Spryker/Zed/Customer/Persistence/Propel/Schema), [sales@11.85.3](https://github.com/spryker/sales/tree/11.85.3/src/Spryker/Zed/Sales/Persistence/Propel/Schema), [merchant-profile@1.11.1](https://github.com/spryker/merchant-profile/tree/1.11.1/src/Spryker/Zed/MerchantProfile/Persistence/Propel/Schema), [oauth@2.15.0](https://github.com/spryker/oauth/tree/2.15.0/src/Spryker/Zed/Oauth/Persistence/Propel/Schema)
+- [spryker/synchronization-behavior@1.15.0 `SynchronizationBehavior.php`](https://github.com/spryker/synchronization-behavior/blob/1.15.0/src/Spryker/Zed/SynchronizationBehavior/Persistence/Propel/Behavior/SynchronizationBehavior.php) (`data` of `*_storage` and `*_search` tables)
+- `spryker-feature/*@202610.0`: [self-service-portal](https://github.com/spryker-feature/self-service-portal/tree/202610.0/src/SprykerFeature/Zed/SelfServicePortal/Persistence/Propel/Schema), [order-experience-management](https://github.com/spryker-feature/order-experience-management/tree/202610.0/src/SprykerFeature/Zed/OrderExperienceManagement/Persistence/Propel/Schema)
+- `spryker-eco/*`: [punchout-gateway@1.4.1](https://github.com/spryker-eco/punchout-gateway/tree/1.4.1/src/SprykerEco/Zed/PunchoutGateway/Persistence/Propel/Schema), [vertex@1.9.0](https://github.com/spryker-eco/vertex/tree/1.9.0/src/SprykerEco/Zed/Vertex/Persistence/Propel/Schema), [stripe@1.1.1](https://github.com/spryker-eco/stripe/tree/1.1.1/src/SprykerEco/Zed/Stripe/Persistence/Propel/Schema)

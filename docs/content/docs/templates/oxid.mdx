@@ -1,0 +1,217 @@
+---
+title: OXID eShop
+description: Privacy rules for OXID eShop 7.0 to 7.6 on MySQL and MariaDB
+---
+
+Covers customer and admin accounts, addresses, orders with billing and delivery copies, newsletter, price alerts, invitations, remarks, reviews, coupons, shop operator details, and secrets.
+
+## Coverage
+
+- **Versions:** 7.0 to 7.6 (Community Edition schema).
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. OXID eShop uses no table prefix.
+- **Forks:** Enterprise Edition adds per-shop mapping tables and columns this template does not rule.
+
+## Template
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - oxuser.OXUSERNAME
+        - oxorder.OXBILLEMAIL
+        - oxnewssubscribed.OXEMAIL
+        - oxpricealarm.OXEMAIL
+        - oxinvitations.OXEMAIL
+        # Shop operator details (optional)
+        - oxshops.OXINFOEMAIL
+        - oxshops.OXORDEREMAIL
+        - oxshops.OXOWNEREMAIL
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - oxuser.OXFNAME
+        - oxuser.OXLNAME
+        - oxaddress.OXFNAME
+        - oxaddress.OXLNAME
+        - oxorder.OXBILLFNAME
+        - oxorder.OXBILLLNAME
+        - oxorder.OXDELFNAME
+        - oxorder.OXDELLNAME
+        - oxnewssubscribed.OXFNAME
+        - oxnewssubscribed.OXLNAME
+        - oxrecommlists.OXAUTHOR
+        - oxshops.OXSMTPUSER
+        # Shop operator details (optional)
+        - oxshops.OXFNAME
+        - oxshops.OXLNAME
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - oxuser.OXFON
+        - oxuser.OXFAX
+        - oxuser.OXPRIVFON
+        - oxuser.OXMOBFON
+        - oxaddress.OXFON
+        - oxaddress.OXFAX
+        - oxorder.OXBILLFON
+        - oxorder.OXBILLFAX
+        - oxorder.OXDELFON
+        - oxorder.OXDELFAX
+        # Shop operator details (optional)
+        - oxshops.OXTELEFON
+        - oxshops.OXTELEFAX
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - oxuser.OXSTREET
+        - oxuser.OXSTREETNR
+        - oxuser.OXADDINFO
+        - oxuser.OXCITY
+        - oxaddress.OXSTREET
+        - oxaddress.OXSTREETNR
+        - oxaddress.OXADDINFO
+        - oxaddress.OXCITY
+        - oxorder.OXBILLSTREET
+        - oxorder.OXBILLSTREETNR
+        - oxorder.OXBILLADDINFO
+        - oxorder.OXBILLCITY
+        - oxorder.OXDELSTREET
+        - oxorder.OXDELSTREETNR
+        - oxorder.OXDELADDINFO
+        - oxorder.OXDELCITY
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - oxuser.OXZIP
+        - oxaddress.OXZIP
+        - oxorder.OXBILLZIP
+        - oxorder.OXDELZIP
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - oxuser.OXCOMPANY
+        - oxaddress.OXCOMPANY
+        - oxorder.OXBILLCOMPANY
+        - oxorder.OXDELCOMPANY
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - oxuser.OXUSTID
+        - oxorder.OXBILLUSTID
+        # Shop operator details (optional)
+        - oxshops.OXVATNUMBER
+      entity: VAT_NUMBER
+      operator: hash
+    tax-numbers:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXTAXNUMBER
+      entity: TAX_NUMBER_DE
+      operator: hash
+    registry-numbers:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXHRBNR
+      entity: COMMERCIAL_REGISTER_DE
+      operator: hash
+    bank-accounts:
+      columns:
+        # Shop operator details (optional)
+        - oxshops.OXIBANNUMBER
+        - oxshops.OXBICCODE
+        - oxshops.OXBANKNUMBER
+        - oxshops.OXBANKCODE
+      entity: IBAN_CODE
+      operator: hash
+    birth-dates:
+      columns:
+        - oxuser.OXBIRTHDATE
+      entity: DATE_OF_BIRTH
+      operator: replace
+    urls:
+      columns:
+        - oxuser.OXURL
+      entity: URL
+      operator: replace
+    ip-addresses:
+      columns:
+        - oxorder.OXIP
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - oxorder.OXREMARK
+        - oxorder.OXCARDTEXT
+        - oxremark.OXTEXT
+        # Reviews and Listmania (optional)
+        - oxreviews.OXTEXT
+        - oxrecommlists.OXDESC
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - oxuser.OXPASSWORD
+        - oxuser.OXPASSSALT
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - oxuser.OXUPDATEKEY
+        - oxshops.OXSMTPPWD
+        # Coupon codes (optional)
+        - oxvouchers.OXVOUCHERNR
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - oxuserpayments.OXVALUE
+        - oxorderarticles.OXPERSPARAM
+        - oxuserbasketitems.OXPERSPARAM
+        - oxadminlog.OXSQL
+      entity: PERSON
+      operator: replace
+    # Keep: mixed-content columns that hold credentials.
+    mixed-content-secrets:
+      columns:
+        - oxconfig.OXVARVALUE
+      entity: API_KEY
+      operator: redact
+```
+
+**Choices**
+
+- `oxuser` holds customers and shop administrators (`OXRIGHTS = 'malladmin'`); the login `OXUSERNAME` is always an e-mail address, so it is `EMAIL_ADDRESS`.
+- `oxuser.OXUPDATEKEY` is the password-reset token; `oxshops.OXSMTPPWD` is the SMTP password; `oxvouchers.OXVOUCHERNR` holds redeemable coupon codes.
+- Shop operator details are the merchant's contact, bank, and tax data in e-mails and the imprint; keep them ruled when the owner is a sole trader.
+- Optional parts: delete the commented shop operator, review, and coupon columns you do not want ruled, and the `mixed-content` rule if the assistant needs those columns readable.
+- `mixed-content` includes `oxuserpayments.OXVALUE` (direct-debit bank data) and `oxadminlog.OXSQL` (written values); `mixed-content-secrets` covers `oxconfig.OXVARVALUE` (module API keys).
+
+## Trade-offs
+
+- **Indexed ruled columns:** `oxuser.OXUSERNAME`, `oxuser.OXPASSWORD`, `oxuser.OXLNAME`, `oxnewssubscribed.OXEMAIL`, `oxvouchers.OXVOUCHERNR`.
+- **Lookups that stop working:** customers, orders, or subscribers by e-mail, name, phone, postcode, or city. OXID stores missing values as `''`, which also become tokens.
+- **Join keys that stay unruled:** `OXID` and `OXUSERID`; look customers up by `oxuser.OXCUSTNR`, orders by `oxorder.OXORDERNR`.
+
+## Not covered
+
+- `OXSAL`, `OXBILLSAL`, `OXDELSAL`: salutation, reveals gender only.
+- Country and state ids: coarse, kept for reporting.
+- `oxorder.OXTRANSID`, `OXPAYID`, `OXXID`, `OXTRACKCODE`: needed to reconcile with providers.
+- `oxshops` address and company: the merchant's public imprint.
+- Module tables (PayPal, Unzer, Klarna, GraphQL): not in the core schema.
+
+## Sources
+
+- [`database_schema.sql` at v7.6.0](https://github.com/OXID-eSales/oxideshop_ce/blob/v7.6.0/source/Setup/Sql/database_schema.sql)
+- [`database_schema.sql` at v7.0.0](https://github.com/OXID-eSales/oxideshop_ce/blob/v7.0.0/source/Setup/Sql/database_schema.sql)
+- [Migrations at v7.6.0](https://github.com/OXID-eSales/oxideshop_ce/blob/v7.6.0/source/migration/data)
+- [`CHANGELOG-7.0.md` at v7.6.0](https://github.com/OXID-eSales/oxideshop_ce/blob/v7.6.0/CHANGELOG-7.0.md)

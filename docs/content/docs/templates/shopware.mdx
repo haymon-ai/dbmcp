@@ -1,0 +1,651 @@
+---
+title: Shopware 6
+description: Privacy rules for Shopware 6.4 to 6.7 on MySQL and MariaDB
+---
+
+Covers Shopware 6 customer, address, order, newsletter, review, and admin-user data, plus the password hashes, secrets, and one-time tokens stored beside them.
+
+## Coverage
+
+- **Versions:** 6.4 to 6.7 (6.4.20.2, 6.5.8.19, 6.6.10.32, 6.7.16.2).
+- **Engines:** MySQL, MariaDB.
+- **Table prefix:** the template assumes unprefixed table names. Shopware uses no table prefix.
+
+## Template
+
+<Tabs groupId="shopware-version" persist items={['6.4', '6.5', '6.6', '6.7']} defaultIndex={3}>
+<Tab value="6.4">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - order_customer.email
+        - newsletter_recipient.email
+        - user.email
+        - product_review.external_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.first_name
+        - customer.last_name
+        - customer_address.first_name
+        - customer_address.last_name
+        - order_customer.first_name
+        - order_customer.last_name
+        - order_address.first_name
+        - order_address.last_name
+        - newsletter_recipient.first_name
+        - newsletter_recipient.last_name
+        - user.username
+        - user.first_name
+        - user.last_name
+        - product_review.external_user
+        - import_export_log.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address.phone_number
+        - order_address.phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address.street
+        - customer_address.additional_address_line1
+        - customer_address.additional_address_line2
+        - customer_address.city
+        - order_address.street
+        - order_address.additional_address_line1
+        - order_address.additional_address_line2
+        - order_address.city
+        - newsletter_recipient.street
+        - newsletter_recipient.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address.zipcode
+        - order_address.zipcode
+        - newsletter_recipient.zip_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer.company
+        - customer_address.company
+        - customer_address.department
+        - order_customer.company
+        - order_address.company
+        - order_address.department
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer.vat_ids
+        - order_customer.vat_ids
+        - order_address.vat_id
+        - customer_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - customer.remote_address
+        - order_customer.remote_address
+        - sales_channel.maintenance_ip_whitelist
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - order.customer_comment
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.password
+        - customer.legacy_password
+        - user.password
+        - user_access_key.secret_access_key
+        - integration.secret_access_key
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.hash
+        - customer_recovery.hash
+        - user_recovery.hash
+        - newsletter_recipient.hash
+        - order.deep_link_code
+        - document.deep_link_code
+        - user.store_token
+        - app.app_secret
+        - sales_channel_api_context.token
+        - cart.token
+        - product_export.access_key
+        - import_export_file.access_token
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer.custom_fields
+        - customer_address.custom_fields
+        - customer_wishlist.custom_fields
+        - newsletter_recipient.custom_fields
+        - order.custom_fields
+        - order_customer.custom_fields
+        - order_address.custom_fields
+        - order_delivery.custom_fields
+        - order_line_item.custom_fields
+        - order_transaction.custom_fields
+        - product_review.custom_fields
+        - user.custom_fields
+        - log_entry.message
+        - log_entry.context
+        - log_entry.extra
+        - webhook_event_log.request_content
+        - webhook_event_log.response_content
+        - webhook_event_log.serialized_webhook_message
+        - sales_channel_api_context.payload
+        - promotion_individual_code.payload
+        - enqueue.body
+        - dead_message.serialized_original_message
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="6.5">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - order_customer.email
+        - newsletter_recipient.email
+        - user.email
+        - product_review.external_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.first_name
+        - customer.last_name
+        - customer_address.first_name
+        - customer_address.last_name
+        - order_customer.first_name
+        - order_customer.last_name
+        - order_address.first_name
+        - order_address.last_name
+        - newsletter_recipient.first_name
+        - newsletter_recipient.last_name
+        - user.username
+        - user.first_name
+        - user.last_name
+        - product_review.external_user
+        - import_export_log.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address.phone_number
+        - order_address.phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address.street
+        - customer_address.additional_address_line1
+        - customer_address.additional_address_line2
+        - customer_address.city
+        - order_address.street
+        - order_address.additional_address_line1
+        - order_address.additional_address_line2
+        - order_address.city
+        - newsletter_recipient.street
+        - newsletter_recipient.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address.zipcode
+        - order_address.zipcode
+        - newsletter_recipient.zip_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer.company
+        - customer_address.company
+        - customer_address.department
+        - order_customer.company
+        - order_address.company
+        - order_address.department
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer.vat_ids
+        - order_customer.vat_ids
+        - order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - customer.remote_address
+        - order_customer.remote_address
+        - sales_channel.maintenance_ip_whitelist
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - order.customer_comment
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.password
+        - customer.legacy_password
+        - user.password
+        - user_access_key.secret_access_key
+        - integration.secret_access_key
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.hash
+        - customer_recovery.hash
+        - user_recovery.hash
+        - newsletter_recipient.hash
+        - order.deep_link_code
+        - document.deep_link_code
+        - user.store_token
+        - app.app_secret
+        - sales_channel_api_context.token
+        - cart.token
+        - product_export.access_key
+        - import_export_file.access_token
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer.custom_fields
+        - customer_address.custom_fields
+        - customer_wishlist.custom_fields
+        - newsletter_recipient.custom_fields
+        - order.custom_fields
+        - order_customer.custom_fields
+        - order_address.custom_fields
+        - order_delivery.custom_fields
+        - order_line_item.custom_fields
+        - order_transaction.custom_fields
+        - product_review.custom_fields
+        - user.custom_fields
+        - log_entry.message
+        - log_entry.context
+        - log_entry.extra
+        - webhook_event_log.request_content
+        - webhook_event_log.response_content
+        - webhook_event_log.serialized_webhook_message
+        - sales_channel_api_context.payload
+        - promotion_individual_code.payload
+        - messenger_messages.body
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="6.6">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - order_customer.email
+        - newsletter_recipient.email
+        - user.email
+        - product_review.external_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.first_name
+        - customer.last_name
+        - customer_address.first_name
+        - customer_address.last_name
+        - order_customer.first_name
+        - order_customer.last_name
+        - order_address.first_name
+        - order_address.last_name
+        - newsletter_recipient.first_name
+        - newsletter_recipient.last_name
+        - user.username
+        - user.first_name
+        - user.last_name
+        - product_review.external_user
+        - import_export_log.username
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address.phone_number
+        - order_address.phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address.street
+        - customer_address.additional_address_line1
+        - customer_address.additional_address_line2
+        - customer_address.city
+        - order_address.street
+        - order_address.additional_address_line1
+        - order_address.additional_address_line2
+        - order_address.city
+        - newsletter_recipient.street
+        - newsletter_recipient.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address.zipcode
+        - order_address.zipcode
+        - newsletter_recipient.zip_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer.company
+        - customer_address.company
+        - customer_address.department
+        - order_customer.company
+        - order_address.company
+        - order_address.department
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer.vat_ids
+        - order_customer.vat_ids
+        - order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - customer.remote_address
+        - order_customer.remote_address
+        - sales_channel.maintenance_ip_whitelist
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - order.customer_comment
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.password
+        - customer.legacy_password
+        - user.password
+        - user_access_key.secret_access_key
+        - integration.secret_access_key
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.hash
+        - customer_recovery.hash
+        - user_recovery.hash
+        - newsletter_recipient.hash
+        - order.deep_link_code
+        - document.deep_link_code
+        - user.store_token
+        - app.app_secret
+        - sales_channel_api_context.token
+        - cart.token
+        - product_export.access_key
+        - import_export_file.access_token
+        - deleted_apps.app_secret
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer.custom_fields
+        - customer_address.custom_fields
+        - customer_wishlist.custom_fields
+        - newsletter_recipient.custom_fields
+        - order.custom_fields
+        - order_customer.custom_fields
+        - order_address.custom_fields
+        - order_delivery.custom_fields
+        - order_line_item.custom_fields
+        - order_transaction.custom_fields
+        - product_review.custom_fields
+        - user.custom_fields
+        - log_entry.message
+        - log_entry.context
+        - log_entry.extra
+        - webhook_event_log.request_content
+        - webhook_event_log.response_content
+        - webhook_event_log.serialized_webhook_message
+        - sales_channel_api_context.payload
+        - promotion_individual_code.payload
+        - messenger_messages.body
+        - order_transaction.validation_data
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+<Tab value="6.7">
+
+```yaml
+privacy:
+  rules:
+    emails:
+      columns:
+        - customer.email
+        - order_customer.email
+        - newsletter_recipient.email
+        - user.email
+        - product_review.external_email
+      entity: EMAIL_ADDRESS
+      operator: hash
+    names:
+      columns:
+        - customer.first_name
+        - customer.last_name
+        - customer_address.first_name
+        - customer_address.last_name
+        - order_customer.first_name
+        - order_customer.last_name
+        - order_address.first_name
+        - order_address.last_name
+        - newsletter_recipient.first_name
+        - newsletter_recipient.last_name
+        - user.username
+        - user.first_name
+        - user.last_name
+        - product_review.external_user
+        - import_export_log.username
+        - consent_state.actor
+        - oauth_user.user_sub
+      entity: PERSON
+      operator: hash
+    phones:
+      columns:
+        - customer_address.phone_number
+        - order_address.phone_number
+      entity: PHONE_NUMBER
+      operator: hash
+    addresses:
+      columns:
+        - customer_address.street
+        - customer_address.additional_address_line1
+        - customer_address.additional_address_line2
+        - customer_address.city
+        - order_address.street
+        - order_address.additional_address_line1
+        - order_address.additional_address_line2
+        - order_address.city
+        - newsletter_recipient.street
+        - newsletter_recipient.city
+      entity: LOCATION
+      operator: hash
+    postcodes:
+      columns:
+        - customer_address.zipcode
+        - order_address.zipcode
+        - newsletter_recipient.zip_code
+      entity: POSTCODE
+      operator: hash
+    companies:
+      columns:
+        - customer.company
+        - customer_address.company
+        - customer_address.department
+        - order_customer.company
+        - order_address.company
+        - order_address.department
+      entity: ORGANIZATION
+      operator: hash
+    tax-ids:
+      columns:
+        - customer.vat_ids
+        - order_customer.vat_ids
+        - order_address.vat_id
+      entity: VAT_NUMBER
+      operator: hash
+    birth-dates:
+      columns:
+        - customer.birthday
+      entity: DATE_OF_BIRTH
+      operator: replace
+    ip-addresses:
+      columns:
+        - customer.remote_address
+        - order_customer.remote_address
+        - sales_channel.maintenance_ip_whitelist
+        - sales_channel.maintenance_ip_allowlist
+      entity: IP_ADDRESS
+      operator: hash
+    text:
+      columns:
+        - order.customer_comment
+        - order.internal_comment
+        - state_machine_history.internal_comment
+      entity: PERSON
+      operator: replace
+    passwords:
+      columns:
+        - customer.password
+        - customer.legacy_password
+        - user.password
+        - user_access_key.secret_access_key
+        - integration.secret_access_key
+      entity: PASSWORD_HASH
+      operator: redact
+    secrets:
+      columns:
+        - customer.hash
+        - customer_recovery.hash
+        - user_recovery.hash
+        - newsletter_recipient.hash
+        - order.deep_link_code
+        - document.deep_link_code
+        - user.store_token
+        - app.app_secret
+        - sales_channel_api_context.token
+        - cart.token
+        - product_export.access_key
+        - import_export_file.access_token
+        - app.unconfirmed_app_secrets
+        - deleted_apps.app_secret
+        - deleted_apps.unconfirmed_app_secrets
+        - oauth_user.token
+      entity: API_KEY
+      operator: redact
+    # Optional: mixed-content columns. Ruling them hides their non-personal content too; remove to keep it readable.
+    mixed-content:
+      columns:
+        - customer.custom_fields
+        - customer_address.custom_fields
+        - customer_wishlist.custom_fields
+        - newsletter_recipient.custom_fields
+        - order.custom_fields
+        - order_customer.custom_fields
+        - order_address.custom_fields
+        - order_delivery.custom_fields
+        - order_line_item.custom_fields
+        - order_transaction.custom_fields
+        - product_review.custom_fields
+        - user.custom_fields
+        - log_entry.message
+        - log_entry.context
+        - log_entry.extra
+        - webhook_event_log.request_content
+        - webhook_event_log.response_content
+        - webhook_event_log.serialized_webhook_message
+        - sales_channel_api_context.payload
+        - promotion_individual_code.payload
+        - messenger_messages.body
+        - order_transaction.validation_data
+        - consent_log.message
+      entity: PERSON
+      operator: replace
+```
+
+</Tab>
+</Tabs>
+
+**Choices**
+
+- `user_access_key.secret_access_key` and `integration.secret_access_key` are `password_hash()` hashes, ruled as `PASSWORD_HASH`; `customer.legacy_password` holds hashes migrated from Shopware 5.
+- `customer.vat_ids` and `order_customer.vat_ids` are JSON lists rewritten whole: their tokens differ from `order_address.vat_id`'s. 6.5 moved VAT IDs off `customer_address.vat_id`.
+- On 6.4, triggers on `customer_address` refuse every write to it while `hash` rules exist ([Writes](/privacy/rules#writes)).
+- Optional parts: delete the `mixed-content` rule if the assistant needs custom fields, logs, webhook bodies, and queued messages readable.
+- Custom fields are the `custom_fields` JSON columns, ruled whole by `mixed-content`; rule your plugins' own columns by data type.
+
+## Trade-offs
+
+- **Indexed ruled columns:** `customer.email`, `customer.hash`, `newsletter_recipient.email`, `newsletter_recipient.hash`, `user.email`, `user.username`, `order.deep_link_code`, `document.deep_link_code`, `oauth_user.user_sub` (6.7), `cart.token`, `sales_channel_api_context.token`.
+- **Lookups that stop working:** orders for an e-mail address, newsletter recipients by address, city or postcode filters, joining `cart` to `sales_channel_api_context` on `token`.
+- **Join keys that stay unruled:** every `id` and foreign key (`BINARY(16)`: select `HEX(id)`), `customer_number`, `order_number`, `document_number`, and the public `access_key` ids of sales channels and integrations.
+
+## Not covered
+
+- `cart.payload` (6.4: `cart.cart`): the serialized, compressed cart with customer and addresses.
+- `version_commit_data.payload`: JSON copies of versioned writes, including order edits.
+- `product_review.title`, `content`, `comment`: public review text and the shop's reply.
+- `notification.message`, `user_config.value`, `app.cookies`, `flow.payload`, `rule.payload`: configuration and admin notices.
+
+## Sources
+
+- shopware/shopware migrations `src/Core/Migration/`: [v6.4.20.2](https://github.com/shopware/shopware/tree/v6.4.20.2/src/Core/Migration), [v6.5.8.19](https://github.com/shopware/shopware/tree/v6.5.8.19/src/Core/Migration), [v6.6.10.32](https://github.com/shopware/shopware/tree/v6.6.10.32/src/Core/Migration), [v6.7.16.2](https://github.com/shopware/shopware/tree/v6.7.16.2/src/Core/Migration)
+- shopware/shopware entity definitions at v6.7.16.2: [`src/Core/Checkout/`](https://github.com/shopware/shopware/tree/v6.7.16.2/src/Core/Checkout), [`src/Core/System/`](https://github.com/shopware/shopware/tree/v6.7.16.2/src/Core/System), [`ProductReviewDefinition.php`](https://github.com/shopware/shopware/blob/v6.7.16.2/src/Core/Content/Product/Aggregate/ProductReview/ProductReviewDefinition.php), [`NewsletterRecipientDefinition.php`](https://github.com/shopware/shopware/blob/v6.7.16.2/src/Core/Content/Newsletter/Aggregate/NewsletterRecipient/NewsletterRecipientDefinition.php)
+- shopware/shopware at v6.7.16.2: [`RemoteAddressFieldSerializer.php`](https://github.com/shopware/shopware/blob/v6.7.16.2/src/Core/Framework/DataAbstractionLayer/FieldSerializer/RemoteAddressFieldSerializer.php), [`CartPersister.php`](https://github.com/shopware/shopware/blob/v6.7.16.2/src/Core/Checkout/Cart/CartPersister.php)
