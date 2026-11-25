@@ -94,7 +94,7 @@
           ]
         },
         "name": {
-          "description": "Database name, or file path for SQLite; pinning it hides the cross-database tools.",
+          "description": "Database name, or file path for SQLite; pinning it removes the `database` parameter and `objects` kind `database`.",
           "type": [
             "string",
             "null"
@@ -186,7 +186,7 @@
           "default": 30
         },
         "max_query_timeout": {
-          "description": "Largest per-call readQuery or explainQuery timeout in seconds; 0 means no cap. Defaults to query_timeout.",
+          "description": "Largest per-call read or explain timeout in seconds; 0 means no cap. Defaults to query_timeout.",
           "type": [
             "integer",
             "string",

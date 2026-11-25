@@ -21,7 +21,7 @@ Works with MySQL, MariaDB, PostgreSQL, and SQLite.
 - **Finds what you did not label** — 47 built-in data types: contact details, national IDs, bank and card numbers, API keys and private keys, VAT and tax numbers, with checksum validation. An optional local model adds names, places, and company names. Detection runs inside dbmcp, with no outside service
 - **Column rules that follow the data** — name a column once and every value from it is rewritten, however a query reaches it: aliases, expressions, views, CTEs, joins, unions. Statements dbmcp cannot prove safe are refused before they run. See [Rules](https://dbmcp.haymon.ai/privacy/rules) and its [residual risks](https://dbmcp.haymon.ai/privacy/rules#residual-risks)
 - **Fewer side doors** — database errors that would echo ruled values are withheld, results are fenced as untrusted data to make prompt injection harder, and the server is read-only unless you turn writes on
-- **MCP tools** — schema discovery (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`), data access (`readQuery`, `writeQuery`), DDL (`createDatabase`, `dropDatabase`, `dropTable`), and `explainQuery`. Read-only mode hides the write tools (`writeQuery`, `createDatabase`, `dropDatabase`, `dropTable`). See [MCP Tools](#mcp-tools) for per-backend availability.
+- **MCP tools** — schema discovery (`objects`), data access (`read`, `write`), and `explain`. Read-only mode hides `write`. See [MCP Tools](#mcp-tools) for per-backend availability.
 - **Databases** — MySQL, MariaDB, PostgreSQL, and SQLite, tested in CI against every [Supported version](https://dbmcp.haymon.ai/supported-versions)
 - **Transports** — stdio (for Claude Desktop, Cursor) and HTTP (for remote/multi-client)
 - **Layered config** — `DBMCP_*` environment variables, an env file, and an optional YAML config file with `${}` interpolation, with sensible defaults per backend
@@ -213,123 +213,39 @@ The SSH tunnel is MySQL/MariaDB/PostgreSQL only and uses an embedded SSH client 
 
 ## MCP Tools 🧩
 
-### listDatabases
+Four tools on every backend. Clients prefix the server name (for example `mcp__dbmcp__read` in Claude Code). See [Tools](https://dbmcp.haymon.ai/tools) for the full reference.
 
-Lists accessible databases, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details. Not available for SQLite.
+### objects
 
-### listTables
+Lists database objects of one `kind`, paginated via `cursor` / `nextCursor` (see [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination)). Parameters: `kind`, `search`, `detail`, `cursor`, `database` (defaults to the active database; absent on SQLite and when a database is pinned).
 
-Lists tables in a database, paginated via `cursor` / `nextCursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
+- `kind` (default `table`) — `table`, `view`, `trigger` on every backend; `function` and `procedure` on MySQL/MariaDB and PostgreSQL; `materialized_view` on PostgreSQL; `database` on MySQL/MariaDB and PostgreSQL while no database is pinned. PostgreSQL lists the `public` schema. `database` and SQLite's `view` list names only.
+- `search` — optional case-insensitive substring filter: `users` matches `users`, `users_audit`, and `old_users`. The value is wrapped as `%users%` in a `LIKE`/`ILIKE` pattern, so `%` and `_` inside it still act as wildcards. Keep it identical across pages.
+- `detail` (default `names`) — `names` returns `objects` as a sorted JSON array of names; `full` returns `objects` as a JSON object keyed by name, each value carrying the kind's metadata (columns, constraints, indexes, and triggers for tables; definitions and backend-specific fields for the rest). PostgreSQL keys functions and procedures by `name(arguments)` so overloads stay apart. See the [`objects` reference](https://dbmcp.haymon.ai/tools/objects) for every field per kind and backend.
 
-Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`.
+### read
 
-`search` is an optional case-insensitive substring filter — `users` matches `users`, `users_audit`, and `old_users`. The value is wrapped as `%users%` in a `LIKE`/`ILIKE` pattern, so `%` and `_` inside it still act as wildcards.
+Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`, `timeout`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
 
-`detailed` (default `false`) switches the response shape:
+### write
 
-- **Brief** (default) — `tables` is a sorted JSON array of bare table-name strings.
-- **Detailed** (`detailed: true`) — `tables` is a JSON object keyed by table name; each value carries the table's `schema`, `kind`, `owner`, `comment`, `columns[]`, `constraints[]`, `indexes[]`, and `triggers[]`. One call returns both the table list and the per-table metadata.
+Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP), including database and table DDL such as `CREATE DATABASE`, `DROP DATABASE`, and `DROP TABLE`; while column rules exist, `CREATE DATABASE`, `DROP DATABASE`, and `DROP … CASCADE` are refused. Only available when read-only mode is disabled. Parameters: `query`, `database`.
 
-### listViews
+### explain
 
-Lists views in a database, paginated via `cursor` / `nextCursor`. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`. SQLite returns the brief shape only — `search` and `detailed` are not accepted there.
-
-`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
-
-`detailed` (default `false`) switches the response shape:
-
-- **Brief** (default) — `views` is a sorted JSON array of bare view-name strings. View names are unique per schema, so no duplicates appear.
-- **Detailed** (`detailed: true`) — `views` is a JSON object keyed by bare view name; each value carries the per-backend metadata payload. PostgreSQL exposes `schema`, `owner`, `description`, `definition`. MySQL/MariaDB exposes `schema`, `definer`, `security`, `checkOption`, `updatable`, `characterSetClient`, `collationConnection`, `definition`. See the [`listViews` reference](https://dbmcp.haymon.ai/tools/list-views) for source columns, enumerated value sets, and intentional omissions per backend.
-
-See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### listTriggers
-
-Lists user-defined triggers on tables, paginated via `cursor` / `nextCursor`. Internal constraint and foreign-key triggers are excluded. Available on MySQL/MariaDB, PostgreSQL (`public` schema), and SQLite. Parameters: `database` (defaults to the active database; SQLite has no `database` parameter), `cursor`, `search`, `detailed`.
-
-`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
-
-`detailed` (default `false`) switches the response shape:
-
-- **Brief** (default) — `triggers` is a sorted JSON array of bare trigger-name strings.
-- **Detailed** (`detailed: true`) — `triggers` is a JSON object keyed by trigger name; each value carries the per-backend metadata payload (timing, events, definition, and backend-specific extras like PostgreSQL `status`/`functionName` or MySQL/MariaDB session-context fields). See the [`listTriggers` reference](https://dbmcp.haymon.ai/tools/list-triggers) for the full per-backend field list.
-
-See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### listFunctions
-
-Lists user-defined SQL functions, paginated via `cursor` / `nextCursor`. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs (`mysql.func`). Available on MySQL/MariaDB and PostgreSQL (`public` schema). Not available for SQLite. Parameters: `database` (defaults to the active database), `cursor`, `search`, `detailed`.
-
-`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
-
-`detailed` (default `false`) switches the response shape:
-
-- **Brief** (default) — `functions` is a sorted JSON array of bare function-name strings. PostgreSQL overloads appear once per overload (duplicate name strings are expected).
-- **Detailed** (`detailed: true`) — `functions` is a JSON object keyed by function signature; each value carries the per-backend metadata payload (language, arguments, return type, definition, and backend-specific extras such as PostgreSQL `volatility`/`strict`/`parallelSafety` or MySQL/MariaDB session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate); MySQL/MariaDB keys are bare names (no overloading). See the [`listFunctions` reference](https://dbmcp.haymon.ai/tools/list-functions) for the full per-backend field list.
-
-See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### listProcedures
-
-Lists user-defined stored procedures, paginated via `cursor` / `nextCursor`. Available on MySQL/MariaDB and PostgreSQL (`public` schema, PostgreSQL 11+). Not available for SQLite. Parameters: `database` (defaults to the active database), `cursor`, `search`, `detailed`.
-
-`search` is an optional case-insensitive `LIKE`/`ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. The `search` value must remain identical across paginated calls for cursor continuity.
-
-`detailed` (default `false`) switches the response shape:
-
-- **Brief** (default) — `procedures` is a sorted JSON array of bare procedure-name strings. PostgreSQL overloads appear once per overload (duplicate name strings are expected).
-- **Detailed** (`detailed: true`) — `procedures` is a JSON object keyed by procedure signature; each value carries the per-backend metadata payload (language, arguments, security, definition, and backend-specific extras such as PostgreSQL `owner` or MySQL/MariaDB `deterministic`/`sqlDataAccess`/session-context fields). PostgreSQL keys are `name(arguments)` (overloads disambiguate; zero-arg procedures key as `name()`); MySQL/MariaDB keys are bare names (no overloading). See the [`listProcedures` reference](https://dbmcp.haymon.ai/tools/list-procedures) for the full per-backend field list.
-
-See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### listMaterializedViews
-
-Lists materialized views in the `public` schema, paginated via `cursor` / `nextCursor`. PostgreSQL only — not available for MySQL/MariaDB or SQLite. Parameters: `database` (defaults to the active database), `cursor`, `search`, `detailed`.
-
-`search` is an optional case-insensitive `ILIKE` pattern with `%` (any sequence) and `_` (single character) as wildcards. SQL meta-characters (`'`, `;`, `--`) are bound as parameter values and never interpolated. The `search` value must remain identical across paginated calls for cursor continuity.
-
-`detailed` (default `false`) switches the response shape:
-
-- **Brief** (default) — `materializedViews` is a sorted JSON array of bare matview-name strings. Matview names are unique per schema, so no duplicates appear.
-- **Detailed** (`detailed: true`) — `materializedViews` is a JSON object keyed by bare matview name; each value carries `schema`, `owner`, `description` (or `null` when no `COMMENT ON MATERIALIZED VIEW`), `definition` (the SELECT body verbatim from `pg_matviews.definition`), `populated` (`false` for matviews created `WITH NO DATA` and never refreshed), and `indexed` (`true` when at least one index exists; `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally requires a unique index). Detailed mode deliberately omits column metadata, `tablespace`, storage parameters, and unique-index detection — recoverable via `definition`, `listTables(detailed=true)`, or `readQuery` against `pg_indexes`. See the [`listMaterializedViews` reference](https://dbmcp.haymon.ai/tools/list-materialized-views) for source columns and operational semantics.
-
-See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### readQuery
-
-Executes a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN). Always enforces SQL validation as defence-in-depth. Parameters: `query`, `database`, `cursor`. `SELECT` results paginate via `cursor` / `nextCursor`; `SHOW`, `DESCRIBE`, and `EXPLAIN` return a single page and ignore `cursor`. See [Cursor Pagination](https://dbmcp.haymon.ai/features/pagination#cursor-pagination) for iteration details.
-
-### writeQuery
-
-Executes a write SQL query (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only available when read-only mode is disabled. Parameters: `query`, `database`.
-
-### createDatabase
-
-Creates a database if it doesn't exist. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database`.
-
-### dropDatabase
-
-Drops an existing database. Refuses to drop the currently connected database. Only available when read-only mode is disabled. Not available for SQLite. Parameters: `database`.
-
-### dropTable
-
-Drops a table from a database. If the table has foreign key dependents, the database error is surfaced to the user. On PostgreSQL, a `cascade` parameter is available to force the drop with `CASCADE`. Only available when read-only mode is disabled. Parameters: `database`, `table`, `cascade` (PostgreSQL only).
-
-### explainQuery
-
-Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB; MariaDB runs `ANALYZE FORMAT=JSON` and refuses `analyze` while column rules apply). EXPLAIN ANALYZE is only allowed for `SELECT` statements since it actually executes the query, whether or not read-only mode is enabled. Every EXPLAIN runs inside a read-only transaction, so on MySQL/MariaDB plain EXPLAIN of write statements is rejected. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database`, `analyze` (PostgreSQL/MySQL/MariaDB only).
+Returns the execution plan for a SQL query. Supports an optional `analyze` parameter for actual execution statistics (PostgreSQL and MySQL/MariaDB; MariaDB runs `ANALYZE FORMAT=JSON` and refuses `analyze` while column rules apply). EXPLAIN ANALYZE is only allowed for `SELECT` statements since it actually executes the query, whether or not read-only mode is enabled. Every EXPLAIN runs inside a read-only transaction, so on MySQL/MariaDB plain EXPLAIN of write statements is rejected. SQLite uses EXPLAIN QUERY PLAN (no ANALYZE support). Always available regardless of read-only mode. Parameters: `query`, `database`, `analyze` and `timeout` (PostgreSQL/MySQL/MariaDB only).
 
 ## Security 🔒
 
-- **Read-only mode** (default) — write tools hidden from AI assistant; `readQuery` enforces AST-based SQL validation
-- **Single-statement enforcement** — `readQuery` / `explainQuery` reject multi-statement SQL at parse level
+- **Read-only mode** (default) — write tools hidden from AI assistant; `read` enforces AST-based SQL validation
+- **Single-statement enforcement** — `read` / `explain` reject multi-statement SQL at parse level
 - **Dangerous function blocking** — `LOAD_FILE()`, `INTO OUTFILE`, `INTO DUMPFILE` detected in the AST
 - **Identifier validation** — database/table names validated against control characters and empty strings
 - **HTTP bearer authentication** — `DBMCP_HTTP_AUTH_TOKEN` enforces `Authorization: Bearer <token>` (constant-time compare, 401 on failure); non-loopback binds refuse to start without a token
 - **Origin + Host allowlists** — server-side rejection (403) plus CORS preflight; configurable for HTTP transport. Defends against browser DNS rebinding — not a substitute for authentication
 - **SSL/TLS** — configured via individual `DBMCP_DB_SSL_*` variables
 - **SSH host-key verification** — the SSH tunnel checks the server key against `known_hosts` (`yes` by default); SSH passwords and passphrases are never logged
-- **Sensitive-data redaction** *(on by default)* — in privacy mode `full`, query tool output passes through a regex-based redactor that rewrites detected sensitive spans across **47 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, postcodes of any country plus UK/German ones), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Mode: `DBMCP_PRIVACY_MODE` (`privacy.mode`) — `none`, `rules` (column rules only), or `full` (default). Operator: `DBMCP_PRIVACY_OPERATOR` (`privacy.operator`) — one of `hash` (default, keyed tokens like `<EMAIL_ADDRESS_…>`; key via `DBMCP_PRIVACY_KEY` (`privacy.key`)), `replace` (entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop). Optional subset via `DBMCP_PRIVACY_CATEGORIES` (`privacy.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: rows returned by `readQuery`, `writeQuery`, and `explainQuery`, plus tool error messages (regex recognizers only). Column rules (`privacy.rules`, YAML only, under `rules` and `full`) rewrite every value of named table columns, traced through views, CTEs, and expressions, and refuse statements that could reveal them otherwise (see [Rules](https://dbmcp.haymon.ai/privacy/rules)). See [Data Privacy](https://dbmcp.haymon.ai/privacy) for the full surface.
+- **Sensitive-data redaction** *(on by default)* — in privacy mode `full`, query tool output passes through a regex-based redactor that rewrites detected sensitive spans across **47 built-in entity types** spanning seven categories: personal (email, date of birth), financial (cards, IBAN, UK/US bank accounts, sort and US ABA routing codes, CVV), government IDs (US SSN, ITIN, EIN, passports, driver licences, Medicare MBI, NPI, DEA; UK NHS, NINO, passports, driving licences, vehicle plates; German tax, social security, health insurance, ID card, passport, driving licence, physician, practice, commercial register, and plate numbers; Canadian SIN; EU VAT), contact (phone, postcodes of any country plus UK/German ones), network (IP, URL, MAC), digital identity (API keys, JWTs, PEM private keys, password hashes), and crypto wallets. Mode: `DBMCP_PRIVACY_MODE` (`privacy.mode`) — `none`, `rules` (column rules only), or `full` (default). Operator: `DBMCP_PRIVACY_OPERATOR` (`privacy.operator`) — one of `hash` (default, keyed tokens like `<EMAIL_ADDRESS_…>`; key via `DBMCP_PRIVACY_KEY` (`privacy.key`)), `replace` (entity-aware placeholders like `<EMAIL_ADDRESS>`), `mask` (length-preserving `*`), `redact` (drop). Optional subset via `DBMCP_PRIVACY_CATEGORIES` (`privacy.categories`) (comma-separated, e.g. `financial,government`); unset enables all built-ins. Scope: rows returned by `read`, `write`, and `explain`, plus tool error messages (regex recognizers only). Column rules (`privacy.rules`, YAML only, under `rules` and `full`) rewrite every value of named table columns, traced through views, CTEs, and expressions, and refuse statements that could reveal them otherwise (see [Rules](https://dbmcp.haymon.ai/privacy/rules)). See [Data Privacy](https://dbmcp.haymon.ai/privacy) for the full surface.
 - **ML/NER redaction** *(opt-in at runtime, off by default)* — adds `PERSON`, `LOCATION`, `ORGANIZATION`, `NATIONALITY_RELIGION_POLITICS`, and `FACILITY` detection that regex cannot catch, turned on under `full` by setting a user-supplied model directory in `DBMCP_PRIVACY_MODEL` (`privacy.model`). Which entities are produced depends on the model's labels (CoNLL models give person/location/organization; OntoNotes-class models add NRP and facility). Inference uses **ONNX Runtime** (model directory holds `config.json`, `tokenizer.json`, `model.onnx`; recommended: the MIT-licensed [`optimum/bert-base-NER`](https://huggingface.co/optimum/bert-base-NER), an ONNX export of `dslim/bert-base-NER`; an int8-quantized export runs about 3.5× faster). Fail-closed: a model that cannot load aborts startup and an inference error fails the request — never a silent fallback. Respects `privacy.categories`. Model-agnostic: multilingual models such as `Davlan/bert-base-multilingual-cased-ner-hrl` work once exported to ONNX.
 - **Credential redaction** — database password is never shown in logs or debug output
 

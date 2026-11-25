@@ -12,8 +12,8 @@
 //! with `isError: true` when parsing tool arguments.
 //!
 //! Handlers page their results through two entry points: [`paginate`]
-//! for any row type, and [`list_entries`] for the brief/detailed `list*`
-//! tools. Both hand the fetch closure a [`Page`] to bind as `LIMIT` /
+//! for any row type, and [`list_objects`] for the brief/detailed `objects`
+//! tool. Both hand the fetch closure a [`Page`] to bind as `LIMIT` /
 //! `OFFSET`, then trim the one-row lookahead and derive the next cursor.
 
 use std::borrow::Cow;
@@ -25,7 +25,7 @@ use serde::de::{Error as DeError, Unexpected};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::types::ListEntriesResponse;
+use crate::types::{Detail, ListObjectsResponse};
 
 /// Wire-format payload carried inside an encoded [`Cursor`].
 #[derive(Serialize, Deserialize)]
@@ -79,7 +79,7 @@ impl JsonSchema for Cursor {
 
 /// Row window a paginated fetch reads, bound as `LIMIT` / `OFFSET`.
 ///
-/// Handed to the fetch closure of [`paginate`] and [`list_entries`].
+/// Handed to the fetch closure of [`paginate`] and [`list_objects`].
 /// [`Self::limit`] already includes a one-row lookahead used to detect a
 /// following page, so bind both values unchanged and return every row.
 #[derive(Debug, Clone, Copy)]
@@ -144,10 +144,10 @@ pub async fn paginate<T, E>(
     Ok(page.split(rows))
 }
 
-/// Fetches one page of a brief/detailed `list*` tool response.
+/// Fetches one page of a brief/detailed `objects` tool response.
 ///
 /// Trims `search` and drops it when blank, then runs `brief` or `full`
-/// depending on `detailed`. Both closures receive the [`Page`] and the
+/// depending on `detail`. Both closures receive the [`Page`] and the
 /// normalised search pattern; `brief` returns entity names, `full`
 /// returns name → metadata pairs in the SQL `ORDER BY` order. Paging
 /// follows [`paginate`].
@@ -155,23 +155,23 @@ pub async fn paginate<T, E>(
 /// # Errors
 ///
 /// Returns whatever error the selected closure returns, unchanged.
-pub async fn list_entries<E>(
+pub async fn list_objects<E>(
     cursor: Option<Cursor>,
     page_size: u16,
     search: Option<&str>,
-    detailed: bool,
+    detail: Detail,
     brief: impl AsyncFnOnce(Page, Option<&str>) -> Result<Vec<String>, E>,
     full: impl AsyncFnOnce(Page, Option<&str>) -> Result<Vec<(String, Value)>, E>,
-) -> Result<ListEntriesResponse, E> {
+) -> Result<ListObjectsResponse, E> {
     let pattern = search.map(str::trim).filter(|s| !s.is_empty());
 
-    if detailed {
+    if detail == Detail::Full {
         let (rows, next_cursor) = paginate(cursor, page_size, |page| full(page, pattern)).await?;
-        return Ok(ListEntriesResponse::detailed(rows.into_iter().collect(), next_cursor));
+        return Ok(ListObjectsResponse::detailed(rows.into_iter().collect(), next_cursor));
     }
 
     let (names, next_cursor) = paginate(cursor, page_size, |page| brief(page, pattern)).await?;
-    Ok(ListEntriesResponse::brief(names, next_cursor))
+    Ok(ListObjectsResponse::brief(names, next_cursor))
 }
 
 /// Encodes a zero-based page offset as an opaque cursor string.
@@ -199,7 +199,8 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use serde_json::{Value, json};
 
-    use super::{Cursor, decode_cursor, encode_cursor, list_entries, paginate};
+    use super::{Cursor, decode_cursor, encode_cursor, list_objects, paginate};
+    use crate::types::Detail;
 
     #[test]
     fn encode_decode_round_trips_representative_offsets() {
@@ -386,47 +387,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_entries_brief_runs_brief_closure_and_pages() {
-        let response = list_entries(
+    async fn list_objects_brief_runs_brief_closure_and_pages() {
+        let response = list_objects(
             None,
             2,
             None,
-            false,
+            Detail::Names,
             async |_, _| Ok::<_, Infallible>(vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]),
             async |_, _| panic!("detailed closure must not run in brief mode"),
         )
         .await
         .expect("infallible");
-        assert_eq!(response.entries.as_brief(), Some(&["a".to_owned(), "b".to_owned()][..]));
+        assert_eq!(response.objects.as_brief(), Some(&["a".to_owned(), "b".to_owned()][..]));
         assert_eq!(response.next_cursor, Some(Cursor { offset: 2 }));
     }
 
     #[tokio::test]
-    async fn list_entries_detailed_runs_full_closure_and_keeps_order() {
-        let response = list_entries(
+    async fn list_objects_detailed_runs_full_closure_and_keeps_order() {
+        let response = list_objects(
             None,
             5,
             None,
-            true,
+            Detail::Full,
             async |_, _| panic!("brief closure must not run in detailed mode"),
             async |_, _| Ok::<_, Infallible>(vec![("b".to_owned(), json!(1)), ("a".to_owned(), json!(2))]),
         )
         .await
         .expect("infallible");
-        let map = response.entries.as_detailed().expect("detailed entries");
+        let map = response.objects.as_detailed().expect("detailed objects");
         assert_eq!(map.keys().collect::<Vec<_>>(), ["b", "a"]);
         assert!(response.next_cursor.is_none());
     }
 
     #[tokio::test]
-    async fn list_entries_trims_search_and_drops_blank() {
+    async fn list_objects_trims_search_and_drops_blank() {
         for (search, expected) in [(None, None), (Some("   "), None), (Some("  ord "), Some("ord"))] {
             let mut seen = None;
-            let _ = list_entries(
+            let _ = list_objects(
                 None,
                 5,
                 search,
-                false,
+                Detail::Names,
                 async |_, pattern| {
                     seen = Some(pattern.map(str::to_owned));
                     Ok::<_, Infallible>(Vec::new())

@@ -10,11 +10,11 @@ MySQL / MariaDB backend for [dbmcp](https://dbmcp.haymon.ai) — the privacy fir
 ## What you get
 
 - `MysqlHandler` ready to plug into any `rmcp::ServerHandler`-compatible MCP transport
-- Full MCP tool surface: `listDatabases`, `listTables` (with `detailed: true`), `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `readQuery`, `writeQuery`, `explainQuery`, `createDatabase`, `dropDatabase`, `dropTable`
+- Full MCP tool surface: `objects` (tables, views, triggers, functions, procedures, databases), `read`, `write`, `explain`
 - Read-only by default — write tools hidden unless explicitly disabled
-- Single-statement enforcement in `readQuery` / `explainQuery` (parse level)
+- Single-statement enforcement in `read` / `explain` (parse level)
 - Parameterised queries everywhere — user values never touch SQL strings
-- Sensitive-data redaction on by default for the output and errors of `readQuery`, `writeQuery`, and `explainQuery`
+- Sensitive-data redaction on by default for the output and errors of `read`, `write`, and `explain`
 - MariaDB compatible — same handler
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

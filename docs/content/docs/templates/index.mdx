@@ -4,7 +4,7 @@ description: Ready-made privacy rules for popular applications, to paste into yo
 ---
 
 <Callout type="warn">
-Templates are built from each application's schema files at pinned releases, not yet checked against a running instance. Compare the keys with `listTables` before relying on one ([Checking the keys](#checking-the-keys)).
+Templates are built from each application's schema files at pinned releases, not yet checked against a running instance. Compare the keys with `objects` output before relying on one ([Checking the keys](#checking-the-keys)).
 </Callout>
 
 One customer's e-mail address, name, and address sit in many tables: accounts, addresses, carts, orders, admin grids, newsletter lists, reviews. A forgotten table comes back unredacted, and a mistyped key matches nothing without warning ([Column keys](/privacy/rules#column-keys)). Each page below lists them for one application.
@@ -13,7 +13,7 @@ One customer's e-mail address, name, and address sit in many tables: accounts, a
 
 1. Copy the page's template into your config; on pages with a version selector, pick your version first. If the config already has a `privacy:` section, paste the rules under its `rules:`.
 2. Delete what you do not want: columns under a `# … (optional)` comment for modules or data you do not need ruled (keeping them is harmless), and the `mixed-content` rule if the assistant needs those columns readable. Keep `mixed-content-secrets` ([Mixed-content columns](#mixed-content-columns)).
-3. Set [`database.name`](/features/database) on MySQL, MariaDB, and PostgreSQL: short `table.column` keys need it (on SQLite they expand to `main.main`). Pinning a name hides `listDatabases`, `createDatabase`, and `dropDatabase`.
+3. Set [`database.name`](/features/database) on MySQL, MariaDB, and PostgreSQL: short `table.column` keys need it (on SQLite they expand to `main.main`). Pinning a name removes the `database` parameter and `objects` `kind: "database"`.
 4. If your installation prefixes its tables, prepend the prefix to every table in the keys ([Table prefixes](#table-prefixes)).
 5. Set [`privacy.key`](/privacy/redaction#hash-key) so `hash` tokens stay stable across restarts and replicas.
 
@@ -99,7 +99,7 @@ JSON, serialized, EAV, and `meta_value` columns mix personal data with everythin
 
 ## Checking the keys
 
-After pasting, compare every key with `listTables` output (`detailed: true` lists the columns). Startup catches repeats, a missing `database.name`, and a wrong catalog segment, but not a column that does not exist.
+After pasting, compare every key with `objects` output (`detail: "full"` lists the columns). Startup catches repeats, a missing `database.name`, and a wrong catalog segment, but not a column that does not exist.
 
 ## Applications
 

@@ -1,196 +1,47 @@
-//! MySQL/MariaDB-specific MCP tool request types.
-//!
-//! `ListEntries` and `ListEntriesResponse` live in the shared `dbmcp-server`
-//! crate; they are re-exported here so call sites can keep importing them
-//! from `crate::types`.
+//! `MySQL`/`MariaDB`-specific MCP tool request types.
 
 use dbmcp_server::listing::Cursor;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-pub use dbmcp_server::types::{ListEntries, ListEntriesResponse};
+pub use dbmcp_server::types::{Detail, ListObjectsResponse, Objects};
 
-/// Request for the `dropTable` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct DropTableRequest {
-    /// Name of the table to drop. Must be non-empty.
-    pub table: String,
-    /// Database containing the table. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
+/// Kind of database object the `objects` tool lists.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectKind {
+    /// Tables in the database.
+    #[default]
+    Table,
+    /// Views in the database.
+    View,
+    /// User-defined triggers in the database.
+    Trigger,
+    /// Stored functions in the database.
+    Function,
+    /// Stored procedures in the database.
+    Procedure,
+    /// Databases on the server; not offered when a database is pinned.
+    Database,
 }
 
-/// Request for the MySQL/MariaDB `listTables` tool — supports search + detailed mode.
+/// Request for the `objects` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListTablesRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
+pub struct ObjectsRequest {
+    /// Kind of object to list. Defaults to `table`.
     #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on table names. The input is used within a `LIKE`
+    pub kind: ObjectKind,
+    /// Optional case-insensitive filter on object names. The input is used within a `LIKE`
     /// clause: `%` matches any sequence of characters and `_` matches any single character.
     #[serde(default)]
     pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (columns,
-    /// constraints, indexes, triggers, owner, comment, kind); when `false` or
-    /// omitted, each entry is the bare table-name string.
+    /// How much metadata to return per object. Defaults to `names`.
     #[serde(default)]
-    pub detailed: bool,
-    /// Database to list tables from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the MySQL/MariaDB `listFunctions` tool — supports search + detailed mode.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListFunctionsRequest {
+    pub detail: Detail,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
     #[serde(default)]
     pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on function names. The input is used within a `LIKE`
-    /// clause: `%` matches any sequence of characters and `_` matches any single character.
-    #[serde(default)]
-    pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (schema, language,
-    /// arguments, returnType, deterministic, sqlDataAccess, security, definer,
-    /// description, definition, sqlMode, characterSetClient, collationConnection,
-    /// databaseCollation); when `false` or omitted, each entry is the bare
-    /// function-name string.
-    #[serde(default)]
-    pub detailed: bool,
-    /// Database to list functions from. Defaults to the active database.
+    /// Database to list objects from. Defaults to the active database.
     #[serde(default)]
     pub database: Option<String>,
-}
-
-/// Request for the MySQL/MariaDB `listProcedures` tool — supports search + detailed mode.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListProceduresRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on procedure names. The input is used within a `LIKE`
-    /// clause: `%` matches any sequence of characters and `_` matches any single character.
-    #[serde(default)]
-    pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (schema, language,
-    /// arguments with IN/OUT/INOUT mode tokens, deterministic, sqlDataAccess, security,
-    /// definer, description, definition, sqlMode, characterSetClient,
-    /// collationConnection, databaseCollation); when `false` or omitted, each entry
-    /// is the bare procedure-name string.
-    #[serde(default)]
-    pub detailed: bool,
-    /// Database to list procedures from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the MySQL/MariaDB `listViews` tool — supports search + detailed mode.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListViewsRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on view names. The input is used within a `LIKE`
-    /// clause: `%` matches any sequence of characters and `_` matches any single character.
-    #[serde(default)]
-    pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (schema, definer,
-    /// security, checkOption, updatable, characterSetClient, collationConnection,
-    /// definition); when `false` or omitted, each entry is the bare view-name string.
-    #[serde(default)]
-    pub detailed: bool,
-    /// Database to list views from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ListFunctionsRequest, ListProceduresRequest, ListTablesRequest, ListViewsRequest};
-
-    #[test]
-    fn list_tables_request_defaults_to_brief_mode_without_search() {
-        let req: ListTablesRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_tables_request_accepts_search_and_detailed() {
-        let req: ListTablesRequest = serde_json::from_str(r#"{"search": "order", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("order"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_tables_request_accepts_database() {
-        let req: ListTablesRequest = serde_json::from_str(r#"{"database": "mydb"}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-    }
-
-    #[test]
-    fn list_functions_request_defaults_to_brief_mode_without_search() {
-        let req: ListFunctionsRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_functions_request_accepts_search_and_detailed() {
-        let req: ListFunctionsRequest =
-            serde_json::from_str(r#"{"search": "order", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("order"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_functions_request_accepts_database() {
-        let req: ListFunctionsRequest = serde_json::from_str(r#"{"database": "mydb"}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-    }
-
-    #[test]
-    fn list_procedures_request_defaults_to_brief_mode_without_search() {
-        let req: ListProceduresRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_procedures_request_accepts_search_and_detailed() {
-        let req: ListProceduresRequest =
-            serde_json::from_str(r#"{"search": "archive", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("archive"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_procedures_request_accepts_database() {
-        let req: ListProceduresRequest = serde_json::from_str(r#"{"database": "mydb"}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-    }
-
-    #[test]
-    fn list_views_request_defaults_to_brief_mode_without_search() {
-        let req: ListViewsRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_views_request_accepts_search_and_detailed() {
-        let req: ListViewsRequest = serde_json::from_str(r#"{"search": "active", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("active"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_views_request_accepts_database() {
-        let req: ListViewsRequest = serde_json::from_str(r#"{"database": "mydb"}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-    }
 }

@@ -1,6 +1,6 @@
 //! Column rule (`privacy.rules`) enforcement on `PostgreSQL`.
 //!
-//! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
+//! With column rules, `read`, `write`, and `explain` run each
 //! statement through [`PostgresHandler::enforce`]. On one pooled connection
 //! of the target database, inside one transaction (read-only for reads) and
 //! under one deadline, it:

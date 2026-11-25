@@ -9,9 +9,9 @@ Shared MCP server primitives for [dbmcp](https://dbmcp.haymon.ai) — the privac
 
 ## What you get
 
-- Request/response schemas for every dbmcp MCP tool (`readQuery`, `writeQuery`, `listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`, `explainQuery`, `createDatabase`, `dropDatabase`, `dropTable`)
+- Request/response schemas for every dbmcp MCP tool (`objects`, `read`, `write`, `explain`)
 - `schemars`-derived JSON schemas
-- `listing` module (`Cursor`, `paginate`, `list_entries`) for paging big result sets across MCP calls
+- `listing` module (`Cursor`, `paginate`, `list_objects`) for paging big result sets across MCP calls
 - `Server` wrapper + `server_info()` advertised to clients
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

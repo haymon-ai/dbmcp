@@ -1,18 +1,9 @@
 {
   "pages": [
     "index",
-    "list-databases",
-    "list-tables",
-    "list-views",
-    "list-triggers",
-    "list-functions",
-    "list-procedures",
-    "list-materialized-views",
-    "read-query",
-    "write-query",
-    "explain-query",
-    "create-database",
-    "drop-database",
-    "drop-table"
+    "objects",
+    "read",
+    "write",
+    "explain"
   ]
 }

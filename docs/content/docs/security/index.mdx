@@ -16,9 +16,9 @@ description: How dbmcp protects your data
 
 ### Multi-Statement Blocking
 
-`readQuery` and `explainQuery` reject SQL that holds more than one statement, on every backend. The check runs in the SQL parser, and SQL the parser cannot read is rejected too. This prevents an attacker from appending malicious statements (such as `; DROP TABLE users`) to a legitimate query.
+`read` and `explain` reject SQL that holds more than one statement, on every backend. The check runs in the SQL parser, and SQL the parser cannot read is rejected too. This prevents an attacker from appending malicious statements (such as `; DROP TABLE users`) to a legitimate query.
 
-> **Limitation**: The database connections themselves accept multi-statement queries. On MySQL and MariaDB, the database driver (sqlx) always enables multi-statement execution and offers no way to turn it off; PostgreSQL accepts several statements in one simple query. `writeQuery`, which is available only when read-only mode is disabled, has no single-statement check, so it runs every statement it is sent ([#307](https://github.com/haymon-ai/dbmcp/issues/307)).
+> **Limitation**: The database connections themselves accept multi-statement queries. On MySQL and MariaDB, the database driver (sqlx) always enables multi-statement execution and offers no way to turn it off; PostgreSQL accepts several statements in one simple query. `write`, which is available only when read-only mode is disabled, has no single-statement check, so it runs every statement it is sent ([#307](https://github.com/haymon-ai/dbmcp/issues/307)).
 
 ### Parameterized Queries
 

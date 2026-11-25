@@ -1,6 +1,6 @@
 //! `EXPLAIN` forms, classified from the parsed statement's options.
 //!
-//! Only the exact plain forms each dialect's `explainQuery` builds classify as
+//! Only the exact plain forms each dialect's `explain` builds classify as
 //! [`ExplainForm::Json`] or [`ExplainForm::QueryPlan`]; any `ANALYZE` is
 //! [`ExplainForm::Analyze`], and every other option, format, or spelling is
 //! [`ExplainForm::Other`].

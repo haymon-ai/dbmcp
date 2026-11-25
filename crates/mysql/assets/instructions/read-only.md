@@ -1,15 +1,10 @@
 ## Workflow
 
-1. Call `listDatabases` to discover available databases.
-2. Call `listTables` to see tables. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call.
-3. Call `listViews` to see views.
-4. Call `listTriggers` to see triggers.
-5. Call `listFunctions` to see stored functions.
-6. Call `listProcedures` to see stored procedures.
-7. Use `readQuery` for read-only SQL (SELECT, SHOW, DESCRIBE, EXPLAIN).
-8. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+1. Call `objects` to discover tables, views, triggers, functions, procedures, and databases before writing SQL.
+2. Use `read` for read-only SQL (SELECT, SHOW, DESCRIBE, EXPLAIN).
+3. Use `explain` to analyze query execution plans and diagnose slow queries.
 
-Per-database tools default to the active database; pass `database` to target another.
+Tools default to the active database; pass `database` to target another.
 
 ## Constraints
 

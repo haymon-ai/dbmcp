@@ -13,26 +13,26 @@ The page size applies uniformly to every paginated tool.
 
 ## Cursor Pagination
 
-All schema-discovery tools (`listDatabases`, `listTables`, `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`) and `readQuery` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100, set with `DBMCP_DB_PAGE_SIZE`) plus, when more items remain, a `nextCursor` string alongside the result data.
+`objects` and `read` (for `SELECT` results) return one page at a time. Each paginated response carries up to the configured page size (default 100, set with `DBMCP_DB_PAGE_SIZE`) plus, when more items remain, a `nextCursor` string alongside the result data.
 
 To walk the full result, call the tool again with the previous response's `nextCursor` as the new `cursor` argument. Iteration ends when a response omits `nextCursor`. An empty first page with no `nextCursor` is also a valid terminal response.
 
 Cursors are opaque tokens. Treat them as black-box strings — do not parse, modify, or persist them across server restarts. Passing a malformed cursor returns a tool result with `isError: true` describing the problem; the server does not silently restart from the beginning.
 
-Only `SELECT` statements in `readQuery` paginate. `SHOW`, `DESCRIBE` / `DESC`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
+Only `SELECT` statements in `read` paginate. `SHOW`, `DESCRIBE` / `DESC`, and `EXPLAIN` always return a single page and ignore any `cursor` argument.
 
 Each page keeps the statement's `ORDER BY` and column names on every backend.
 
-Every page re-runs the statement; there is no snapshot, so rows inserted or deleted between calls can shift later pages. `readQuery` fits each page into the statement's own top-level `LIMIT`/`OFFSET` (or appends one). Statements it cannot rewrite run unchanged and read the whole result on every page, keeping only the page: `FETCH FIRST`, a `LIMIT` that is not a literal number, `FOR UPDATE`/`FOR SHARE`, and a top-level `VALUES`. Write a literal `LIMIT` to keep large results cheap.
+Every page re-runs the statement; there is no snapshot, so rows inserted or deleted between calls can shift later pages. `read` fits each page into the statement's own top-level `LIMIT`/`OFFSET` (or appends one). Statements it cannot rewrite run unchanged and read the whole result on every page, keeping only the page: `FETCH FIRST`, a `LIMIT` that is not a literal number, `FOR UPDATE`/`FOR SHARE`, and a top-level `VALUES`. Write a literal `LIMIT` to keep large results cheap.
 
-A `readQuery` page can hold fewer rows than the page size when the [response size cap](#output-size-caps) ends it early; its `nextCursor` then resumes at the first row left out.
+A `read` page can hold fewer rows than the page size when the [response size cap](#output-size-caps) ends it early; its `nextCursor` then resumes at the first row left out.
 
 ## Output Size Caps
 
-Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`readQuery`, `writeQuery`, `explainQuery`) cap their `rows` in Unicode characters:
+Row count alone does not bound a response: one wide row or a large text, JSON, or binary cell can still flood the agent's context. The query tools (`read`, `write`, `explain`) cap their `rows` in Unicode characters:
 
 - **Per cell** (`DBMCP_DB_MAX_CELL_CHARS`, default `4096`): every string value longer than the cap, at any depth inside JSON columns, keeps its first characters and ends in `…[truncated, N chars total]`. Binary values count by their base64 text. Object keys are never cut, except in MariaDB and SQLite JSON: it is text, so the cap cuts the whole document.
-- **Per response** (`DBMCP_DB_MAX_RESPONSE_CHARS`, default `32000`): bounds the whole text result, including the untrusted-data envelope, so it stays under client limits such as Claude Code's 50,000-character and Gemini CLI's 40,000-character thresholds. About 1,500 characters are reserved for the envelope and the fields beside `rows`; trailing rows past the rest are dropped, keeping at least one. A paginated `readQuery` `SELECT` resumes them via `nextCursor`, so no row is lost when the query orders by a unique key. Other statements (`SHOW`, `DESCRIBE`, `EXPLAIN`, `explainQuery`, `writeQuery`) cannot resume, so the response reports the dropped count as `rowsOmitted`; for `writeQuery`, `rowsAffected` still counts every row.
+- **Per response** (`DBMCP_DB_MAX_RESPONSE_CHARS`, default `32000`): bounds the whole text result, including the untrusted-data envelope, so it stays under client limits such as Claude Code's 50,000-character and Gemini CLI's 40,000-character thresholds. About 1,500 characters are reserved for the envelope and the fields beside `rows`; trailing rows past the rest are dropped, keeping at least one. A paginated `read` `SELECT` resumes them via `nextCursor`, so no row is lost when the query orders by a unique key. Other statements (`SHOW`, `DESCRIBE`, `EXPLAIN`, `explain`, `write`) cannot resume, so the response reports the dropped count as `rowsOmitted`; for `write`, `rowsAffected` still counts every row.
 
 When either cap cuts the output, the response carries `truncated: true` and a `hint` to select fewer or narrower columns, narrow the query, or read a cut value in parts with `SUBSTRING`/`SUBSTR`. Both fields are absent otherwise. Set a cap to `0` to disable it. With [data privacy redaction](/privacy/redaction) on, values are redacted before they are cut.
 

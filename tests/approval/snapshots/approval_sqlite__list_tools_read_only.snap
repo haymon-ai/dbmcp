@@ -4,9 +4,9 @@ expression: tools
 ---
 [
   {
-    "name": "explainQuery",
-    "title": "Explain Query",
-    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through readQuery — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use readQuery, or writeQuery for data changes (not available in read-only mode)\n- Checking table structure → use listTables with `detailed: true`\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explainQuery(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → explainQuery\n✗ \"Run this SELECT\" → use readQuery\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
+    "name": "explain",
+    "title": "Explain",
+    "description": "Return the execution plan for a SQL query to diagnose performance. Use this tool instead of running EXPLAIN directly through `read` — it provides structured output via EXPLAIN QUERY PLAN.\n\n<usecase>\nUse when:\n- A query runs slowly and you need to understand why\n- Understanding how SQLite will scan tables and use indexes\n- Deciding whether to add an index\n</usecase>\n\n<when_not_to_use>\n- Running actual queries → use `read`, or `write` for data changes (not available in read-only mode)\n- Checking table structure → use objects with `detail: \"full\"`\n</when_not_to_use>\n\n<examples>\n✓ \"Why is my SELECT on orders slow?\" → explain(query=\"SELECT ...\")\n✓ \"How will SQLite execute this join?\" → `explain`\n✗ \"Run this SELECT\" → use `read`\n</examples>\n\n<what_it_returns>\nA JSON array of EXPLAIN QUERY PLAN rows showing how SQLite will scan tables, use indexes, and order operations.\n\nLong string values are cut and end in `…[truncated, N chars total]`, and rows past the response size cap are dropped and counted in `rowsOmitted`; when either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -63,43 +63,73 @@ expression: tools
     }
   },
   {
-    "name": "listTables",
-    "title": "List Tables",
-    "description": "List tables in the connected database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Exploring a database to find relevant tables (brief mode, default).\n- Searching for a table by partial name (pass `search`).\n- Inspecting a table's columns, constraints, indexes, and triggers before writing a query (pass `detailed: true`).\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on table names via `LIKE`. `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by table name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What tables are in this database?\" → listTables()\n✓ \"Find the orders table\" → listTables(search=\"order\")\n✓ \"What columns does orders have?\" → listTables(search=\"orders\", detailed=true)\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of table-name strings, e.g. `[\"customers\", \"orders\"]`.\nDetailed mode: a JSON object keyed by table name; each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers` (the name is the key and is not repeated inside the value). Keys iterate in the same alphabetical order brief mode uses. Example: `{\"orders\": {\"schema\": \"main\", \"kind\": \"TABLE\", ...}}`.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
+    "name": "objects",
+    "title": "Objects",
+    "description": "List database objects by kind: names, or full metadata keyed by name.\n\n<usecase>\nUse before writing SQL to discover object names and shapes. Prefer this over querying the catalog through `read`.\n</usecase>\n\n<examples>\n✓ \"What tables are there?\" → objects()\n✓ \"What columns does orders have?\" → objects(search=\"orders\", detail=\"full\")\n✓ \"Which triggers exist?\" → objects(kind=\"trigger\")\n</examples>\n\n<what_it_returns>\n`detail: \"names\"`: `{\"objects\": [...]}`, a sorted array of name strings.\n`detail: \"full\"`: `{\"objects\": {name: metadata}}`; the name is the key and is not repeated. Metadata per kind:\n- `table`: `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, `triggers`.\n- `view`: names only; `search` and `detail` are rejected.\n- `trigger`: `schema`, `table`, `definition` (the stored `CREATE TRIGGER` text).\n</what_it_returns>\n\n<pagination>\nKeep `kind`, `search`, and `detail` the same across pages.\n</pagination>\n",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "cursor": {
-          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
+        "kind": {
+          "description": "Kind of object to list. Defaults to `table`.",
+          "oneOf": [
+            {
+              "description": "Tables in the database.",
+              "type": "string",
+              "const": "table"
+            },
+            {
+              "description": "Views in the database; names only.",
+              "type": "string",
+              "const": "view"
+            },
+            {
+              "description": "Triggers in the database.",
+              "type": "string",
+              "const": "trigger"
+            }
+          ]
         },
         "search": {
-          "description": "Optional case-insensitive filter on table names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
+          "description": "Optional case-insensitive filter on object names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
           "type": [
             "string",
             "null"
           ],
           "default": null
         },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (columns,\nconstraints, indexes, triggers); when `false` or omitted, each entry\nis the bare table-name string.",
-          "type": "boolean",
-          "default": false
+        "detail": {
+          "description": "How much metadata to return per object. Defaults to `names`.",
+          "oneOf": [
+            {
+              "description": "A sorted array of bare object names.",
+              "type": "string",
+              "const": "names"
+            },
+            {
+              "description": "An object keyed by name, each value carrying the object's full metadata.",
+              "type": "string",
+              "const": "full"
+            }
+          ]
+        },
+        "cursor": {
+          "description": "Opaque cursor from a prior response's `nextCursor`; omit for the first page.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       }
     },
     "outputSchema": {
       "type": "object",
       "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
+        "objects": {
+          "description": "Page of matching objects. Shape depends on the request's `detail`.",
           "anyOf": [
             {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
+              "description": "Brief mode: sorted array of bare object-name strings.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -118,7 +148,7 @@ expression: tools
         }
       },
       "required": [
-        "entries"
+        "objects"
       ]
     },
     "annotations": {
@@ -129,119 +159,9 @@ expression: tools
     }
   },
   {
-    "name": "listTriggers",
-    "title": "List Triggers",
-    "description": "List triggers in the connected SQLite database, optionally filtered and/or with full metadata.\n\n<usecase>\nUse when:\n- Auditing trigger coverage across a database (brief mode, default).\n- Searching for a trigger by partial name (pass `search`).\n- Inspecting a trigger's table and full `CREATE TRIGGER` text before reasoning about side-effects (pass `detailed: true`). Detailed mode supersedes ad-hoc `readQuery` against `sqlite_schema`.\n</usecase>\n\n<parameters>\n- `cursor` — Opaque pagination cursor; echo the prior response's `nextCursor`.\n- `search` — Case-insensitive filter on trigger names via `LIKE` (SQLite's `LIKE` is ASCII-case-insensitive by default). `%` matches any sequence; `_` matches a single character.\n- `detailed` — When `true`, returns full metadata objects keyed by trigger name instead of bare name strings. Default `false`.\n</parameters>\n\n<examples>\n✓ \"What triggers are in this database?\" → listTriggers()\n✓ \"Find the audit triggers\" → listTriggers(search=\"audit\")\n✓ \"What does orders_audit_after_insert do?\" → listTriggers(search=\"orders_audit_after_insert\", detailed=true)\n✗ \"Show me a trigger's body\" → use detailed mode; the `definition` field carries the full `CREATE TRIGGER` text\n</examples>\n\n<what_it_returns>\nBrief mode (default): a sorted JSON array of trigger-name strings, e.g. `[\"customers_audit_after_insert\", \"orders_audit_after_insert\"]`.\nDetailed mode: a JSON object keyed by trigger name; each value carries exactly three fields — `schema` (always `\"main\"`), `table` (`sqlite_schema.tbl_name` — may be a view name for `INSTEAD OF` triggers), and `definition` (the original `CREATE TRIGGER` text from `sqlite_schema.sql`, byte-for-byte). Internal `sqlite_*` triggers are excluded.\nThe detailed payload deliberately diverges from the Postgres and MySQL/MariaDB `listTriggers` detailed payloads — `timing`, `events`, `activationLevel`, `status`, `functionName`, `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`, and `created` are absent. SQLite's catalogue does not expose those concepts as columns, and this tool deliberately avoids parsing the stored DDL to derive them; clients that need the timing or event keyword can read it off the prefix of `definition`.\nTriggers whose stored `sqlite_schema.sql` is `NULL` (rare; produced by extension-generated rows or hand-edited catalogues) are silently omitted from detailed mode but still listed by name in brief mode.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. The `search` filter must stay the same across pages for cursor continuity.\n</pagination>",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "cursor": {
-          "description": "Opaque pagination cursor. Omit (or pass `null`) for the first page.\nOn subsequent calls, pass the `nextCursor` returned by the previous\nresponse verbatim. Cursors are opaque — do not parse, modify, or persist.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "search": {
-          "description": "Optional case-insensitive filter on trigger names. The input is used within a `LIKE`\nclause: `%` matches any sequence of characters and `_` matches any single character.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "detailed": {
-          "description": "When `true`, each returned entry is a full metadata object (schema,\ntable, definition); when `false` or omitted, each entry is the bare\ntrigger-name string.",
-          "type": "boolean",
-          "default": false
-        }
-      }
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "listViews",
-    "title": "List Views",
-    "description": "List all views in the connected SQLite database.\n\n<usecase>\nUse when:\n- Exploring what views exist in the database alongside tables\n- Verifying a view exists before querying it\n- The user asks what views are available\n</usecase>\n\n<examples>\n✓ \"What views are in this database?\"\n✓ \"Does an active_users view exist?\" → listViews to check\n✗ \"Show me the columns of a view\" → use listTables with `detailed: true` instead\n</examples>\n\n<what_it_returns>\nA sorted JSON array of view name strings.\n</what_it_returns>\n\n<pagination>\nPaginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page.\n</pagination>",
-    "inputSchema": {
-      "type": "object",
-      "properties": {}
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "entries": {
-          "description": "Page of matching entries. Shape depends on the request's `detailed` flag.",
-          "anyOf": [
-            {
-              "description": "Brief mode: sorted array of bare entity-name strings.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            {
-              "description": "Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.",
-              "type": "object",
-              "additionalProperties": true
-            }
-          ]
-        },
-        "nextCursor": {
-          "description": "Opaque cursor pointing to the next page. Absent when this is the final page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entries"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "readQuery",
-    "title": "Read Query",
-    "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use writeQuery (not available in read-only mode)\n- Query performance analysis → use explainQuery\n- Discovering tables or columns → use listTables (pass `detailed: true` for columns)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use writeQuery (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use explainQuery for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with explainQuery before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
+    "name": "read",
+    "title": "Read",
+    "description": "Execute a read-only SQL query. Allowed statements: SELECT, EXPLAIN.\n\n<usecase>\nUse when:\n- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)\n- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING\n- Checking data existence or counts\n</usecase>\n\n<when_not_to_use>\n- Data changes (INSERT, UPDATE, DELETE) → use `write` (not available in read-only mode)\n- Query performance analysis → use `explain`\n- Discovering tables or columns → use objects (pass `detail: \"full\"` for columns)\n</when_not_to_use>\n\n<examples>\n✓ \"SELECT * FROM users WHERE status = 'active'\"\n✓ \"SELECT COUNT(*) FROM orders GROUP BY region\"\n✗ \"INSERT INTO users ...\" → use `write` (not available in read-only mode)\n✗ \"EXPLAIN SELECT ...\" → use `explain` for structured analysis\n</examples>\n\n<what_it_returns>\nA JSON array of row objects, each keyed by column name.\n\nLong string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.\n</what_it_returns>\n\n<pagination>\n`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `EXPLAIN` returns a single page and ignores `cursor`.\n</pagination>\n\n<timeout>\nEach call stops at the configured query timeout. On a timeout, check the plan with `explain` before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.\n</timeout>",
     "inputSchema": {
       "type": "object",
       "properties": {

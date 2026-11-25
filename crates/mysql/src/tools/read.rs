@@ -1,0 +1,62 @@
+//! MCP tool: `read`.
+
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use dbmcp_server::types::{ReadRequest, ReadResponse};
+use dbmcp_server::{input_schema, output_schema};
+use rmcp::handler::server::router::tool::{AsyncTool, ToolBase};
+use rmcp::model::{ErrorData, JsonObject, ToolAnnotations};
+
+use crate::MysqlHandler;
+
+const NAME: &str = "read";
+const TITLE: &str = "Read";
+const DESCRIPTION: &str = include_str!("../../assets/tools/read/default.md");
+
+/// Marker type for the `read` MCP tool.
+pub(crate) struct ReadTool<const PINNED: bool>;
+
+impl<const PINNED: bool> ToolBase for ReadTool<PINNED> {
+    type Parameter = ReadRequest;
+    type Output = ReadResponse;
+    type Error = ErrorData;
+
+    fn name() -> Cow<'static, str> {
+        NAME.into()
+    }
+
+    fn title() -> Option<String> {
+        Some(TITLE.into())
+    }
+
+    fn description() -> Option<Cow<'static, str>> {
+        Some(DESCRIPTION.into())
+    }
+
+    fn input_schema() -> Option<Arc<JsonObject>> {
+        Some(input_schema::<Self::Parameter>(PINNED))
+    }
+
+    fn output_schema() -> Option<Arc<JsonObject>> {
+        Some(output_schema::<Self::Output>())
+    }
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(
+            ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .idempotent(true)
+                .open_world(true),
+        )
+    }
+}
+
+impl<const PINNED: bool> AsyncTool<MysqlHandler> for ReadTool<PINNED> {
+    async fn invoke(handler: &MysqlHandler, params: Self::Parameter) -> Result<Self::Output, Self::Error> {
+        handler
+            .read(params.query, params.database, params.cursor, params.timeout)
+            .await
+    }
+}

@@ -1,9 +1,7 @@
 //! Request and response types for MCP tool parameters.
 //!
 //! Most structs map to the input or output schema of a single MCP tool;
-//! [`ListEntriesResponse`] is the shared output for every `list*` tool
-//! (`listTables`, `listViews`, `listTriggers`, `listFunctions`,
-//! `listProcedures`, `listMaterializedViews`).
+//! [`ListObjectsResponse`] is the output of every backend's `objects` tool.
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -15,20 +13,20 @@ use crate::truncate::Truncation;
 
 /// Two-shape listing payload: bare names in brief mode, name-keyed metadata in detailed mode.
 ///
-/// Embedded as the `entries` field of [`ListEntriesResponse`]. Serialises untagged:
+/// Embedded as the `objects` field of [`ListObjectsResponse`]. Serialises untagged:
 /// brief mode → JSON array of strings, detailed mode → JSON object whose keys are
-/// entity names and whose values are the per-entity metadata.
+/// object names and whose values are the per-object metadata.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
-pub enum ListEntries {
-    /// Brief mode: sorted array of bare entity-name strings.
+pub enum Objects {
+    /// Brief mode: sorted array of bare object-name strings.
     Brief(Vec<String>),
     /// Detailed mode: name-keyed map; insertion order matches the SQL `ORDER BY` sort.
     Detailed(IndexMap<String, Value>),
 }
 
-impl ListEntries {
-    /// Number of entries in the page, regardless of variant.
+impl Objects {
+    /// Number of objects in the page, regardless of variant.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -37,7 +35,7 @@ impl ListEntries {
         }
     }
 
-    /// Whether the page contains no entries.
+    /// Whether the page contains no objects.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -62,124 +60,76 @@ impl ListEntries {
     }
 }
 
-/// Response for list-style tools (`listTables`, `listViews`, `listTriggers`,
-/// `listFunctions`, `listProcedures`, `listMaterializedViews`).
+/// Response for the `objects` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct ListEntriesResponse {
-    /// Page of matching entries. Shape depends on the request's `detailed` flag.
-    pub entries: ListEntries,
+pub struct ListObjectsResponse {
+    /// Page of matching objects. Shape depends on the request's `detail`.
+    pub objects: Objects,
     /// Opaque cursor pointing to the next page. Absent when this is the final page.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Cursor", default)]
     pub next_cursor: Option<Cursor>,
 }
 
-impl ListEntriesResponse {
-    /// Builds a brief-mode response from a page of bare entity names.
+impl ListObjectsResponse {
+    /// Builds a brief-mode response from a page of bare object names.
     #[must_use]
-    pub fn brief(entries: Vec<String>, next_cursor: Option<Cursor>) -> Self {
+    pub fn brief(objects: Vec<String>, next_cursor: Option<Cursor>) -> Self {
         Self {
-            entries: ListEntries::Brief(entries),
+            objects: Objects::Brief(objects),
             next_cursor,
         }
     }
 
-    /// Builds a detailed-mode response from a page of name → metadata entries.
+    /// Builds a detailed-mode response from a page of name → metadata objects.
     #[must_use]
-    pub fn detailed(mut entries: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
-        entries.values_mut().for_each(Value::sort_all_objects);
+    pub fn detailed(mut objects: IndexMap<String, Value>, next_cursor: Option<Cursor>) -> Self {
+        objects.values_mut().for_each(Value::sort_all_objects);
         Self {
-            entries: ListEntries::Detailed(entries),
+            objects: Objects::Detailed(objects),
             next_cursor,
         }
     }
 }
 
-/// Response for tools with no structured return data.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct MessageResponse {
-    /// Description of the completed operation.
-    pub message: String,
+/// How much metadata the `objects` tool returns per object.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Detail {
+    /// A sorted array of bare object names.
+    #[default]
+    Names,
+    /// An object keyed by name, each value carrying the object's full metadata.
+    Full,
 }
 
-/// Request for the `listDatabases` tool.
+/// Rejects an `objects` call whose `kind` is unavailable in this configuration.
+#[must_use]
+pub fn unavailable_kind(kind: &str, reason: &str) -> rmcp::ErrorData {
+    rmcp::ErrorData::invalid_params(format!("kind `{kind}` is unavailable: {reason}"), None)
+}
+
+/// Rejects `search` and `detail: full` for an `objects` kind that lists names only.
+///
+/// A blank `search` counts as unset, as in [`list_objects`](crate::listing::list_objects).
+///
+/// # Errors
+///
+/// Returns an invalid-params error when either option is set.
+pub fn names_only(kind: &str, search: Option<&str>, detail: Detail) -> Result<(), rmcp::ErrorData> {
+    if search.is_some_and(|s| !s.trim().is_empty()) || detail == Detail::Full {
+        Err(rmcp::ErrorData::invalid_params(
+            format!("kind `{kind}` lists names only: omit `search` and `detail`"),
+            None,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Request for the `write` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListDatabasesRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-}
-
-/// Response for the `listDatabases` tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ListDatabasesResponse {
-    /// Sorted list of database names for this page.
-    pub databases: Vec<String>,
-    /// Opaque cursor pointing to the next page. Absent when this is the final page.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Cursor", default)]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Request for the `createDatabase` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct CreateDatabaseRequest {
-    /// Name of the database to create. Must be non-empty.
-    pub database: String,
-}
-
-/// Request for the `dropDatabase` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct DropDatabaseRequest {
-    /// Name of the database to drop. Must be non-empty.
-    pub database: String,
-}
-
-/// Request for the `listViews` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListViewsRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Database to list views from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the `listTriggers` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListTriggersRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Optional case-insensitive filter on trigger names. The input is used within a `LIKE`
-    /// clause: `%` matches any sequence of characters and `_` matches any single character.
-    #[serde(default)]
-    pub search: Option<String>,
-    /// When `true`, each returned entry is a full metadata object (schema, table, timing,
-    /// events, activationLevel, definition, plus backend-specific fields); when `false` or
-    /// omitted, each entry is the bare trigger-name string.
-    #[serde(default)]
-    pub detailed: bool,
-    /// Database to list triggers from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the `listFunctions` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ListFunctionsRequest {
-    /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
-    #[serde(default)]
-    pub cursor: Option<Cursor>,
-    /// Database to list functions from. Defaults to the active database.
-    #[serde(default)]
-    pub database: Option<String>,
-}
-
-/// Request for the `writeQuery` tool.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct QueryRequest {
+pub struct WriteRequest {
     /// The SQL query to execute.
     pub query: String,
     /// Database to run the query against. Defaults to the active database.
@@ -187,9 +137,9 @@ pub struct QueryRequest {
     pub database: Option<String>,
 }
 
-/// Request for the `readQuery` tool.
+/// Request for the `read` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ReadQueryRequest {
+pub struct ReadRequest {
     /// The SQL query to execute.
     pub query: String,
     /// Opaque cursor from a prior response's `nextCursor`; omit for the first page.
@@ -250,9 +200,9 @@ pub fn resolve_timeout(requested: Option<u64>, default: u64, max: u64) -> Result
     }
 }
 
-/// Response for the `explainQuery` tool.
+/// Response for the `explain` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct QueryResponse {
+pub struct ExplainResponse {
     /// Result rows, each a JSON object keyed by a column name.
     #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
@@ -261,9 +211,9 @@ pub struct QueryResponse {
     pub truncation: Truncation,
 }
 
-/// Response for the `writeQuery` tool.
+/// Response for the `write` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct WriteQueryResponse {
+pub struct WriteResponse {
     /// Rows returned by the statement (e.g. `RETURNING`), each a JSON object keyed by a column name.
     #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
@@ -279,9 +229,9 @@ pub struct WriteQueryResponse {
     pub truncation: Truncation,
 }
 
-/// Response for the `readQuery` tool.
+/// Response for the `read` tool.
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct ReadQueryResponse {
+pub struct ReadResponse {
     /// Result rows, each a JSON object keyed by a column name.
     #[schemars(with = "Vec<rmcp::model::JsonObject>")]
     pub rows: Vec<Value>,
@@ -296,9 +246,9 @@ pub struct ReadQueryResponse {
     pub truncation: Truncation,
 }
 
-/// Request for the `explainQuery` tool.
+/// Request for the `explain` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ExplainQueryRequest {
+pub struct ExplainRequest {
     /// The SQL query to explain.
     pub query: String,
     /// If true, run the statement and report actual execution statistics (EXPLAIN ANALYZE; ANALYZE on `MariaDB`). Only allowed for read-only statements. Defaults to false.
@@ -316,69 +266,54 @@ pub struct ExplainQueryRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexMap, ListEntries, ListEntriesResponse, ListTriggersRequest, MAX_TIMEOUT_SECS, ReadQueryResponse,
-        Truncation, WriteQueryResponse, resolve_timeout,
+        Detail, IndexMap, ListObjectsResponse, MAX_TIMEOUT_SECS, Objects, ReadResponse, Truncation, WriteResponse,
+        names_only, resolve_timeout,
     };
     use serde_json::{Value, json};
 
     #[test]
-    fn detailed_sorts_value_keys_and_keeps_entry_order() {
+    fn detailed_sorts_value_keys_and_keeps_object_order() {
         let value = json!({"z": 1, "a": {"y": 2, "b": 3}});
-        let entries = IndexMap::from([("users".to_string(), value.clone()), ("orders".to_string(), value)]);
+        let objects = IndexMap::from([("users".to_string(), value.clone()), ("orders".to_string(), value)]);
 
-        let text = serde_json::to_string(&ListEntriesResponse::detailed(entries, None)).expect("serializes");
+        let text = serde_json::to_string(&ListObjectsResponse::detailed(objects, None)).expect("serializes");
         let sorted = r#"{"a":{"b":3,"y":2},"z":1}"#;
-        assert_eq!(text, format!(r#"{{"entries":{{"users":{sorted},"orders":{sorted}}}}}"#));
+        assert_eq!(text, format!(r#"{{"objects":{{"users":{sorted},"orders":{sorted}}}}}"#));
     }
 
     #[test]
-    fn list_triggers_request_defaults_to_brief_mode_without_search() {
-        let req: ListTriggersRequest = serde_json::from_str("{}").expect("empty object should parse");
-        assert!(req.search.is_none());
-        assert!(!req.detailed, "detailed must default to false");
-        assert!(req.database.is_none());
-    }
-
-    #[test]
-    fn list_triggers_request_accepts_search_and_detailed() {
-        let req: ListTriggersRequest = serde_json::from_str(r#"{"search": "audit", "detailed": true}"#).expect("parse");
-        assert_eq!(req.search.as_deref(), Some("audit"));
-        assert!(req.detailed);
-    }
-
-    #[test]
-    fn list_triggers_request_accepts_database_and_inner_fields() {
-        let req: ListTriggersRequest =
-            serde_json::from_str(r#"{"database": "mydb", "search": "audit", "detailed": true}"#).expect("parse");
-        assert_eq!(req.database.as_deref(), Some("mydb"));
-        assert_eq!(req.search.as_deref(), Some("audit"));
-        assert!(req.detailed);
+    fn names_only_treats_blank_search_as_unset() {
+        assert!(names_only("view", None, Detail::Names).is_ok());
+        assert!(names_only("view", Some(""), Detail::Names).is_ok());
+        assert!(names_only("view", Some("  "), Detail::Names).is_ok());
+        assert!(names_only("view", Some("ord"), Detail::Names).is_err());
+        assert!(names_only("view", None, Detail::Full).is_err());
     }
 
     #[test]
     fn brief_serializes_as_bare_string_array() {
-        let entries = ListEntries::Brief(vec!["customers".into(), "orders".into()]);
-        assert_eq!(serde_json::to_value(&entries).unwrap(), json!(["customers", "orders"]));
+        let objects = Objects::Brief(vec!["customers".into(), "orders".into()]);
+        assert_eq!(serde_json::to_value(&objects).unwrap(), json!(["customers", "orders"]));
     }
 
     #[test]
     fn detailed_serializes_as_keyed_object() {
-        let entries = ListEntries::Detailed(IndexMap::from([("orders".into(), json!({"kind": "TABLE"}))]));
+        let objects = Objects::Detailed(IndexMap::from([("orders".into(), json!({"kind": "TABLE"}))]));
         assert_eq!(
-            serde_json::to_value(&entries).unwrap(),
+            serde_json::to_value(&objects).unwrap(),
             json!({"orders": {"kind": "TABLE"}})
         );
     }
 
     #[test]
     fn brief_empty_serializes_as_empty_array() {
-        assert_eq!(serde_json::to_value(ListEntries::Brief(Vec::new())).unwrap(), json!([]));
+        assert_eq!(serde_json::to_value(Objects::Brief(Vec::new())).unwrap(), json!([]));
     }
 
     #[test]
     fn detailed_empty_serializes_as_empty_object() {
         assert_eq!(
-            serde_json::to_value(ListEntries::Detailed(IndexMap::new())).unwrap(),
+            serde_json::to_value(Objects::Detailed(IndexMap::new())).unwrap(),
             json!({})
         );
     }
@@ -390,30 +325,30 @@ mod tests {
             ("a".into(), json!({})),
             ("b".into(), json!({})),
         ]);
-        let s = serde_json::to_string(&ListEntries::Detailed(map)).unwrap();
+        let s = serde_json::to_string(&Objects::Detailed(map)).unwrap();
         let positions = ["\"c\"", "\"a\"", "\"b\""].map(|k| s.find(k).expect(k));
         assert!(positions.is_sorted(), "insertion order not preserved: {s}");
     }
 
     #[test]
-    fn list_entries_response_brief_serializes_with_entries_key() {
-        let response = ListEntriesResponse::brief(vec!["a".into()], None);
-        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"entries": ["a"]}));
+    fn list_objects_response_brief_serializes_with_objects_key() {
+        let response = ListObjectsResponse::brief(vec!["a".into()], None);
+        assert_eq!(serde_json::to_value(&response).unwrap(), json!({"objects": ["a"]}));
     }
 
     #[test]
-    fn list_entries_response_detailed_serializes_with_entries_key() {
+    fn list_objects_response_detailed_serializes_with_objects_key() {
         let map = IndexMap::from([("a".into(), json!({"kind": "TABLE"}))]);
-        let response = ListEntriesResponse::detailed(map, None);
+        let response = ListObjectsResponse::detailed(map, None);
         assert_eq!(
             serde_json::to_value(&response).unwrap(),
-            json!({"entries": {"a": {"kind": "TABLE"}}})
+            json!({"objects": {"a": {"kind": "TABLE"}}})
         );
     }
 
     #[test]
-    fn list_entries_response_omits_next_cursor_when_none() {
-        let response = ListEntriesResponse::brief(vec!["a".into()], None);
+    fn list_objects_response_omits_next_cursor_when_none() {
+        let response = ListObjectsResponse::brief(vec!["a".into()], None);
         let value = serde_json::to_value(&response).unwrap();
         assert!(
             value.get("nextCursor").is_none(),
@@ -423,18 +358,18 @@ mod tests {
 
     #[test]
     fn as_brief_and_as_detailed_unwrap_correct_variant() {
-        let brief = ListEntries::Brief(vec!["a".into()]);
+        let brief = Objects::Brief(vec!["a".into()]);
         assert_eq!(brief.as_brief(), Some(&["a".into()][..]));
         assert!(brief.as_detailed().is_none());
 
-        let det = ListEntries::Detailed(IndexMap::from([("x".into(), json!(1))]));
+        let det = Objects::Detailed(IndexMap::from([("x".into(), json!(1))]));
         assert!(det.as_brief().is_none());
         assert_eq!(det.as_detailed().map(IndexMap::len), Some(1));
     }
 
     /// Detailed keyed payload must be strictly smaller than the prior array-of-objects
     /// form for a representative 10-table fixture. The saving is one `"name": "<table>",`
-    /// fragment per entry; the contractual claim is the strict reduction across backends.
+    /// fragment per object; the contractual claim is the strict reduction across backends.
     #[test]
     fn detailed_payload_strictly_smaller_than_array_form() {
         let metadata = json!({
@@ -467,14 +402,14 @@ mod tests {
                 v
             })
             .collect();
-        let new_len = serde_json::to_vec(&ListEntries::Detailed(new_map)).unwrap().len();
+        let new_len = serde_json::to_vec(&Objects::Detailed(new_map)).unwrap().len();
         let old_len = serde_json::to_vec(&old).unwrap().len();
         assert!(new_len < old_len, "payload not smaller: new={new_len} old={old_len}");
     }
 
     #[test]
-    fn write_query_response_serializes_counters_in_camel_case() {
-        let response = WriteQueryResponse {
+    fn write_response_serializes_counters_in_camel_case() {
+        let response = WriteResponse {
             rows: vec![json!({"id": 1})],
             rows_affected: 2,
             last_insert_id: Some(1),
@@ -488,8 +423,8 @@ mod tests {
     }
 
     #[test]
-    fn write_query_response_omits_absent_insert_id() {
-        let response = WriteQueryResponse {
+    fn write_response_omits_absent_insert_id() {
+        let response = WriteResponse {
             rows: Vec::new(),
             rows_affected: 0,
             last_insert_id: None,
@@ -532,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn read_query_response_reports_truncation_only_when_set() {
-        let plain = ReadQueryResponse {
+    fn read_response_reports_truncation_only_when_set() {
+        let plain = ReadResponse {
             rows: vec![json!({"one": 1})],
             next_cursor: None,
             truncation: Truncation::default(),
@@ -543,7 +478,7 @@ mod tests {
             json!({"rows": [{"one": 1}]})
         );
 
-        let cut = ReadQueryResponse {
+        let cut = ReadResponse {
             rows: Vec::new(),
             next_cursor: None,
             truncation: Truncation {

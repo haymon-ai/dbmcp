@@ -1,10 +1,9 @@
-//! Table listing statements and `DROP TABLE`.
+//! Table listing statements.
 
 use dbmcp_server::listing::Page;
 use dbmcp_sql::{Connection as _, SqlError};
 use serde_json::Value;
 
-use super::ident;
 use crate::connection::PostgresConnection;
 
 /// Brief-mode SQL: single `pg_tables` scan with optional `ILIKE` filter.
@@ -203,30 +202,4 @@ pub(crate) async fn details(
             database,
         )
         .await
-}
-
-/// Statement prefix of `drop`; the quoted table name follows.
-const DROP: &str = "DROP TABLE";
-
-/// Suffix of `drop` that also removes dependent foreign-key constraints.
-const CASCADE: &str = " CASCADE";
-
-/// Drops `table` in `database`, quoted as an identifier; `cascade` appends `CASCADE`.
-///
-/// # Errors
-///
-/// Returns the [`SqlError`] of a failed statement, or
-/// [`SqlError::ReadOnlyViolation`] in read-only mode.
-pub(crate) async fn drop(
-    connection: &PostgresConnection,
-    table: &str,
-    database: Option<&str>,
-    cascade: bool,
-) -> Result<(), SqlError> {
-    let mut sql = format!("{DROP} {}", ident::quote(table));
-    if cascade {
-        sql.push_str(CASCADE);
-    }
-    connection.execute(sql.as_str(), database).await?;
-    Ok(())
 }

@@ -74,7 +74,7 @@ privacy:
   model: ./models/bert-ner
 ```
 
-**4. Verify it loaded.** Loading is **fail-closed**: a missing file or an unusable model makes the server refuse to start, so a clean startup means the model loaded. To confirm the pass is rewriting output, run a `readQuery` over a column holding a person or place name and check the value comes back as `<PERSON>` / `<LOCATION>` (with the default `replace` operator).
+**4. Verify it loaded.** Loading is **fail-closed**: a missing file or an unusable model makes the server refuse to start, so a clean startup means the model loaded. To confirm the pass is rewriting output, run a `read` over a column holding a person or place name and check the value comes back as `<PERSON>` / `<LOCATION>` (with the default `replace` operator).
 
 Behaviour notes:
 

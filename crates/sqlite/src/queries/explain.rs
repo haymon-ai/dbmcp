@@ -1,4 +1,4 @@
-//! `EXPLAIN QUERY PLAN` statement builder for `explainQuery`.
+//! `EXPLAIN QUERY PLAN` statement builder for `explain`.
 
 /// Prefix of every plan request; `SQLite` has no `EXPLAIN ANALYZE`.
 const STATEMENT: &str = "EXPLAIN QUERY PLAN";

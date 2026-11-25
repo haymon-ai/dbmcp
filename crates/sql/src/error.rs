@@ -46,7 +46,7 @@ pub enum SqlError {
 
     /// Query exceeded the configured timeout.
     #[error(
-        "Query timed out after {elapsed_secs:.1}s: {sql}. Check the plan with explainQuery, filter on indexed \
+        "Query timed out after {elapsed_secs:.1}s: {sql}. Check the plan with the explain tool, filter on indexed \
          columns, or limit inner result sets before joining or aggregating."
     )]
     QueryTimeout {
@@ -110,7 +110,7 @@ mod tests {
             message.starts_with("Query timed out after 30.0s: SELECT 1. "),
             "{message}"
         );
-        assert!(message.contains("explainQuery"), "{message}");
+        assert!(message.contains("the explain tool"), "{message}");
     }
 
     #[test]

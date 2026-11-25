@@ -1,6 +1,6 @@
 //! Column rule (`privacy.rules`) enforcement on `MySQL` and `MariaDB`.
 //!
-//! With column rules, `readQuery`, `writeQuery`, and `explainQuery` run each
+//! With column rules, `read`, `write`, and `explain` run each
 //! statement through [`MysqlHandler::enforce`]. On one pooled connection of
 //! the target database and under one deadline, it:
 //!

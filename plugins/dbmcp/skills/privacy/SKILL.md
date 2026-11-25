@@ -18,7 +18,7 @@ privacy:
       operator: replace       # optional
 ```
 
-- Exact keys (no `*`, quotes, spaces). Check each with `listTables`; unmatched keys are silently ignored.
+- Exact keys (no `*`, quotes, spaces). Check each with `objects` (`detail: "full"`); unmatched keys are silently ignored.
 - Short keys need `database.name` (PostgreSQL: any; MySQL/MariaDB: `table.column`; SQLite: never, it fills `main.main`); PostgreSQL fills `public`, not `search_path`.
 - One rule per column. The entity only labels; every value is rewritten.
 - YAML only; the last config file setting `privacy.rules` wins whole. Applies under `rules` and `full`, not `none`.

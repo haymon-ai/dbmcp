@@ -104,7 +104,7 @@ async fn client() -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
 async fn call_read_query(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>, query: &str) -> CallToolResult {
     let arguments = json!({ "query": query }).as_object().cloned().expect("object");
     client
-        .call_tool(CallToolRequestParams::new("readQuery").with_arguments(arguments))
+        .call_tool(CallToolRequestParams::new("read").with_arguments(arguments))
         .await
         .expect("tools/call")
 }

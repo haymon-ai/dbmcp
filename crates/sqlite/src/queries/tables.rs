@@ -1,10 +1,9 @@
-//! Table listing statements and `DROP TABLE`.
+//! Table listing statements.
 
 use dbmcp_server::listing::Page;
 use dbmcp_sql::{Connection as _, SqlError};
 use serde_json::Value;
 
-use super::ident;
 use crate::connection::SqliteConnection;
 
 /// Brief-mode SQL: `pragma_table_list` scan with optional `LIKE` filter.
@@ -235,20 +234,4 @@ pub(crate) async fn details(
             None,
         )
         .await
-}
-
-/// Statement prefix of `drop`; the quoted table name follows.
-const DROP: &str = "DROP TABLE";
-
-/// Drops `table`, quoted as an identifier.
-///
-/// # Errors
-///
-/// Returns the [`SqlError`] of a failed statement, or
-/// [`SqlError::ReadOnlyViolation`] in read-only mode.
-pub(crate) async fn drop(connection: &SqliteConnection, table: &str) -> Result<(), SqlError> {
-    connection
-        .execute(format!("{DROP} {}", ident::quote(table)).as_str(), None)
-        .await?;
-    Ok(())
 }

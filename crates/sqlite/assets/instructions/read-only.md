@@ -1,10 +1,8 @@
 ## Workflow
 
-1. Call `listTables` to discover tables in the connected database. Pass `search` to filter by name (case-insensitive substring). Pass `detailed: true` to get columns, constraints, indexes, and triggers in the same call.
-2. Call `listViews` to discover views in the connected database.
-3. Call `listTriggers` to discover triggers in the connected database.
-4. Use `readQuery` for read-only SQL (SELECT).
-5. Use `explainQuery` to analyze query execution plans and diagnose slow queries.
+1. Call `objects` to discover tables, views, and triggers before writing SQL.
+2. Use `read` for read-only SQL (SELECT).
+3. Use `explain` to analyze query execution plans and diagnose slow queries.
 
 ## Constraints
 

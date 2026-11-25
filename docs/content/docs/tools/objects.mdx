@@ -1,0 +1,166 @@
+---
+title: objects
+description: List tables, views, triggers, functions, procedures, materialized views, or databases, with name search and optional full metadata
+---
+
+List the objects of one kind, one page at a time. Results are paginated — see [Cursor Pagination](/features/pagination#cursor-pagination) for the protocol. `objects` runs fixed catalog queries, so it keeps working while [column rules](/privacy/rules) restrict what `read` may query.
+
+## Parameters
+
+- `kind` — the object kind to list; defaults to `table`. See [Kinds](#kinds) for what each backend offers. A kind the backend lacks is rejected.
+- `search` — a case-insensitive substring filter on the object name: `order` matches `order`, `orders`, and `reorder`. The value is wrapped as `%order%` in a `LIKE`/`ILIKE` pattern, so `%` and `_` inside it still act as wildcards (`_` matches any single character). Values are bound as parameters, never interpolated.
+- `detail` — `names` (default) returns bare names; `full` returns per-object metadata keyed by name, so one call enumerates the objects and inspects them.
+- `cursor` — opaque pagination token; pass back the prior response's `nextCursor` to fetch the next page. Keep `kind`, `search`, and `detail` the same across pages.
+- `database` — MySQL/MariaDB and PostgreSQL only: the database to inspect, defaulting to the active database. Absent when `database.name` / `DBMCP_DB_NAME` pins one database. SQLite operates on a single file and has no `database` parameter.
+
+## Kinds
+
+| `kind` | MySQL / MariaDB | PostgreSQL | SQLite |
+|--------|-----------------|------------|--------|
+| `table` | Yes | Yes | Yes |
+| `view` | Yes | Yes | Yes (names only) |
+| `trigger` | Yes | Yes | Yes |
+| `function` | Yes | Yes | No |
+| `procedure` | Yes | Yes (11+) | No |
+| `materialized_view` | No | Yes | No |
+| `database` | Yes, unless pinned | Yes, unless pinned | No |
+
+PostgreSQL restricts every kind except `database` to the `public` schema. `database` and SQLite's `view` list names only and reject `search` and `detail: "full"`; `database` lists the whole server and also rejects the `database` parameter.
+
+## Response
+
+With `detail: "names"` the response is a sorted JSON array of names:
+
+```json
+{
+  "objects": ["customers", "orders", "products"],
+  "nextCursor": "<opaque or absent>"
+}
+```
+
+With `detail: "full"` the response is an object keyed by name; the name is the key only and is not repeated inside the value:
+
+```json
+{
+  "objects": {
+    "orders": {
+      "schema": "public",
+      "kind": "TABLE",
+      "owner": "app",
+      "comment": null,
+      "columns": [
+        { "name": "id", "dataType": "bigint", "ordinalPosition": 1, "nullable": false, "default": null, "comment": null }
+      ],
+      "constraints": [
+        { "name": "pk", "type": "PRIMARY KEY", "columns": ["id"], "definition": "PRIMARY KEY (id)" }
+      ],
+      "indexes": [],
+      "triggers": []
+    }
+  }
+}
+```
+
+The metadata per kind follows.
+
+### Tables
+
+Each value carries `schema`, `kind`, `owner`, `comment`, `columns`, `constraints`, `indexes`, and `triggers`. Field availability follows what the backend exposes: `owner` is null on MySQL, MariaDB, and SQLite (only PostgreSQL reports it); PostgreSQL fills `schema` from the catalog while SQLite uses `main`.
+
+### Views
+
+Materialized views are not listed here; they have their own kind.
+
+- **PostgreSQL** — `schema` (always `"public"`), `owner` (from `pg_views.viewowner`), `description` (from `obj_description`, or `null` when no `COMMENT ON VIEW`), and `definition` (the `SELECT` body verbatim from `pg_views.definition`, with no `CREATE VIEW` wrapper). Column metadata and view-level options (`security_barrier`, `security_invoker`, `WITH CHECK OPTION`) are omitted. PostgreSQL exposes views in `pg_class`, so their columns appear under `kind: "table"` with `detail: "full"`.
+- **MySQL / MariaDB** — `schema`, `definer` (`user@host`), `security` (`INVOKER` / `DEFINER`), `checkOption` (`NONE` / `CASCADED` / `LOCAL`), `updatable` (boolean), `characterSetClient` and `collationConnection` (session context captured at view creation), and `definition` (the `SELECT` body verbatim from `information_schema.VIEWS.VIEW_DEFINITION`; empty when the connected role lacks `SHOW VIEW`). There is no `description`: `CREATE VIEW` has no `COMMENT` clause. `algorithm` is absent because it is a MariaDB-only column.
+- **SQLite** — names only.
+
+```json
+{
+  "objects": {
+    "active_users": {
+      "schema": "public",
+      "owner": "app_user",
+      "description": "Currently-active user accounts",
+      "definition": " SELECT id,\n    name,\n    email\n   FROM users\n  WHERE active = true;"
+    }
+  }
+}
+```
+
+### Materialized views
+
+PostgreSQL only. System-schema matviews are excluded. Each value carries:
+
+- `schema` — always `"public"`.
+- `owner` — owning role from `pg_matviews.matviewowner`.
+- `description` — `COMMENT ON MATERIALIZED VIEW` text, or `null`.
+- `definition` — the `SELECT` body verbatim from `pg_matviews.definition`.
+- `populated` — `false` for matviews created `WITH NO DATA` and never refreshed; querying one returns zero rows until `REFRESH MATERIALIZED VIEW` runs.
+- `indexed` — `true` when at least one index exists. `REFRESH MATERIALIZED VIEW CONCURRENTLY` additionally needs a unique index, which this flag does not distinguish.
+
+Column metadata, tablespace, and storage parameters are omitted; columns appear under `kind: "table"` with `detail: "full"`.
+
+### Triggers
+
+User-defined triggers only: internal constraint, foreign-key, and `sqlite_*` triggers are excluded.
+
+- **PostgreSQL** — `schema` (always `"public"`), `table`, `status` (`ENABLED` / `DISABLED` / `REPLICA` / `ALWAYS`), `timing` (`BEFORE` / `AFTER` / `INSTEAD OF`), `events` (non-empty subset of `INSERT` / `UPDATE` / `DELETE` / `TRUNCATE` in that order), `activationLevel` (`ROW` / `STATEMENT`), `functionName`, and `definition` (from `pg_get_triggerdef`).
+- **MySQL / MariaDB** — `schema`, `table`, `timing` (`BEFORE` / `AFTER`), `events` (one of `["INSERT"]`, `["UPDATE"]`, `["DELETE"]`), `activationLevel` (always `"ROW"`), `definition` (reconstructed `CREATE DEFINER=… TRIGGER …`), plus the session context at creation: `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`. There is no `status` or `functionName`.
+- **SQLite** — `schema` (always `"main"`), `table` (may be a view for `INSTEAD OF` triggers), and `definition` (the stored `CREATE TRIGGER` text). Timing and events can be read off the start of `definition`. A trigger whose stored SQL is `NULL` is listed by name but omitted from `detail: "full"`.
+
+```json
+{
+  "objects": {
+    "orders_audit_after_iu": {
+      "schema": "public",
+      "table": "orders",
+      "status": "ENABLED",
+      "timing": "AFTER",
+      "events": ["INSERT", "UPDATE"],
+      "activationLevel": "ROW",
+      "functionName": "audit_orders",
+      "definition": "CREATE TRIGGER orders_audit_after_iu AFTER INSERT OR UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION public.audit_orders()"
+    }
+  }
+}
+```
+
+### Functions
+
+MySQL/MariaDB and PostgreSQL. PostgreSQL excludes aggregates, window functions, and procedures; MySQL/MariaDB excludes loadable UDFs registered in `mysql.func`.
+
+- **PostgreSQL** — names list each overload separately, so duplicate names are expected. `detail: "full"` keys by `name(arguments)` to tell overloads apart. Each value carries `schema`, `name`, `language`, `arguments`, `returnType`, `volatility` (`IMMUTABLE` / `STABLE` / `VOLATILE`), `strict`, `security` (`INVOKER` / `DEFINER`), `parallelSafety` (`SAFE` / `RESTRICTED` / `UNSAFE`), `owner`, `description` (or `null`), and `definition` (from `pg_get_functiondef`).
+- **MySQL / MariaDB** — keyed by bare name (no overloading). Each value carries `schema`, `language`, `arguments` (comma-separated `name type` pairs; empty for none), `returnType` (full `DTD_IDENTIFIER`), `deterministic`, `sqlDataAccess` (`CONTAINS_SQL` / `NO_SQL` / `READS_SQL_DATA` / `MODIFIES_SQL_DATA`), `security`, `definer` (`user@host`), `description` (or `null`), `definition` (reconstructed `CREATE FUNCTION` text), plus `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`.
+
+```json
+{
+  "objects": {
+    "calc_order_total(order_id integer, tax_rate numeric)": {
+      "schema": "public",
+      "name": "calc_order_total",
+      "language": "sql",
+      "arguments": "order_id integer, tax_rate numeric",
+      "returnType": "numeric",
+      "volatility": "IMMUTABLE",
+      "strict": true,
+      "security": "INVOKER",
+      "parallelSafety": "SAFE",
+      "owner": "app_user",
+      "description": "Sums line items minus discounts",
+      "definition": "CREATE OR REPLACE FUNCTION public.calc_order_total(order_id integer, tax_rate numeric) RETURNS numeric ..."
+    }
+  }
+}
+```
+
+### Procedures
+
+MySQL/MariaDB and PostgreSQL 11+.
+
+- **PostgreSQL** — keyed by `name(arguments)`; zero-argument procedures key as `name()`. Each value carries `schema`, `name`, `language`, `arguments`, `security`, `owner`, `description` (or `null`), and `definition`. The function-only fields `returnType`, `volatility`, `strict`, and `parallelSafety` are absent.
+- **MySQL / MariaDB** — keyed by bare name. Each value carries `schema`, `language`, `arguments` (comma-separated `MODE name type` triples, `MODE` being `IN` / `OUT` / `INOUT`), `deterministic`, `sqlDataAccess`, `security`, `definer`, `description` (or `null`), `definition` (reconstructed `CREATE PROCEDURE` text), plus `sqlMode`, `characterSetClient`, `collationConnection`, `databaseCollation`.
+
+### Databases
+
+MySQL/MariaDB and PostgreSQL, and only while no database is pinned. Lists every database the connected role can see, as names only.

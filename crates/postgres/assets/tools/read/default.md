@@ -1,0 +1,36 @@
+Execute a read-only SQL query. Allowed statements: SELECT, SHOW, EXPLAIN.
+
+<usecase>
+Use when:
+- Querying data from tables (SELECT with WHERE, JOIN, GROUP BY, etc.)
+- Aggregations: COUNT, SUM, AVG, GROUP BY, HAVING
+- Listing server configuration parameters (SHOW)
+</usecase>
+
+<when_not_to_use>
+- Data changes (INSERT, UPDATE, DELETE) → use `write` (not available in read-only mode)
+- Query performance analysis → use `explain`
+- Discovering tables or columns → use objects (pass `detail: "full"` to get columns, keys, and indexes)
+</when_not_to_use>
+
+<examples>
+✓ "SELECT * FROM users WHERE status = 'active'"
+✓ "SELECT COUNT(*) FROM orders GROUP BY region"
+✓ "SHOW server_version"
+✗ "INSERT INTO users ..." → use `write` (not available in read-only mode)
+✗ "EXPLAIN SELECT ..." → use `explain` for structured analysis
+</examples>
+
+<what_it_returns>
+A JSON array of row objects, each keyed by column name.
+
+Long string values are cut and end in `…[truncated, N chars total]`; read the rest with `SUBSTRING`/`SUBSTR`. Rows past the response size cap are dropped: a `SELECT` page ends early and `nextCursor` resumes at the first row left out, while other statements report the count in `rowsOmitted`. When either happens the response carries `truncated: true` and a `hint`.
+</what_it_returns>
+
+<pagination>
+`SELECT` results are paginated. Pass the prior response's `nextCursor` as `cursor` to fetch the next page. Order by a unique key so pages neither skip nor repeat rows. Pages stay within the statement's own `LIMIT` and `OFFSET`. Write a row limit as a literal `LIMIT n`: other forms (`FETCH FIRST`, expressions) make every page read the whole result. `SHOW` and `EXPLAIN` return a single page and ignore `cursor`.
+</pagination>
+
+<timeout>
+Each call stops at the configured query timeout. On a timeout, check the plan with `explain` before retrying: filter on indexed columns, or limit inner result sets before joining or aggregating. For a query known to be slow, pass `timeout` (seconds, at least 1) to allow more time. This only helps if the server allows a higher maximum, which is often the same as the default; a value above it is rejected with an error naming the maximum.
+</timeout>
