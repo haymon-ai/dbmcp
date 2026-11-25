@@ -4,6 +4,7 @@ use dbmcp_server::listing::{self, Cursor};
 use dbmcp_server::types::{ListEntriesResponse, ListTriggersRequest};
 
 use super::prelude::*;
+use crate::queries;
 
 const NAME: &str = "listTriggers";
 const TITLE: &str = "List Triggers";
@@ -66,68 +67,6 @@ impl<const PINNED: bool> AsyncTool<MysqlHandler> for ListTriggersTool<PINNED> {
     }
 }
 
-/// Brief-mode SQL: name-only column with optional case-insensitive `LIKE` filter.
-///
-/// `CAST(TRIGGER_NAME AS CHAR)` forces a `VARCHAR` decode — `MySQL` 9 reports
-/// `information_schema` text columns as `VARBINARY`. `LOWER(...)` on both sides
-/// of the `LIKE` makes the match case-insensitive regardless of column collation.
-const BRIEF_SQL: &str = r"
-    SELECT CAST(TRIGGER_NAME AS CHAR)
-    FROM information_schema.TRIGGERS
-    WHERE TRIGGER_SCHEMA = ?
-      AND (? IS NULL OR LOWER(TRIGGER_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
-    ORDER BY TRIGGER_NAME
-    LIMIT ? OFFSET ?";
-
-/// Detailed-mode SQL — single SELECT against `information_schema.TRIGGERS`.
-///
-/// `JSON_OBJECT(...)` projects ten fields per row. Identifiers in the
-/// reconstructed `definition` are backtick-quoted with embedded backticks
-/// doubled. The `DEFINER` column stores `user@host` unquoted; the user
-/// portion can itself contain `@` (e.g. `'foo@bar'@'localhost'`), so the
-/// host is the segment after the **last** `@` and the user is everything
-/// before it (`SUBSTRING_INDEX(..., '@', -1)` for host, `LEFT(...)` for
-/// user). The five comma-separated `CONCAT` chunks rebuild the canonical
-/// `SHOW CREATE TRIGGER` `DEFINER=` `` `<user>`@`<host>` `` opener inline
-/// so identifier escaping and the last-`@` split live next to the rest of
-/// the projection. `events` is always a single-element array on
-/// `MySQL`/`MariaDB` (the engine fires one event per definition);
-/// `activationLevel` is always `ROW`. `ORDER BY TRIGGER_NAME` is sufficient —
-/// `(TRIGGER_SCHEMA, TRIGGER_NAME)` is the table's primary key, and the
-/// `WHERE` clause already pins `TRIGGER_SCHEMA`.
-const DETAILED_SQL: &str = r"
-    SELECT
-        CAST(TRIGGER_NAME AS CHAR) AS name,
-        JSON_OBJECT(
-            'schema',              CAST(EVENT_OBJECT_SCHEMA AS CHAR),
-            'table',               CAST(EVENT_OBJECT_TABLE  AS CHAR),
-            'timing',              CAST(ACTION_TIMING       AS CHAR),
-            'events',              JSON_ARRAY(CAST(EVENT_MANIPULATION AS CHAR)),
-            'activationLevel',     CAST(ACTION_ORIENTATION  AS CHAR),
-            'definition',          CONCAT(
-                'CREATE DEFINER=`',
-                REPLACE(LEFT(DEFINER, LENGTH(DEFINER) - LENGTH(SUBSTRING_INDEX(DEFINER, '@', -1)) - 1), '`', '``'),
-                '`@`',
-                REPLACE(SUBSTRING_INDEX(DEFINER, '@', -1), '`', '``'),
-                '`',
-                ' TRIGGER ',
-                '`', REPLACE(TRIGGER_NAME, '`', '``'), '`',
-                ' ', ACTION_TIMING, ' ', EVENT_MANIPULATION,
-                ' ON ',
-                '`', REPLACE(EVENT_OBJECT_TABLE,  '`', '``'), '`',
-                ' FOR EACH ROW ', ACTION_STATEMENT
-            ),
-            'sqlMode',             CAST(SQL_MODE                AS CHAR),
-            'characterSetClient',  CAST(CHARACTER_SET_CLIENT    AS CHAR),
-            'collationConnection', CAST(COLLATION_CONNECTION    AS CHAR),
-            'databaseCollation',   CAST(DATABASE_COLLATION      AS CHAR)
-        ) AS entry
-    FROM information_schema.TRIGGERS
-    WHERE TRIGGER_SCHEMA = ?
-      AND (? IS NULL OR LOWER(TRIGGER_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
-    ORDER BY TRIGGER_NAME
-    LIMIT ? OFFSET ?";
-
 impl MysqlHandler {
     /// Lists one page of user-defined triggers, optionally filtered and/or detailed.
     ///
@@ -153,32 +92,8 @@ impl MysqlHandler {
             self.config.page_size,
             search.as_deref(),
             detailed,
-            async |page, pattern| {
-                self.connection
-                    .fetch_scalar(
-                        sqlx::query(BRIEF_SQL)
-                            .bind(database)
-                            .bind(pattern)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
-            async |page, pattern| {
-                self.connection
-                    .fetch(
-                        sqlx::query(DETAILED_SQL)
-                            .bind(database)
-                            .bind(pattern)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
+            async |page, pattern| queries::triggers::names(&self.connection, page, pattern, database).await,
+            async |page, pattern| queries::triggers::details(&self.connection, page, pattern, database).await,
         )
         .await
         .map_err(Into::into)

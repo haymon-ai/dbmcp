@@ -4,6 +4,7 @@ use dbmcp_server::listing;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
+use crate::queries;
 
 const NAME: &str = "listDatabases";
 const TITLE: &str = "List Databases";
@@ -54,13 +55,6 @@ impl AsyncTool<MysqlHandler> for ListDatabasesTool {
     }
 }
 
-/// Lists one page of schema names, sorted by name.
-const SQL: &str = r"
-    SELECT CAST(SCHEMA_NAME AS CHAR)
-    FROM information_schema.SCHEMATA
-    ORDER BY SCHEMA_NAME
-    LIMIT ? OFFSET ?";
-
 impl MysqlHandler {
     /// Lists one page of accessible databases.
     ///
@@ -72,9 +66,7 @@ impl MysqlHandler {
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
         let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
-            self.connection
-                .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
-                .await
+            queries::databases::names(&self.connection, page).await
         })
         .await?;
 

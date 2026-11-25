@@ -14,11 +14,11 @@ use dbmcp_sql::support::{self, Variant};
 use dbmcp_types::database;
 use moka::future::Cache;
 use secrecy::ExposeSecret;
-use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPool, MySqlSslMode};
 use tracing::{debug, info, warn};
 
 use crate::flavour::{self, BackendMismatch};
+use crate::queries;
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -178,9 +178,7 @@ impl MysqlConnection {
             let checked = Arc::clone(&checked);
             Box::pin(async move {
                 if read_only {
-                    sqlx::raw_sql("SET SESSION TRANSACTION READ ONLY")
-                        .execute(&mut *conn)
-                        .await?;
+                    queries::session::read_only(&mut *conn).await?;
                 }
                 check_version(conn, &checked, backend, rules).await;
                 Ok(())
@@ -204,10 +202,7 @@ async fn check_version(
     if checked.load(Ordering::Acquire) {
         return;
     }
-    let Ok(version) = sqlx::query_scalar::<_, String>("SELECT CAST(VERSION() AS CHAR)")
-        .fetch_one(&mut *conn)
-        .await
-    else {
+    let Ok(version) = queries::session::version(&mut *conn).await else {
         debug!("could not read the server version; checking again on the next connection");
         return;
     };
@@ -223,18 +218,13 @@ async fn check_version(
     } else if let Some(line) = flavour::line(&version, server) {
         let variant = match flavour::variant(&version) {
             Some(variant) => Some(variant),
-            None if backend == database::Backend::Mysql => {
-                match sqlx::raw_sql("SHOW VARIABLES LIKE 'aurora_version'")
-                    .fetch_optional(&mut *conn)
-                    .await
-                {
-                    Ok(row) => row.map(|_| Variant::AuroraMysql),
-                    Err(error) => {
-                        debug!("could not probe for Aurora ({error}); checking again on the next connection");
-                        return;
-                    }
+            None if backend == database::Backend::Mysql => match queries::session::aurora_version(&mut *conn).await {
+                Ok(aurora) => aurora.then_some(Variant::AuroraMysql),
+                Err(error) => {
+                    debug!("could not probe for Aurora ({error}); checking again on the next connection");
+                    return;
                 }
-            }
+            },
             None => None,
         };
         support::classify(backend, line, variant, false).warning(rules)
@@ -273,44 +263,17 @@ impl Connection for MysqlConnection {
     }
 
     async fn session_id(&self, conn: &mut sqlx::MySqlConnection) -> Result<Option<u64>, sqlx::Error> {
-        let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()").fetch_one(conn).await?;
+        let id = queries::session::id(conn).await?;
         Ok(Some(id))
     }
 
     async fn set_timeout(&self, conn: &mut sqlx::MySqlConnection, limit: Duration) -> Result<(), sqlx::Error> {
-        let query = match self.config.backend {
-            database::Backend::Mariadb => sqlx::query("SET SESSION max_statement_time = ?").bind(limit.as_secs_f64()),
-            _ => sqlx::query("SET SESSION max_execution_time = ?")
-                .bind(u64::try_from(limit.as_millis()).unwrap_or(u64::MAX)),
-        };
-        query.execute(conn).await.map(|_| ())
+        queries::session::set_timeout(conn, self.config.backend, limit).await
     }
 
     async fn kill(conn: &mut sqlx::MySqlConnection, id: u64) -> Result<(), sqlx::Error> {
-        // `id` is a server-returned integer, not user input. MySQL 9 prepares
-        // `KILL QUERY ?`, but sqlx can't decode its parameter type (0xf3).
-        match sqlx::raw_sql(AssertSqlSafe(format!("KILL QUERY {id}")))
-            .execute(conn)
-            .await
-        {
-            // 1094: unknown thread id, the session already ended.
-            Err(error)
-                if error
-                    .as_database_error()
-                    .and_then(|e| e.try_downcast_ref::<MySqlDatabaseError>())
-                    .is_some_and(|e| e.number() == 1094) =>
-            {
-                Ok(())
-            }
-            result => result.map(|_| ()),
-        }
+        queries::session::kill(conn, id).await
     }
-}
-
-/// Quotes `value` as a `MySQL` identifier (backtick-wrapped).
-#[must_use]
-pub(crate) fn quote_ident(value: &str) -> String {
-    dbmcp_sql::sanitize::quote_ident(value, '`')
 }
 
 #[cfg(test)]

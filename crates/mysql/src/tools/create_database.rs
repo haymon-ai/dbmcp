@@ -3,7 +3,7 @@
 use dbmcp_server::types::{CreateDatabaseRequest, MessageResponse};
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 
 const NAME: &str = "createDatabase";
 const TITLE: &str = "Create Database";
@@ -68,28 +68,13 @@ impl MysqlHandler {
         &self,
         CreateDatabaseRequest { database }: CreateDatabaseRequest,
     ) -> Result<MessageResponse, ErrorData> {
-        let exists: Option<String> = self
-            .connection
-            .fetch_optional(
-                sqlx::query(
-                    "SELECT CAST(SCHEMA_NAME AS CHAR) \
-                     FROM information_schema.SCHEMATA \
-                     WHERE SCHEMA_NAME = ?",
-                )
-                .bind(&database),
-                None,
-            )
-            .await?;
-
-        if exists.is_some() {
+        if queries::databases::exists(&self.connection, &database).await? {
             return Ok(MessageResponse {
                 message: format!("Database '{database}' already exists."),
             });
         }
 
-        let create_sql = format!("CREATE DATABASE IF NOT EXISTS {}", quote_ident(&database));
-
-        self.connection.execute(create_sql.as_str(), None).await?;
+        queries::databases::create(&self.connection, &database).await?;
 
         Ok(MessageResponse {
             message: format!("Database '{database}' created successfully."),

@@ -3,6 +3,7 @@
 use dbmcp_server::listing::{self, Cursor};
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::{ListEntriesResponse, ListViewsRequest};
 
 const NAME: &str = "listViews";
@@ -66,51 +67,6 @@ impl<const PINNED: bool> AsyncTool<MysqlHandler> for ListViewsTool<PINNED> {
     }
 }
 
-/// Brief-mode SQL: name-only column with optional case-insensitive `LIKE` filter.
-///
-/// `CAST(TABLE_NAME AS CHAR)` forces a `VARCHAR` decode — `MySQL` 9 reports
-/// `information_schema` text columns as `VARBINARY`. `LOWER(...)` on both sides
-/// of the `LIKE` makes the match case-insensitive regardless of column collation.
-/// `(? IS NULL OR ...)` lets one prepared statement cover both filtered and
-/// unfiltered cases.
-const BRIEF_SQL: &str = r"
-    SELECT CAST(TABLE_NAME AS CHAR)
-    FROM information_schema.VIEWS
-    WHERE TABLE_SCHEMA = ?
-      AND (? IS NULL OR LOWER(TABLE_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
-    ORDER BY TABLE_NAME
-    LIMIT ? OFFSET ?";
-
-/// Detailed-mode SQL — single SELECT against `information_schema.VIEWS`.
-///
-/// Eight fields per row, every value a single-column projection from the same
-/// `information_schema.VIEWS` row. **No correlated subquery** (views have no
-/// parameters). **No DDL reconstruction** (`VIEW_DEFINITION` already returns
-/// the SELECT body verbatim — see research Decision 5). The `ALGORITHM` column
-/// is deliberately not selected because it is a MariaDB-only addition; touching
-/// it would fail on `MySQL` 9 (FR-006).
-///
-/// `LIMIT` pushes down before the JSON projection, so per-page work scales
-/// with `page_size + 1` rows regardless of how many views the schema holds.
-const DETAILED_SQL: &str = r"
-    SELECT
-        CAST(v.TABLE_NAME AS CHAR) AS name,
-        JSON_OBJECT(
-            'schema',              CAST(v.TABLE_SCHEMA          AS CHAR),
-            'definer',             CAST(v.DEFINER               AS CHAR),
-            'security',            CAST(v.SECURITY_TYPE         AS CHAR),
-            'checkOption',         CAST(v.CHECK_OPTION          AS CHAR),
-            'updatable',           (v.IS_UPDATABLE = 'YES'),
-            'characterSetClient',  CAST(v.CHARACTER_SET_CLIENT  AS CHAR),
-            'collationConnection', CAST(v.COLLATION_CONNECTION  AS CHAR),
-            'definition',          CAST(v.VIEW_DEFINITION       AS CHAR)
-        ) AS entry
-    FROM information_schema.VIEWS v
-    WHERE v.TABLE_SCHEMA = ?
-      AND (? IS NULL OR LOWER(v.TABLE_NAME) LIKE LOWER(CONCAT('%', ?, '%')))
-    ORDER BY v.TABLE_NAME
-    LIMIT ? OFFSET ?";
-
 impl MysqlHandler {
     /// Lists one page of views, optionally filtered and/or detailed.
     ///
@@ -136,32 +92,8 @@ impl MysqlHandler {
             self.config.page_size,
             search.as_deref(),
             detailed,
-            async |page, pattern| {
-                self.connection
-                    .fetch_scalar(
-                        sqlx::query(BRIEF_SQL)
-                            .bind(database)
-                            .bind(pattern)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
-            async |page, pattern| {
-                self.connection
-                    .fetch(
-                        sqlx::query(DETAILED_SQL)
-                            .bind(database)
-                            .bind(pattern)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        None,
-                    )
-                    .await
-            },
+            async |page, pattern| queries::views::names(&self.connection, page, pattern, database).await,
+            async |page, pattern| queries::views::details(&self.connection, page, pattern, database).await,
         )
         .await
         .map_err(Into::into)
