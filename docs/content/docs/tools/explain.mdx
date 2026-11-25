@@ -1,5 +1,5 @@
 ---
-title: explainQuery
+title: explain
 description: Show the execution plan of a SQL query, with optional EXPLAIN ANALYZE on PostgreSQL and MySQL, or ANALYZE on MariaDB
 ---
 
@@ -7,6 +7,6 @@ Return the execution plan for a SQL query. Supports an optional `analyze` parame
 
 On PostgreSQL and MySQL/MariaDB, an optional `timeout` argument (seconds) gives a known-slow `analyze` more time, up to the operator's cap; see [Per-Call Timeout](/features/query-timeouts#per-call-timeout).
 
-Plan row keys follow the column order, as in [`readQuery`](/tools/read-query).
+Plan row keys follow the column order, as in [`read`](/tools/read).
 
 With [column rules](/privacy/rules#plans-of-ruled-tables), the plan of a statement that touches a ruled table is pruned to value-free keys (plan structure, table and index names, access types, estimates), and `analyze` on such a statement is refused. On MariaDB, `analyze` is refused on every statement while rules exist.

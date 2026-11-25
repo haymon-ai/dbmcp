@@ -7,7 +7,7 @@ Global [redaction](/privacy/redaction) finds sensitive values by their pattern. 
 
 To do that, <Dbmcp /> works out which table columns feed each output column of a statement before it runs. A statement it cannot check, or one that would use a ruled column in a way that could reveal its values, is refused before it runs.
 
-Rules apply to `readQuery`, `writeQuery` (including `RETURNING` rows), and `explainQuery` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection under `full`.
+Rules apply to `read`, `write` (including `RETURNING` rows), and `explain` on MySQL, MariaDB, PostgreSQL, and SQLite. Output columns that no rule covers keep global detection under `full`.
 
 <Callout type="warn">
 The guarantees on this page hold only on [Supported versions](/supported-versions). On other versions rules still apply and every statement is still checked, but the server's catalog facts may differ from what <Dbmcp /> was tested against. <Dbmcp /> logs a warning once it reads the server version.
@@ -85,7 +85,7 @@ Startup checks the first segment of a full key: it must be `def` on MySQL and Ma
 
 Repeats are found after the segments are filled in: with `database.name: shop` on PostgreSQL, `users.email` and `shop.public.users.email` name the same column.
 
-> **Check the names.** A rule for a column that does not exist (a typo, a renamed table, the database name in the wrong segment) never matches, and nothing warns you. Compare every key with `listTables` output.
+> **Check the names.** A rule for a column that does not exist (a typo, a renamed table, the database name in the wrong segment) never matches, and nothing warns you. Compare every key with `objects` output (`detail: "full"` lists the columns).
 
 Rules name **table** columns. A query that reads through a view gets the rules of the view's base table columns.
 
@@ -189,7 +189,7 @@ While any rule exists, <Dbmcp /> refuses every statement it cannot fully check, 
   - SQLite: `sqlite_stat1` to `sqlite_stat4`, `sqlite_dbpage`, and **every virtual table**, including full-text search (FTS) tables. FTS cannot be queried while rules exist.
 - **Views it cannot read**: a view whose body the connecting user cannot see is refused. On MySQL and MariaDB that needs the `SHOW VIEW` privilege.
 - **`SHOW` forms**: every PostgreSQL `SHOW` (it reads settings). On MySQL and MariaDB, every `SHOW` except those that list schema objects or settings: `SHOW DATABASES` / `SCHEMAS`, `[EXTENDED] [FULL] TABLES`, `OPEN TABLES`, `TABLE STATUS`, `[EXTENDED] [FULL] COLUMNS` / `FIELDS`, `[EXTENDED] INDEX` / `INDEXES` / `KEYS`, `CREATE TABLE` / `VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE` / `EVENT`, `TRIGGERS`, `EVENTS`, `FUNCTION` / `PROCEDURE STATUS`, `FUNCTION` / `PROCEDURE CODE`, `[GLOBAL | SESSION] VARIABLES`, `[GLOBAL | SESSION] STATUS`, `CHARACTER SET` / `CHARSET`, `COLLATION`, `[STORAGE] ENGINES`, `PLUGINS`, and `PRIVILEGES`. Every other form, such as `SHOW WARNINGS`, `PROCESSLIST`, `GRANTS`, or `CREATE USER`, is refused. An allowed form may filter only with `LIKE 'pattern'`: a `WHERE` filter is refused, because it can test any column's value.
-- **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explainQuery` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
+- **`EXPLAIN` of ruled tables**: when the statement touches a table with a ruled column, only the plain plan forms `explain` builds return a pruned plan (see [Plans of ruled tables](#plans-of-ruled-tables)). Every `ANALYZE`, and every other `EXPLAIN` form, is refused. `CREATE INDEX` on a ruled table is refused too.
 - **Writes that could plant values in `hash`-ruled columns**: literals, parameters, unruled or computed values, defaults, generated columns, `ON UPDATE` columns, foreign-key cascades, and, while `hash` rules exist, every write to a table with triggers or rules (see [Writes](#writes)).
 - **Row movement on PostgreSQL**: `UPDATE` and `MERGE` through a partitioned table whose partitions are ruled differently, even when no row would move; name the partition (see [Inheritance and partitions](#inheritance-and-partitions)).
 - **A changed inheritance tree on PostgreSQL**: a table with a ruled column that joined the tree of a table the statement read while it ran. This one is caught after the statement runs: nothing is returned and a write is rolled back, with `column policy: an inheritance tree changed while the statement ran`. Retry the statement.
@@ -201,7 +201,7 @@ Output of `SHOW`, `DESCRIBE`, and `EXPLAIN` that is not refused gets global dete
 
 The plan of a statement that touches a ruled table is pruned to value-free keys: the plan structure, table and index names, access types, and row and cost estimates. Conditions, sort and group keys, and every other expression are dropped, since they can print literal values. Plans keep each engine's native shape; no flag marks what was dropped. Plans of statements that touch no ruled table are returned unchanged.
 
-Only these forms are pruned, whether `explainQuery` builds them or they are written through `readQuery`:
+Only these forms are pruned, whether `explain` builds them or they are written through `read`:
 
 - PostgreSQL: `EXPLAIN (FORMAT JSON) …`, with no other option.
 - MySQL and MariaDB: `EXPLAIN FORMAT=JSON …`.
@@ -211,12 +211,12 @@ The statement inside must pass every other check, so a ruled column in a conditi
 
 ```text
 column policy: EXPLAIN ANALYZE on ruled relation "public.users" is denied; actual row counts can reveal values, explain without ANALYZE
-column policy: EXPLAIN touches ruled relation "public.users"; use explainQuery
+column policy: EXPLAIN touches ruled relation "public.users"; use the explain tool
 ```
 
-The first answers any `ANALYZE`, `explainQuery`'s `analyze` included: actual row counts can reveal values. The second answers every other form, such as a text plan, `VERBOSE`, or any other PostgreSQL option. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
+The first answers any `ANALYZE`, `explain`'s `analyze` included: actual row counts can reveal values. The second answers every other form, such as a text plan, `VERBOSE`, or any other PostgreSQL option. A plan that does not have the shape <Dbmcp /> expects is not returned; the error ends in `column policy: EXPLAIN plan has an unexpected shape`.
 
-On MariaDB, `explainQuery` runs `analyze` as the `ANALYZE` statement, which <Dbmcp /> cannot analyze, so `analyze` is refused there on every statement while rules exist, ruled table or not:
+On MariaDB, `explain` runs `analyze` as the `ANALYZE` statement, which <Dbmcp /> cannot analyze, so `analyze` is refused there on every statement while rules exist, ruled table or not:
 
 ```text
 column policy: ANALYZE is denied on MariaDB while column rules exist; explain without ANALYZE
@@ -233,7 +233,7 @@ On MySQL, a pruned plan runs with `explain_json_format_version` set to `1` for i
 
 ## Writes
 
-With `DBMCP_DB_READ_ONLY=false`, `writeQuery` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
+With `DBMCP_DB_READ_ONLY=false`, `write` is checked like a read, and the rows of `RETURNING` are rewritten like query rows. A write must also not copy ruled values into a column that is not ruled the same way, which would launder them:
 
 - A target column fed by a ruled column needs a rule with the same operator and entity, and the ruled column must pass through unchanged. An unruled target, or one ruled differently, is refused.
 - A computed value over a ruled column (see [Derived columns](#derived-columns)) is laundering into any target, whatever its rule: stored, it would later read back as a plain column, not as the placeholder. `UPDATE users SET note = IF(email LIKE '%.de', NULL, 'x')` is refused even when `note` carries `email`'s rule; `INSERT INTO copy (email) SELECT email FROM users` passes when `copy.email` does. A column written by several clauses (an upsert's conflict clause, `MERGE` branches) counts as computed when one clause writes a constant or `DEFAULT` beside a plain copy, so `INSERT INTO copy (id, email) SELECT id, email FROM users ON CONFLICT (id) DO UPDATE SET email = DEFAULT` is refused too, as is `UPDATE users SET phone = trim(phone)`.
@@ -312,4 +312,4 @@ Column rules narrow what the assistant can learn, but some channels stay open. P
 - **Triggers and generated columns.** A trigger on an unruled table can raise an error quoting a ruled value, and that message is not withheld. A generated column computed from a ruled column is not ruled by its source. Rule generated columns explicitly. On MySQL and MariaDB, triggers are visible only with the `TRIGGER` privilege on the table: a trigger <Dbmcp /> cannot see that writes a `hash`-ruled column lets the assistant plant a value and read its token back, a guess oracle. Grant `TRIGGER`, or keep such tables out of read-write mode.
 - **MySQL GTID consistency.** With `enforce_gtid_consistency` on, writes to non-transactional tables fail inside the transaction <Dbmcp /> opens.
 
-Metadata tools (`listTables`, `listViews`, …) are not covered by column rules: they return schema objects, not query rows.
+The `objects` tool is not covered by column rules: they return schema objects, not query rows.

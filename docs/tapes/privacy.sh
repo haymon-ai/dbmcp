@@ -38,7 +38,7 @@ respond() {
   case "$query" in
     *"biggest orders"*)
       think "2.1s" 2.1
-      printf "\n${GREEN}●${RESET} ${BOLD}readQuery${RESET} ${DIM}(dbmcp)${RESET}\n"
+      printf "\n${GREEN}●${RESET} ${BOLD}read${RESET} ${DIM}(dbmcp)${RESET}\n"
       printf "  ${DIM}⎿  3 rows, personal data redacted${RESET}\n"
       sleep 0.4
       printf "\n● Last week's 3 biggest orders:\n\n"

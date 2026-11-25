@@ -117,7 +117,7 @@ privacy:
 - **Indexed ruled columns:** `users.email`, `phone` and the `users` token columns; `refresh_tokens.token`, `parent`; `identities.email`, `provider_id`; `saml_relay_states.for_email`; `mfa_factors.friendly_name`, `phone`; `flow_state.auth_code`; `oauth_authorizations.authorization_code`; `scim_users.user_name`, `external_id`; `scim_tokens.token_hash`.
 - **Lookups that stop working:** a user by e-mail or phone, an identity by provider subject, a SCIM user by `userName`, sessions or audit entries by IP.
 - **Join keys that stay unruled:** `id` and `user_id` columns, plus `refresh_tokens.session_id` and `mfa_challenges.factor_id`. `audit_log_entries` has no user column; its actor sits in `payload`.
-- **Writes:** `writeQuery` refuses inserts into `users`, inserts and updates on `identities` and `scim_users` (defaulted and generated `hash`-ruled columns), and writes to tables with triggers; use the Auth API.
+- **Writes:** `write` refuses inserts into `users`, inserts and updates on `identities` and `scim_users` (defaulted and generated `hash`-ruled columns), and writes to tables with triggers; use the Auth API.
 
 ## Not covered
 

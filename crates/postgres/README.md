@@ -10,10 +10,10 @@ PostgreSQL backend for [dbmcp](https://dbmcp.haymon.ai) — the privacy first MC
 ## What you get
 
 - `PostgresHandler` ready to plug into any `rmcp::ServerHandler`-compatible MCP transport
-- Full MCP tool surface: `listDatabases`, `listTables` (with `detailed: true`), `listViews`, `listTriggers`, `listFunctions`, `listProcedures`, `listMaterializedViews`, `readQuery`, `writeQuery`, `explainQuery`, `createDatabase`, `dropDatabase`, `dropTable`
+- Full MCP tool surface: `objects` (tables, views, materialized views, triggers, functions, procedures, databases), `read`, `write`, `explain`
 - Per-database connection pool cache (`moka`) — cheap per-call `database` switches
 - Read-only by default — write tools hidden unless explicitly disabled
 - Parameterised queries everywhere — user values never touch SQL strings
-- Sensitive-data redaction on by default for the output and errors of `readQuery`, `writeQuery`, and `explainQuery`; walks JSON/JSONB recursively
+- Sensitive-data redaction on by default for the output and errors of `read`, `write`, and `explain`; walks JSON/JSONB recursively
 
 See the main crate: **[dbmcp](https://dbmcp.haymon.ai)** · [Website](https://dbmcp.haymon.ai)

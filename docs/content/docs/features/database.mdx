@@ -10,7 +10,7 @@ description: Connect dbmcp to MySQL, MariaDB, PostgreSQL, or SQLite
 | `database.port` | `DBMCP_DB_PORT` | integer | Backend-dependent | Database port (see [Backend Defaults](#backend-defaults)) |
 | `database.user` | `DBMCP_DB_USER` | string | Backend-dependent | Database user (see [Backend Defaults](#backend-defaults)) |
 | `database.password` | `DBMCP_DB_PASSWORD` | string | — | Database password |
-| `database.name` | `DBMCP_DB_NAME` | string / path | — | Database name, or file path for SQLite. Pinning a name hides `listDatabases`, `createDatabase`, and `dropDatabase` on MySQL/PostgreSQL. |
+| `database.name` | `DBMCP_DB_NAME` | string / path | — | Database name, or file path for SQLite. Pinning a name removes the `database` parameter and `objects` `kind: "database"` on MySQL/PostgreSQL. |
 
 ## Character Set
 
@@ -29,7 +29,7 @@ Default values for `database.port` and `database.user` depend on the selected ba
 | PostgreSQL | `5432` | `postgres` |
 | SQLite | N/A | N/A |
 
-On MySQL and MariaDB, dbmcp checks the server's `VERSION()` against `database.backend` when the first connection opens (on first use, not at startup) and logs one warning per process on a mismatch; while column rules apply (privacy mode `rules` or `full`), a mismatch refuses every statement. `explainQuery`'s `analyze` also follows `database.backend`: `EXPLAIN ANALYZE` for `mysql`, `ANALYZE FORMAT=JSON` for `mariadb`, so a mismatch makes it fail with a syntax error.
+On MySQL and MariaDB, dbmcp checks the server's `VERSION()` against `database.backend` when the first connection opens (on first use, not at startup) and logs one warning per process on a mismatch; while column rules apply (privacy mode `rules` or `full`), a mismatch refuses every statement. `explain`'s `analyze` also follows `database.backend`: `EXPLAIN ANALYZE` for `mysql`, `ANALYZE FORMAT=JSON` for `mariadb`, so a mismatch makes it fail with a syntax error.
 
 Which server versions <Dbmcp /> tests, and the warning it logs on the others, are listed on [Supported versions](/supported-versions).
 
