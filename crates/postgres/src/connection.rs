@@ -17,7 +17,7 @@ use secrecy::ExposeSecret;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use tracing::{debug, info, warn};
 
-use crate::version;
+use crate::{queries, version};
 
 /// Maximum number of cached per-database connection pools.
 pub(crate) const POOL_CACHE_CAPACITY: u64 = 16;
@@ -146,27 +146,19 @@ impl Connection for PostgresConnection {
     }
 
     async fn session_id(&self, conn: &mut sqlx::PgConnection) -> Result<Option<u64>, sqlx::Error> {
-        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(conn).await?;
+        let pid = queries::session::id(conn).await?;
         let pid = u64::try_from(pid).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
         Ok(Some(pid))
     }
 
     async fn set_timeout(&self, conn: &mut sqlx::PgConnection, limit: Duration) -> Result<(), sqlx::Error> {
         let millis = limit.as_millis().to_string();
-        sqlx::query("SELECT set_config('statement_timeout', $1, false)")
-            .bind(millis)
-            .execute(conn)
-            .await
-            .map(|_| ())
+        queries::session::set_timeout(conn, millis).await
     }
 
     async fn kill(conn: &mut sqlx::PgConnection, id: u64) -> Result<(), sqlx::Error> {
         let pid = i32::try_from(id).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-        sqlx::query("SELECT pg_cancel_backend($1)")
-            .bind(pid)
-            .execute(conn)
-            .await
-            .map(|_| ())
+        queries::session::kill(conn, pid).await
     }
 }
 /// Creates a lazy `PostgreSQL` pool for `db_name`.
@@ -244,27 +236,19 @@ async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, back
         debug!("could not read the server version; checking again on the next connection");
         return;
     };
-    let Ok(text) = sqlx::query_scalar::<_, String>("SELECT pg_catalog.version()")
-        .fetch_one(&mut *conn)
-        .await
-    else {
+    let Ok(text) = queries::session::version(&mut *conn).await else {
         debug!("could not read the server version text; checking again on the next connection");
         return;
     };
     let variant = match version::variant(&text) {
         Some(variant) => Some(variant),
-        None => {
-            match sqlx::query_scalar::<_, bool>("SELECT pg_catalog.to_regproc('pg_catalog.aurora_version') IS NOT NULL")
-                .fetch_one(&mut *conn)
-                .await
-            {
-                Ok(aurora) => aurora.then_some(Variant::AuroraPostgres),
-                Err(error) => {
-                    debug!("could not probe for Aurora ({error}); checking again on the next connection");
-                    return;
-                }
+        None => match queries::session::aurora_version(&mut *conn).await {
+            Ok(aurora) => aurora.then_some(Variant::AuroraPostgres),
+            Err(error) => {
+                debug!("could not probe for Aurora ({error}); checking again on the next connection");
+                return;
             }
-        }
+        },
     };
     if checked.swap(true, Ordering::AcqRel) {
         return;
@@ -278,12 +262,6 @@ async fn check_version(conn: &mut sqlx::PgConnection, checked: &AtomicBool, back
     if let Some(warning) = tier.warning(rules) {
         warn!("{warning}");
     }
-}
-
-/// Quotes `value` as a `PostgreSQL` identifier (ANSI double-quote style).
-#[must_use]
-pub(crate) fn quote_ident(value: &str) -> String {
-    dbmcp_sql::sanitize::quote_ident(value, '"')
 }
 
 #[cfg(test)]

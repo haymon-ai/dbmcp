@@ -4,6 +4,7 @@ use dbmcp_server::listing;
 use dbmcp_server::types::{ListDatabasesRequest, ListDatabasesResponse};
 
 use super::prelude::*;
+use crate::queries;
 
 const NAME: &str = "listDatabases";
 const TITLE: &str = "List Databases";
@@ -54,14 +55,6 @@ impl AsyncTool<PostgresHandler> for ListDatabasesTool {
     }
 }
 
-/// Lists one page of non-template database names, sorted by name.
-const SQL: &str = r"
-    SELECT datname
-    FROM pg_database
-    WHERE datistemplate = false
-    ORDER BY datname
-    LIMIT $1 OFFSET $2";
-
 impl PostgresHandler {
     /// Lists one page of accessible databases.
     ///
@@ -77,9 +70,7 @@ impl PostgresHandler {
         ListDatabasesRequest { cursor }: ListDatabasesRequest,
     ) -> Result<ListDatabasesResponse, ErrorData> {
         let (databases, next_cursor) = listing::paginate(cursor, self.config.page_size, async |page| {
-            self.connection
-                .fetch_scalar(sqlx::query(SQL).bind(page.limit()).bind(page.offset()), None)
-                .await
+            queries::databases::names(&self.connection, page).await
         })
         .await?;
 

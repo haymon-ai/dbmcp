@@ -3,6 +3,7 @@
 use dbmcp_server::listing::{self, Cursor};
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::{ListEntriesResponse, ListMaterializedViewsRequest};
 
 const NAME: &str = "listMaterializedViews";
@@ -66,51 +67,6 @@ impl<const PINNED: bool> AsyncTool<PostgresHandler> for ListMaterializedViewsToo
     }
 }
 
-/// Brief-mode SQL: `pg_matviews` scan with `ILIKE` filter on matview name.
-///
-/// `pg_matviews` already filters to `pg_class.relkind = 'm'`, and
-/// `schemaname = 'public'` keeps system-schema matviews out. The
-/// `($1::text IS NULL OR ...)` trinary lets one statement cover both filtered
-/// and unfiltered cases. Matview names are unique per schema (Postgres enforces
-/// this via `pg_class`'s unique index on `(relname, relnamespace)`), so
-/// `matviewname` alone is a stable sort key — no tiebreaker needed.
-const BRIEF_SQL: &str = r"
-    SELECT matviewname
-    FROM pg_matviews
-    WHERE schemaname = 'public'
-      AND ($1::text IS NULL OR matviewname ILIKE '%' || $1 || '%')
-    ORDER BY matviewname
-    LIMIT $2 OFFSET $3";
-
-/// Detailed-mode SQL: per-matview `json_build_object` projection.
-///
-/// `pg_matviews` already filters to `relkind = 'm'`. The `pg_namespace` +
-/// `pg_class` joins anchor the relation OID needed by `obj_description`.
-/// Postgres defers SELECT-list evaluation past `LIMIT`, so `obj_description`
-/// only runs for the page's rows — never the full schema.
-/// `pg_matviews.matviewowner` is already a role name, so no `pg_roles` join is
-/// needed. `populated` and `indexed` are projected directly from
-/// `pg_matviews.ispopulated` / `pg_matviews.hasindexes`. Matview names are
-/// unique per schema, so `matviewname` alone is a stable sort key.
-const DETAILED_SQL: &str = r"
-    SELECT
-        mv.matviewname AS name,
-        json_build_object(
-            'schema',      mv.schemaname,
-            'owner',       mv.matviewowner,
-            'description', pg_catalog.obj_description(c.oid, 'pg_class'),
-            'definition',  mv.definition,
-            'populated',   mv.ispopulated,
-            'indexed',     mv.hasindexes
-        ) AS entry
-    FROM pg_matviews mv
-    JOIN pg_namespace n ON n.nspname = mv.schemaname
-    JOIN pg_class     c ON c.relname = mv.matviewname AND c.relnamespace = n.oid
-    WHERE mv.schemaname = 'public'
-      AND ($1::text IS NULL OR mv.matviewname ILIKE '%' || $1 || '%')
-    ORDER BY mv.matviewname
-    LIMIT $2 OFFSET $3";
-
 impl PostgresHandler {
     /// Lists one page of user-defined materialized views, optionally filtered and/or detailed.
     ///
@@ -131,28 +87,8 @@ impl PostgresHandler {
             self.config.page_size,
             search.as_deref(),
             detailed,
-            async |page, pattern| {
-                self.connection
-                    .fetch_scalar(
-                        sqlx::query(BRIEF_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        database,
-                    )
-                    .await
-            },
-            async |page, pattern| {
-                self.connection
-                    .fetch(
-                        sqlx::query(DETAILED_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        database,
-                    )
-                    .await
-            },
+            async |page, pattern| queries::materialized_views::names(&self.connection, page, pattern, database).await,
+            async |page, pattern| queries::materialized_views::details(&self.connection, page, pattern, database).await,
         )
         .await
         .map_err(Into::into)

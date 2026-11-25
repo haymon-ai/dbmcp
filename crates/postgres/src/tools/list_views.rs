@@ -3,6 +3,7 @@
 use dbmcp_server::listing::{self, Cursor};
 
 use super::prelude::*;
+use crate::queries;
 use crate::types::{ListEntriesResponse, ListViewsRequest};
 
 const NAME: &str = "listViews";
@@ -66,46 +67,6 @@ impl<const PINNED: bool> AsyncTool<PostgresHandler> for ListViewsTool<PINNED> {
     }
 }
 
-/// Brief-mode SQL: `pg_views` scan with `ILIKE` filter on view name.
-///
-/// `pg_views` already excludes materialized views (those live in `pg_matviews`),
-/// and `schemaname = 'public'` keeps system-schema views out. The
-/// `($1::text IS NULL OR ...)` trinary lets one statement cover both filtered
-/// and unfiltered cases. View names are unique per schema (Postgres enforces
-/// this), so `viewname` alone is a stable sort key — no tiebreaker needed.
-const BRIEF_SQL: &str = r"
-    SELECT viewname
-    FROM pg_views
-    WHERE schemaname = 'public'
-      AND ($1::text IS NULL OR viewname ILIKE '%' || $1 || '%')
-    ORDER BY viewname
-    LIMIT $2 OFFSET $3";
-
-/// Detailed-mode SQL: per-view `json_build_object` projection.
-///
-/// `pg_views` excludes materialized views. The `pg_namespace` + `pg_class`
-/// joins anchor the relation OID needed by `obj_description`. Postgres defers
-/// SELECT-list evaluation past `LIMIT`, so `obj_description` only runs for the
-/// page's rows — never the full schema. `pg_views.viewowner` is already a role
-/// name, so no `pg_roles` join is needed. View names are unique per schema, so
-/// `viewname` alone is a stable sort key.
-const DETAILED_SQL: &str = r"
-    SELECT
-        v.viewname AS name,
-        json_build_object(
-            'schema',      v.schemaname,
-            'owner',       v.viewowner,
-            'description', pg_catalog.obj_description(c.oid, 'pg_class'),
-            'definition',  v.definition
-        ) AS entry
-    FROM pg_views v
-    JOIN pg_namespace n ON n.nspname = v.schemaname
-    JOIN pg_class     c ON c.relname = v.viewname AND c.relnamespace = n.oid
-    WHERE v.schemaname = 'public'
-      AND ($1::text IS NULL OR v.viewname ILIKE '%' || $1 || '%')
-    ORDER BY v.viewname
-    LIMIT $2 OFFSET $3";
-
 impl PostgresHandler {
     /// Lists one page of user-defined views, optionally filtered and/or detailed.
     ///
@@ -126,28 +87,8 @@ impl PostgresHandler {
             self.config.page_size,
             search.as_deref(),
             detailed,
-            async |page, pattern| {
-                self.connection
-                    .fetch_scalar(
-                        sqlx::query(BRIEF_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        database,
-                    )
-                    .await
-            },
-            async |page, pattern| {
-                self.connection
-                    .fetch(
-                        sqlx::query(DETAILED_SQL)
-                            .bind(pattern)
-                            .bind(page.limit())
-                            .bind(page.offset()),
-                        database,
-                    )
-                    .await
-            },
+            async |page, pattern| queries::views::names(&self.connection, page, pattern, database).await,
+            async |page, pattern| queries::views::details(&self.connection, page, pattern, database).await,
         )
         .await
         .map_err(Into::into)

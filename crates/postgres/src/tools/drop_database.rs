@@ -4,7 +4,7 @@ use dbmcp_server::types::{DropDatabaseRequest, MessageResponse};
 use dbmcp_sql::SqlError;
 
 use super::prelude::*;
-use crate::connection::quote_ident;
+use crate::queries;
 
 const NAME: &str = "dropDatabase";
 const TITLE: &str = "Drop Database";
@@ -75,8 +75,7 @@ impl PostgresHandler {
             return Err(SqlError::Query(format!("Cannot drop the currently connected database '{database}'.")).into());
         }
 
-        let drop_sql = format!("DROP DATABASE {}", quote_ident(&database));
-        self.connection.execute(drop_sql.as_str(), None).await?;
+        queries::databases::drop(&self.connection, &database).await?;
 
         self.connection.invalidate(&database).await;
 
